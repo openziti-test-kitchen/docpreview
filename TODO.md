@@ -170,6 +170,22 @@ a DNS suffix — but it is a **bare hostname**, not a URL, so anything putting i
 - [ ] **A zrok name race.** The collision check drops the lock before `CreateShare`, and the daemon's commit
       lock is per preview, so two previews rendering to one name both pass and the loser's `reapName` deletes
       the winner's fresh share. See [16-exposer-zrok.md](docs/design/16-exposer-zrok.md).
+- [ ] **Registered zrok names are never released.** `ensureName` creates one per preview name ever published and
+      nothing calls `DeleteShareName`, so the account accumulates them and they survive the deletion of the
+      database — the audit gap below, widened. Harmless today because registration is idempotent; it becomes an
+      outage if an account has a name limit, which nobody has established. Needs the limit checked first, then
+      either a release on teardown or `docpreview names prune`.
+- [ ] **`ensureName` cannot tell a name this account owns from a stranger's.** The 409 has an empty body, so both
+      read as success and the failure surfaces one call later from `CreateShare` with a message that does not say
+      which it was. `ListNamesForNamespace` would tell them apart and is the same call `docpreview shares list`
+      wants.
+- [ ] **Nothing tests the zrok publish path**, including the two fixes above it that stopped it working. It needs
+      the `zrokAPI` seam from [16-exposer-zrok.md](docs/design/16-exposer-zrok.md) — item 2 of that build order,
+      and the thing everything else there depends on.
+- [ ] **The `builds` table records only `building`, `failed` and `ready`.** A skipped build and a queued one leave
+      no row, so the history shows a gap where a push was deliberately not built — which is the one case somebody
+      asks the history about. The skip branch in `Daemon.build` (`internal/daemon/daemon.go:812`) is where the
+      first belongs.
 - [ ] **`/healthz` is `ok\n` and answers before recovery runs**, and the vault's locked state — which makes
       every GitHub webhook answer 501 — appears in no endpoint. Extend `/status`.
 - [ ] **Log the dialing identity on the ziti exposer**, then enforce against it. This is the cheap first half of
