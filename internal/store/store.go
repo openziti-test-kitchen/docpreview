@@ -91,6 +91,39 @@ CREATE TABLE IF NOT EXISTS builds (
 
 CREATE INDEX IF NOT EXISTS builds_started_at ON builds(started_at);
 
+-- A project is a repository docpreview is willing to build, and how to build it.
+--
+-- It exists to move the build instructions off the pull request. .docpreview.yml
+-- lives in the branch, so on any repository where opening a pull request is not a
+-- privilege, whoever opens one chooses the command that runs — and the local
+-- driver runs it. An operator-authored row cannot be edited by a contributor.
+--
+-- Every build field is nullable-by-emptiness: empty means "no opinion, fall back
+-- to the repository's own .docpreview.yml". That keeps a project row useful as
+-- just an allowlist entry, which is the common case, without forcing an operator
+-- to restate settings the repository already gets right.
+--
+-- Keyed by (platform, owner, repo) rather than by a surrogate id, because that is
+-- what a webhook arrives carrying and a lookup per delivery should not need a
+-- second query to resolve.
+CREATE TABLE IF NOT EXISTS projects (
+    platform      TEXT NOT NULL,
+    owner         TEXT NOT NULL,
+    repo          TEXT NOT NULL,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    build_dir     TEXT NOT NULL DEFAULT '',
+    build_command TEXT NOT NULL DEFAULT '',
+    build_output  TEXT NOT NULL DEFAULT '',
+    base_url      TEXT NOT NULL DEFAULT '',
+    detect_script TEXT NOT NULL DEFAULT '',
+    driver        TEXT NOT NULL DEFAULT '',
+    image         TEXT NOT NULL DEFAULT '',
+    notes         TEXT NOT NULL DEFAULT '',
+    created_at    INTEGER NOT NULL DEFAULT 0,
+    updated_at    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (platform, owner, repo)
+);
+
 -- Comments exist only for the local platform, which has nowhere else to put
 -- them. GitHub and Bitbucket keep the comment on the pull request, which is the
 -- point: the comment is self-identifying by its marker and needs no record
@@ -242,6 +275,138 @@ func (s *Store) PendingJobs(ctx context.Context) ([]PendingJob, error) {
 			return nil, fmt.Errorf("decoding job: %w", err)
 		}
 		out = append(out, PendingJob{PR: pr, EnqueuedAt: time.UnixMilli(enqueued)})
+	}
+	return out, rows.Err()
+}
+
+// Project is a repository docpreview will build, and how.
+//
+// Every build field is optional. Empty means "defer to the repository's own
+// .docpreview.yml", so a row that only names a repository is a valid project and
+// is the common case — an operator should not have to restate settings the
+// repository already gets right in order to allow it.
+type Project struct {
+	Platform string `json:"platform"`
+	Owner    string `json:"owner"`
+	Repo     string `json:"repo"`
+	Enabled  bool   `json:"enabled"`
+
+	BuildDir     string `json:"build_dir,omitempty"`
+	BuildCommand string `json:"build_command,omitempty"`
+	BuildOutput  string `json:"build_output,omitempty"`
+	BaseURL      string `json:"base_url,omitempty"`
+	DetectScript string `json:"detect_script,omitempty"`
+
+	// Driver and Image override the server-wide build.driver and build.image for
+	// this project. Empty means the server default.
+	Driver string `json:"driver,omitempty"`
+	Image  string `json:"image,omitempty"`
+
+	// Notes is free text for whoever added the project. It appears in the UI and
+	// nowhere else; the build never reads it.
+	Notes string `json:"notes,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Key is the project's identity, as it appears in a webhook.
+func (p Project) Key() string { return p.Platform + ":" + p.Owner + "/" + p.Repo }
+
+// SaveProject creates or replaces a project.
+func (s *Store) SaveProject(ctx context.Context, p Project) error {
+	now := time.Now().UnixMilli()
+	created := now
+	if !p.CreatedAt.IsZero() {
+		created = p.CreatedAt.UnixMilli()
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+        INSERT INTO projects (platform, owner, repo, enabled, build_dir, build_command,
+            build_output, base_url, detect_script, driver, image, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(platform, owner, repo) DO UPDATE SET
+            enabled       = excluded.enabled,
+            build_dir     = excluded.build_dir,
+            build_command = excluded.build_command,
+            build_output  = excluded.build_output,
+            base_url      = excluded.base_url,
+            detect_script = excluded.detect_script,
+            driver        = excluded.driver,
+            image         = excluded.image,
+            notes         = excluded.notes,
+            updated_at    = excluded.updated_at`,
+		p.Platform, p.Owner, p.Repo, p.Enabled, p.BuildDir, p.BuildCommand,
+		p.BuildOutput, p.BaseURL, p.DetectScript, p.Driver, p.Image, p.Notes,
+		created, now)
+	if err != nil {
+		return fmt.Errorf("saving project %s: %w", p.Key(), err)
+	}
+	return nil
+}
+
+// ErrNoProject is returned when a repository has no project row.
+var ErrNoProject = errors.New("no such project")
+
+// ProjectFor returns the project for a repository.
+//
+// ErrNoProject is an ordinary answer, not a failure: it is what every repository
+// returns before anybody adds it, and the caller decides what that means.
+func (s *Store) ProjectFor(ctx context.Context, platform, owner, repo string) (Project, error) {
+	rows, err := s.queryProjects(ctx,
+		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
+                base_url, detect_script, driver, image, notes, created_at, updated_at
+         FROM projects WHERE platform = ? AND owner = ? AND repo = ?`,
+		platform, owner, repo)
+	if err != nil {
+		return Project{}, err
+	}
+	if len(rows) == 0 {
+		return Project{}, fmt.Errorf("%w: %s:%s/%s", ErrNoProject, platform, owner, repo)
+	}
+	return rows[0], nil
+}
+
+// ListProjects returns every project, ordered for display.
+func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
+	return s.queryProjects(ctx,
+		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
+                base_url, detect_script, driver, image, notes, created_at, updated_at
+         FROM projects ORDER BY platform, owner, repo`)
+}
+
+// DeleteProject removes a project. Removing one does not touch its previews:
+// those are live shares and database rows with their own lifecycle, and silently
+// tearing them down because somebody edited a list would be a surprise.
+func (s *Store) DeleteProject(ctx context.Context, platform, owner, repo string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM projects WHERE platform = ? AND owner = ? AND repo = ?`,
+		platform, owner, repo)
+	if err != nil {
+		return fmt.Errorf("deleting project %s:%s/%s: %w", platform, owner, repo, err)
+	}
+	return nil
+}
+
+func (s *Store) queryProjects(ctx context.Context, query string, args ...any) ([]Project, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing projects: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Project
+	for rows.Next() {
+		var p Project
+		var created, updated int64
+		if err := rows.Scan(&p.Platform, &p.Owner, &p.Repo, &p.Enabled, &p.BuildDir,
+			&p.BuildCommand, &p.BuildOutput, &p.BaseURL, &p.DetectScript, &p.Driver,
+			&p.Image, &p.Notes, &created, &updated); err != nil {
+			return nil, err
+		}
+		p.CreatedAt = time.UnixMilli(created)
+		p.UpdatedAt = time.UnixMilli(updated)
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }

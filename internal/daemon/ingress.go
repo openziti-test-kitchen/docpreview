@@ -45,6 +45,9 @@ type Ingress struct {
 	// credential management should not advertise one.
 	secrets *SecretsAdmin
 
+	// projects is the project admin surface, on the same terms.
+	projects *ProjectsAdmin
+
 	// mu guards clients, which the setup page can add to after the daemon is
 	// already serving. See SetClient.
 	mu      sync.Mutex
@@ -77,6 +80,12 @@ func (i *Ingress) client(platform model.Platform) (scm.Client, bool) {
 // WithSecrets attaches the credential admin surface.
 func (i *Ingress) WithSecrets(a *SecretsAdmin) *Ingress {
 	i.secrets = a
+	return i
+}
+
+// WithProjects attaches the project admin surface.
+func (i *Ingress) WithProjects(a *ProjectsAdmin) *Ingress {
+	i.projects = a
 	return i
 }
 
@@ -146,6 +155,17 @@ func (i *Ingress) Handler() http.Handler {
 		// helper to keep in step.
 		mux.HandleFunc("GET /secrets", i.dashboard)
 		mux.HandleFunc("GET /secrets/{$}", i.dashboard)
+	}
+
+	if i.projects != nil {
+		mux.Handle("/api/projects", i.projects.Handler())
+		mux.Handle("/api/projects/", i.projects.Handler())
+
+		// Its own address, for the same reasons /secrets has one: it can be linked
+		// from a runbook, and a proxy or a future authentication layer can gate one
+		// path where it cannot gate a panel inside "/".
+		mux.HandleFunc("GET /projects", i.dashboard)
+		mux.HandleFunc("GET /projects/{$}", i.dashboard)
 	}
 	return mux
 }

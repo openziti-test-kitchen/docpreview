@@ -443,7 +443,9 @@ func cmdServe(args []string) error {
 	// opened rather than the locked answer cached at boot.
 	w.setUnlockSource(admin.Vault)
 
-	ingress = daemon.NewIngress(d, w.clients, w.store, w.log).WithSecrets(admin)
+	ingress = daemon.NewIngress(d, w.clients, w.store, w.log).
+		WithSecrets(admin).
+		WithProjects(daemon.NewProjectsAdmin(w.store, w.cfg, w.log))
 
 	listeners, err := daemon.Open(w.cfg.Listeners, w.log)
 	if err != nil {

@@ -224,6 +224,59 @@ input.control::placeholder { color: var(--muted) }
 }
 .counts .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--edge, var(--idle)) }
 @media (max-width: 52rem) { .counts { display: none } }
+
+/* ── Under 1000px ───────────────────────────────────────────────────────────
+   The layout already stacks at 68rem and the header and toolbar already wrap, so
+   nothing here is structural. What remains is everything sized for a mouse and a
+   wide viewport: controls that assumed room beside each other, fixed-height panes
+   that eat a phone screen, and a copy button positioned for a desktop scrollbar. */
+@media (max-width: 62.5rem) {
+  .wrap { padding: 0.75rem; gap: 0.75rem }
+  .topbar .row { gap: 0.6rem; padding: 0.6rem 0.75rem }
+
+  /* Full width, each on its own line. Side by side at this width they were two
+     truncated controls instead of one usable one. */
+  select#project, input#search { width: 100%; max-width: none }
+
+  /* The counters scroll rather than wrap. Wrapping reflowed the header every time
+     a build changed state, which moved everything under it while being read. */
+  .seg {
+    display: flex; width: 100%;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .seg::-webkit-scrollbar { display: none }
+  .seg button { flex: 1 0 auto; padding: 0.45rem 0.6rem }
+
+  /* A phone gets a taller log because there is nothing beside it competing for
+     the screen, and Expand becomes nearly the whole viewport. */
+  pre.term { height: 20rem; font-size: 12px }
+  pre.term.tall { height: 75vh }
+
+  /* Touch has no hover, so the copy button would never appear. Show it always,
+     make it a touch target, and move it clear of a narrow scrollbar. */
+  .termwrap .copy {
+    opacity: 1; pointer-events: auto;
+    width: 2.25rem; height: 2.25rem;
+    top: 0.4rem; right: 0.4rem;
+  }
+  .termwrap .copy svg { width: 1.1rem; height: 1.1rem }
+
+  /* Selects take the row; the buttons share the next one. */
+  .logbar select.control.sm { flex: 1 1 100%; max-width: none }
+  .logbar .grow { display: none }
+  .logbar .btn { flex: 1 1 auto; text-align: center }
+
+  /* The go-to-preview link stops being a narrow column beside the row title and
+     becomes a full-width tap target under it. */
+  .row { flex-wrap: wrap }
+  .row .head { flex: 1 1 100% }
+  .row .go {
+    flex: 1 1 100%; justify-content: center;
+    border-left: 0; border-top: 1px solid var(--hairline);
+    padding: 0.55rem 0.9rem;
+  }
+}
 .head:hover { background: var(--raised) }
 .head:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
 .item.open .row { background: var(--raised) }
@@ -335,6 +388,32 @@ pre.term {
   white-space: pre-wrap; word-break: break-word;
 }
 pre.term.tall { height: 34rem }
+
+/* The copy button floats over the log rather than sitting in the toolbar.
+   Reaching for it happens while reading the scrollback, so that is where it
+   should be — and a log pane has no spare horizontal room in the bar above it.
+
+   Hidden until the pointer is in the pane, or the button itself has keyboard
+   focus. Permanently visible, it covers the first line of output. */
+.termwrap { position: relative }
+.termwrap .copy {
+  position: absolute; top: 0.5rem;
+  /* Clear of the scrollbar. At 0.75rem the button straddled the scrollbar gutter
+     and looked like it belonged to the page rather than to the log. */
+  right: 1.6rem;
+  opacity: 0; pointer-events: none;
+  transition: opacity 120ms ease;
+  display: grid; place-items: center;
+  width: 1.75rem; height: 1.75rem;
+  background: var(--raised); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 6px;
+  padding: 0; cursor: pointer;
+}
+.termwrap .copy svg { width: 0.95rem; height: 0.95rem; display: block }
+/* focus-within rather than :focus, so tabbing to it reveals it. */
+.termwrap:hover .copy,
+.termwrap:focus-within .copy { opacity: 1; pointer-events: auto }
+.termwrap .copy:hover { border-color: var(--ink) }
 pre.term .cmd { color: #9fd2ff }
 pre.term .err { color: #ff9a8c }
 pre.term .mask { color: var(--warning); font-weight: 700 }
@@ -444,6 +523,16 @@ footer {
   </div>
 </div>
 
+<!-- Projects, on /projects. Same arrangement as the secrets panel: one document,
+     switched on pathname, so the styles and the fetch helper exist once. -->
+<div class="setup" id="projects" hidden>
+  <div class="setup-inner">
+    <h2>Projects</h2>
+    <div id="projects-body"></div>
+    <p style="margin:1rem 0 0"><a href="/">← back to previews</a></p>
+  </div>
+</div>
+
 <div class="wrap">
   <div>
     <h2 id="list-heading">Previews</h2>
@@ -524,6 +613,24 @@ const ui = {
   logSource: null,
   logFor: null,       // preview id the open stream belongs to
 };
+
+// Inline SVG rather than an icon font or an emoji. A font is a network request
+// for two glyphs, and 📋 renders as a different picture on every platform and at
+// a size nothing here controls.
+//
+// stroke=currentColor so both follow the button's colour in light and dark mode.
+const ICON_COPY =
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+     <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+     <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"></path>
+   </svg>`;
+
+const ICON_CHECK =
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+     <path d="M20 6 9 17l-5-5"></path>
+   </svg>`;
 
 const ORDER = ["failed", "building", "queued", "ready"];
 
@@ -825,8 +932,45 @@ function updateBody(item, g) {
         <a class="btn" data-role="download" download>Download</a>
       </div>
       <div class="logstate"></div>
-      <pre class="term"></pre>`;
+      <div class="termwrap">
+        <button class="copy" data-role="copy" type="button"
+                title="Copy the whole log" aria-label="Copy the whole log"></button>
+        <pre class="term"></pre>
+      </div>`;
     item.appendChild(body);
+
+    const copyBtn = body.querySelector('[data-role="copy"]');
+    copyBtn.innerHTML = ICON_COPY;
+
+    // Copies the log's text, not its HTML. The pane renders spans for command
+    // lines, errors and redaction masks, so innerHTML would paste markup and
+    // innerText is what somebody pasting into an issue actually wants — masks
+    // included, since ***** is the truth about that line.
+    copyBtn.onclick = async e => {
+      const t = term();
+      if (!t) return;
+      const btn = e.currentTarget;
+      try {
+        await navigator.clipboard.writeText(t.innerText);
+        btn.innerHTML = ICON_CHECK;
+        btn.title = "Copied";
+      } catch {
+        // clipboard needs a secure context. http://127.0.0.1 qualifies, but not
+        // every browser agrees and the dashboard is also reachable over a tunnel
+        // — so fall back to selecting the pane and saying so in the tooltip,
+        // since there is no room for words in an icon button.
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(t);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        btn.title = "Selected — press Ctrl+C";
+      }
+      setTimeout(() => {
+        btn.innerHTML = ICON_COPY;
+        btn.title = "Copy the whole log";
+      }, 1500);
+    };
 
     body.querySelector('[data-role="follow"]').onclick = () => setFollow(!ui.follow);
     body.querySelector('[data-role="tall"]').onclick = () => setTall(!ui.tall);
@@ -1617,7 +1761,183 @@ async function run(btn, fn) {
 
 // The Secrets control is an ordinary link now, so there is no click handler.
 // Which of the two pages this document is depends on the path it was served at.
-const isSetupPage = location.pathname.replace(/\/+$/, "") === "/secrets";
+const currentPath = location.pathname.replace(/\/+$/, "");
+const isSetupPage = currentPath === "/secrets";
+const isProjectsPage = currentPath === "/projects";
+
+/* ── Projects ─────────────────────────────────────────────────────────────
+   A project is a repository docpreview will build, and how. The row lives in
+   sqlite and wins over the repository's own .docpreview.yml, because that file
+   arrives in the pull request — so on any repository where opening one is not a
+   privilege, its author would otherwise choose the command that runs.
+
+   Every build field may be blank, meaning "defer to the repository". A row that
+   only names a repository is valid and is the common case: it says the repository
+   is allowed, not that the operator wants to restate its config. */
+
+async function loadProjects() {
+  const body = document.getElementById("projects-body");
+  try {
+    renderProjectsPage(await api("GET", "/api/projects"));
+  } catch (e) {
+    body.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
+  }
+}
+
+function renderProjectsPage(s) {
+  const el = document.getElementById("projects-body");
+  const ro = !s.can_write;
+
+  const banner = ro
+    ? `<div class="notice warn"><strong>Read-only from here.</strong> ${esc(s.read_only_why || "")}
+       <p>A project decides what command runs on the build host, so it can only be changed on
+       that machine.</p></div>`
+    : `<div class="notice ok">A project's settings win over the repository's own
+       <code>.docpreview.yml</code>, which arrives in the pull request. Leave a field blank to
+       defer to the repository.</div>`;
+
+  const rows = s.projects.length ? s.projects.map(p => projectRow(p, s, ro)).join("") :
+    `<div class="notice">No projects yet. Every repository the App is installed on still builds
+     using its own <code>.docpreview.yml</code> — adding a project is how you take the build
+     command out of the branch.</div>`;
+
+  el.innerHTML = `${banner}${rows}${ro ? "" : projectForm(s)}`;
+  if (!ro) wireProjectHandlers(s);
+}
+
+function projectRow(p, s, ro) {
+  const driver = p.driver || `${s.defaults.driver} (server default)`;
+  const fields = [
+    ["directory", p.build_dir],
+    ["command", p.build_command],
+    ["output", p.build_output],
+    ["base URL", p.base_url],
+    ["ignore script", p.detect_script],
+    ["image", p.image],
+  ].filter(([, v]) => v);
+
+  return `<div class="sec">
+    <div>
+      <div class="name">${esc(p.owner)}/${esc(p.repo)}
+        <span class="flag ${p.enabled ? "on" : "off"}">${p.enabled ? "enabled" : "disabled"}</span>
+        <span class="flag ${p.driver === "docker" || (!p.driver && s.defaults.driver === "docker")
+          ? "on" : "opt"}">${esc(driver)}</span>
+      </div>
+      <div class="key">${esc(p.platform)}</div>
+      ${fields.length
+        ? `<div class="hint">${fields.map(([k, v]) => `${esc(k)}: <code>${esc(v)}</code>`).join(" · ")}</div>`
+        : `<div class="hint">defers entirely to the repository's .docpreview.yml</div>`}
+      ${p.notes ? `<div class="hint">${esc(p.notes)}</div>` : ""}
+    </div>
+    <div></div>
+    <div class="act">${ro ? "" :
+      `<button class="btn" data-edit="${esc(projectKey(p))}">Edit</button>
+       <button class="btn" data-del-project="${esc(projectKey(p))}">Delete</button>`}</div>
+  </div>`;
+}
+
+function projectKey(p) { return `${p.platform}/${p.owner}/${p.repo}`; }
+
+function projectForm(s) {
+  return `<div class="sec" style="display:block">
+    <div class="name" id="project-form-title">Add a project</div>
+    <div class="hint" style="margin-bottom:0.6rem">Blank fields defer to the repository.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));gap:0.5rem">
+      <select class="control" id="p-platform" aria-label="Platform">
+        <option value="github">github</option>
+        <option value="bitbucket">bitbucket</option>
+        <option value="local">local</option>
+      </select>
+      <input class="control" id="p-owner" placeholder="owner, e.g. openziti-test-kitchen">
+      <input class="control" id="p-repo" placeholder="repository, e.g. docpreview">
+      <select class="control" id="p-driver" aria-label="Driver">
+        <option value="">driver: ${esc(s.defaults.driver)} (server default)</option>
+        <option value="docker">driver: docker — build in a container</option>
+        <option value="local">driver: local — build on this host</option>
+      </select>
+      <input class="control" id="p-dir" placeholder="build directory, e.g. www">
+      <input class="control" id="p-command" placeholder="build command, e.g. ./gendoc.sh">
+      <input class="control" id="p-output" placeholder="output directory, e.g. build">
+      <input class="control" id="p-baseurl" placeholder="base URL, e.g. /">
+      <input class="control" id="p-detect" placeholder="ignore-build script, e.g. ci/needs-build.sh">
+      <input class="control" id="p-image" placeholder="docker image, blank for the default">
+      <input class="control" id="p-notes" placeholder="notes, for whoever reads this next">
+    </div>
+    <div class="act" style="margin-top:0.6rem">
+      <button class="btn" id="p-save">Save project</button>
+      <button class="btn" id="p-clear">Clear</button>
+    </div>
+  </div>`;
+}
+
+const projectFields = {
+  platform: "p-platform", owner: "p-owner", repo: "p-repo", driver: "p-driver",
+  build_dir: "p-dir", build_command: "p-command", build_output: "p-output",
+  base_url: "p-baseurl", detect_script: "p-detect", image: "p-image", notes: "p-notes",
+};
+
+function wireProjectHandlers(s) {
+  const val = id => document.getElementById(id).value.trim();
+
+  document.getElementById("p-save").onclick = async e => {
+    const platform = val("p-platform"), owner = val("p-owner"), repo = val("p-repo");
+    if (!platform || !owner || !repo) {
+      alert("platform, owner and repository are all required");
+      return;
+    }
+    const path = `/api/projects/${encodeURIComponent(platform)}` +
+      `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    await run(e.target, async () => {
+      const out = await api("PUT", path, {
+        enabled: true,
+        driver: val("p-driver"),
+        build_dir: val("p-dir"),
+        build_command: val("p-command"),
+        build_output: val("p-output"),
+        base_url: val("p-baseurl"),
+        detect_script: val("p-detect"),
+        image: val("p-image"),
+        notes: val("p-notes"),
+      });
+      renderProjectsPage(out);
+      return out;
+    });
+  };
+
+  document.getElementById("p-clear").onclick = () => {
+    for (const id of Object.values(projectFields)) document.getElementById(id).value = "";
+  };
+
+  // Edit fills the form rather than opening a second one. The form is already the
+  // full set of fields, and a PUT is an upsert, so "edit" and "add" are the same
+  // request — two different UIs for one operation would drift.
+  for (const b of document.querySelectorAll("[data-edit]")) {
+    b.onclick = () => {
+      const p = s.projects.find(x => projectKey(x) === b.dataset.edit);
+      if (!p) return;
+      for (const [field, id] of Object.entries(projectFields)) {
+        document.getElementById(id).value = p[field] || "";
+      }
+      document.getElementById("project-form-title").textContent =
+        `Editing ${p.owner}/${p.repo}`;
+      document.getElementById("p-owner").scrollIntoView({block: "center"});
+    };
+  }
+
+  for (const b of document.querySelectorAll("[data-del-project]")) {
+    b.onclick = async () => {
+      const key = b.dataset.delProject;
+      if (!confirm(`Delete the project ${key}? Its existing previews are left alone.`)) return;
+      const [platform, owner, repo] = key.split("/");
+      const path = `/api/projects/${encodeURIComponent(platform)}` +
+        `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+      await run(b, async () => {
+        renderProjectsPage(await api("DELETE", path));
+        return {};
+      });
+    };
+  }
+}
 
 /* ── Wiring ───────────────────────────────────────────────────────────── */
 
@@ -1673,17 +1993,30 @@ function connect() {
   src.onerror = () => { conn.textContent = "reconnecting…"; conn.className = "stale"; };
 }
 
-if (isSetupPage) {
-  // Only the setup panel. No status stream and no polling: this page has nothing
-  // live on it, and an open EventSource per idle browser tab is a connection the
-  // daemon holds for nothing.
+// hideOperationsChrome strips the parts of the page that only make sense with a
+// live status stream behind them.
+//
+// Shared by both admin pages, because leaving a project filter and a search box
+// above a form that neither one filters is worse than leaving the page bare.
+function hideOperationsChrome(label) {
   document.querySelector(".wrap").hidden = true;
   document.getElementById("counters").hidden = true;
   document.getElementById("project").hidden = true;
   document.getElementById("search").hidden = true;
-  document.getElementById("conn").textContent = "setup";
+  document.getElementById("conn").textContent = label;
+}
+
+if (isSetupPage) {
+  // Only the setup panel. No status stream and no polling: this page has nothing
+  // live on it, and an open EventSource per idle browser tab is a connection the
+  // daemon holds for nothing.
+  hideOperationsChrome("setup");
   setupEl().hidden = false;
   loadSetup();
+} else if (isProjectsPage) {
+  hideOperationsChrome("projects");
+  document.getElementById("projects").hidden = false;
+  loadProjects();
 } else {
   connect();
   render();

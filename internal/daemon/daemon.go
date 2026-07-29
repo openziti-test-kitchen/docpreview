@@ -444,6 +444,69 @@ func (d *Daemon) recover(ctx context.Context) error {
 	return nil
 }
 
+// applyProject overlays the operator's project settings onto the repository's own.
+//
+// Field by field, and only where the project states one. An empty project field
+// means "no opinion", which keeps a row that merely names a repository useful —
+// the common case, where the repository already configures itself correctly and
+// the row exists to say the repository is allowed at all.
+//
+// A missing project row changes nothing. Requiring one to build would break every
+// repository the App is already installed on, which is a decision for whoever
+// turns that requirement on rather than a side effect of adding this.
+//
+// Failure is a warning, not an error. The alternative is refusing to build because
+// a lookup failed, which trades a build for nothing.
+func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg config.RepoConfig) config.RepoConfig {
+	p, err := d.store.ProjectFor(ctx, string(pr.Repo.Platform), pr.Repo.Owner, pr.Repo.Name)
+	if err != nil {
+		if !errors.Is(err, store.ErrNoProject) {
+			d.log.Warn("reading the project settings", "repo", pr.Repo.String(), "error", err)
+		}
+		return cfg
+	}
+
+	if p.BuildDir != "" {
+		cfg.Build.Dir = p.BuildDir
+	}
+	if p.BuildCommand != "" {
+		cfg.Build.Command = p.BuildCommand
+	}
+	if p.BuildOutput != "" {
+		cfg.Build.Output = p.BuildOutput
+	}
+	if p.BaseURL != "" {
+		cfg.Build.BaseURL = p.BaseURL
+	}
+	if p.DetectScript != "" {
+		cfg.Detect.Script = p.DetectScript
+	}
+	return cfg
+}
+
+// projectDriver returns the build driver and image for a pull request.
+//
+// Per-project, falling back to the server default. A project that runs a command
+// somebody outside your trust boundary can influence wants docker; the repository
+// whose contributors you all know wants local and its two-second builds. Making it
+// one server-wide setting forces the stricter answer on everything or the looser
+// answer on everything.
+func (d *Daemon) projectDriver(ctx context.Context, pr model.PullRequest) (driver, image string) {
+	driver, image = d.cfg.Build.Driver, d.cfg.Build.Image
+
+	p, err := d.store.ProjectFor(ctx, string(pr.Repo.Platform), pr.Repo.Owner, pr.Repo.Name)
+	if err != nil {
+		return driver, image
+	}
+	if p.Driver != "" {
+		driver = p.Driver
+	}
+	if p.Image != "" {
+		image = p.Image
+	}
+	return driver, image
+}
+
 // saveBuild records a build attempt, logging rather than propagating a failure.
 //
 // Best-effort on purpose. The history and the build picker are worth having, and
@@ -868,6 +931,14 @@ func (d *Daemon) runPipeline(
 		return out, pipeline.Decision{}, err
 	}
 
+	// The project's settings win over the branch's.
+	//
+	// .docpreview.yml arrived in the pull request, so on any repository where
+	// opening one is not a privilege, its author chose what runs — and the local
+	// driver runs it. An operator-authored project row cannot be edited by a
+	// contributor, so where the two disagree the row is the trustworthy one.
+	repoCfg = d.applyProject(ctx, pr, repoCfg)
+
 	changed, err := client.ChangedFiles(ctx, pr)
 	if err != nil {
 		return out, pipeline.Decision{}, err
@@ -896,7 +967,11 @@ func (d *Daemon) runPipeline(
 	// rebuilt, and a timestamp alone would sort correctly but tell you nothing.
 	// One builder for the whole build, read once. A rotation mid-build must not
 	// leave the log scrubbed by one redactor and the environment set by another.
-	builder := d.currentBuilder()
+	// One builder for the whole build, with this project's driver applied. Taken
+	// once and reused below, so a rotation mid-build cannot leave the log scrubbed
+	// by one redactor and the environment set by another.
+	driver, image := d.projectDriver(ctx, pr)
+	builder := d.currentBuilder().WithDriver(driver, image)
 
 	buildID := logBuildID(pr.HeadSHA)
 	logw, logErr := d.logs.Begin(pr.PreviewID(), buildID, builder.Redactor())

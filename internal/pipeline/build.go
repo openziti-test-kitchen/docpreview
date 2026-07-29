@@ -50,6 +50,34 @@ type Builder struct {
 	redactor *redact.Redactor
 }
 
+// WithDriver returns a copy of the builder using a different driver and image.
+//
+// The driver decides whether repository code runs on the host or in a container,
+// so it must come from the operator — never from RepoConfig, which arrives in the
+// pull request. A project row is the operator's, which is why this takes plain
+// arguments the daemon resolves rather than reading anything out of cfg.
+//
+// A copy, so two projects building at once cannot see each other's driver. The
+// secrets map and the redactor are shared by reference deliberately: both are
+// immutable once built, and rebuilding a redactor per build would recompile every
+// pattern for nothing.
+//
+// Empty arguments keep the server default, which is what a project that expresses
+// no preference gets.
+func (b *Builder) WithDriver(driver, image string) *Builder {
+	if driver == "" && image == "" {
+		return b
+	}
+	copied := *b
+	if driver != "" {
+		copied.defaults.Driver = driver
+	}
+	if image != "" {
+		copied.defaults.Image = image
+	}
+	return &copied
+}
+
 // NewBuilder returns a Builder with no injected secrets.
 func NewBuilder(defaults config.BuildDefaults, log *slog.Logger) *Builder {
 	r, _ := redact.New(nil)
