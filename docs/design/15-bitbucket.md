@@ -1,8 +1,13 @@
 # Bitbucket
 
 Bitbucket is the reason `scm.Client` exists. It is also the platform for which nothing has been written. This
-document is the plan, and the first half of it is an inventory: how much of the anticipation in the tree is
-actually load-bearing, and how much is a comment promising work.
+document is the plan: which Bitbucket construct to build against, what the code in the tree already assumes and
+where those assumptions are wrong, and the order to do the work in.
+
+Most of what follows was checked rather than recalled. A live Bitbucket workspace was read through the API —
+including Vercel's own Bitbucket integration, which is doing this exact job on a Docusaurus repository and therefore
+answers several questions no documentation does. Where something is still a guess it says so, and the last two
+sections separate the two.
 
 Read [09-scm.md](09-scm.md) first. Everything here is a second implementation of what that document describes.
 
@@ -93,9 +98,9 @@ Real:
   hash (`internal/model/model.go:75`), so a GitHub `acme/docs#7` and a Bitbucket `acme/docs#7` are already
   different previews with different artifact directories and different comment markers. Nothing needs changing
   for two platforms to run in one daemon.
-- `POST /webhook/bitbucket` is routed (`internal/daemon/ingress.go:100`) and answers 501 through the generic
-  "no client for this platform" path (`internal/daemon/ingress.go:172`), not a special case. Install a client
-  with `Ingress.SetClient` and the route starts working with no edit to the mux.
+- `POST /webhook/bitbucket` is routed (`internal/daemon/ingress.go:108`) and answers 501 through the generic
+  "platform not configured" path (`internal/daemon/ingress.go:214`), not a special case. Install a client with
+  `Ingress.SetClient` and the route starts working with no edit to the mux.
 - Three vault keys are reserved: `bitbucket.email`, `bitbucket.api_token`, `bitbucket.webhook_secret`
   (`internal/vault/vault.go:58`).
 - `model.PullRequest` documents its own Bitbucket semantics: `Number` is the pull request ID, `InstallationID`
@@ -111,11 +116,14 @@ Not real, despite appearances:
   GitHub keys and the Frontdoor token; the setup page has no Bitbucket rows, so the credentials cannot be
   entered anywhere except `docpreview vault set`.
 - `config.Server` has no `Bitbucket` field (`internal/config/config.go:53`), so there is nothing to switch on.
-- `internal/daemon/ingress.go:189` tests `errors.Is(err, github.ErrBadSignature)`. A Bitbucket client's own
-  bad-signature error would be answered **400 "bad request" and logged at error level**, not 401 with no
-  diagnostic. That breaks invariant 3 of 09-scm.md for the new platform, and it is already broken for the local
-  client, whose verification failure is a bare `fmt.Errorf` (`internal/scm/local/local.go:145`). The sentinel is
-  in the wrong package.
+- The reserved vault keys name the *wrong* credential to prefer. `bitbucket.email` + `bitbucket.api_token` is the
+  fallback mode under the recommendation below, not the default, so a fourth key `bitbucket.access_token` is needed
+  and the naming no longer tells an operator which one to fill in.
+
+Fixed since this document was first written, and no longer a Bitbucket blocker: the bad-signature sentinel has moved
+to `scm.ErrBadSignature` (`internal/scm/scm.go:94`), the ingress compares against the shared one
+(`internal/daemon/ingress.go:230`), and `github.ErrBadSignature` is an alias. A new platform's verification failure
+already answers 401 rather than 400 without touching the ingress.
 
 So the anticipation is worth about a day. The interface fits; the wiring does not generalize yet.
 
@@ -304,7 +312,7 @@ header" helper would be the bug.
 The order of operations in `VerifyWebhook` is not negotiable and the reasons are already written down at
 `internal/scm/github/webhook.go:22`: verify before parsing, because the endpoint is internet-facing by design
 and the JSON parser must never see unauthenticated bytes. The body cap is upstream in the ingress
-(`internal/daemon/ingress.go:31`) and platform-independent, so Bitbucket inherits it for free.
+(`maxWebhookBody`, `internal/daemon/ingress.go:30`) and platform-independent, so Bitbucket inherits it for free.
 
 **Missing secret is a hard failure, not a downgrade.** This is not hypothetical: the API documentation is explicit
 that an empty or absent secret leaves the webhook unsigned, and that Bitbucket generates `X-Hub-Signature` *only*
@@ -744,7 +752,7 @@ the same hazard.
 bitbucket:
   enabled: true
   api_base: "https://api.bitbucket.org/2.0"
-  auth: "api_token"          # or "access_token"
+  auth: "access_token"       # or "api_token"
 ```
 
 `enabled` rather than a sentinel value, because there is no Bitbucket equivalent of `github.app_id`. GitHub is
@@ -774,18 +782,50 @@ leaking anywhere above the map in `wiring.clients`.
 Until somebody asks for it, this is a **deliberate limit** and should be written as one in the user
 documentation rather than implied by silence.
 
+## Where `internal/scm/scm.go` leaks a GitHub assumption
+
+The interface is the right shape — six methods, nothing platform-specific in the signatures — but the *documentation*
+and one function body encode GitHub facts as universal ones. Each of these is a place where a Bitbucket implementer
+would read the interface, believe it, and be wrong.
+
+| Location | The leak | Consequence | Fix |
+|---|---|---|---|
+| `scm.go:5-7` (package doc) | "basic auth with an API token … PATCH versus PUT" | names the credential this document now recommends *against*, and asserts a `PUT` nobody has verified | say "an access token as a bearer" and drop the method claim until confirmed |
+| `scm.go:109` `CloneURL` | "including any short-lived credential" | a reader concludes leakage is time-bounded. On Bitbucket it is not: the credential in that URL is as long-lived as the vault entry | "including a credential, which on some platforms does not expire" — and point at the redactor |
+| `scm.go:161` `Marker` | returns an HTML comment, documented as "hidden" | **false on Bitbucket**, which escapes it into a visible line. It is a package-level function, so a platform cannot override it | `MarkerStyle`, above |
+| `scm.go:76` `Report.Commit` / `model.go:61` `HeadSHA` | no statement of width | GitHub supplies 40 characters, Bitbucket 12; nothing says which the field holds, so both are "correct" | document it as **always the full 40-character SHA**, and make the client normalize |
+| `comment.go:13` `maxLogExcerpt` | "GitHub's comment limit is 65536 characters" | a per-platform limit stated as the reason for a shared constant | keep the constant, note that Bitbucket's limit is unconfirmed and the value is a safety margin, not a computed bound |
+| `model.go:38` `Repo.Name` | one field for what Bitbucket splits into `name` and `slug` | see below — this one has a security consequence | store the **slug** and say so |
+| `model.go:68` `InstallationID` | a GitHub-only `int64` on the shared struct | already documented as unused elsewhere; genuinely the least-bad option | leave it |
+| `scm.go:97` `Client` | no `Validate`, so `cmd/docpreview/main.go:501` type-switches on concrete client types | a new platform is not validated at startup until somebody edits that switch | add `interface{ Validate(context.Context) error }` and iterate `w.clients` |
+
+`Repo.Name` is the one worth dwelling on, because it is the only leak on this list that can fail *unsafely* rather
+than merely look wrong. Bitbucket distinguishes a repository's display `name` from its URL `slug` — for
+`customer-connect-docs` they happen to be identical, which is exactly how this hides — and they diverge as soon as a
+repository has a capital letter or a space in its name. `Repo.Slug()` (`model.go:43`) concatenates
+`Owner + "/" + Name`, and that string is compared against `full_name` to decide **whether a pull request comes from a
+fork** (`internal/scm/github/webhook.go:141`). Bitbucket's `full_name` is built from workspace slug and repository
+slug. So a client that populated `Repo.Name` from the payload's display `name` would produce a `Slug()` that never
+matches `full_name` on any repository whose name is not already slug-shaped, the comparison would say "different
+repository", and **every pull request on that repository would be refused as a fork.**
+
+That is the safe direction to fail, which is why it goes on this list rather than in a security section: the failure is
+"nothing builds and nobody can tell why", not "a stranger's code runs". Still, it costs an afternoon, and the fix is
+one sentence in the `Repo.Name` doc comment: *on Bitbucket this is the repository slug, not its display name, because
+`Slug()` is compared against the platform's `full_name`.*
+
 ## What must move out of `github` first
 
 A second hosted platform copies whatever it finds. These are the things that should not be copied, in the order
 they hurt:
 
-1. **`ErrBadSignature`** → `scm.ErrBadSignature`. `internal/scm/github/webhook.go:20` defines it,
-   `internal/daemon/ingress.go:189` imports the `github` package purely to compare against it, and
-   `internal/scm/local/local.go:145` returns an unrelated error that consequently produces the wrong status
-   code. One sentinel in `scm`, `github.ErrBadSignature` kept as an alias for one release if anything external
-   references it, and the ingress stops importing a platform package.
+1. ~~**`ErrBadSignature`** → `scm.ErrBadSignature`.~~ **Done.** The sentinel is at `internal/scm/scm.go:94`, the
+   ingress compares against it at `internal/daemon/ingress.go:230`, and `github.ErrBadSignature` is an alias.
 2. **`verifySignature`** → `scm.VerifyHMACSHA256`, as above. Two identical copies today, three tomorrow.
-3. **The comment upsert loop.** `upsertComment` and `findComment` (`internal/scm/github/github.go:212`, `:251`)
+3. **`Marker` → `MarkerFor` + `HasMarker`**, because Bitbucket escapes the HTML comment form. This is new to this
+   list and it outranks everything below it: the upsert protocol is worthless if the marker is not found, and the
+   marker being *visible* is the most public possible defect. See the comment section.
+4. **The comment upsert loop.** `upsertComment` and `findComment` (`internal/scm/github/github.go:212`, `:251`)
    are pure protocol — render, page through comments, match the marker, create or edit — with four
    platform-specific holes in them. Extract into `scm`:
 
@@ -806,12 +846,12 @@ they hurt:
    piece of duplication avoided, and it is the piece where a subtle divergence — matching a prefix instead of
    the marker, taking the newest match instead of the first — would produce duplicate comments on one platform
    only.
-4. **`APIError`, `Retryable`, `IsNotFound`** (`internal/scm/github/github.go:444`, `:462`, `:498`). The type and
+5. **`APIError`, `Retryable`, `IsNotFound`** (`internal/scm/github/github.go:444`, `:462`, `:498`). The type and
    the retry predicate are platform-neutral; only the body parser and the rate-limit headers are not. GitHub
    signals a rate limit with 403 plus `X-RateLimit-Remaining: 0` (`internal/scm/github/github.go:485`) and puts
-   its message in `{"message": ...}`; Bitbucket returns a different error envelope and different headers. Move
-   the struct, keep `errorFromResponse` per platform.
-5. **The authenticated-JSON-round-trip helper.** `do` (`internal/scm/github/github.go:398`) is a request
+   its message in `{"message": ...}`; Bitbucket answers 429 and nests its message under `{"error": {...}}` with an
+   `error.detail.required` scope list. Move the struct, keep `errorFromResponse` per platform.
+6. **The authenticated-JSON-round-trip helper.** `do` (`internal/scm/github/github.go:398`) is a request
    builder, a bounded error read, and a decode. Worth sharing with an injected `authorize(*http.Request) error`
    and `parseError(*http.Response) error`, because the bounded read at `:469` and the `io.Copy(io.Discard, ...)`
    at `:434` are the sort of care that does not survive being retyped.
@@ -831,7 +871,7 @@ Two wiring changes are needed as well, neither of which is a refactor of `scm`:
   startup without an edit here. A Bitbucket `Validate` asks the API who the credential belongs to, and its
   error message names the vault keys to fix, in the style of `internal/scm/github/github.go:95`.
 
-And the setup page: three rows in `knownKeys()` (`internal/daemon/secrets.go:209`), `required` keyed off
+And the setup page: four rows in `knownKeys()` (`internal/daemon/secrets.go:209`), `required` keyed off
 `cfg.Bitbucket.Enabled` and the selected auth mode, plus a line in `doctor`'s `scm:` output
 (`cmd/docpreview/main.go:563`) that reports the mode and whether the client was built.
 
@@ -846,87 +886,154 @@ on the returned events. Every row of the event table above is a case; so is a mi
 signature, a body signed under a different key, a fork pull request producing zero events, and a build event
 with no source commit. That file is the template, verbatim.
 
-**The HTTP half needs a fake API server, and the GitHub client has no such test.** That is the gap to close
-first, because the pattern will be copied: an `httptest.NewServer` with `api_base` pointed at it, a handler that
-records the requests it received, and assertions about the *sequence* rather than the payloads. The tests worth
-having are the ones that guard the invariants: publishing three times issues exactly one create and two updates
-and never lists the same page twice; `Retract` deletes the comment it created and nothing else; a diffstat that
-pages three deep returns every path and both halves of a rename; a `next` URL pointing at another host is
-refused; a 429 produces an error whose `Retryable()` is true and a 404 one whose is not.
+**The HTTP half has a fake API server now.** `internal/scm/github/api_test.go` stands an `httptest.Server` in front
+of the client through the existing `api_base` field and covers the token exchange, rate-limit classification and the
+401 retry; `docs/design/13-github-testing.md` designs the rest. That is the pattern to copy, and the tests worth
+having are the ones that guard the invariants: publishing three times issues exactly one create and two updates and
+never lists the same page twice; `Retract` deletes the comment it created and nothing else; a diffstat that pages
+three deep returns every path and both halves of a rename; a `next` URL pointing at another host is refused; a 429
+produces an error whose `Retryable()` is true and a 404 one whose is not.
 
-**Payloads are the one thing that cannot be inferred.** Everything else in this document can be reasoned about
-from the code; the exact shape of a `pullrequest:updated` body cannot. Capture one real delivery from a live
-workspace — a scratch repository and a webhook pointed at a request bin is enough — redact it, and commit it
-under `internal/scm/bitbucket/testdata/`. A hand-written fixture tests the parser against the author's belief
-about the payload, which is the failure mode `TODO.md:76` already records for Frontdoor's wire format. Until a
-real payload is in `testdata/`, the client is unverified no matter how green the tests are.
+Bitbucket adds four cases that GitHub cannot produce, and each corresponds to a claim in this document:
+
+- a comment with `deleted: true` carrying our marker **must not** be matched;
+- a `diffstat` entry with `status: "added"` and no `old` object **must not** panic, and one with
+  `status: "renamed"` must yield both paths;
+- a `pullrequest.source.commit.hash` of twelve characters **must** be normalized to forty or fail, never stored
+  short;
+- a delivery whose `X-Hub-Signature` names a method other than `sha256` **must** be rejected, not accepted as
+  unverifiable.
+
+**Payloads are the one thing that cannot be inferred**, and stage 0 above exists to capture them.
 
 ## The order to build it in
 
-1. ~~Move the sentinel into `scm`, fix the ingress to compare against the shared one, and make the local client
-   return it.~~ **Done** — `scm.ErrBadSignature`, with `github.ErrBadSignature` kept as an alias, and tests
-   asserting 401 on all three routes. The HMAC check itself is still duplicated between the github and local
-   clients; extracting `VerifyHMACSHA256` is the remaining half and is worth doing when the third caller exists.
-2. ~~Fix `scrubLine` to take the last `@` in the authority.~~ **Done**, with tests for a userinfo containing an
-   unescaped `@` and for two such URLs on one line. It was a live leak, not a precaution against future code.
-3. Add `BitbucketConfig`, its `validate` case, and the three `knownKeys()` rows. Nothing works yet; the setup
-   page can now hold the credentials.
-4. Capture and commit a real `pullrequest:created` and `pullrequest:updated` payload as testdata.
-5. Write `VerifyWebhook` and the event mapping, including fork refusal, against those payloads. Wire the client
-   into `setup` and `rewireSCM`. At this point `/webhook/bitbucket` returns 202 and the daemon queues builds
-   that fail at clone time — which is the first end-to-end signal worth having.
-6. `authorizer` plus `Validate`, then `CloneURL` with both halves of the userinfo escaped. Builds now succeed.
-7. Extract `scm.Upsert` and `scm.CommentStore` from the GitHub client, with the fake-server tests for the
-   GitHub side written first so the extraction is provably behaviour-preserving. Then implement
-   `CommentStore` for Bitbucket, and `Publish`/`Retract` fall out.
-8. `RenderCommentFlavor` and `FlavorPlain`, once somebody has looked at a real rendered comment.
-9. `ChangedFiles` via diffstat, with the `next`-host check and the page bound.
-10. Build statuses, last, and only when the dashboard has a reachable URL. Everything above works without them.
-11. Update `docs/design/09-scm.md` (the Bitbucket section currently says "interface only"),
-    `docs/design/README.md`, `README.md:187`, `www/docs/quickstart.md:31`, and the `TODO.md` checklist.
+Riskiest unknown first, which is not the same as easiest first. Stages 0 and 1 exist to convert the three remaining
+guesses into facts *before* any code depends on them, because each one is cheap to check and expensive to be wrong
+about. Everything from stage 3 onward is ordinary work.
 
-## Not verified
+Already done, and no longer on the path:
 
-Everything above about this repository was read from the code and is cited. Everything below is recalled, not
-confirmed, and each item is a thing that fails loudly-but-uninformatively if it is wrong.
+- ~~Move the bad-signature sentinel into `scm`.~~ `scm.ErrBadSignature`, `github.ErrBadSignature` as an alias, tests
+  asserting 401 on all three routes. The HMAC check itself is still duplicated between the github and local clients;
+  extracting `VerifyHMACSHA256` is the remaining half and now has its third caller coming.
+- ~~Fix `scrubLine` to take the last `@` in the authority.~~ With tests for a userinfo containing an unescaped `@`
+  and for two such URLs on one line. It was a live leak, not a precaution.
 
-- **The webhook signature header name.** I believe Bitbucket Cloud sends `X-Hub-Signature` with a `sha256=` hex
-  prefix — the GitHub name *without* the `-256` suffix — but I am not confident, and confusing it with
-  `X-Hub-Signature-256` produces a 401 on every delivery with no diagnostic by design. Confirm against
-  Atlassian's webhook documentation, or against one captured delivery's headers, before writing the constant.
-  Confirm the digest is over the raw body and the prefix spelling at the same time.
-- **`X-Event-Key`, `X-Request-UUID`, `X-Hook-UUID`.** Reasonably confident about the first two; the third is
-  mentioned nowhere above because I am not sure of it.
-- **Event key spellings.** `pullrequest:created`, `pullrequest:updated`, `pullrequest:fulfilled`,
-  `pullrequest:rejected`. Confident about the first two, less so that "fulfilled" and "rejected" are the merged
-  and declined spellings.
-- **That `pullrequest:updated` fires on description edits.** Asserted from how the event is described rather
-  than from observation. If it turns out to fire only on source-branch movement, the tradeoff discussed above
-  evaporates and the mapping gets simpler.
-- **Endpoint paths.** I have deliberately named none. The diffstat, comment, and build-status endpoints are
-  described by what they do, not by a path I would be guessing at. Fill them in from the API reference when the
-  client is written; every one of them is a 404 away from being caught, unlike the header name.
-- **Payload field paths.** `pullrequest.id`, `pullrequest.source.branch.name`, `pullrequest.source.commit.hash`,
-  `pullrequest.source.repository.full_name`, `pullrequest.destination.branch.name`, and the diffstat entries'
-  `old.path` / `new.path` are recalled and plausible, not confirmed. This is what step 4 above is for.
-- **Comment bodies use `content.raw` and edits use `PUT`.** Reasonably confident; `TODO.md:60` says `PUT`
-  independently, which is weak corroboration at best since it may share an author with this document.
-- **Build status states** `INPROGRESS`, `SUCCESSFUL`, `FAILED`, `STOPPED`, and that there is no neutral. The
-  absence of a neutral state is the load-bearing claim; if one exists, `StateSkipped` maps to it instead.
-- **Markdown flavor.** Whether Bitbucket Cloud comments render pipe tables, and whether raw HTML — the marker
-  and `<details>` — is honored or escaped. I do not know, which is why `FlavorPlain` is the recommended default
-  rather than an assumption either way. One test comment on a scratch pull request settles it.
-- **App password end-of-life.** That app passwords are being removed in favour of Atlassian API tokens is
-  something I am confident about in direction; `TODO.md:61` and `docs/design/09-scm.md:117` both name June 2026,
-  which is the repository's own claim and not independent confirmation.
-- **Access tokens.** That Bitbucket Cloud offers repository, project, and workspace access tokens as scoped,
-  non-user bearer credentials, and that a repository-scoped one is usable for both the API and an HTTPS clone
-  (with a fixed literal username in the userinfo, `x-token-auth` or similar). The whole `auth: access_token`
-  recommendation rests on this; verify it before writing the second auth mode, and if it does not hold, the
-  security section's conclusion — that Bitbucket's credential is a person's — becomes unconditional.
-- **Rate-limit signalling.** That Bitbucket Cloud returns 429 and may include `Retry-After`. The
-  `APIError.Retryable` contract does not depend on the details, but the parser does.
+**Stage 0 — one scratch repository, one afternoon, no Go code.** Every item is a question this document could not
+answer from documentation, and each one changes a design decision rather than an implementation detail.
+
+| Check | How | What it changes if it goes the other way |
+|---|---|---|
+| Is `pullrequest.source.commit.hash` abbreviated in a *webhook body* too? | one capture | if full, the whole SHA-resolution request disappears |
+| What does `pullrequest:updated` actually fire on? | edit a title, then push a commit; compare | if only on branch movement, the churn discussion evaporates |
+| Are `pullrequest:fulfilled` / `:rejected` the merge and decline keys? | merge one, decline one | the teardown mapping |
+| Does a link-reference-definition marker survive a *round trip* — post it, read `content.raw` back unchanged? | one comment via the API | if Bitbucket normalizes the body, marker matching needs a looser match |
+| Does `PUT` edit a comment, or is it `PATCH`? | one edit | the `CommentStore.Update` verb |
+| What are the token-creation dialog's scope labels? | screenshot | the runbook's scope table |
+
+Capture the payloads while doing this, redact them, and commit them under `internal/scm/bitbucket/testdata/`. A
+hand-written fixture tests the parser against the author's belief about the payload, which is the failure mode
+`TODO.md:76` already records for Frontdoor's wire format. **Until a real payload is in `testdata/`, the client is
+unverified no matter how green the tests are.**
+
+**Stage 1 — the marker, on GitHub, before Bitbucket exists.** `MarkerFor`, `HasMarker` matching both styles, and a
+test that a body carrying the *old* HTML-comment marker is still found. Doing this first means the migration path is
+proved by the platform that already has comments in the wild, and it is the only stage that can corrupt existing
+GitHub pull requests if it is wrong.
+
+**Stage 2 — `scm.VerifyHMACSHA256` and the `CommentStore` extraction, with the GitHub fake-server tests written
+first** so the extraction is provably behaviour-preserving. `internal/scm/github/api_test.go` already stands an
+`httptest.Server` in front of the client through `api_base` and covers the token exchange, rate-limit classification
+and the 401 retry; extend it rather than starting a second pattern. This is refactoring with no Bitbucket in it, and
+it is where the duplication is cheapest to remove.
+
+**Stage 3 — `BitbucketConfig`, its `validate` case, and four `knownKeys()` rows** (`access_token` is the new one).
+Nothing works yet; the setup page can now hold the credentials.
+
+**Stage 4 — `VerifyWebhook`, event mapping, fork refusal, SHA normalization**, against the stage-0 payloads. Wire the
+client into `setup` and `rewireSCM`. `/webhook/bitbucket` now answers 202 and the daemon queues builds that fail at
+clone time — the first end-to-end signal worth having.
+
+**Stage 5 — `authorizer`, `Validate`, `CloneURL`** with `x-token-auth`, both halves of the userinfo escaped, and the
+URL constructed rather than decorated. Builds now succeed.
+
+**Stage 6 — `CommentStore` for Bitbucket**, and `Publish` / `Retract` fall out of the stage-2 extraction. Filter
+`deleted` and `pending` comments in `List`.
+
+**Stage 7 — `ChangedFiles` via diffstat**, with nil-safe `old`/`new`, the `next`-host check and the page bound.
+
+**Stage 8 — build statuses**, last, and only when `localOrigin` is non-empty, because `url` is a required field.
+Everything above works without them.
+
+**Stage 9 — documentation.** A `www/docs/runbooks/bitbucket.md` sibling to the GitHub App runbook, including the
+attribution warning and the per-repository-webhook limit; then `docs/design/09-scm.md` (whose Bitbucket section says
+"interface only"), `docs/design/README.md`, `README.md:187`, `www/docs/quickstart.md:31`, and the `TODO.md`
+checklist. And fold this document into 09-scm.md, per the rule in `CLAUDE.md` that a plan which lands is deleted.
+
+## How each claim here was established
+
+An earlier draft of this document had a long "not verified" list, and most of it has since been settled — some by
+Atlassian's documentation, and more usefully by reading a live Bitbucket workspace through the read-only API.
+`bitbucket.org/netfoundry/customer-connect-docs` is a Docusaurus documentation repository with Vercel's own Bitbucket
+integration attached to it, which makes it a working reference implementation of the exact feature docpreview is
+building. Anything below marked **observed** came from a real API response on that workspace and can be re-derived.
+
+| Claim | Status | Source |
+|---|---|---|
+| `X-Hub-Signature`, `sha256=<hex>`, HMAC over the raw body | **documented** | [Manage webhooks](https://support.atlassian.com/bitbucket-cloud/docs/manage-webhooks/), [verification sample](https://support.atlassian.com/bitbucket-cloud/kb/bitbucket-cloud-python-sample-code-to-verify-webhook-signature/) |
+| No signature at all when the secret is blank | **documented** | [Webhooks API](https://developer.atlassian.com/cloud/bitbucket/rest/api-group-webhooks/) |
+| `X-Event-Key`, `X-Hook-UUID`, `X-Request-UUID`, `X-Attempt-Number` | **documented** | [Event payloads](https://support.atlassian.com/bitbucket-cloud/docs/event-payloads/) |
+| `pullrequest:fulfilled` is the merge event | **documented** | as above |
+| Bitbucket escapes raw HTML in comments; `<!-- -->` becomes visible text | **observed** | Vercel's own comment on PR 17, `content.html` |
+| A `[label]: dest` link reference definition renders to nothing | **observed** | Vercel's marker on PR 20, absent from `content.html` |
+| Pipe tables, images, bold, code spans render | **observed** | PR 20 `content.html` contains `<table>`, `<img>` |
+| Comment shape: `content.raw` / `content.markup` / `content.html`, numeric `id`, `deleted`, `pending` | **observed** | full comment object |
+| `pullrequest.draft` exists | **observed** | PR object |
+| `source.commit.hash` is 12 chars; `/commit/{abbrev}` and `/commits` return 40 | **observed** | PR object vs commit endpoint |
+| `source`/`destination` `.branch.name`, `.repository.full_name` | **observed** | PR object |
+| Repo object has `slug`, `workspace.slug`, `owner.username`, `parent`, `fork_policy`, `mainbranch` | **observed** | repository object |
+| `links.clone` is an array of `{name, href}`, and the `https` href already carries a username | **observed** | repository object |
+| Diffstat: `pagelen` 500, `size`, no `next` on a single page, `old`/`new` with `path` | **observed** | diffstat response |
+| Error envelope `{"error": {"message", "detail": {"required", "granted"}}}` | **observed** | a real 403 for a missing scope |
+| Granular scope names `read:webhook:bitbucket`, `read:repository:bitbucket`, … | **observed** | the same 403 |
+| Access tokens: bot identity, `x-token-auth`, bearer | **documented** | [Using access tokens](https://support.atlassian.com/bitbucket-cloud/docs/using-access-tokens/) |
+| Vercel's integration comments as a *human user*, not a bot | **observed** | `user.type: "user"` on every Vercel comment |
+| App passwords removed 28 July 2026 | **documented** | [brownout schedule](https://community.atlassian.com/forums/Bitbucket-articles/Deprecation-notice-Bitbucket-Cloud-app-password-brownout/ba-p/3237429) |
+| OAuth access token 2h, refresh token 3 months | **documented** | [Use OAuth](https://support.atlassian.com/bitbucket-cloud/docs/use-oauth-on-bitbucket-cloud/) |
+| Connect closed to new apps 2 Feb 2026; Forge is the platform | **documented** | [Forge for Bitbucket](https://developer.atlassian.com/cloud/bitbucket/forge/), [changelog](https://developer.atlassian.com/cloud/bitbucket/changelog/) |
+| Workspace webhooks exist, API-only | **documented** | [workspace-level webhooks](https://support.atlassian.com/bitbucket-cloud/kb/how-to-create-workspace-level-webhooks/) |
+| Build statuses: `INPROGRESS`/`SUCCESSFUL`/`FAILED`/`STOPPED`, `url` required | **documented** | Atlassian's build-status how-to |
+| 429 + `Retry-After` (seconds or HTTP-date), `X-RateLimit-NearLimit` | **documented** | [API request limits](https://support.atlassian.com/bitbucket-cloud/docs/api-request-limits/), [scaled rate limits](https://www.atlassian.com/blog/bitbucket/introducing-scaled-rate-limits) |
+
+## What I could not verify
+
+Each of these needs the stage-0 scratch workspace. They are listed with what changes if the guess is wrong, because
+that is the only useful thing to say about an unverified claim.
+
+- **Whether the webhook body abbreviates `source.commit.hash` the way the REST object does.** The REST abbreviation
+  is observed; the webhook is a different serializer and might not. **This is the single highest-value check**,
+  because a full hash in the payload deletes an API call from the webhook path.
+- **Whether editing a comment is `PUT` or `PATCH`.** `TODO.md:60` says `PUT`, which is this repository citing itself.
+  A 405 catches it immediately, so the cost of being wrong is minutes, not days.
+- **The exact top-level webhook envelope.** That the pull request object nests under `pullrequest` and the repository
+  under `repository` is near-certain from every third-party parser, but not observed here. `actor` is presumably
+  present and docpreview does not need it.
+- **Whether `pullrequest:updated` fires on description and title edits.** Still asserted from how the event is
+  described, not from observation. If it fires only on source-branch movement, the churn discussion in the event
+  mapping evaporates and nothing else changes.
+- **Whether the hooks list response exposes whether a secret is set, and under what field name.** The `doctor` check
+  described above depends on it. If it does not, drop the check; do not guess a field name.
+- **Bitbucket's maximum comment length.** GitHub's 65536 is cited in `maxLogExcerpt`'s comment. The current
+  `RenderComment` output is a few hundred bytes, so this is theoretical — but it stops being theoretical if a log
+  excerpt ever returns to the comment.
+- **Whether a comment body survives a round trip byte-for-byte.** Marker matching is against `content.raw`, so
+  normalization (trailing whitespace, line-ending changes) could in principle break an exact-match lookup. Vercel's
+  raw bodies come back with their markers intact, which is good evidence but not the same as posting one and reading
+  it back.
+- **Whether `source.repository` can actually be absent** in a webhook body, as GitHub's `head.repo` can be for a
+  deleted fork. The recommendation is to treat absent as untrusted regardless, so being wrong here costs nothing.
 - **Data Center specifics.** The `/rest/api/1.0` base, `pr:opened` / `pr:merged` / `pr:declined` /
-  `pr:from_ref_updated` event names, and bearer personal access tokens. Recalled. Since Data Center is
-  recommended as a non-goal, nothing is built on these; they are here only to support the claim that it is a
-  different API rather than a different address.
+  `pr:from_ref_updated` event names, and bearer personal access tokens. Recalled, not checked. Since Data Center is
+  recommended as a non-goal, nothing is built on these; they support only the claim that it is a different API rather
+  than a different address.
