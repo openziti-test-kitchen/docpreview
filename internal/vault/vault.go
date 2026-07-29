@@ -1,0 +1,371 @@
+// Package vault stores docpreview's credentials encrypted at rest.
+//
+// The threat model is deliberately modest and deliberately explicit. docpreview
+// runs on a laptop or a small VM, not in a cloud KMS. The property we want is:
+// somebody who walks off with the data directory — a stolen laptop, a leaked
+// backup, a snapshot of a VM disk — gets nothing. Somebody who is already
+// running code as the docpreview user has won, and no file format fixes that.
+//
+// The whole vault is one age-encrypted blob.
+//
+// age (https://age-encryption.org, filippo.io/age) is a file encryption format
+// with a deliberately tiny API: generate an identity, encrypt to a recipient,
+// decrypt with an identity. No cipher selection, no key size, no mode, no
+// keyring, no config. It is used here rather than a hand-rolled AEAD because
+// the two decisions a hand-rolled version has to make — key derivation and
+// nonce handling — are exactly the two that quietly ruin this kind of file.
+// Reuse a nonce and the ciphertexts XOR into plaintext; pick a fast hash where
+// scrypt was needed and the passphrase falls to a wordlist. Both failures still
+// encrypt, still decrypt, and still pass every test you would think to write.
+//
+// A recipient is either an X25519 public key or a scrypt-stretched passphrase;
+// both are supported, see ResolveKey. The key never lands on disk: it comes
+// from the environment or an interactive prompt and lives only in memory.
+package vault
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+
+	"filippo.io/age"
+	"golang.org/x/term"
+)
+
+// MasterKeyEnv is the environment variable consulted for the vault key. Its
+// value is either an age X25519 identity ("AGE-SECRET-KEY-1...") or, failing
+// that, treated as a passphrase.
+//
+// Supported, not recommended. It is consulted only when vault.key_source is
+// unset, and OWASP is blunt about why: environment variables "are generally
+// accessible to all processes and may be included in logs or system dumps",
+// and using them is "not recommended unless the other methods are not
+// possible". Prefer a KeySource.
+const MasterKeyEnv = "DOCPREVIEW_MASTER_KEY"
+
+// Well-known vault keys. Using constants rather than bare strings means a typo
+// is a compile error instead of a silently missing credential at 3am.
+const (
+	KeyGitHubPrivateKey  = "github.private_key"
+	KeyGitHubWebhookSec  = "github.webhook_secret"
+	KeyBitbucketEmail    = "bitbucket.email"
+	KeyBitbucketAPIToken = "bitbucket.api_token"
+	KeyBitbucketHookSec  = "bitbucket.webhook_secret"
+	KeyFrontdoorToken    = "frontdoor.api_token"
+)
+
+// ErrLocked is returned when the vault file exists but no key was available to
+// open it.
+var ErrLocked = errors.New("vault is locked: no master key available")
+
+// ErrNotFound is returned by Get for an absent key.
+var ErrNotFound = errors.New("no such secret")
+
+// Vault is a set of named secrets backed by an encrypted file. It is safe for
+// concurrent use.
+type Vault struct {
+	path string
+
+	mu      sync.RWMutex
+	secrets map[string]Secret
+
+	// identity and recipient are the age key material for this vault. Both are
+	// derived from the same master key.
+	identity  age.Identity
+	recipient age.Recipient
+}
+
+// Open loads the vault at path, decrypting it with the master key resolved by
+// ResolveKey. If the file does not exist, an empty vault is returned and the
+// file is created on the first Save.
+func Open(path string) (*Vault, error) {
+	return OpenFrom(path, KeySource{})
+}
+
+// OpenFrom loads the vault at path using the configured key source. See
+// ResolveKeyFrom for the resolution order.
+func OpenFrom(path string, src KeySource) (*Vault, error) {
+	id, rcp, err := ResolveKeyFrom(src)
+	if err != nil {
+		return nil, err
+	}
+	return openWith(path, id, rcp)
+}
+
+// OpenWithKey opens the vault with a key supplied by the caller rather than
+// from the environment or a terminal prompt.
+//
+// It exists for the setup UI, where the key arrives in a form post: a browser
+// has no stdin and the server process cannot be handed a new environment
+// variable after it has started. The key is used and discarded; it is never
+// written anywhere, which is the same guarantee ResolveKey gives.
+//
+// An empty key is refused rather than treated as a passphrase, because an
+// empty scrypt passphrase is a valid one and would produce a vault anybody
+// could open.
+func OpenWithKey(path, key string) (*Vault, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, fmt.Errorf("%w: empty key", ErrLocked)
+	}
+	id, rcp, err := keyFromString(key)
+	if err != nil {
+		return nil, err
+	}
+	return openWith(path, id, rcp)
+}
+
+func openWith(path string, id age.Identity, rcp age.Recipient) (*Vault, error) {
+	v := &Vault{
+		path:      path,
+		secrets:   map[string]Secret{},
+		identity:  id,
+		recipient: rcp,
+	}
+
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return v, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading vault: %w", err)
+	}
+
+	r, err := age.Decrypt(bytes.NewReader(raw), v.identity)
+	if err != nil {
+		// age does not distinguish "wrong key" from "corrupt file" in a way
+		// worth surfacing separately; both mean the operator has to intervene.
+		return nil, fmt.Errorf("decrypting vault (wrong master key?): %w", err)
+	}
+	plain, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("reading decrypted vault: %w", err)
+	}
+
+	var onDisk map[string]string
+	if err := json.Unmarshal(plain, &onDisk); err != nil {
+		return nil, fmt.Errorf("parsing decrypted vault: %w", err)
+	}
+	for k, val := range onDisk {
+		v.secrets[k] = NewSecretString(val)
+	}
+	// The plaintext copy has served its purpose.
+	zero(plain)
+
+	return v, nil
+}
+
+// Get returns the named secret.
+func (v *Vault) Get(key string) (Secret, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	s, ok := v.secrets[key]
+	if !ok {
+		return Secret{}, fmt.Errorf("%w: %s", ErrNotFound, key)
+	}
+	return s, nil
+}
+
+// MustGet returns the named secret or an error naming the vault command that
+// would fix the omission. Startup validation uses this so that a fresh install
+// tells the operator what to do instead of failing with a nil dereference three
+// layers down.
+func (v *Vault) MustGet(key string) (Secret, error) {
+	s, err := v.Get(key)
+	if err != nil {
+		return Secret{}, fmt.Errorf("%w (set it with: docpreview vault set %s)", err, key)
+	}
+	if s.IsZero() {
+		return Secret{}, fmt.Errorf("secret %s is empty (set it with: docpreview vault set %s)", key, key)
+	}
+	return s, nil
+}
+
+// Set stores a secret and persists the vault.
+func (v *Vault) Set(key string, s Secret) error {
+	v.mu.Lock()
+	v.secrets[key] = s
+	v.mu.Unlock()
+	return v.Save()
+}
+
+// Delete removes a secret and persists the vault.
+func (v *Vault) Delete(key string) error {
+	v.mu.Lock()
+	delete(v.secrets, key)
+	v.mu.Unlock()
+	return v.Save()
+}
+
+// Keys lists the stored secret names, sorted. Names only — never values.
+func (v *Vault) Keys() []string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	out := make([]string, 0, len(v.secrets))
+	for k := range v.secrets {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Save encrypts and writes the vault. The write goes to a temporary file in the
+// same directory and is then renamed over the target, so a crash mid-write
+// cannot leave a truncated — and therefore unrecoverable — vault behind.
+func (v *Vault) Save() error {
+	v.mu.RLock()
+	onDisk := make(map[string]string, len(v.secrets))
+	for k, s := range v.secrets {
+		onDisk[k] = s.RevealString()
+	}
+	v.mu.RUnlock()
+
+	plain, err := json.Marshal(onDisk)
+	if err != nil {
+		return fmt.Errorf("serializing vault: %w", err)
+	}
+	defer zero(plain)
+
+	if err := os.MkdirAll(filepath.Dir(v.path), 0o700); err != nil {
+		return fmt.Errorf("creating vault directory: %w", err)
+	}
+
+	var buf bytes.Buffer
+	w, err := age.Encrypt(&buf, v.recipient)
+	if err != nil {
+		return fmt.Errorf("starting vault encryption: %w", err)
+	}
+	if _, err := w.Write(plain); err != nil {
+		return fmt.Errorf("encrypting vault: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("finalizing vault encryption: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(v.path), ".vault-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp vault: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+
+	if err := tmp.Chmod(0o600); err != nil && !isWindows() {
+		tmp.Close()
+		return fmt.Errorf("securing temp vault: %w", err)
+	}
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing temp vault: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("syncing temp vault: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temp vault: %w", err)
+	}
+	if err := os.Rename(tmpName, v.path); err != nil {
+		return fmt.Errorf("installing vault: %w", err)
+	}
+	return nil
+}
+
+// ResolveKey produces the age identity and recipient for the vault, with no
+// configured key source. See ResolveKeyFrom.
+func ResolveKey() (age.Identity, age.Recipient, error) {
+	return ResolveKeyFrom(KeySource{})
+}
+
+// ResolveKeyFrom produces the age identity and recipient for the vault.
+//
+// Resolution order:
+//
+//  1. The configured KeySource — a file, or a command that prints the key. This
+//     is the intended production path. See the KeySource doc for why.
+//  2. $DOCPREVIEW_MASTER_KEY. Still supported, no longer recommended: an
+//     environment variable is readable by every process under the same user and
+//     lands in service definitions, process listings and crash dumps.
+//  3. An interactive prompt on a TTY.
+//
+// Whatever the source, the material is either an age X25519 secret key or a
+// passphrase. A passphrase is stretched with scrypt by age itself, which is why
+// the passphrase path is noticeably slower to open. That is the point.
+//
+// With no source, no environment variable and no terminal, this returns
+// ErrLocked — which is a state the daemon serves in, not a startup failure. The
+// dashboard unlocks it.
+func ResolveKeyFrom(src KeySource) (age.Identity, age.Recipient, error) {
+	if !src.IsZero() {
+		raw, err := src.Read()
+		if err != nil {
+			return nil, nil, err
+		}
+		return keyFromString(raw)
+	}
+
+	if raw := os.Getenv(MasterKeyEnv); raw != "" {
+		return keyFromString(strings.TrimSpace(raw))
+	}
+
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return nil, nil, fmt.Errorf("%w: set vault.key_source in the config, "+
+			"unlock it from the dashboard, or run on a terminal", ErrLocked)
+	}
+
+	fmt.Fprint(os.Stderr, "docpreview vault passphrase: ")
+	pass, err := term.ReadPassword(fd)
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading passphrase: %w", err)
+	}
+	if len(pass) == 0 {
+		return nil, nil, fmt.Errorf("%w: empty passphrase", ErrLocked)
+	}
+	return keyFromString(string(pass))
+}
+
+func keyFromString(raw string) (age.Identity, age.Recipient, error) {
+	if strings.HasPrefix(strings.ToUpper(raw), "AGE-SECRET-KEY-1") {
+		id, err := age.ParseX25519Identity(raw)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parsing %s as an age identity: %w", MasterKeyEnv, err)
+		}
+		return id, id.Recipient(), nil
+	}
+
+	id, err := age.NewScryptIdentity(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("deriving vault key from passphrase: %w", err)
+	}
+	rcp, err := age.NewScryptRecipient(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("deriving vault recipient from passphrase: %w", err)
+	}
+	return id, rcp, nil
+}
+
+// GenerateIdentity mints a fresh age X25519 identity for use as a vault master
+// key. The caller is expected to show it to the operator exactly once.
+func GenerateIdentity() (string, error) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		return "", fmt.Errorf("generating identity: %w", err)
+	}
+	return id.String(), nil
+}
+
+func zero(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+func isWindows() bool { return os.PathSeparator == '\\' }

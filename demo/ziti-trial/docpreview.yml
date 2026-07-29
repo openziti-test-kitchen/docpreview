@@ -1,0 +1,24 @@
+# docpreview against the throwaway local OpenZiti network.
+listen: "127.0.0.1:8492"
+data_dir: "C:\\temp\\tangent\\replace-vercel\\ziti-trial\\data"
+workers: 2
+
+exposer:
+  kind: "ziti"
+  ziti:
+    identity_file: "C:\\temp\\tangent\\replace-vercel\\ziti-trial\\docpreview-host.json"
+    service: "docpreview-svc"
+    domain: "docpreview.ziti"
+    name_template: "{{.Name}}"
+
+github:
+  app_id: 0
+  api_base: "https://api.github.com"
+
+build:
+  driver: "local"
+  timeout: 15m0s
+
+preview:
+  ttl: 72h0m0s
+  teardown_on_close: true

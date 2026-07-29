@@ -1,0 +1,28 @@
+# docpreview's own preview configuration.
+#
+# This repository is its own test subject: the documentation in www/ is built
+# and previewed by the tool the documentation describes. If a pull request here
+# gets a working preview comment, the tool works.
+
+build:
+  dir: www
+  command: npm run build
+  output: build
+
+  # www/docusaurus.config.ts reads process.env.DOCUSAURUS_BASE_URL, so any
+  # value works here and the root is the nicest to read. Change this to
+  # /docs/ or /anything/ and the preview follows — that is the whole point of
+  # making baseUrl configurable rather than hardcoded.
+  base_url: /
+
+detect:
+  paths:
+    - "www/docs/**"
+    - "www/src/**"
+    - "www/static/**"
+    - "www/docusaurus.config.ts"
+    - "www/sidebars.ts"
+    - "www/package.json"
+    - "www/package-lock.json"
+    - "**/*.md"
+    - ".docpreview.yml"

@@ -1,0 +1,36 @@
+listen: "127.0.0.1:8493"
+data_dir: "D:\\worktrees\\tangents\\vercel-replacement\\demo\\data"
+
+# Four workers so several projects genuinely build at once rather than
+# queueing behind each other. The dashboard is only interesting if there is
+# concurrency to look at.
+workers: 4
+
+exposer:
+  kind: "local"
+
+local:
+  enabled: true
+  repos_dir: "D:\\worktrees\\tangents\\vercel-replacement\\demo\\repos"
+  default_base: "main"
+
+github:
+  app_id: 0
+
+build:
+  driver: "local"
+  # A real Docusaurus build is a yarn install plus a webpack run. Fifteen
+  # minutes is slack for four of them competing for the same disk.
+  timeout: 15m0s
+
+  # Injected into every build, and — the point of having it here — redacted out
+  # of every build log. Each project's prebuild step prints this variable on
+  # purpose, so the live tail always has a line of asterisks in it. Without a
+  # secret configured the redactor is inactive and nothing is ever masked, which
+  # makes it impossible to tell working redaction from absent redaction.
+  secrets:
+    ALGOLIA_WRITE_KEY: "demo.algolia_key"
+
+preview:
+  ttl: 72h0m0s
+  teardown_on_close: true

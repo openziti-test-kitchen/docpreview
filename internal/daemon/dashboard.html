@@ -1,0 +1,1567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>docpreview</title>
+<style>
+/* Surfaces, ink and the status palette come from a validated set. Dark mode is
+   stepped deliberately rather than inverted, because an inverted palette puts
+   saturated hues on a dark surface where they vibrate. */
+:root {
+  --plane:    #f9f9f7;
+  --surface:  #fcfcfb;
+  --raised:   #ffffff;
+  --ink:      #0b0b0b;
+  --ink-2:    #52514e;
+  --muted:    #898781;
+  --hairline: #e1e0d9;
+  --ring:     rgba(11,11,11,0.10);
+
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+  --idle:     #898781;
+
+  --term-bg:  #14140f;
+  --term-fg:  #d8d6cc;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --plane:    #0d0d0d;
+    --surface:  #1a1a19;
+    --raised:   #222220;
+    --ink:      #ffffff;
+    --ink-2:    #c3c2b7;
+    --hairline: #2c2c2a;
+    --ring:     rgba(255,255,255,0.10);
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 0 0 3rem;
+  background: var(--plane); color: var(--ink);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+a { color: inherit; }
+h1 { font-size: 1.05rem; margin: 0; letter-spacing: -0.01em; font-weight: 650; }
+h2 {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--muted); margin: 0 0 0.6rem; font-weight: 600;
+}
+h2 span { color: var(--ink-2); text-transform: none; letter-spacing: 0 }
+
+/* ── Top bar ──────────────────────────────────────────────────────────────
+   One horizontal strip instead of a grid of tiles. The counts are the same
+   numbers; they just stop claiming a quarter of the first screen. */
+.topbar {
+  position: sticky; top: 0; z-index: 5;
+  background: color-mix(in srgb, var(--plane) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--hairline);
+}
+.topbar .row {
+  max-width: 96rem; margin: 0 auto;
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 0.7rem 1.25rem;
+}
+.brand { display: flex; align-items: baseline; gap: 0.6rem; }
+.brand .sub { color: var(--muted); font-size: 0.78rem; }
+.grow { flex: 1 }
+
+/* Segmented counters. A shared border and one radius on the ends reads as a
+   single control — which it is: picking one deselects the others. */
+.seg { display: inline-flex; border: 1px solid var(--ring); border-radius: 8px; overflow: hidden; }
+.seg button {
+  font: inherit; font-size: 0.8rem; line-height: 1;
+  background: var(--surface); color: var(--ink-2);
+  border: 0; border-left: 1px solid var(--ring);
+  padding: 0.45rem 0.75rem; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.42rem; white-space: nowrap;
+}
+.seg button:first-child { border-left: 0 }
+.seg button:hover { background: var(--raised) }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--plane) }
+.seg button[aria-pressed="true"] .dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--plane) 35%, transparent) }
+.seg .n { font-variant-numeric: tabular-nums; font-weight: 650 }
+.seg .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--edge, var(--idle)); flex: none }
+/* The Building counter turns while anything is building, so the fact that work
+   is happening is visible without reading a number or finding the row. */
+.seg .dot.work, .counts .dot.work {
+  width: 10px; height: 10px; box-sizing: border-box; background: none;
+  border: 2px solid transparent;
+  border-top-color: var(--edge, var(--idle));
+  border-right-color: var(--edge, var(--idle));
+  animation: spin 0.7s linear infinite;
+}
+/* Reduced motion slows the spin rather than stopping it.
+   Stopping it left a static ring that is indistinguishable from a decorative
+   dot, so the one thing the spinner exists to say — work is happening right
+   now — was silently dropped for anyone with the setting on, including anyone
+   who has it on without knowing. A 10px ring at two and a half seconds is a
+   long way from the fast rotation the guidance is aimed at, and the state is
+   also carried by a word and a colour for anyone who needs no motion at all. */
+@media (prefers-reduced-motion: reduce) {
+  .seg .dot.work, .counts .dot.work { animation-duration: 2.4s }
+}
+
+.control {
+  font: inherit; font-size: 0.82rem;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 8px;
+  padding: 0.42rem 0.6rem;
+}
+.control:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px }
+/* Secrets is a link to /secrets rather than a toggle, and an anchor is inline and
+   underlined by default — both of which make it sit wrong beside the inputs. */
+a.control { display: inline-block; text-decoration: none; line-height: normal }
+/* A select rather than a chip per project: at three projects chips are nicer,
+   at three hundred they are a wall. The search box beside it covers the case
+   where you know the branch but not the project. */
+select.control { max-width: 15rem }
+input.control { width: 13rem }
+input.control::placeholder { color: var(--muted) }
+
+/* ── Setup panel ────────────────────────────────────────────────────────── */
+.setup { border-bottom: 1px solid var(--hairline); background: var(--surface) }
+.setup-inner { max-width: 96rem; margin: 0 auto; padding: 1rem 1.25rem 1.25rem }
+
+.sec {
+  display: grid; grid-template-columns: minmax(0, 18rem) minmax(0, 1fr) auto;
+  gap: 0.6rem; align-items: start;
+  padding: 0.6rem 0; border-top: 1px solid var(--hairline);
+}
+.sec:first-of-type { border-top: 0 }
+.sec .name { font-weight: 600; font-size: 0.85rem }
+.sec .key { font: 11.5px/1.5 ui-monospace, Consolas, monospace; color: var(--muted) }
+.sec .hint { font-size: 0.76rem; color: var(--muted); margin-top: 0.15rem }
+.sec textarea, .sec input[type=password] {
+  font: 12.5px/1.5 ui-monospace, Consolas, monospace;
+  width: 100%; background: var(--raised); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 6px; padding: 0.4rem 0.5rem;
+  resize: vertical;
+}
+.sec textarea { min-height: 2.4rem }
+.sec .act { display: flex; gap: 0.35rem; align-items: center }
+
+/* Set or missing, at a glance. A setup screen is a checklist. */
+.flag {
+  font-size: 0.7rem; font-weight: 600; white-space: nowrap;
+  border: 1px solid var(--ring); border-radius: 999px; padding: 0.08rem 0.45rem;
+}
+.flag.on  { color: var(--good) }
+.flag.off { color: var(--critical) }
+.flag.opt { color: var(--muted) }
+
+.notice {
+  font-size: 0.8rem; border: 1px solid var(--ring); border-left: 3px solid var(--edge, var(--muted));
+  border-radius: 6px; padding: 0.6rem 0.75rem; margin-bottom: 0.9rem; color: var(--ink-2);
+}
+.notice.bad  { --edge: var(--critical) }
+.notice.warn { --edge: var(--warning) }
+.notice.ok   { --edge: var(--good) }
+.notice code { font: 12px/1.5 ui-monospace, Consolas, monospace }
+.notice p { margin: 0.4rem 0 0 }
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+.wrap {
+  max-width: 96rem; margin: 0 auto; padding: 1.25rem;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem;
+}
+@media (min-width: 68rem) {
+  .wrap { grid-template-columns: minmax(0, 1fr) 21rem; align-items: start; }
+}
+
+/* ── Accordion ──────────────────────────────────────────────────────────── */
+.list {
+  border: 1px solid var(--ring); border-radius: 10px;
+  background: var(--surface); overflow: hidden;
+}
+.item { border-top: 1px solid var(--hairline) }
+.item:first-child { border-top: 0 }
+
+/* The row is the toggle plus the preview link, side by side. Separate elements
+   because an anchor inside a button is invalid markup and would both navigate
+   and toggle. */
+.row { display: flex; align-items: stretch }
+.row .head { flex: 1; min-width: 0 }
+
+/* Scoped to .row on purpose. Unscoped, `.go:not([href])` also matched the
+   activity rail's entry buttons — which have no href because they are buttons —
+   and greyed the whole panel out at 0.3 opacity with pointer-events: none. A
+   generic class name in a single stylesheet is a collision waiting for its
+   second user. */
+.row .go {
+  display: flex; align-items: center; white-space: nowrap;
+  font-size: 0.75rem; font-weight: 600; text-decoration: none;
+  color: var(--ink-2); padding: 0 0.9rem 0 0.6rem;
+  border-left: 1px solid var(--hairline);
+}
+.row .go[href]:hover { color: var(--ink); text-decoration: underline }
+/* An anchor with no href is not a link, which is the wanted state before a
+   build has produced anything. Styling follows from that fact rather than from
+   a `disabled` attribute anchors ignore. */
+.row .go:not([href]) { opacity: 0.3; cursor: default; pointer-events: none }
+
+.head {
+  width: 100%; font: inherit; color: inherit; text-align: left;
+  background: transparent; border: 0; cursor: pointer;
+  display: grid; grid-template-columns: 1.1rem minmax(0, 1fr) auto auto auto;
+  align-items: center; gap: 0.75rem;
+  padding: 0.62rem 0.9rem;
+  border-left: 3px solid var(--edge, var(--idle));
+}
+
+/* Per-state counts for the project, on the row itself. Colour plus number,
+   with the state named in the tooltip — a bare coloured number is a quiz. */
+.counts { display: flex; gap: 0.3rem; align-items: center }
+.counts .chip {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-size: 0.72rem; font-variant-numeric: tabular-nums; color: var(--ink-2);
+  border: 1px solid var(--ring); border-radius: 5px; padding: 0.05rem 0.32rem;
+}
+.counts .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--edge, var(--idle)) }
+@media (max-width: 52rem) { .counts { display: none } }
+.head:hover { background: var(--raised) }
+.head:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
+.item.open .row { background: var(--raised) }
+
+.caret { color: var(--muted); transition: transform 0.12s ease; font-size: 0.7rem }
+.item.open .caret { transform: rotate(90deg) }
+@media (prefers-reduced-motion: reduce) { .caret { transition: none } }
+
+.who { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0 }
+.who .proj { font-weight: 600 }
+.who .num { color: var(--muted); font-weight: 400 }
+.who .branch {
+  font: 12.5px/1.4 ui-monospace, Consolas, monospace; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.when { color: var(--muted); font-size: 0.75rem; font-variant-numeric: tabular-nums }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font-size: 0.72rem; font-weight: 600; color: var(--ink-2);
+  border: 1px solid var(--ring); border-radius: 999px;
+  padding: 0.12rem 0.5rem 0.12rem 0.4rem; white-space: nowrap;
+}
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--edge, var(--idle)); flex: none }
+/* Building gets a real spinner rather than a pulsing dot. A dot that fades is
+   ambiguous — it reads as "stale" as easily as "working" — where rotation only
+   means one thing. Queued keeps the pulse: it is waiting, not working, and the
+   two states should not look identical.
+
+   Drawn with a border rather than an SVG or a font: one element, no request,
+   and it inherits the state colour it is already being given. */
+.pill.spin .dot { animation: pulse 1.1s ease-in-out infinite }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.2 } }
+
+.pill.work .dot {
+  width: 11px; height: 11px; box-sizing: border-box;
+  background: none;
+  /* A transparent track and two lit sides: a 180° arc, which reads as motion
+     at this size where a single lit side reads as a flicker.
+     Deliberately not color-mix() for the track. --edge is set inline and its
+     value is itself a var(), and color-mix does not reliably resolve that
+     second indirection — when it fails the whole border declaration is
+     dropped, leaving an 11px transparent box and no spinner at all. That is
+     the bug this replaced. */
+  border: 2px solid transparent;
+  border-top-color: var(--edge, var(--idle));
+  border-right-color: var(--edge, var(--idle));
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg) } }
+
+/* Reduced motion keeps the distinction without the movement: the ring stays,
+   it just stops turning. */
+@media (prefers-reduced-motion: reduce) {
+  .pill.spin .dot { animation: none }
+  .pill.work .dot { animation-duration: 2.4s }
+}
+
+.body { padding: 0 0.9rem 0.9rem 1.55rem }
+.reason {
+  font-size: 0.78rem; color: var(--critical);
+  padding: 0 0.9rem 0.6rem 1.55rem; overflow-wrap: anywhere;
+}
+
+.logbar {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0 0 0.5rem;
+}
+.logbar .grow { flex: 1 }
+select.control.sm {
+  font-size: 0.75rem; padding: 0.2rem 0.4rem; max-width: 24rem;
+}
+select.control.sm:disabled { opacity: 0.6 }
+.btn {
+  font: inherit; font-size: 0.75rem;
+  background: var(--surface); color: var(--ink-2);
+  border: 1px solid var(--ring); border-radius: 6px;
+  padding: 0.22rem 0.55rem; cursor: pointer; text-decoration: none;
+}
+.btn:hover { border-color: var(--muted) }
+.btn[aria-pressed="true"] { background: var(--ink); color: var(--plane); border-color: var(--ink) }
+a.btn:not([href]) { opacity: 0.45; cursor: default; pointer-events: none }
+
+/* What the pane is showing, above the pane. A log with no label is assumed to
+   belong to the row it is under, which is wrong for every state except
+   building. */
+.logstate {
+  font-size: 0.72rem; padding: 0 0 0.4rem; color: var(--muted);
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.logstate:empty { display: none }
+.logstate::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; flex: none;
+}
+.logstate.live { color: var(--good) }
+.logstate.past { color: var(--muted) }
+.logstate.none { color: var(--muted) }
+
+/* The log is a fixed, modest height by default. The old page gave it 30rem
+   whether or not anything was in it, which pushed everything else off screen.
+   Tall is one click away for when you actually need it. */
+pre.term {
+  margin: 0; padding: 0.7rem 0.8rem;
+  background: var(--term-bg); color: var(--term-fg);
+  font: 12.5px/1.5 ui-monospace, Consolas, monospace;
+  border-radius: 8px;
+  height: 15rem; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+pre.term.tall { height: 34rem }
+pre.term .cmd { color: #9fd2ff }
+pre.term .err { color: #ff9a8c }
+pre.term .mask { color: var(--warning); font-weight: 700 }
+
+/* ── Right rail ─────────────────────────────────────────────────────────── */
+.rail { position: sticky; top: 4rem }
+.rail .card {
+  border: 1px solid var(--ring); border-radius: 10px;
+  background: var(--surface); padding: 0.85rem;
+}
+/* Kind filters for the feed. Its own control rather than reusing the top
+   counters: those count previews as they are now, these narrow a history, and
+   a single filter driving both would mean picking Failed emptied the feed of
+   the queued and building rows that led to the failure. */
+.feed-filters {
+  display: flex; gap: 0.3rem; flex-wrap: wrap;
+  padding-bottom: 0.6rem; margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--hairline);
+}
+.feed-filters button {
+  font: inherit; font-size: 0.7rem; line-height: 1;
+  display: inline-flex; align-items: center; gap: 0.28rem;
+  background: var(--raised); color: var(--ink-2);
+  border: 1px solid var(--ring); border-radius: 999px;
+  padding: 0.22rem 0.5rem; cursor: pointer;
+}
+.feed-filters button:hover { border-color: var(--muted) }
+.feed-filters button[aria-pressed="true"] { background: var(--ink); color: var(--plane); border-color: var(--ink) }
+.feed-filters .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--edge, var(--idle)) }
+.feed-filters .c { opacity: 0.6; font-variant-numeric: tabular-nums }
+
+.feed { max-height: 30rem; overflow: auto; margin: -0.2rem -0.3rem 0; padding: 0 0.3rem }
+.ev {
+  display: grid; grid-template-columns: 3.6rem minmax(0, 1fr);
+  gap: 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid var(--hairline);
+  font-size: 0.79rem; align-items: baseline;
+}
+.ev:last-child { border-bottom: 0 }
+
+/* An entry whose preview still exists is a button that opens it. The reset is
+   what keeps it looking identical to the inert entries beside it — the affordance
+   is the hover, not a different shape, because a rail of twenty buttons reads as
+   a menu rather than a history. */
+button.ev {
+  width: 100%; text-align: left; font: inherit; font-size: 0.79rem;
+  background: none; border: 0; border-bottom: 1px solid var(--hairline);
+  color: inherit; cursor: pointer;
+  margin: 0 -0.3rem; padding: 0.4rem 0.3rem; width: calc(100% + 0.6rem);
+}
+button.ev:hover { background: var(--raised) }
+button.ev:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
+button.ev:hover .k { text-decoration: underline }
+.ev .t {
+  color: var(--muted); font: 11px/1.5 ui-monospace, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.ev .l1 { display: flex; align-items: baseline; gap: 0.35rem; min-width: 0 }
+.ev .l1 .k { font-weight: 600; color: var(--ink-2); white-space: nowrap }
+.ev .l1 .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--edge, var(--idle)); flex: none }
+.ev .l2 { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.ev code { font: 11px/1.4 ui-monospace, Consolas, monospace }
+
+.empty { padding: 2rem 1rem; text-align: center; color: var(--muted); font-size: 0.86rem }
+.empty code { font: 12.5px/1.5 ui-monospace, Consolas, monospace; color: var(--ink-2) }
+
+footer {
+  max-width: 96rem; margin: 1.5rem auto 0; padding: 0 1.25rem;
+  color: var(--muted); font-size: 0.75rem;
+}
+.live { color: var(--good) } .stale { color: var(--critical) }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <div class="brand">
+      <h1>docpreview</h1>
+      <span class="sub" id="exposer">&nbsp;</span>
+    </div>
+    <div class="seg" id="counters"></div>
+    <span class="grow"></span>
+    <select class="control" id="project" aria-label="Project"></select>
+    <input class="control" id="search" type="search" placeholder="branch, PR, project…" aria-label="Filter">
+    <a class="control" id="btn-setup" href="/secrets">Secrets</a>
+  </div>
+</div>
+
+<!-- The secrets panel lives on /secrets, not here. A credential form permanently
+     occupying the top of an operations dashboard invites pasting into it by
+     reflex, and a separate address is something a proxy or an authentication
+     layer can gate — a panel inside "/" is not.
+
+     Same document either way, switched on pathname below. -->
+<div class="setup" id="setup" hidden>
+  <div class="setup-inner">
+    <!-- The vault's path is a detail of where the daemon keeps its files, not
+         something anyone acts on from here. It stays as a tooltip: findable
+         when you are debugging, absent when you are not. -->
+    <h2 id="setup-head">Secrets</h2>
+    <div id="setup-body"></div>
+    <p style="margin:1rem 0 0"><a href="/">← back to previews</a></p>
+  </div>
+</div>
+
+<div class="wrap">
+  <div>
+    <h2 id="list-heading">Previews</h2>
+    <div class="list" id="list"></div>
+  </div>
+
+  <aside class="rail">
+    <h2>Activity · <span id="feed-scope">all projects</span></h2>
+    <div class="card">
+      <div class="feed-filters" id="feed-filters"></div>
+      <div class="feed" id="events"></div>
+    </div>
+  </aside>
+</div>
+
+<footer>
+  <span id="conn" class="live">connecting…</span> ·
+  <a href="/status">/status</a> · <a href="/pr">/pr</a>
+</footer>
+
+<script>
+"use strict";
+
+const STATE = {
+  ready:       {label: "Ready",    color: "var(--good)"},
+  // work spins, spin pulses. Building is doing something; queued is waiting for
+  // a worker, and the two must not look the same.
+  building:    {label: "Building", color: "var(--warning)", work: true},
+  queued:      {label: "Queued",   color: "var(--idle)",    spin: true},
+  skipped:     {label: "Skipped",  color: "var(--idle)"},
+  failed:      {label: "Failed",   color: "var(--critical)"},
+  "torn-down": {label: "Removed",  color: "var(--idle)"},
+  log:         {label: "Log",      color: "var(--idle)"},
+};
+const state = k => STATE[k] || {label: k || "unknown", color: "var(--idle)"};
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// Escaping closes attribute breakout but not scheme abuse: `javascript:` and
+// `data:` survive it intact. Preview URLs come from the exposer rather than
+// from a pull request, so this is not reachable today — but the rule belongs
+// with the render, not with an assumption about who writes the value.
+const safeURL = u => /^https?:\/\//i.test(String(u ?? "")) ? String(u) : "";
+
+const ago = iso => {
+  const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+  if (s < 60)    return Math.floor(s) + "s";
+  if (s < 3600)  return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+};
+const clock = iso => new Date(iso).toLocaleTimeString([], {hour12: false});
+
+const project = p => String(p.repo || "").split("/").pop() || "unknown";
+
+
+const ui = {
+  state: null,        // null means every state
+  kind: null,         // activity-feed filter; null means every kind
+  project: "",        // "" means every project
+  query: "",          // free-text filter
+  open: null,         // project name whose row is expanded
+  pick: {},           // project -> preview id being looked at, when not the newest
+  follow: true,
+  tall: false,
+  autoScrolling: false,
+  shownOnce: null,      // a just-minted secret, rendered once and then dropped
+  buffer: "",         // rendered log html, so a redraw need not replay the stream
+  previews: [],
+  events: [],
+  status: {},
+  logSource: null,
+  logFor: null,       // preview id the open stream belongs to
+};
+
+const ORDER = ["failed", "building", "queued", "ready"];
+
+function matches(p) {
+  if (ui.state && p.state !== ui.state) return false;
+  if (ui.project && project(p) !== ui.project) return false;
+  if (!ui.query) return true;
+  const hay = `${project(p)} ${p.branch} #${p.number} ${p.name || ""}`.toLowerCase();
+  return hay.includes(ui.query);
+}
+
+// One row per project rather than one per preview.
+//
+// A project with a dozen open pull requests produced a dozen rows that all said
+// the same project name, and the list stopped being scannable at exactly the
+// point it started being useful. The row now carries the project's newest
+// preview and a count of everything else it has; the older ones are a dropdown
+// inside, so they are one click away instead of permanently in the way.
+//
+// "Newest" is by state first, then time: a failure nobody has looked at is more
+// interesting than a build that went green a minute later, and a project whose
+// row says Ready while one of its branches is broken is a lie of omission.
+function groups() {
+  const by = new Map();
+  for (const p of ui.previews.filter(matches)) {
+    const k = project(p);
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(p);
+  }
+
+  const rank = p => {
+    const i = ORDER.indexOf(p.state);
+    return i < 0 ? ORDER.length : i;
+  };
+
+  const out = [];
+  for (const [name, list] of by) {
+    list.sort((a, b) =>
+      rank(a) - rank(b) || new Date(b.updated_at) - new Date(a.updated_at));
+
+    const counts = {};
+    for (const p of list) counts[p.state] = (counts[p.state] || 0) + 1;
+
+    const picked = list.find(p => p.preview_id === ui.pick[name]) || list[0];
+    out.push({name, list, counts, current: picked});
+  }
+  out.sort((a, b) => rank(a.current) - rank(b.current) || a.name.localeCompare(b.name));
+  return out;
+}
+
+/* ── Counters ─────────────────────────────────────────────────────────── */
+
+function renderCounters() {
+  const by = k => ui.previews.filter(p => p.state === k).length;
+  const cells = [
+    {label: "All",      n: ui.previews.length, key: null},
+    {label: "Ready",    n: by("ready"),        key: "ready",    color: "var(--good)"},
+    {label: "Building", n: by("building"),     key: "building", color: "var(--warning)"},
+    {label: "Queued",   n: by("queued"),       key: "queued",   color: "var(--idle)"},
+    {label: "Failed",   n: by("failed"),       key: "failed",   color: "var(--critical)"},
+  ];
+
+  const el = document.getElementById("counters");
+  const sig = cells.map(c => `${c.key}:${c.n}:${ui.state === c.key}`).join("|");
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+
+  el.innerHTML = cells.map((c, i) => `
+    <button data-i="${i}" aria-pressed="${ui.state === c.key}" title="${esc(c.label)}">
+      ${c.color ? `<span class="dot${c.key === "building" && c.n > 0 ? " work" : ""}"
+                          style="--edge:${c.color}"></span>` : ""}
+      <span class="n">${c.n}</span><span>${esc(c.label)}</span>
+    </button>`).join("");
+
+  for (const b of el.querySelectorAll("button")) {
+    const c = cells[Number(b.dataset.i)];
+    b.onclick = () => { ui.state = (ui.state === c.key) ? null : c.key; render(); };
+  }
+}
+
+/* ── Project selector ─────────────────────────────────────────────────────
+   A select, not chips. Chips are better at three projects and unusable at
+   three hundred; the browser already knows how to render a long list, scroll
+   it, and type-ahead it. */
+
+function renderProjects() {
+  const counts = new Map();
+  for (const p of ui.previews) {
+    const k = project(p);
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const names = [...counts.keys()].sort();
+
+  // Rebuilding a select closes its open dropdown and loses the keyboard
+  // position, so only touch it when the set of projects actually changed.
+  const sig = names.map(n => `${n}:${counts.get(n)}`).join("|");
+  const el = document.getElementById("project");
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+
+  el.innerHTML =
+    `<option value="">All projects (${ui.previews.length})</option>` +
+    names.map(n => `<option value="${esc(n)}">${esc(n)} (${counts.get(n)})</option>`).join("");
+  el.value = names.includes(ui.project) ? ui.project : "";
+}
+
+/* ── Accordion ────────────────────────────────────────────────────────────
+   Updated by key, not rebuilt.
+
+   Setting innerHTML on the list every status tick destroyed and recreated the
+   open log pane, which is what the flicker was: a few hundred lines of log
+   thrown away and re-inserted twice a second. It also dropped hover and focus,
+   and it meant the pane's event handlers had to be re-attached on a schedule
+   rather than once. Rows are now created on first sight and mutated in place;
+   the log pane is created once per opened preview and left alone. */
+
+function renderList() {
+  const gs = groups();
+  const el = document.getElementById("list");
+
+  document.getElementById("list-heading").textContent =
+    ui.state || ui.project || ui.query
+      ? `Projects (${gs.length}) — ${ui.previews.filter(matches).length} of ${ui.previews.length} previews`
+      : `Projects (${gs.length})`;
+
+  const empty = el.querySelector(".empty");
+  if (gs.length === 0) {
+    if (!empty) {
+      const filtered = ui.state || ui.project || ui.query;
+      el.innerHTML = `<div class="empty">
+        ${filtered
+          ? `Nothing matches.<br><br><button class="btn" id="clear">Clear filters</button>`
+          : `No previews yet.<br><br>Push a branch to a repo made by <code>docpreview sim init</code>.`}
+      </div>`;
+      const c = document.getElementById("clear");
+      if (c) c.onclick = clearFilters;
+    }
+    return;
+  }
+  if (empty) el.innerHTML = "";
+
+  const wanted = new Set(gs.map(g => g.name));
+  for (const item of [...el.children]) {
+    if (!wanted.has(item.dataset.project)) item.remove();
+  }
+
+  let prev = null;
+  for (const g of gs) {
+    let item = el.querySelector(`.item[data-project="${CSS.escape(g.name)}"]`);
+    if (!item) {
+      item = document.createElement("div");
+      item.className = "item";
+      item.dataset.project = g.name;
+      // The link is a sibling of the button, not inside it: an anchor nested in
+      // a button is invalid, and clicking it would toggle the row as well as
+      // follow the href.
+      item.innerHTML = `<div class="row"><button class="head"></button><a class="go"></a></div>`;
+      item.querySelector(".head").onclick = () => toggle(g.name);
+    }
+
+    // Reordering is suspended while a row is expanded or the list has focus.
+    //
+    // groups() sorts by state, so a project that starts building climbs to the
+    // top — under a reader who was mid-sentence in an expanded log. Moving a
+    // DOM node also closes any <select> open inside it and drops focus, so a
+    // background wave arriving while somebody had the preview dropdown open
+    // shut it with no explanation.
+    //
+    // The sort is right when you arrive at the page and wrong the moment you
+    // start using it. New rows are still appended, so nothing is hidden; the
+    // order just stops rearranging itself under your hands.
+    if (!frozen(el)) {
+      const next = prev ? prev.nextSibling : el.firstChild;
+      if (item !== next) el.insertBefore(item, next);
+    } else if (!item.isConnected) {
+      el.appendChild(item);
+    }
+    prev = item;
+
+    // Set outside updateHead, and unconditionally.
+    //
+    // It used to live at the end of updateHead, past two early returns — and
+    // one of them fires exactly when this matters. Clicking the row makes the
+    // button the active element, the focus guard then skipped the whole
+    // function, and the class never went on. `term()` selects `.item.open
+    // .term`, so it found nothing, and the first expand of any row showed an
+    // empty log until some other click moved focus and let the next render
+    // through.
+    //
+    // A class that other code queries by is state, not markup. It does not
+    // belong behind a repaint optimisation.
+    item.classList.toggle("open", ui.open === g.name);
+    // Same argument: a screen reader announcing "collapsed" on a row that just
+    // expanded is a correctness bug, not a repaint.
+    item.querySelector(".head").setAttribute("aria-expanded", String(ui.open === g.name));
+
+    updateHead(item, g);
+    updateBody(item, g);
+  }
+}
+
+// frozen reports whether the list is being interacted with, and so must not be
+// rearranged or have its markup replaced underneath.
+//
+// Two signals. Focus inside the list covers the open dropdown, the mid-tab
+// keyboard user, and text selection. An expanded row covers the commonest case
+// of all: reading a build log while the rest of the world keeps moving.
+function frozen(el) {
+  return ui.open !== null || el.contains(document.activeElement);
+}
+
+function updateHead(item, g) {
+  const p = g.current;
+  const s = state(p.state);
+
+  const chips = ORDER
+    .filter(k => g.counts[k])
+    .map(k => `<span class="chip" style="--edge:${state(k).color}" title="${g.counts[k]} ${state(k).label.toLowerCase()}">
+                 <span class="dot${k === "building" ? " work" : ""}"></span>${g.counts[k]}</span>`)
+    .join("");
+
+  // p.url is in the signature because the row now carries the link: a republish
+  // that moves the URL without changing the state would otherwise leave the
+  // anchor pointing at the old one.
+  const sig = [p.preview_id, p.state, p.url, p.branch, p.number, ago(p.updated_at),
+               ui.open === g.name, JSON.stringify(g.counts)].join("|");
+
+  const head = item.querySelector(".head");
+  if (head.dataset.sig === sig) return;
+
+  // Replacing the markup of the element that currently has focus takes the
+  // focus with it, which drops a keyboard user back to the top of the page
+  // mid-navigation. The counts and the timestamp can wait until they look away.
+  if (head === document.activeElement) return;
+
+  head.dataset.sig = sig;
+
+  head.style.setProperty("--edge", s.color);
+  head.innerHTML = `
+    <span class="caret">▶</span>
+    <span class="who">
+      <span class="proj">${esc(g.name)}</span>
+      <span class="branch">${esc(p.branch)}</span><span class="num">#${p.number}</span>
+    </span>
+    <span class="counts">${chips}</span>
+    <span class="pill${s.work ? " work" : s.spin ? " spin" : ""}" style="--edge:${s.color}">
+      <span class="dot"></span>${esc(s.label)}
+    </span>
+    <span class="when">${ago(p.updated_at)}</span>`;
+
+  updateGoLink(item.querySelector(".go"), p);
+}
+
+// The preview link belongs on the row, not inside the expanded panel: opening
+// the site is the commonest thing anyone wants from a list of previews, and
+// burying it behind a click to reveal a build log inverts that.
+//
+// It is only a link while the state is `ready`. Queued, building and failed
+// have no URL at all, and a torn-down one has a URL that no longer answers —
+// rendering either as live sends the reader to an error page. An anchor with no
+// href is not a link, which is exactly the state wanted, and the tooltip says
+// why.
+function updateGoLink(a, p) {
+  const url = p.state === "ready" ? safeURL(p.url) : "";
+  a.textContent = "Open ↗";
+  if (url) {
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noreferrer";
+    a.title = url;
+  } else {
+    a.removeAttribute("href");
+    a.title = p.state === "ready"
+      ? "this preview has no URL"
+      : `no preview while ${state(p.state).label.toLowerCase()}`;
+  }
+}
+
+function updateBody(item, g) {
+  const open = ui.open === g.name;
+  let body = item.querySelector(".body");
+
+  if (!open) {
+    if (body) body.remove();
+    return;
+  }
+
+  const fresh = !body;
+  if (!body) {
+    body = document.createElement("div");
+    body.className = "body";
+    body.innerHTML = `
+      <div class="logbar">
+        <select class="control sm" data-role="pick" aria-label="Preview"></select>
+        <span class="grow"></span>
+        <button class="btn" data-role="follow" aria-pressed="true">Following</button>
+        <button class="btn" data-role="tall" aria-pressed="false">Expand</button>
+        <a class="btn" data-role="download" download>Download</a>
+      </div>
+      <div class="logstate"></div>
+      <pre class="term"></pre>`;
+    item.appendChild(body);
+
+    body.querySelector('[data-role="follow"]').onclick = () => setFollow(!ui.follow);
+    body.querySelector('[data-role="tall"]').onclick = () => setTall(!ui.tall);
+    const pick = body.querySelector('[data-role="pick"]');
+    pick.onchange = e => {
+      ui.pick[g.name] = e.target.value;
+      openLog(e.target.value);
+      render();
+    };
+    // Whatever arrived while the dropdown was open gets applied once it is not.
+    pick.onblur = () => { if (pick.dataset.pending) render(); };
+    body.querySelector(".term").addEventListener("scroll", () => {
+      if (ui.autoScrolling) return;
+      setFollow(atBottom());
+    });
+  }
+
+  // Pin the selection on expand.
+  //
+  // Without this the picker had no stored choice and groups() re-derived it as
+  // list[0] on every render — and that list is sorted by state, so a build
+  // starting anywhere in the project made the new preview "first" and swapped
+  // it into the dropdown under a reader who was part-way through a different
+  // log. Opening a row is a choice; it should stick until the reader makes
+  // another one, or closes the row.
+  // Re-pinned rather than merely set, so a pin left pointing at a preview that
+  // has since been torn down does not leave the selection floating again.
+  // groups() already falls back to the newest when the pinned id is gone;
+  // this makes that fallback stick.
+  if (!g.list.some(p => p.preview_id === ui.pick[g.name])) {
+    ui.pick[g.name] = g.current.preview_id;
+  }
+
+  updatePicker(body.querySelector('[data-role="pick"]'), g);
+
+  const p = g.current;
+  body.querySelector('[data-role="download"]').href =
+    `/logs/${encodeURIComponent(p.preview_id)}/download`;
+
+  // The preview link lives on the row, not here. See updateGoLink.
+
+  // Three cases, and the middle one is the bug this replaced.
+  //
+  // A filter that hides a project removes its row; clearing the filter builds a
+  // fresh one, so the <pre> is new and empty. `ui.logFor` still names the same
+  // preview, so the old test — reopen only when the preview changed — did
+  // nothing, and the pane sat blank until you collapsed and reopened it. That
+  // is what "no logs show" was.
+  if (ui.logFor !== p.preview_id) {
+    openLog(p.preview_id);
+  } else if (fresh) {
+    // Same preview, new element. Repaint from the buffer rather than
+    // reconnecting, which would replay the whole log from the top.
+    const t = body.querySelector(".term");
+    t.innerHTML = ui.buffer;
+    if (ui.follow) t.scrollTop = t.scrollHeight;
+
+    // The banner is part of the pane and goes with it.
+    if (ui.banner) banner(ui.banner.kind, ui.banner.text);
+
+    // A stream that has already ended leaves nothing to reconnect to, but an
+    // empty buffer with no stream means the log was never read.
+    if (!ui.logSource && !ui.buffer) openLog(p.preview_id);
+  }
+}
+
+function updatePicker(sel, g) {
+  const sig = g.list.map(p => `${p.preview_id}:${p.state}:${ago(p.updated_at)}`).join("|");
+
+  // A <select> being rewritten while its dropdown is open closes it, with no
+  // visible cause — you reach for an older preview, a build finishes somewhere
+  // else, and the list vanishes out from under the pointer. There is no DOM
+  // event for "the dropdown is open", but focus is a good enough proxy: a
+  // select only opens when focused. Defer instead, and apply on the way out.
+  if (document.activeElement === sel) {
+    sel.dataset.pending = sig;
+    return;
+  }
+  delete sel.dataset.pending;
+
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.innerHTML = g.list.map(p =>
+      `<option value="${esc(p.preview_id)}">` +
+      `${esc(p.branch)} · #${p.number} · ${esc(state(p.state).label)} · ${ago(p.updated_at)} ago` +
+      `</option>`).join("");
+  }
+  sel.value = g.current.preview_id;
+  sel.disabled = g.list.length < 2;
+}
+
+function clearFilters() {
+  ui.state = null; ui.project = ""; ui.query = "";
+  document.getElementById("search").value = "";
+  render();
+}
+
+/* ── Log ──────────────────────────────────────────────────────────────── */
+
+const term = () => document.querySelector(".item.open .term");
+
+// banner labels the log pane: what you are looking at, and whether it is moving.
+function banner(kind, text) {
+  ui.banner = {kind, text};
+  const el = document.querySelector(".item.open .logstate");
+  if (el) {
+    el.className = "logstate " + kind;
+    el.textContent = text;
+  }
+}
+
+function toggle(name) {
+  if (ui.open === name) {
+    // Collapsing releases the pin, so reopening later lands on whatever is
+    // newest then rather than on a preview chosen minutes ago.
+    delete ui.pick[name];
+    closeLog();
+    ui.open = null;
+    render();
+    return;
+  }
+  closeLog();
+  ui.open = name;
+  ui.follow = true;
+  render();
+}
+
+function closeLog() {
+  if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
+  ui.logFor = null;
+  ui.buffer = "";
+}
+
+// Exactly one stream is open at a time — the one behind the expanded row.
+// Nothing is fetched for a collapsed project. Several at once would mean N
+// server-sent-event connections from one tab, and browsers cap concurrent
+// connections per origin, so the sixth would hang with no visible reason.
+function openLog(previewID) {
+  if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
+  ui.logFor = previewID;
+  ui.buffer = "";
+  banner("none", "connecting…");
+
+  const t = term();
+  if (t) t.innerHTML = "";
+
+  const src = new EventSource(`/logs/${encodeURIComponent(previewID)}/stream`);
+  ui.logSource = src;
+
+  // The server says up front whether this is a live build or a replay, and
+  // which build the replay is. Without it a queued row showed a completed log
+  // with nothing marking it as the previous build's — so the row said Queued
+  // and the pane looked like it had already done the work.
+  src.addEventListener("start", e => {
+    let d = {};
+    try { d = JSON.parse(e.data) || {}; } catch {}
+    if (d.live) {
+      banner("live", "streaming this build");
+    } else {
+      banner("past", `previous build${d.build_id ? " · " + d.build_id : ""} — nothing is running`);
+    }
+  });
+
+  src.addEventListener("line", e => appendLog(e.data));
+  src.addEventListener("done", e => {
+    let d = {};
+    try { d = JSON.parse(e.data) || {}; } catch {}
+
+    if (d.reason) {
+      // "no build log" and "log unreadable" arrive with no start event, so the
+      // banner is still whatever the last preview left. Say what happened here
+      // rather than in the terminal, and leave the pane empty — an empty
+      // black box under an explanation is clearer than the words alone in it.
+      banner("none", d.reason);
+    } else if (!d.live) {
+      appendLog("\n— end of log —");
+    } else {
+      // A build that finished while being watched. The banner said "live" a
+      // moment ago and would keep saying it.
+      banner("past", "this build finished");
+      appendLog("\n— end of log —");
+    }
+
+    src.close();
+    if (ui.logSource === src) ui.logSource = null;
+  });
+  // EventSource retries on its own; closing here stops it reconnecting to a
+  // log that has already ended.
+  src.onerror = () => { src.close(); if (ui.logSource === src) ui.logSource = null; };
+}
+
+// Only three cases, all structural rather than interpreting the tool's own
+// output: the command being run, something that looks like an error, and a
+// redaction — highlighted deliberately, so redaction is visibly happening
+// rather than silently assumed.
+function logLine(text) {
+  const safe = esc(text);
+  if (/^\$ /.test(text)) return `<span class="cmd">${safe}</span>`;
+  if (/(^|\s)(ERR!|ERROR|error:|failed|FAIL)/.test(text)) return `<span class="err">${safe}</span>`;
+  return safe.replace(/\*{5}/g, '<span class="mask">*****</span>');
+}
+
+// 40px of slack: a scroll position is fractional and a bottom test that demands
+// equality is false as often as it is true.
+function atBottom() {
+  const t = term();
+  return !t || t.scrollHeight - t.scrollTop - t.clientHeight < 40;
+}
+
+function setFollow(on) {
+  ui.follow = on;
+  const b = document.querySelector('.item.open [data-role="follow"]');
+  if (b) {
+    b.setAttribute("aria-pressed", String(on));
+    b.textContent = on ? "Following" : "Paused";
+  }
+  const t = term();
+  if (on && t) t.scrollTop = t.scrollHeight;
+}
+
+function setTall(on) {
+  ui.tall = on;
+  const b = document.querySelector('.item.open [data-role="tall"]');
+  const t = term();
+  if (b) {
+    b.setAttribute("aria-pressed", String(on));
+    b.textContent = on ? "Shrink" : "Expand";
+  }
+  if (t) {
+    t.classList.toggle("tall", on);
+    if (ui.follow) t.scrollTop = t.scrollHeight;
+  }
+}
+
+function appendLog(text) {
+  const html = logLine(text) + "\n";
+  ui.buffer += html;
+
+  const t = term();
+  if (!t) return;
+  t.insertAdjacentHTML("beforeend", html);
+
+  if (!ui.follow) return;
+  // Guard the scroll handler against our own write, which would otherwise read
+  // as the reader scrolling and flip Following off mid-stream.
+  ui.autoScrolling = true;
+  t.scrollTop = t.scrollHeight;
+  requestAnimationFrame(() => { ui.autoScrolling = false; });
+}
+
+/* ── Activity rail ────────────────────────────────────────────────────── */
+
+// Only the kinds actually present get a button, and each carries its count.
+// A row of five filters where four are always empty is four things to read and
+// discount every time you look at the rail.
+function renderFeedFilters(events) {
+  const counts = new Map();
+  for (const e of events) counts.set(e.kind, (counts.get(e.kind) || 0) + 1);
+
+  const kinds = ORDER.filter(k => counts.has(k))
+    .concat([...counts.keys()].filter(k => !ORDER.includes(k)).sort());
+
+  const el = document.getElementById("feed-filters");
+  const sig = kinds.map(k => `${k}:${counts.get(k)}`).join("|") + `|${ui.kind}`;
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+
+  if (kinds.length === 0) { el.innerHTML = ""; return; }
+
+  el.innerHTML =
+    `<button data-k="" aria-pressed="${ui.kind === null}">All <span class="c">${events.length}</span></button>` +
+    kinds.map(k => {
+      const s = state(k);
+      return `<button data-k="${esc(k)}" aria-pressed="${ui.kind === k}">` +
+             `<span class="dot" style="--edge:${s.color}"></span>${esc(s.label)} ` +
+             `<span class="c">${counts.get(k)}</span></button>`;
+    }).join("");
+
+  for (const b of el.querySelectorAll("button")) {
+    b.onclick = () => {
+      const k = b.dataset.k || null;
+      ui.kind = (ui.kind === k) ? null : k;
+      renderEvents();
+    };
+  }
+}
+
+function renderEvents() {
+  const el = document.getElementById("events");
+
+  // The top counters deliberately do not apply here. The feed is a history, and
+  // narrowing it to "ready" would hide the queued and building rows that led
+  // there — so it gets its own kind filter. The project filter and the search
+  // box do apply, and expanding a project narrows the feed to it, which is what
+  // makes the rail worth its width instead of scrolling past unrelated noise.
+  const only = ui.open || ui.project;
+  const scoped = (ui.events || []).filter(e => {
+    if (only && project(e) !== only) return false;
+    if (!ui.query) return true;
+    return `${project(e)} ${e.branch} #${e.number}`.toLowerCase().includes(ui.query);
+  });
+
+  document.getElementById("feed-scope").textContent = only ? only : "all projects";
+  renderFeedFilters(scoped);
+
+  const shown = ui.kind ? scoped.filter(e => e.kind === ui.kind) : scoped;
+
+  if (shown.length === 0) {
+    el.innerHTML = `<div class="empty">Nothing yet.</div>`;
+    return;
+  }
+
+  // An entry is a button when the preview it names still exists, and inert
+  // text when it does not. An event log outlives the previews in it — a
+  // torn-down preview leaves its history behind — and a link that looks live
+  // and goes nowhere is worse than one that never offered.
+  const reachable = id => id && ui.previews.some(p => p.preview_id === id);
+
+  el.innerHTML = shown.map(e => {
+    const s = state(e.kind);
+    const go = reachable(e.preview_id);
+    const inner = `
+      <div class="t">${clock(e.at)}</div>
+      <div>
+        <div class="l1">
+          <span class="dot"></span>
+          <span class="k">${esc(s.label)}</span>
+          <span class="l2">${esc(project(e))}#${e.number}</span>
+        </div>
+        <div class="l2"><code>${esc(e.branch)}</code> — ${esc(e.message)}</div>
+      </div>`;
+
+    return go
+      ? `<button class="ev linked" style="--edge:${s.color}" data-id="${esc(e.preview_id)}"
+                 title="Open this build">${inner}</button>`
+      : `<div class="ev" style="--edge:${s.color}">${inner}</div>`;
+  }).join("");
+
+  for (const b of el.querySelectorAll(".ev.linked")) {
+    b.onclick = () => reveal(b.dataset.id);
+  }
+}
+
+// reveal opens the build an activity entry names.
+//
+// Clearing the filters first is the point of the whole thing: the entry you
+// clicked may well be hidden by the state filter or the search box you set
+// three minutes ago, and expanding a row that is not on screen looks like
+// nothing happened at all.
+function reveal(previewID) {
+  const p = ui.previews.find(x => x.preview_id === previewID);
+  if (!p) return;
+
+  const name = project(p);
+
+  ui.state = null;
+  ui.query = "";
+  document.getElementById("search").value = "";
+  // The project filter is left alone when it already admits this project, so
+  // clicking within a project you deliberately narrowed to does not widen it.
+  if (ui.project && ui.project !== name) ui.project = "";
+
+  if (ui.open !== name) {
+    closeLog();
+    ui.open = name;
+    ui.follow = true;
+  }
+  // Pin the preview the entry named, not whichever is newest.
+  ui.pick[name] = previewID;
+
+  render();
+
+  const item = document.querySelector(`.item[data-project="${CSS.escape(name)}"]`);
+  if (item) {
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    item.scrollIntoView({block: "nearest", behavior: still ? "auto" : "smooth"});
+  }
+}
+
+/* ── Setup panel ──────────────────────────────────────────────────────────
+   The credential surface. It exists because the alternative was three terminal
+   commands in the right order, and getting them wrong leaves a daemon that
+   starts and cannot open its own vault.
+
+   It never displays a value. The server has no endpoint that returns one. */
+
+const setupEl = () => document.getElementById("setup");
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? {"Content-Type": "application/json"} : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch {}
+  if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+  return data;
+}
+
+async function loadSetup() {
+  try {
+    renderSetup(await api("GET", "/api/secrets"));
+  } catch (e) {
+    document.getElementById("setup-body").innerHTML =
+      `<div class="notice bad">${esc(e.message)}</div>`;
+  }
+}
+
+function renderSetup(s) {
+  document.getElementById("setup-head").title = s.vault_path || "";
+  const el = document.getElementById("setup-body");
+
+  if (!s.available) {
+    // Refused, and it says why rather than hiding. An operator who cannot find
+    // the feature assumes it is broken.
+    el.innerHTML = `<div class="notice bad">
+      <strong>Not available on this daemon.</strong> ${esc(s.reason)}
+      <p>Credentials on a reachable listener need authentication this does not have yet.
+      Use <code>docpreview vault set &lt;key&gt;</code> on the host instead.</p></div>`;
+    return;
+  }
+
+  if (s.locked) { renderUnlock(el, s); return; }
+
+  // Read-only for anyone who is not on this machine. The rows still render, with
+  // the fields and buttons gone: seeing that two credentials are set is useful
+  // from a colleague's browser, and hiding the panel entirely would read as a
+  // missing feature rather than a deliberate boundary. The server refuses these
+  // calls regardless — this only stops the page offering something it knows will
+  // be refused.
+  const ro = !s.can_write;
+
+  const rows = s.entries.map(e => {
+    const flag = e.set
+      ? `<span class="flag on">set</span>`
+      : e.required ? `<span class="flag off">missing</span>`
+                   : `<span class="flag opt">not needed</span>`;
+    // A private key is multi-line; everything else is one line and masked.
+    const multi = e.key.includes("private_key");
+    const field = ro ? "" : multi
+      ? `<textarea data-k="${esc(e.key)}" rows="3"
+           placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;…"></textarea>`
+      : `<input type="password" data-k="${esc(e.key)}" placeholder="paste to replace">`;
+
+    const acts = ro ? "" : `
+        <button class="btn" data-save="${esc(e.key)}">Save</button>
+        ${multi ? "" : `<button class="btn" data-gen="${esc(e.key)}"
+             title="Mint a random value and show it once">Generate</button>`}
+        ${e.set ? `<button class="btn" data-del="${esc(e.key)}">Delete</button>` : ""}`;
+
+    return `<div class="sec">
+      <div>
+        <div class="name">${esc(e.label)} ${flag}</div>
+        <div class="key">${esc(e.key)}</div>
+        ${e.hint ? `<div class="hint">${esc(e.hint)}</div>` : ""}
+      </div>
+      <div>${field}</div>
+      <div class="act">${acts}</div>
+    </div>`;
+  }).join("");
+
+  // A minted value, shown exactly once. It is rendered above everything else
+  // and consumed on render, so the next redraw loses it — which is the point:
+  // there is no way to ask for it again, and a box that persisted would imply
+  // otherwise.
+  let once = "";
+  if (ui.shownOnce) {
+    const {key, value} = ui.shownOnce;
+    ui.shownOnce = null;
+    once = `<div class="notice warn" id="once">
+      <strong>Copy this now — it will not be shown again.</strong>
+      Stored as <code>${esc(key)}</code>. Paste it into the matching field on GitHub.
+      <p><input type="text" id="once-val" readonly value="${esc(value)}"
+           style="width:100%;font:12.5px/1.5 ui-monospace,Consolas,monospace;
+                  background:var(--raised);color:var(--ink);
+                  border:1px solid var(--ring);border-radius:6px;padding:0.4rem 0.5rem">
+      <button class="btn" id="once-copy" style="margin-top:0.4rem">Copy</button></p></div>`;
+  }
+
+  const banner = ro
+    ? `<div class="notice warn"><strong>Read-only from here.</strong> ${esc(s.read_only_why || "")}
+       <p>Open the dashboard on the machine running docpreview, or use
+       <code>docpreview vault set &lt;key&gt;</code> there.</p></div>`
+    : `<div class="notice ok">Values are written to the age-encrypted vault. Nothing here reads one
+       back — the only time a secret is visible is the moment you generate it. Changing a build
+       secret re-arms the log redactor immediately.</div>`;
+
+  el.innerHTML = `
+    ${once}
+    ${banner}
+    ${rows}
+    ${ro ? "" : `<div class="sec">
+      <div><div class="name">Add another</div>
+        <div class="hint">any key you reference from <code>build.secrets</code></div></div>
+      <div>
+        <input type="text" id="new-key" placeholder="e.g. demo.algolia_key"
+               style="width:100%;margin-bottom:0.35rem">
+        <input type="password" id="new-val" placeholder="value">
+      </div>
+      <div class="act"><button class="btn" id="new-save">Save</button></div>
+    </div>`}`;
+
+  const copy = document.getElementById("once-copy");
+  if (copy) {
+    const field = document.getElementById("once-val");
+    field.focus();
+    field.select();
+    copy.onclick = async () => {
+      field.select();
+      // navigator.clipboard needs a secure context, and http://127.0.0.1 counts
+      // as one — but not every browser agrees, so the selection above is the
+      // fallback that always works.
+      try { await navigator.clipboard.writeText(field.value); copy.textContent = "Copied"; }
+      catch { copy.textContent = "Press Ctrl+C"; }
+    };
+  }
+
+  for (const b of el.querySelectorAll("[data-save]")) {
+    b.onclick = () => save(b.dataset.save, el.querySelector(`[data-k="${CSS.escape(b.dataset.save)}"]`), b);
+  }
+  for (const b of el.querySelectorAll("[data-gen]")) {
+    b.onclick = async () => {
+      const key = b.dataset.gen;
+      const entry = s.entries.find(x => x.key === key);
+      if (entry && entry.set &&
+          !confirm(`${key} is already set. Replace it with a new random value?`)) return;
+      await run(b, async () => {
+        const out = await api("POST", `/api/secrets/${encodeURIComponent(key)}/generate`);
+        // Stash it so the re-render can show it. This is the only moment the
+        // value exists outside the vault; there is no endpoint to ask again.
+        ui.shownOnce = {key, value: out.shown_once};
+        return out;
+      });
+    };
+  }
+
+  for (const b of el.querySelectorAll("[data-del]")) {
+    b.onclick = async () => {
+      if (!confirm(`Delete ${b.dataset.del} from the vault?`)) return;
+      await run(b, () => api("DELETE", `/api/secrets/${encodeURIComponent(b.dataset.del)}`));
+    };
+  }
+  // Absent when read-only. The querySelectorAll loops above degrade to no-ops on
+  // their own; this one is a direct lookup and would throw.
+  const newSave = document.getElementById("new-save");
+  if (newSave) {
+    newSave.onclick = async e => {
+      const k = document.getElementById("new-key").value.trim();
+      const v = document.getElementById("new-val").value;
+      if (!k || !v) return;
+      await run(e.target, () => api("PUT", `/api/secrets/${encodeURIComponent(k)}`, {value: v}));
+    };
+  }
+}
+
+function renderUnlock(el, s) {
+  // Unlocking is a mutating call, and a passphrase box offered to a remote
+  // browser is a prompt to type the one secret that opens everything into a form
+  // whose POST the server will refuse. Say the state and stop.
+  if (!s.can_write) {
+    el.innerHTML = `<div class="notice warn">
+      <strong>${s.has_vault ? "The vault is locked." : "No vault yet."}</strong>
+      Nothing can arrive until it is unlocked, and that has to happen on the machine
+      running docpreview. ${esc(s.read_only_why || "")}</div>`;
+    return;
+  }
+
+  // Two doors. An existing vault needs its key; a new one is created by
+  // choosing a key, and the wording has to make clear which is happening —
+  // typing a new passphrase at an existing vault just fails to open it.
+  el.innerHTML = `
+    <div class="notice warn">
+      <strong>${s.has_vault ? "The vault is locked." : "No vault yet."}</strong>
+      ${s.has_vault
+        ? `Enter the master key or passphrase it was created with.`
+        : `Choose a passphrase. It encrypts the vault, it is never stored, and
+           <strong>losing it means losing the contents</strong> — there is no recovery.
+           Put it in a password manager now.`}
+      <p>Set <code>vault.key_source</code> in the config to skip this on every restart.</p>
+    </div>
+    <div class="sec">
+      <div><div class="name">${s.has_vault ? "Master key" : "New passphrase"}</div>
+        <div class="hint">an age secret key, or any passphrase</div></div>
+      <div>
+        <input type="password" id="unlock-key" placeholder="AGE-SECRET-KEY-1… or a passphrase">
+        ${s.has_vault ? "" : `<div class="hint" id="strength">&nbsp;</div>`}
+      </div>
+      <div class="act"><button class="btn" id="unlock-go">${s.has_vault ? "Unlock" : "Create"}</button></div>
+    </div>`;
+
+  const go = document.getElementById("unlock-go");
+  const field = document.getElementById("unlock-key");
+  go.onclick = () => run(go, () => api("POST", "/api/secrets/unlock", {key: field.value}));
+  field.onkeydown = e => { if (e.key === "Enter") go.click(); };
+
+  // Advice, not a gate. A rule that refuses a passphrase teaches people to
+  // append "1!" and call it done; saying what would be stronger, and then
+  // accepting whatever they choose, is the honest version. It is also their
+  // vault on their loopback interface — refusing them entry to it would be
+  // absurd.
+  const meter = document.getElementById("strength");
+  if (meter) {
+    field.oninput = () => {
+      const v = field.value;
+      if (!v) { meter.innerHTML = "&nbsp;"; return; }
+      const s = rate(v);
+      meter.innerHTML = `<span style="color:${s.color};font-weight:600">${esc(s.word)}</span> — ${esc(s.advice)}`;
+    };
+  }
+  field.focus();
+}
+
+// rate is a rough passphrase estimate. Length dominates, because it does:
+// four unrelated words beat eight characters of punctuation, and a meter that
+// rewards symbols over length teaches the wrong lesson.
+function rate(v) {
+  if (v.toUpperCase().startsWith("AGE-SECRET-KEY-1")) {
+    return {word: "age key", color: "var(--good)", advice: "a generated key — nothing to improve"};
+  }
+
+  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter(re => re.test(v)).length;
+  const words = v.trim().split(/\s+/).filter(w => w.length > 2).length;
+
+  // Rough bits: log2(alphabet) per character, with a bonus for multi-word.
+  const alphabet = [26, 26, 52, 62, 95][Math.min(classes, 4)];
+  const bits = Math.round(v.length * Math.log2(alphabet)) + (words >= 3 ? 12 : 0);
+
+  if (bits < 45) {
+    return {word: "weak", color: "var(--critical)",
+            advice: "aim for four or more unrelated words, or 16+ characters"};
+  }
+  if (bits < 70) {
+    return {word: "fair", color: "var(--warning)",
+            advice: "longer is worth more than adding symbols"};
+  }
+  return {word: "strong", color: "var(--good)",
+          advice: "save it now — there is no recovery"};
+}
+
+function save(key, field, btn) {
+  const value = field.value;
+  if (!value.trim()) return;
+  return run(btn, async () => {
+    const s = await api("PUT", `/api/secrets/${encodeURIComponent(key)}`, {value});
+    field.value = "";     // never leave a credential sitting in the DOM
+    return s;
+  });
+}
+
+// run performs an action, renders whatever state comes back, and reports a
+// failure next to the button rather than in a console nobody has open.
+async function run(btn, fn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    renderSetup(await fn());
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = label;
+    const n = document.createElement("div");
+    n.className = "notice bad";
+    n.textContent = e.message;
+    document.getElementById("setup-body").prepend(n);
+  }
+}
+
+// The Secrets control is an ordinary link now, so there is no click handler.
+// Which of the two pages this document is depends on the path it was served at.
+const isSetupPage = location.pathname.replace(/\/+$/, "") === "/secrets";
+
+/* ── Wiring ───────────────────────────────────────────────────────────── */
+
+function render() {
+  renderCounters();
+  renderProjects();
+  renderList();
+  renderEvents();
+}
+
+function applyStatus(d) {
+  ui.previews = d.previews || [];
+  ui.events = d.events || [];
+  ui.status = d;
+
+  document.getElementById("exposer").textContent = `exposer: ${d.exposer}`;
+
+  // A project whose last preview was torn down must not keep a stream open
+  // behind a panel nobody can see. ui.open is a project name, so the test is
+  // "does this project still have any preview at all" — a filter that merely
+  // hides it is not grounds for closing the log somebody is reading.
+  if (ui.open && !ui.previews.some(p => project(p) === ui.open)) {
+    closeLog();
+    ui.open = null;
+  }
+
+  render();
+}
+
+document.getElementById("project").onchange = e => { ui.project = e.target.value; render(); };
+
+let searchTimer = null;
+document.getElementById("search").oninput = e => {
+  const v = e.target.value.trim().toLowerCase();
+  clearTimeout(searchTimer);
+  // Debounced: every keystroke otherwise rebuilds the list, and rebuilding the
+  // list replaces the open log pane.
+  searchTimer = setTimeout(() => { ui.query = v; render(); }, 120);
+};
+
+function connect() {
+  const conn = document.getElementById("conn");
+  const src = new EventSource("/events");
+
+  src.onopen = () => { conn.textContent = "live"; conn.className = "live"; };
+  src.addEventListener("status", e => {
+    try { applyStatus(JSON.parse(e.data)); } catch (err) { /* keep the last good render */ }
+  });
+  // A dashboard that silently freezes is worse than one that admits it: the
+  // numbers on screen would otherwise look current indefinitely. EventSource
+  // reconnects by itself, so this only has to report.
+  src.onerror = () => { conn.textContent = "reconnecting…"; conn.className = "stale"; };
+}
+
+if (isSetupPage) {
+  // Only the setup panel. No status stream and no polling: this page has nothing
+  // live on it, and an open EventSource per idle browser tab is a connection the
+  // daemon holds for nothing.
+  document.querySelector(".wrap").hidden = true;
+  document.getElementById("counters").hidden = true;
+  document.getElementById("project").hidden = true;
+  document.getElementById("search").hidden = true;
+  document.getElementById("btn-setup").hidden = true;
+  document.getElementById("conn").textContent = "setup";
+  setupEl().hidden = false;
+  loadSetup();
+} else {
+  connect();
+  render();
+  // Relative timestamps drift without a redraw, and the status stream is silent
+  // when nothing changes — which is exactly when "2s ago" has become a lie.
+  setInterval(() => { if (ui.previews.length) renderList(); }, 5000);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+# Go build output
+/bin/
+/build.claude/
+
+# Docusaurus
+/www/node_modules/
+/www/build/
+/www/.docusaurus/
+/www/.cache-loader/
+
+# Demo harness: the scripts are tracked, everything they generate is not.
+/demo/data/
+/demo/secret-data/
+/demo/repos/
+/demo/secret-repos/
+/demo/work-*/
+/demo/template/
+/demo/docpreview.exe
+/demo/*.log
+/demo/*.out
+/demo/*.err
+/demo/secret-config.yml
+/demo/ziti-trial/home/
+/demo/ziti-trial/data/
+
+# Enrolled OpenZiti identities. These are JSON, so the *.pem and *.key rules
+# below do not catch them — the private key sits inside a string field. An
+# enrollment JWT is single-use but is a bearer credential until it is spent.
+*.jwt
+/demo/ziti-trial/*.json
+
+# Local state — the vault lives here. Never commit it, even encrypted.
+/.docpreview/
+*.age
+
+# Credentials that should never have been in the tree in the first place
+*.pem
+*.key
+
+# Tooling scratch. The leading **/ is load-bearing: a pattern with a slash in
+# it is anchored to the directory holding the .gitignore, so `.claude/x` would
+# only match at the root and www/.claude/agent-log.txt would slip through.
+**/.claude/settings.local.json
+**/.claude/agent-log.txt
+/.mercurius/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+*.stackdump
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,198 @@
+#                                     _
+#  _ __ ___   ___ _ __ ___ _   _ _ __(_)_   _ ___
+# | '_ ` _ \ / _ \ '__/ __| | | | '__| | | | / __|
+# | | | | | |  __/ | | (__| |_| | |  | | |_| \__ \
+# |_| |_| |_|\___|_|  \___|\__,_|_|  |_|\__,_|___/
+#
+#         mediates the design-build duel.
+#  https://github.com/michaelquigley/mercurius
+#
+
+max_findings: 8
+
+review_context: |
+  docpreview: a single Go binary that builds documentation previews for pull
+  requests and posts the URL back. An imitation of Vercel's preview
+  deployments, self-hosted, using zrok v2 or NetFoundry Frontdoor for public
+  ingress instead of a CDN.
+
+  Pre-1.0, no users yet, no released version. Breaking changes are free.
+  Single supervised implementer.
+
+  Deployment model: an operator runs one process on a laptop or a small VM.
+  One sqlite file, one encrypted vault file, one directory of build artifacts.
+  Docker is optional and only sandboxes builds. There is no cluster, no
+  control plane, and no second instance.
+
+  Prefer simple over defensive when both achieve correctness. The project's
+  stated appeal is that it is small enough to read.
+
+  Stakes are asymmetric and worth naming:
+
+  - The webhook endpoint is deliberately internet-reachable, so anything on
+    the path from an unauthenticated HTTP request to code execution matters a
+    great deal.
+  - The process holds a GitHub App private key that can mint write tokens for
+    every repository the App is installed on. Any path by which a credential
+    reaches a log line, an error message, a build environment, or a pull
+    request comment is serious.
+  - Builds execute package.json scripts written by whoever opened the pull
+    request. Fork pull requests are refused outright; the local build driver
+    is documented as trusted-contributors-only and the docker driver exists
+    for the rest. Within that stated model, further sandboxing of the local
+    driver is not the concern - escaping the stated model is.
+  - Everything else is a documentation preview. A wrong preview is an
+    annoyance, not an incident.
+
+settled_decisions:
+  - id: observability-out-of-scope
+    do_not_flag: >
+      missing production-grade observability, metrics, tracing, or
+      multi-tenant concerns
+  - id: single-instance
+    do_not_flag: >
+      the absence of distributed coordination, leader election, or
+      multi-instance safety; exactly one process owns the data directory by
+      design
+  - id: local-driver-executes-repo-code
+    do_not_flag: >
+      that the local build driver runs package.json scripts with the daemon's
+      privileges; this is the documented model, fork PRs are refused, and the
+      docker driver is the answer for untrusted contributors
+  - id: frontdoor-wire-format-unverified
+    do_not_flag: >
+      that the Frontdoor exposer's endpoint paths and JSON field names are
+      unverified against a live tenant; this is known, marked in the code and
+      the docs, and confined to two structs
+
+review_focus: |
+  Round 4. Rounds 1 to 3 found seven concerns and one advisory, all confirmed
+  and all fixed. Two whole subsystems are new since round 3.
+
+  BUILD LOG CAPTURE, and this is where the sharpest requirement lives. Builds
+  can be handed operator secrets through build.secrets, and their output is
+  written to disk, streamed to a browser, and quoted into pull request
+  comments. The claimed guarantee is that a configured secret never appears in
+  any of those, replaced by exactly five asterisks regardless of length.
+
+  internal/buildlog/buildlog.go buffers by line and scrubs each complete line
+  before it reaches the file or a subscriber, because a secret split across two
+  Write calls defeats a per-chunk scrubber and os/exec splits arbitrarily.
+  Trace every path build output can take and find one that skips the scrubber.
+  The maxLineLength flush is already known to be imperfect; look for others —
+  the partial line on Close, the error appended after a failed build, the
+  backlog replay in Subscribe, Tail, and the download handler.
+
+  Also on that writer: stdout and stderr are both piped into it and os/exec
+  gives each its own goroutine, so its mutex discipline is load-bearing. The
+  subscriber map is mutated while being iterated in emit. Subscribe replays
+  from disk before registering, which is a deliberate at-most-once-duplicate
+  choice rather than a gap — check that reasoning holds.
+
+  SERVER-SENT EVENTS, replacing a one-second poll. internal/daemon/stream.go.
+  Look for connection or goroutine leaks when a browser disappears mid-stream,
+  whether the cancel from Subscribe always runs, whether a build finishing
+  while tailed actually ends the stream rather than hanging, and whether a
+  wedged subscriber can hold up a build (it must not — the log is on disk
+  regardless).
+
+  Log lifecycle: prune, Sweep and Remove racing an in-flight build, and
+  path handling in previewDir, Open and downloadLog, all of which take
+  caller-supplied ids from URLs on Windows.
+
+  The dashboard interpolates build output — attacker-controlled, since anyone
+  who can open a pull request writes it — into HTML.
+
+  Round 3's fixes, stated so you audit rather than rediscover: the ziti live
+  map holds *zitiPreview carrying a preview ID; Publish refuses a label owned
+  by a different preview; the close deletes only its own entry.
+
+  The ziti exposer breaks the shape every other exposer follows, and that is
+  the thing to scrutinise. Instead of a listener per preview it binds ONE
+  wildcard service, holds ONE http.Server, and routes requests to previews by
+  the first label of the HTTP Host header. Publish mutates a map; nothing
+  remote is created per preview. Consequences worth checking: Reap has nothing
+  to reap and is a near-no-op whose justification may not hold; the live map is
+  keyed by hostname label while the rest of the daemon keys by preview ID, so
+  the two namespaces can disagree; Validate has side effects (it binds and
+  starts serving) where other exposers only check; Close and Validate are not
+  obviously safe to interleave; the 404 page interpolates a Host header, which
+  is attacker-controlled by anyone on the overlay.
+
+  Also new: go.mod moved sdk-golang 1.2.8 to 1.9.0 and pulled roughly forty
+  transitive upgrades including edge-api and the go-openapi family. Everything
+  builds and passes, but flag anything in the reviewed files that now depends
+  on behaviour that may have changed under it.
+
+  Round 2's fixes, stated so you can audit rather than rediscover: SavePreview
+  failure now calls unpublish, which closes the publication, clears the live
+  map and deletes the row; init renders to a temp file, validates it through
+  the real loader, and only then renames into place; yamlString escapes via
+  encoding/json.
+
+  Earlier fixes still worth auditing for what they broke: runPipeline's commit
+  phase holds a per-preview mutex and re-checks ctx.Err() and build-generation
+  ownership; d.running holds a *build pointer; teardown takes the commit lock
+  and drops the map entry.
+
+  The round 1 fixes, stated so you can check them rather than rediscover them:
+  runPipeline now has an explicit commit phase holding a per-preview mutex and
+  re-checking both ctx.Err() and build-generation ownership before it writes
+  anything; d.running holds a *build pointer so identity is comparable;
+  handleBuild deletes the entry as it cancels; teardown takes the commit lock
+  and drops the map entry; SavePreview uses a detached context. Look for
+  deadlock between commitLock and d.mu, for lock-ordering inversions, for
+  paths that still write past a supersede, and for the commit map leaking on
+  any route other than teardown.
+
+  New and unreviewed: docpreview init writes a config from prompts; docpreview
+  preview publishes one directory with no source-control integration; the
+  vault is now opened lazily and GitHub is optional throughout, so a
+  configuration with app_id 0 must be coherent everywhere rather than merely
+  not crashing; shell detection walks the Windows process tree to decide how
+  to print an environment assignment that the user will pipe into their shell.
+
+  Concentrate on invariants that span files, where a single-file reading would
+  miss the defect.
+
+  Credential containment. Trace every path a secret can take from the vault to
+  an output: log lines, wrapped errors, build environments, comment bodies,
+  and the clone URL that git echoes into its own error text. The Secret type
+  and the git output scrubber are the two defenses; look for routes around
+  them.
+
+  Webhook trust boundary. The signature must be verified before the body is
+  parsed, in constant time. Trace what an unauthenticated request can reach.
+
+  Identity and idempotency. A preview keeps one stable ID and one stable
+  public name across rebuilds, force-pushes, and restarts; that is what lets
+  one PR comment be edited rather than duplicated. Look for anything that
+  makes an ID or name move, collide between repositories, or fail to be found
+  again after a restart.
+
+  Concurrency and lifecycle. A newer push must supersede an in-flight build
+  without the abandoned build writing anything - not a report, not artifacts,
+  not a published share, not a database row. Look at the interaction between
+  the commit phase, the running/live/commit maps, the sqlite queue's claim
+  path, the reaper, and the exposer's Reap - especially a preview being torn
+  down while it is being rebuilt, and a build superseded twice.
+
+  Shell-assignment output. vault keygen -shell prints a line the user pipes
+  into their shell for evaluation. Anything that reaches that line is executed
+  by their shell, so check the quoting and escaping per shell dialect against
+  values that contain quotes, spaces, or metacharacters.
+
+  Resource ownership across restart. On startup every remote share the exposer
+  owns is an orphan and is reaped, then recorded previews are republished from
+  artifacts on disk. Look for ways this leaks shares, deletes shares it does
+  not own, or resurrects something it should not.
+
+  The baseUrl invariant. The value passed into the build and the mount point
+  used to serve the output must come from the same stored value and cannot be
+  allowed to diverge; a mismatch produces a preview that loads but is
+  unstyled, with nothing in the logs to explain it.
+
+reviewer:
+  name: codex
+  impl: codex
+  model: gpt-5.5

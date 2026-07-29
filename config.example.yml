@@ -1,0 +1,103 @@
+# docpreview server configuration.
+#
+# Copy to ~/.docpreview/config.yml and edit. Every field has a default, so a
+# missing file is not an error — this file exists to show you what is available,
+# not because you need all of it.
+#
+# Full reference: www/docs/reference/configuration.md
+
+# Where the webhook ingress binds.
+#
+# Loopback plus a zrok share is the recommended arrangement: nothing is exposed
+# to the network directly, and the only route in is the overlay you control.
+listen: 127.0.0.1:8471
+
+# Or bind several at once, TCP and OpenZiti together. A ziti listener gives the
+# dashboard and the webhook endpoint no address on the underlay at all, which
+# matters because between them they enumerate every open documentation pull
+# request. `docpreview configure ziti` sets this up.
+#
+# Set `listen` or `listeners`, never both — a config with both is refused,
+# because guessing which one wins means an address someone believes is live.
+#
+# listeners:
+#   - tcp: "127.0.0.1:8471"
+#   - ziti:
+#       identity_file: ~/.docpreview/ziti/docpreview-host.json
+#       service: docpreview-admin
+
+# Vault, sqlite database, workspaces, and build artifacts. Created 0700.
+data_dir: ~/.docpreview
+
+# Concurrent builds. Each one is an npm install, so this is bounded by disk and
+# RAM long before CPU.
+workers: 2
+
+exposer:
+  # zrok2 | frontdoor | ziti | local
+  kind: zrok2
+
+  zrok2:
+    # Blank uses the enabled environment's default namespace.
+    namespace: ""
+
+    # The public hostname label. {{.Name}} is the branch, sanitized into a DNS
+    # label. If you point docpreview at more than one repository, use
+    # "{{.Repo.Name}}-{{.Name}}" — zrok names are unique per namespace, and two
+    # repos with a `main` branch will otherwise fight over it.
+    name_template: "{{.Repo.Name}}-{{.Name}}"
+
+    # true: anyone with the link. false: only the accounts in access_grants.
+    open: true
+    access_grants: []
+
+    # Gate previews behind an identity provider. "google" or "github".
+    oauth_provider: ""
+    oauth_email_domains: []
+
+  # Previews reachable only from a machine running an OpenZiti tunneler with an
+  # enrolled identity. No public surface at all: the hostname does not resolve
+  # and the service cannot be dialed without a right granted on the controller.
+  # `docpreview configure ziti` creates all of it and fills these in.
+  ziti:
+    identity_file: ~/.docpreview/ziti/docpreview-host.json
+    service: docpreview-svc
+    # Must match the addresses in the service's intercept.v1 config.
+    domain: docpreview.ziti
+    name_template: "{{.Repo.Name}}-{{.Name}}"
+
+  frontdoor:
+    api_base: https://gateway.production.netfoundry.io/frontdoor
+    frontend: public
+
+    # Frontdoor's agent dials OUT to the preview, so unlike zrok this binds a
+    # real TCP port. This must be an address the agent can reach. Leave it at
+    # loopback when the agent runs on this host.
+    agent_reachable_host: 127.0.0.1
+
+    name_template: "{{.Repo.Name}}-{{.Name}}"
+
+github:
+  # From the App settings page. The private key and webhook secret are NOT
+  # here — they live in the encrypted vault:
+  #   docpreview vault set github.private_key -file key.pem
+  #   docpreview vault set github.webhook_secret
+  app_id: 0
+
+  # https://your-ghe-host/api/v3 for GitHub Enterprise.
+  api_base: https://api.github.com
+
+build:
+  # local: run npm on this host, fast, for repositories you already trust.
+  # docker: run it in a capped throwaway container, for the ones you do not.
+  driver: local
+
+  image: node:24-bookworm-slim
+  timeout: 15m
+
+preview:
+  # Idle lifetime. Refreshed on every rebuild, so an active pull request never
+  # expires out from under a reviewer.
+  ttl: 72h
+
+  teardown_on_close: true
