@@ -124,6 +124,14 @@ select.control { max-width: 15rem }
 input.control { width: 13rem }
 input.control::placeholder { color: var(--muted) }
 
+/* The admin links, present only on a local request — see showAdminLinks. Kept
+   visually quieter than the filters beside them: they leave this page, and
+   nothing on an operations screen should draw the eye toward a form for pasting
+   a private key. */
+.admin-nav { display: inline-flex; gap: 0.4rem }
+.admin-nav a.control { color: var(--muted); background: transparent }
+.admin-nav a.control:hover { color: var(--ink); background: var(--raised) }
+
 /* ── Setup panel ────────────────────────────────────────────────────────── */
 .setup { border-bottom: 1px solid var(--hairline); background: var(--surface) }
 .setup-inner { max-width: 96rem; margin: 0 auto; padding: 1rem 1.25rem 1.25rem }
@@ -498,10 +506,16 @@ footer {
     <span class="grow"></span>
     <select class="control" id="project" aria-label="Project"></select>
     <input class="control" id="search" type="search" placeholder="branch, PR, project…" aria-label="Filter">
-    <!-- No Secrets link. Credential management lives at /secrets, reached by
-         typing it or from the runbooks — not from a control on an operations
-         screen, where the thing it does is unrelated to everything around it and
-         a form for pasting a private key invites being pasted into. -->
+    <!-- The admin links appear only for a request the daemon accepts writes from,
+         and it answers that question itself: /api/admin is gated by the same
+         isLocalRequest the write endpoints use, and is absent from the
+         dashboard-only proxy's allowlist, so a tunnelled page's fetch 404s.
+
+         Hiding a link is not a security boundary and is not doing any work as
+         one — the gate is on the server, and typing /secrets from a tunnel still
+         gets nowhere. This is about not offering an operator a control that will
+         answer 403. -->
+    <span class="admin-nav" id="admin-nav" hidden></span>
 
   </div>
 </div>
@@ -1806,8 +1820,30 @@ function renderProjectsPage(s) {
      using its own <code>.docpreview.yml</code> — adding a project is how you take the build
      command out of the branch.</div>`;
 
-  el.innerHTML = `${banner}${rows}${ro ? "" : projectForm(s)}`;
+  el.innerHTML = `${banner}${rows}${ro ? "" : projectForm(s) + cachePanel()}`;
   if (!ro) wireProjectHandlers(s);
+}
+
+/* The cache, and the button that empties it.
+
+   Package downloads are kept outside the workspace because a workspace is created
+   per commit and pruned with its siblings — so without a cache every push
+   re-downloads the whole dependency tree, which for a Docusaurus site is about two
+   minutes before the build starts.
+
+   The button exists because that cache is the one new thing that can be wrong. A
+   corrupt entry makes every build of every project fail identically, with an error
+   naming a tarball rather than the cache, and the fix is otherwise a directory
+   somebody has to be told about. */
+function cachePanel() {
+  return `<div class="sec" style="display:block">
+    <div class="name">Build cache</div>
+    <div class="hint" style="margin-bottom:0.6rem">Package downloads, shared by every project and
+      kept between builds — without it each push re-downloads its whole dependency tree. Clearing
+      is safe: the next build of each project refetches what it needs. Do it when builds start
+      failing on a package that has not changed.</div>
+    <button class="btn" id="cache-clear">Clear the build cache</button>
+  </div>`;
 }
 
 function projectRow(p, s, ro) {
@@ -1942,6 +1978,41 @@ function wireProjectHandlers(s) {
       });
     };
   }
+
+  const clear = document.getElementById("cache-clear");
+  if (clear) {
+    // Not run(), which renders its result into the secrets panel and puts its
+    // errors in an element that is hidden on this page. A destructive button whose
+    // failure is invisible is worse than no button.
+    clear.onclick = async () => {
+      // Confirmed because the cost is not obvious from the button: the next build
+      // of every project pays for this one, not just the project being looked at.
+      if (!confirm("Clear the shared build cache? The next build of every project will " +
+                   "re-download its dependencies.")) return;
+
+      const label = clear.textContent;
+      clear.disabled = true;
+      clear.textContent = "…";
+      try {
+        const out = await api("DELETE", "/api/projects/cache");
+        const what = (out.cleared || []).join(", ");
+        projectsNotice("ok", what ? `Cleared: ${what}.` : "Nothing was cached.");
+      } catch (e) {
+        projectsNotice("bad", e.message);
+      }
+      clear.disabled = false;
+      clear.textContent = label;
+    };
+  }
+}
+
+// projectsNotice puts a message at the top of the projects page, where the reader
+// is not necessarily looking — hence prepend rather than beside the button.
+function projectsNotice(kind, text) {
+  const n = document.createElement("div");
+  n.className = `notice ${kind}`;
+  n.textContent = text;
+  document.getElementById("projects-body").prepend(n);
 }
 
 /* ── Wiring ───────────────────────────────────────────────────────────── */
@@ -2025,9 +2096,38 @@ if (isSetupPage) {
 } else {
   connect();
   render();
+  showAdminLinks();
   // Relative timestamps drift without a redraw, and the status stream is silent
   // when nothing changes — which is exactly when "2s ago" has become a lie.
   setInterval(() => { if (ui.previews.length) renderList(); }, 5000);
+}
+
+// showAdminLinks draws the Secrets and Projects links, and only for a request the
+// daemon would accept a write from.
+//
+// The server decides, not the page: /api/admin runs the same isLocalRequest check
+// the write endpoints run. A Host-header test here would be worthless — Host is
+// whatever the client typed, so a tunnelled visitor sending "localhost" would pass
+// it. Where the connection came from is the daemon's to know.
+//
+// Anything other than an outright yes leaves the links absent. Through the
+// dashboard-only proxy this endpoint is not in the allowlist and the fetch 404s,
+// which lands here as a failure and hides them.
+async function showAdminLinks() {
+  let state;
+  try {
+    state = await api("GET", "/api/admin");
+  } catch {
+    return;
+  }
+  const links = [];
+  if (state.projects) links.push(`<a class="control" href="/projects">Projects</a>`);
+  if (state.secrets) links.push(`<a class="control" href="/secrets">Secrets</a>`);
+  if (!links.length) return;
+
+  const nav = document.getElementById("admin-nav");
+  nav.innerHTML = links.join("");
+  nav.hidden = false;
 }
 </script>
 </body>

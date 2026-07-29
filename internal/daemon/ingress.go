@@ -126,6 +126,11 @@ func (i *Ingress) Handler() http.Handler {
 
 	mux.HandleFunc("GET /{$}", i.dashboard)
 
+	// What the page asks before drawing the Secrets and Projects links. Registered
+	// unconditionally so the page gets an answer rather than a 404 it has to
+	// interpret, and it reports false for a surface that is not wired. See admin.go.
+	mux.HandleFunc("GET /api/admin", i.admin)
+
 	// /v2 was the second dashboard while the two layouts sat side by side. It
 	// won and replaced the original, so the path redirects rather than 404s —
 	// it was linked from the old page's footer and is in browser histories.

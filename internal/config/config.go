@@ -403,6 +403,19 @@ type BuildDefaults struct {
 	// KeepLogs is how long a build log is kept on disk. Logs can contain
 	// almost anything a build printed, so they are not kept forever.
 	KeepLogs time.Duration `yaml:"keep_logs"`
+
+	// CacheDir holds the package manager caches, shared by every build under the
+	// docker driver.
+	//
+	// Not a per-build directory, which is the point: a workspace is created per
+	// commit and deleted with its siblings, so without somewhere outside it to
+	// keep downloads, every build fetches the whole dependency tree again — two
+	// minutes of network per push for a Docusaurus site.
+	//
+	// Blank means <data_dir>/cache, set during loading. Set it explicitly to put
+	// the cache on a different disk, which is worth doing: it is the largest and
+	// most rewritten directory docpreview owns.
+	CacheDir string `yaml:"cache_dir"`
 }
 
 // PreviewConfig governs preview lifetime.
@@ -536,6 +549,12 @@ func (s *Server) validate() error {
 	}
 	if s.DataDir == "" {
 		return fmt.Errorf("data_dir must be set")
+	}
+	// Defaulted here rather than exposed as another DataDir-derived accessor,
+	// because unlike those it is meant to be overridable: the caches are the
+	// largest thing docpreview writes and belong on whichever disk has room.
+	if s.Build.CacheDir == "" {
+		s.Build.CacheDir = filepath.Join(s.DataDir, "cache")
 	}
 
 	if err := s.validateKeySource(); err != nil {

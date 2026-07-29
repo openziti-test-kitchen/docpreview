@@ -358,6 +358,11 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	var log bytes.Buffer
 	out := tee(&log, sink)
 
+	caches, err := b.cacheMounts()
+	if err != nil {
+		return "", err
+	}
+
 	args := []string{
 		"create",
 		// --mount, not --volume: --volume's fields are colon-separated, so a
@@ -369,6 +374,10 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 		"--memory", "4g",
 		"--cpus", "2",
 	}
+	args = append(args, caches...)
+	// After the caches, so a repository that names one of these variables in its
+	// own config wins — which is the general rule for build env here, and the
+	// escape hatch if a manager needs a cache somewhere else.
 	for _, kv := range b.buildEnv(ws.PR, cfg, nil) {
 		args = append(args, "--env", kv)
 	}

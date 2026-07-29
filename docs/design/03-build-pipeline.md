@@ -105,6 +105,29 @@ at all. A wrong path that the daemon *accepts* mounts an empty directory, and th
 `package.json` — which sends whoever is debugging it into the repository instead of at the mount. Refusing up
 front costs an hour less.
 
+#### The caches are mounted from outside the workspace
+
+A workspace is per commit and pruned with its siblings, which is what stops a superseded build corrupting its
+replacement — and it also means nothing a build downloads survives. `cacheMounts` mounts `<cache_dir>/npm`,
+`/yarn` and `/pnpm` at `/cache/*` and points each manager at its own with `npm_config_cache`,
+`YARN_CACHE_FOLDER` and `npm_config_store_dir`. Measured on this project's own `www/`: two minutes cold, seconds
+warm.
+
+One cache for every repository. Entries are content-addressed and verified against the integrity hashes in the
+lockfile requesting them, so a build cannot plant a package another build installs — the check fails and the fetch
+goes to the registry. Per-repository caches would surrender the whole benefit on each repository's first build to
+buy nothing.
+
+`node_modules` is not cached. `npm ci` removes it before installing, which a bind mount cannot survive, and
+reusing an installed tree across repositories is the sharing that would be unsafe. The remaining cost is the link
+step, not the download.
+
+The host directories are created before the mount: docker creates a missing bind source as root, which on a Linux
+host leaves a cache the operator cannot clear. `DELETE /api/projects/cache` clears them, gated exactly as a
+project write is — clearing costs every project its next build's downloads. It removes only the three
+subdirectories this program creates, never `cache_dir` itself, because that path is one the operator chose and a
+typo in it must not turn "clear the caches" into "delete that directory".
+
 #### Symlinks in the output are refused
 
 A mount is the one place the docker driver's containment leaks in the wrong direction. The preview server hands

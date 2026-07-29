@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -39,6 +40,62 @@ func hostMountPath(dir string) (string, error) {
 	}
 	return "", fmt.Errorf("cannot express %s as a path the docker daemon can mount; "+
 		"the docker driver needs the workspace on a lettered drive", abs)
+}
+
+// cacheMounts are the package manager caches, and the environment that points
+// each manager at its own.
+//
+// Without these every build downloads the whole dependency tree again: a workspace
+// is created per commit and pruned with its siblings, so nothing inside it
+// survives a push. Measured on this project's own www/: two minutes for `npm ci`
+// cold, against a few seconds warm.
+//
+// # Shared across repositories, deliberately
+//
+// One cache, not one per repository. The entries are content-addressed and
+// verified against the integrity hashes in the lockfile that asked for them, so a
+// build cannot plant a package another build will install — the check fails and
+// the fetch goes to the registry. Per-repository caches would give up the entire
+// benefit on the first build of every repository to buy back nothing.
+//
+// What is deliberately *not* cached is node_modules. `npm ci` deletes it before
+// installing, which a bind mount cannot survive, and reusing an installed tree
+// across repositories is the sharing that would actually be unsafe.
+//
+// Directories are created on the host first. A bind mount of a path the daemon
+// cannot find creates it as root-owned, which on a Linux host leaves a cache
+// directory the operator cannot clear.
+func (b *Builder) cacheMounts() ([]string, error) {
+	root := b.defaults.CacheDir
+	if root == "" {
+		return nil, nil
+	}
+
+	// One directory per manager. They have no common format and pnpm in
+	// particular hard-links out of its store, which requires the store to be on
+	// its own path rather than inside another manager's tree.
+	managers := []struct{ dir, env, target string }{
+		{"npm", "npm_config_cache", "/cache/npm"},
+		{"yarn", "YARN_CACHE_FOLDER", "/cache/yarn"},
+		{"pnpm", "npm_config_store_dir", "/cache/pnpm"},
+	}
+
+	var args []string
+	for _, m := range managers {
+		host := filepath.Join(root, m.dir)
+		if err := os.MkdirAll(host, 0o755); err != nil {
+			return nil, fmt.Errorf("creating the %s cache directory: %w", m.dir, err)
+		}
+		source, err := hostMountPath(host)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args,
+			"--mount", "type=bind,source="+source+",target="+m.target,
+			"--env", m.env+"="+m.target,
+		)
+	}
+	return args, nil
 }
 
 // rejectSymlinks fails a build whose output directory contains a symlink.
