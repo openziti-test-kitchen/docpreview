@@ -50,6 +50,18 @@ type Server struct {
 	// Workers is the number of builds that may run concurrently.
 	Workers int `yaml:"workers"`
 
+	// DashboardURL is the address the dashboard is reachable at, used to link a
+	// failed build's comment to its build log.
+	//
+	// Configured rather than derived, because the daemon cannot know it. The
+	// listener is loopback, so the address it binds is the one address a link in
+	// a pull request comment must not use — and whatever makes the dashboard
+	// reachable, a tunnel or a reverse proxy or a VPN, is outside this process.
+	//
+	// Empty is the honest default: the comment then names the dashboard without
+	// pretending to link to it.
+	DashboardURL string `yaml:"dashboard_url"`
+
 	Exposer ExposerConfig  `yaml:"exposer"`
 	GitHub  GitHubConfig   `yaml:"github"`
 	Local   LocalSCMConfig `yaml:"local"`

@@ -419,7 +419,11 @@ footer {
     <span class="grow"></span>
     <select class="control" id="project" aria-label="Project"></select>
     <input class="control" id="search" type="search" placeholder="branch, PR, project…" aria-label="Filter">
-    <a class="control" id="btn-setup" href="/secrets">Secrets</a>
+    <!-- No Secrets link. Credential management lives at /secrets, reached by
+         typing it or from the runbooks — not from a control on an operations
+         screen, where the thing it does is unrelated to everything around it and
+         a form for pasting a private key invites being pasted into. -->
+
   </div>
 </div>
 
@@ -504,6 +508,11 @@ const ui = {
   query: "",          // free-text filter
   open: null,         // project name whose row is expanded
   pick: {},           // project -> preview id being looked at, when not the newest
+  // preview id -> build id being read, when not the current one. Keyed by preview
+  // rather than by project so switching previews and switching back does not
+  // silently drop you onto a different build than the one you were reading.
+  build: {},
+  builds: {},         // preview id -> the build list last fetched for it
   follow: true,
   tall: false,
   autoScrolling: false,
@@ -809,6 +818,7 @@ function updateBody(item, g) {
     body.innerHTML = `
       <div class="logbar">
         <select class="control sm" data-role="pick" aria-label="Preview"></select>
+        <select class="control sm" data-role="build" aria-label="Build"></select>
         <span class="grow"></span>
         <button class="btn" data-role="follow" aria-pressed="true">Following</button>
         <button class="btn" data-role="tall" aria-pressed="false">Expand</button>
@@ -828,6 +838,14 @@ function updateBody(item, g) {
     };
     // Whatever arrived while the dropdown was open gets applied once it is not.
     pick.onblur = () => { if (pick.dataset.pending) render(); };
+
+    // Choosing a build stops following. A reader who has deliberately gone back
+    // to an earlier build does not want the live one scrolling in over it.
+    body.querySelector('[data-role="build"]').onchange = e => {
+      const buildID = e.target.value;
+      ui.build[g.current.preview_id] = buildID;
+      showBuild(g.current.preview_id, buildID);
+    };
     body.querySelector(".term").addEventListener("scroll", () => {
       if (ui.autoScrolling) return;
       setFollow(atBottom());
@@ -851,6 +869,11 @@ function updateBody(item, g) {
   }
 
   updatePicker(body.querySelector('[data-role="pick"]'), g);
+
+  // The build list changes when a build finishes, so refresh it on the render
+  // that follows — cheap, and the alternative is a picker that never learns
+  // about the build you are watching complete.
+  loadBuilds(g.current.preview_id);
 
   const p = g.current;
   body.querySelector('[data-role="download"]').href =
@@ -954,6 +977,112 @@ function closeLog() {
 // Nothing is fetched for a collapsed project. Several at once would mean N
 // server-sent-event connections from one tab, and browsers cap concurrent
 // connections per origin, so the sixth would hang with no visible reason.
+// showBuild renders one stored build's log, in place of the live stream.
+//
+// A download rather than a stream: a finished build is a file, and the stream
+// endpoint always replays whichever build is current. Following is turned off
+// because a reader who deliberately went back to an earlier build does not want
+// the live one scrolling in over it.
+async function showBuild(previewID, buildID) {
+  if (!buildID) { openLog(previewID); return; }
+
+  if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
+  ui.logFor = previewID;
+  setFollow(false);
+  banner("past", `build ${buildID} — not live`);
+
+  const t = term();
+  if (t) t.innerHTML = "";
+  ui.buffer = "";
+
+  try {
+    const res = await fetch(
+      `/logs/${encodeURIComponent(previewID)}/download/${encodeURIComponent(buildID)}`);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const text = await res.text();
+    for (const line of text.split("\n")) appendLog(line);
+  } catch (e) {
+    banner("none", `could not read build ${buildID}: ${e.message}`);
+  }
+}
+
+// loadBuilds fetches the build list for a preview and repopulates the picker.
+//
+// Fetched on demand rather than folded into /status, because a status payload
+// carrying every build of every preview would grow without bound on a busy
+// repository and be re-sent on every state change.
+async function loadBuilds(previewID) {
+  try {
+    const res = await fetch(`/logs/${encodeURIComponent(previewID)}`);
+    if (!res.ok) return;
+    const d = await res.json();
+    ui.builds[previewID] = d.logs || [];
+    updateBuildPicker(previewID);
+  } catch { /* the picker stays as it was */ }
+}
+
+// updateBuildPicker rewrites the build dropdown for a preview.
+function updateBuildPicker(previewID) {
+  const sel = document.querySelector('.item.open [data-role="build"]');
+  if (!sel) return;
+
+  const builds = ui.builds[previewID] || [];
+  // Deferred while open, for the same reason the preview picker is: rewriting a
+  // select that is open closes it with no visible cause.
+  if (document.activeElement === sel) return;
+
+  // Hidden rather than disabled with one entry. A greyed-out control invites
+  // clicking; nothing at all reads as "there is only one build", which is true.
+  sel.hidden = builds.length < 2;
+  if (builds.length < 2) return;
+
+  // No separate "latest" row. The newest build *is* the latest, so a synthetic
+  // entry above it said the same thing twice and made the list one longer than
+  // the number of builds.
+  //
+  // It keeps the empty value, which is what means "follow the live stream" rather
+  // than "download this file" — the newest build's log is still being written
+  // while it runs, so reading it as a file would show a truncated copy that never
+  // updates.
+  const current = ui.build[previewID] || "";
+  sel.innerHTML = builds.map((b, i) =>
+    `<option value="${i === 0 ? "" : esc(b.build_id)}">` +
+    `${buildIcon(b)} ${esc(buildLabel(b))} · ${esc(b.build_id)} · ${ago(b.mod_time)} ago` +
+    `</option>`).join("");
+  sel.value = current;
+}
+
+// buildIcon and buildLabel describe how a build ended.
+//
+// The icons match the row states so one glance means the same thing in both
+// places, and the word is there too — an emoji alone is unreadable to a screen
+// reader and ambiguous at a glance between "failed" and "cancelled".
+//
+// A build with no recorded state predates the builds table or had its row pruned
+// before its log. The log is still readable, so it is listed as unknown rather
+// than hidden.
+function buildIcon(b) {
+  switch (b.state) {
+    case "ready":    return "✅";
+    case "failed":   return "❌";
+    case "building": return "🔨";
+    case "queued":   return "⏳";
+    case "skipped":  return "⏭️";
+    default:         return "•";
+  }
+}
+
+function buildLabel(b) {
+  switch (b.state) {
+    case "ready":    return "succeeded";
+    case "failed":   return "failed";
+    case "building": return "running";
+    case "queued":   return "queued";
+    case "skipped":  return "skipped";
+    default:         return "unknown";
+  }
+}
+
 function openLog(previewID) {
   if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
   ui.logFor = previewID;
@@ -1506,6 +1635,7 @@ function applyStatus(d) {
 
   document.getElementById("exposer").textContent = `exposer: ${d.exposer}`;
 
+
   // A project whose last preview was torn down must not keep a stream open
   // behind a panel nobody can see. ui.open is a project name, so the test is
   // "does this project still have any preview at all" — a filter that merely
@@ -1551,7 +1681,6 @@ if (isSetupPage) {
   document.getElementById("counters").hidden = true;
   document.getElementById("project").hidden = true;
   document.getElementById("search").hidden = true;
-  document.getElementById("btn-setup").hidden = true;
   document.getElementById("conn").textContent = "setup";
   setupEl().hidden = false;
   loadSetup();

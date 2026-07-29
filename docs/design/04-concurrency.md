@@ -30,8 +30,15 @@ previous process.
 
 ### 1. Cancellation
 
-`Daemon.Handle` cancels any in-flight build for the same preview before enqueuing the replacement. Each build
-runs under a context derived from the daemon's.
+`handleBuild` cancels any in-flight build for the same preview and **clears its entry from `d.running`**
+(`internal/daemon/daemon.go:629-635`). Each build runs under a context derived from the daemon's.
+
+Clearing, not just cancelling. The entry is what a build's `isCurrent` check reads, so a build cancelled while
+nothing else is registered — the replacement is enqueued but no worker has claimed it yet — would still see itself
+as current and publish.
+
+This happens *after* the enqueue, so the report ordering below is not affected by it: the replacement job is in the
+queue before the old build is told to stop.
 
 Cancellation alone is **not sufficient**, for two reasons:
 
@@ -114,6 +121,85 @@ So `unpublish` withdraws it. It deliberately does **not** restore whatever was p
 withdrew that to take the name, so there is nothing to restore to. "Nothing is live" is the only consistent
 state reachable from there, and it is an accurate one.
 
+## Reports have an order, and it is not the order they were made in
+
+Three changes, all from watching a real pull request comment say the wrong thing.
+
+### 1. `queued` is reported before the enqueue
+
+`handleBuild` calls `d.report(… StateQueued …)` and *then* `store.Enqueue` (`internal/daemon/daemon.go:603-620`).
+
+The other way round is a race, and it lost most of the time. `Enqueue` nudges a worker, the worker claims the job
+and reports `building` — all of it faster than the queued report's network round trip. So the comment settled on
+"Queued" for a build that was already running, and stayed there until the build finished. Emitting it first means
+the job does not exist yet, so nothing can be building.
+
+The report is best-effort where the enqueue is not: a queue write that fails means no build and the caller has to
+hear about it, while a comment that fails to say "queued" is a cosmetic loss on the way to saying "building".
+
+### 2. `staleReport` drops anything ranked below what has already been reported
+
+Ordering the emitters is not enough — several goroutines report on one preview, and a supersede storm has more
+than one build reporting at once. `Daemon.staleReport` (`internal/daemon/daemon.go:511`) keeps the furthest state
+reported per preview and drops any report ranked below it:
+
+```go
+queued 1 → building 2 → ready | failed | skipped 3 → anything unrecognised 4
+```
+
+Unrecognised is 4, not 0: a state this function has not been taught about — a teardown, something added later — is
+terminal rather than stale, because silently dropping it is the worse failure (`reportRank`, `daemon.go:479`).
+
+**Keyed by commit.** The lifecycle restarts with every push, so `ready` → `queued` is backwards within one commit
+and correct across two. A report whose commit differs from the mark resets it rather than being compared against
+it.
+
+**Strictly below, not below-or-equal.** Two `ready` reports for one commit are legitimate: a republish after a
+restart can move the URL, and the comment has to be rewritten to carry the new one.
+
+Teardown deletes the mark along with `live`, `running` and `commit` (`daemon.go:668`). The lifecycle is over, so the
+next report starts a new one; keeping the mark would make a reopened pull request's `queued` look stale against the
+terminal state of the build that was torn down, and it would be dropped.
+
+The drop happens in `report` before `d.record`, not on the way out to the platform (`daemon.go:1095`). The
+dashboard reads the same reports, and three surfaces disagreeing about a build's state is worse than any one of
+them being briefly behind.
+
+**A timestamp cannot do this job**, and the observed failure is the proof. In the inversion this defends against
+the queued report was stamped *later* than the building report, because it was created later. A timestamp records
+when a message was made; the invariant being violated is lifecycle position. Sorting by time reproduces the wrong
+order faithfully.
+
+Tests: `internal/daemon/publisher_test.go:150-194`.
+
+### 3. Platform writes are debounced per preview
+
+`internal/daemon/publisher.go` holds a report for 250 ms and writes only the newest one for that preview. Every
+state change is an API write, and a comment upsert is two requests when it has to search for the comment first; a
+build emits four-ish reports and a supersede storm multiplies that by the number of pushes, straight into GitHub's
+secondary rate limit — which fires on burst rather than on volume.
+
+**Safe because a report is a snapshot, not an event.** Nothing downstream accumulates them: the comment is
+rewritten whole each time. A report superseded inside the window was never going to leave a trace, so writing it
+would only have cost a request.
+
+Two details are the difference between working and subtly broken:
+
+- **The timer is not reset on each report** (`publisher.go:91-99`). Replacing the payload and leaving the timer
+  running bounds the delay at one window. Resetting it is the classic debounce failure — a steady stream of reports
+  postpones the write forever, and the preview never reports because it keeps almost reporting.
+- **`Close` flushes** (`publisher.go:130`), before the exposer closes, and `Run` calls it after the workers exit
+  (`daemon.go:376`). A shutdown inside the window would otherwise lose the last report of every in-flight build —
+  usually the terminal one, leaving a comment reading "Building" for a build that finished. After `Close`, a
+  straggler is written straight through rather than dropped: shutdown is exactly when a terminal state most needs
+  to reach the pull request.
+
+Keyed by preview rather than globally, because two pull requests reporting at once are unrelated and a shared timer
+would be a shared latency.
+
+**It is not an ordering mechanism.** The last report in a window wins, so a debouncer fed out-of-order reports
+faithfully publishes the wrong one. That is `staleReport`'s job, done before a report reaches here.
+
 ## Reporting a superseded build
 
 ```go
@@ -175,3 +261,5 @@ Tests: `internal/daemon/status_test.go`.
 4. The liveness check and the irreversible writes are inside one per-preview lock.
 5. A failed rebuild does not retract a working preview.
 6. Transient states are composed at read time, never persisted.
+7. A report for a state a commit has already passed is dropped, on every surface, whatever its timestamp says.
+8. The debouncer's timer is never reset by a new report, and `Close` flushes what it holds.

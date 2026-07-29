@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -85,6 +86,48 @@ func (l *eventLog) recent(n int) []Event {
 		out = append(out, l.buf[idx])
 	}
 	return out
+}
+
+// backfill seeds the activity feed from the recorded build history.
+//
+// The feed is an in-memory ring, so before this it was empty after every restart
+// — a list of "recent activity" that forgot everything the moment the process
+// did, which reads as a broken feed rather than as an empty one.
+//
+// Oldest first, because add() writes into a ring and the newest entry has to end
+// up last. Only builds; the queued and skipped states are not recorded per build
+// and are transient anyway.
+func (d *Daemon) backfill(ctx context.Context, limit int) {
+	builds, err := d.store.RecentBuilds(ctx, limit)
+	if err != nil {
+		d.log.Warn("backfilling the activity feed", "error", err)
+		return
+	}
+
+	for i := len(builds) - 1; i >= 0; i-- {
+		b := builds[i]
+		at := b.FinishedAt
+		if at.IsZero() {
+			at = b.StartedAt
+		}
+		message := b.State
+		if b.Reason != "" {
+			message = b.State + " — " + b.Reason
+		}
+		d.events.add(Event{
+			At:        at,
+			Kind:      b.State,
+			Repo:      b.PR.Repo.String(),
+			PreviewID: b.PreviewID,
+			Number:    b.PR.Number,
+			Branch:    b.PR.Branch,
+			Commit:    shortSHA(b.Commit),
+			Message:   message,
+		})
+	}
+	if len(builds) > 0 {
+		d.log.Info("restored activity history", "builds", len(builds))
+	}
 }
 
 // record adds an event derived from a report.

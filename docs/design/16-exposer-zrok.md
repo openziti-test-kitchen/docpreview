@@ -1,6 +1,6 @@
 # Getting the zrok exposer into production
 
-Every real run of docpreview so far has used the `local` exposer. Its URLs are paths on the daemon's own
+For a long time every real run of docpreview used the `local` exposer. Its URLs are paths on the daemon's own
 listener (`internal/expose/local.go:111`), and the daemon listens on `127.0.0.1:8471`, so the link in the pull
 request comment is reachable by exactly one person: whoever is sitting at the machine that built it. That is
 fine for proving the pipeline and useless for the thing the pipeline exists to do.
@@ -8,9 +8,13 @@ fine for proving the pipeline and useless for the thing the pipeline exists to d
 `zrok2` is the first real answer because it is already a dependency, already the default in
 `config.DefaultServer` (`internal/config/config.go:448`), and already the intended endpoint of the GitHub App
 smoke test — step 4 of "Then" in [11-github-setup-state.md](11-github-setup-state.md) is literally "switch
-`exposer.kind` to `zrok2`". The implementation exists and compiles. What it has never done is create a share.
+`exposer.kind` to `zrok2`".
 
-This document is the gap between those two sentences.
+**It has now been run against a real zrok account**, and that is where most of what follows was either confirmed or
+corrected. Two things stopped it working outright — a name that has to be registered before a share can bind it,
+and a frontend endpoint that is a hostname rather than a URL — and **neither was reachable from the local git
+simulator**, where nothing ever creates a share and no comment is ever rendered for a browser. Both are fixed and
+written up below. The rest of this document is still the gap between "it publishes" and "it is production".
 
 ## What the code does today, end to end
 
@@ -19,24 +23,32 @@ namespace, falling back to the environment's default (`zrok.go:77-85`). `Validat
 makes one `GetEnvironmentDetail` round trip so a revoked account token becomes a startup error rather than an
 opaque 401 on the first pull request (`zrok.go:99-122`). `main.go:303-304` is the only construction site.
 
-`Publish` (`zrok.go:130`) does five things in order:
+`Publish` (`zrok.go:131`) does six things in order:
 
-1. Withdraws this preview's own earlier publication, so the name is free (`zrok.go:141`).
+1. Withdraws this preview's own earlier publication, so the name is free (`zrok.go:142`).
 2. Refuses the name if a *different* live preview holds it (`zrok.go:143-153`).
 3. Builds a `sdk.ShareRequest` — public share, proxy backend, `Target: "docpreview:<previewID>"`, one
-   `NameSelection{Namespace, Name}`, permission and OAuth from config — and calls `sdk.CreateShare`
-   (`zrok.go:155-184`).
-4. Opens an overlay listener for the returned share token and starts an `http.Server` on it
-   (`zrok.go:186-204`). No TCP port is bound; this is why the `Exposer` interface takes an `http.Handler`
+   `NameSelection{Namespace, Name}`, permission and OAuth from config (`zrok.go:156-171`).
+4. **Registers the name** in the namespace (`ensureName`, `zrok.go:178`), then calls `sdk.CreateShare`, retrying
+   once behind `reapName` (`zrok.go:182-194`). Step 4 did not exist and nothing could publish without it; see
+   below.
+5. Opens an overlay listener for the returned share token and starts an `http.Server` on it
+   (`zrok.go:196-214`). No TCP port is bound; this is why the `Exposer` interface takes an `http.Handler`
    rather than a port ([02-exposers.md](02-exposers.md)).
-5. Takes `shr.FrontendEndpoints[0]` as the origin, joins the site's `base_url` onto it, and returns that as the
-   URL for the comment (`zrok.go:217-232`). A share that came back with no frontend endpoints is torn down and
-   reported as an error, because a preview with no URL is worse than a failed build.
+6. Takes `shr.FrontendEndpoints[0]` as the origin, **prefixes `https://` if it has no scheme**, joins the site's
+   `base_url` onto it, and returns that as the URL for the comment (`zrok.go:227-248`). A share that came back
+   with no frontend endpoints is torn down and reported as an error, because a preview with no URL is worse than
+   a failed build.
 
 The resulting URL is whatever the controller returned plus the base URL — the code does not construct the
-hostname. Its *shape* is asserted in exactly one place: `endpointsMatchName` (`zrok.go:381-394`) assumes the
-first DNS label of a frontend endpoint is the name we asked for. So the implementation already depends on
-`https://<name>.<something>/` without ever having confirmed it.
+hostname. Its *shape* is asserted in exactly one place: `endpointsMatchName` (`zrok.go:445`) assumes the
+first DNS label of a frontend endpoint is the name we asked for.
+
+**`FrontendEndpoints` reports a bare hostname, not a URL.** Observed against a real account. Without the scheme
+prefix at step 6 the preview URL went into the pull request comment with no `https://`, so the link resolved
+relative to github.com and every reviewer who clicked one got a 404 there. Nothing in the daemon was wrong and
+nothing logged an error; the URL was simply not a URL. `JoinURL`'s tests use `https://x.share.zrok.io` as a
+fixture (`expose_test.go:118`) — a plausible-looking value, not a recorded one — which is why no test caught it.
 
 `Publication.Close` calls `withdrawEntry` with the entry identity (`zrok.go:236-239`), which is the guard that
 stops a superseded publication from tearing down its own replacement — under zrok that would not merely 404 the
@@ -67,14 +79,27 @@ Permanence moved to the **name**. `rest_model_zrok.Name` carries `Name`, `Namesp
 docpreview never touches: `CreateShareName`, `DeleteShareName`, `UpdateShareName`, `ListNamesForNamespace`,
 `ListAllNames`, `ListShareNamespaces` (`rest_client_zrok/share/share_client.go:174-350`).
 
-docpreview creates names implicitly, as a side effect of `NameSelections` on the share request. So the name it
-gets is one bound to a share, not one it reserved and owns. **That is the right choice, and it should stay.** A
-preview is rebuilt on every push, so the name has to outlive an individual share — which it does, because the
-next share asks for the same name from the same namespace and the database remembers what that name was
-(`store.Preview.name`, [08-storage.md](08-storage.md)). What docpreview does *not* want is a name it has to
-remember to release: an explicitly reserved name survives the deletion of the daemon's database, and then
-nothing claims it and nothing looks — precisely the audit gap already recorded in `TODO.md`. Deleting a share
-and letting its name go with it means the only durable state is the share, and `Reap` already owns the share.
+This document originally argued that docpreview creates names *implicitly*, as a side effect of `NameSelections`
+on the share request, and that a name bound to a share rather than owned outright was the right choice because
+nothing then has to remember to release it.
+
+**That was wrong, and the run against a real account is what showed it.** zrok v2 does not create a name
+implicitly. `CreateShare` with a `NameSelection` naming an unregistered name fails 409 — see the next section —
+so no named share could be created at all. The name has to exist first, and creating it is a separate call:
+`CreateShareName` (`zrok.go:372`).
+
+So docpreview now owns names it does not delete, and the cost the original argument was avoiding is real. A name
+outlives every share bound to it, which is what keeps a preview's URL stable across rebuilds and restarts, and it
+means the account accumulates one name per preview name ever published (`zrok.go:368-371`). Nothing releases them:
+`DeleteShareName` exists on the client and docpreview never calls it.
+
+That is a leak, and it is the audit gap in `TODO.md` widened rather than avoided — a name survives the deletion of
+the daemon's database with nothing claiming it and nothing looking. It is not urgent, because the name is
+idempotent: the next daemon publishing the same preview registers the same name, gets the 409, treats it as
+success, and reuses it. It becomes urgent the moment name limits on an account are known, which they are not.
+
+**Invariant, restated:** a name docpreview registers must be reusable by the next process without coordination.
+`ensureName` treating "already exists" as success is what makes that hold.
 
 The consequence for [08-storage.md](08-storage.md)'s "The URL can move" is the good outcome. The URL is a
 function of the name, the name is a function of the template, and the template is a function of the repository
@@ -83,8 +108,30 @@ share with the same name, gets the same hostname back, and `pub.URL != p.URL` is
 comment churn (`daemon.go:436-446`). The comment written once and edited thereafter, which is the whole product,
 survives.
 
-**Invariant: the zrok exposer must not reserve a name it does not delete in the same process lifetime.** Either
-the name is bound to a share `Reap` can find, or it is a leak nothing can see.
+## A name must exist before a share can bind it
+
+This is the bug that stopped the whole exposer working, and it was invisible until a real zrok account was
+involved. Nothing in the local git simulator or in any test creates a share.
+
+`sdk.CreateShare` with `NameSelections: [{Namespace, Name}]` for a name that is not registered in that namespace
+answers **409**. So every publish failed, every build reported failed, and no preview ever got a URL. The fix is
+one call: `ensureName` registers the name before `CreateShare` (`zrok.go:173-180`).
+
+`ensureName` is **idempotent by design rather than by check** (`zrok.go:360-390`). Asking whether the name exists
+and then creating it is a race against another publish, and the create is the cheaper of the two calls anyway. So
+"already exists" is the success case and is matched on rather than returned.
+
+**Matched on the generated type, not the message.** The 409 arrives with an **empty body** — the whole of it is
+`[POST /share/name][409] createShareNameConflict ""` — so there is no text to match. `CreateShareNameConflict` is
+documented in the swagger definition as "name already exists", which makes the type the only signal there is
+(`isNameAlreadyExists`, `zrok.go:403`).
+
+**It cannot tell a name this account owns from one another account holds.** Nothing can, given the empty body.
+Treating both as success is safe because the `CreateShare` that follows binds the name and fails on its own if it
+is not ours — one call later, with its own error, which is the error an operator can act on.
+
+`CreateShareNameBody` carries only `Name` and `NamespaceToken`. There is no reserved flag to set, so whatever
+`rest_model_zrok.Name.Reserved` ends up as is the server's default, and docpreview does not choose it.
 
 ## Names and collisions
 
@@ -397,6 +444,7 @@ type zrokAPI interface {
     EnvironmentID() string
     CreateShare(req *sdk.ShareRequest) (*sdk.Share, error)  // no ctx: the SDK has none
     DeleteShare(token string) error
+    CreateShareName(ctx context.Context, name string) error // idempotent; swallows the empty-body 409
     ListShares(ctx context.Context, envZID, target string) ([]shareRow, error)
     Listen(token string) (net.Listener, error)
 }
@@ -431,15 +479,18 @@ argued above:
 | `Reap(ctx, nil)` deletes all, `Reap(ctx, keep)` deletes the complement | The startup contract |
 | `Reap` skips shares whose target merely contains the prefix | Guarded in code (`zrok.go:330`), untested |
 | `Reap` ignores a share from a different `EnvZID`/instance | The footgun, once fixed |
-| A share with no frontend endpoints is torn down, not returned | `zrok.go:222-230` |
+| A share with no frontend endpoints is torn down, not returned | `zrok.go:236-246` |
+| `ensureName` treats an empty-body 409 as success and any other error as fatal | The bug that stopped every publish |
+| A publish fails if the name cannot be registered, before any share exists | Otherwise the failure surfaces one call later, from `CreateShare` |
+| A scheme-less frontend endpoint becomes an `https://` URL | The relative-link bug; needs a fixture without a scheme |
 | `Limited` is surfaced | New |
 
 What genuinely needs an account, and belongs in a build-tagged integration test next to
 `ziti_integration_test.go`:
 
 - That the frontend endpoint's first DNS label really is the requested name. `endpointsMatchName`
-  (`zrok.go:381-394`) and the whole stable-URL argument depend on it and nothing has confirmed it.
-- That a name is released when its share is deleted, and reusable immediately by a new share.
+  (`zrok.go:445`) and the whole stable-URL argument depend on it and nothing has confirmed it.
+- That a registered name is reusable by a new share after the previous share is deleted, without a delay.
 - That the OAuth gate actually challenges a browser, and that `oauth_email_domains` excludes what it should.
 - What `permissionMode: closed` plus `access_grants` does to a *public* share — the one place the security story
   is asserted from the field names rather than from behaviour.
@@ -447,25 +498,35 @@ What genuinely needs an account, and belongs in a build-tagged integration test 
 
 ## The order to build it in
 
+Done, out of order, because a publish that fails is not a plan item:
+
+- ~~**Register the name before creating the share.**~~ `ensureName`. This was the difference between an exposer
+  that publishes and one that fails every build.
+- ~~**Give the frontend endpoint a scheme.**~~ Otherwise the link in the comment is relative to github.com.
+- ~~**Run the smoke test.**~~ A real account, a real namespace, a real pull request. It found both of the above and
+  nothing else in this document changed as a result.
+
+What is left:
+
 1. **Require a namespace, and reject the incoherent visibility combinations,** in `config.validate`
    (`config.go:511`). Cheapest change, and it is the difference between publishing into your namespace and
    publishing into `public`.
 2. **Add the `zrokAPI` seam** and a fake, converting nothing else. This is the change everything below depends
-   on being testable.
+   on being testable. `CreateShareName` belongs on it, and the empty-body 409 is a case a fake has to be able to
+   produce.
 3. **Fix the name race**: `reserve`/`release` held across `CreateShare`, and `reapName` skipping live tokens.
    With tests, because this is the last way one pull request's site reaches another's URL.
 4. **Add `exposer.zrok2.root_dir`** and call `environment.SetRootDirName` in `buildExposer` before `NewZrok`
    (`main.go:293-320`), plus the instance token in `Target`. Two daemons must not reap each other.
-5. **Run the smoke test**: `zrok2 enable`, a real namespace, one repository, one pull request, three pushes in a
-   minute. This is step 4 of [11-github-setup-state.md](11-github-setup-state.md) and the first time any of this
-   code creates a share.
-6. **Restart the daemon with previews live** and confirm the URLs and the comments do not move. Then kill it hard
-   and confirm the next start reaps and republishes cleanly.
-7. **Surface `Limited`, and improve the version-mismatch error** — both are things the smoke test will have
-   taught you the shape of.
+5. **Restart the daemon with previews live** and confirm the URLs and the comments do not move. Then kill it hard
+   and confirm the next start reaps and republishes cleanly. Now cheap to do, since publishing works.
+6. **Decide whether registered names need releasing**, and if so where — `DeleteShareName` on teardown, or a
+   `docpreview names prune`. Blocked on knowing whether an account has a name limit.
+7. **Surface `Limited`, and improve the version-mismatch error** — both are things a longer run will have taught
+   you the shape of.
 8. **Make recovery concurrent**, bounded by `workers`.
 9. **`docpreview shares list`**, over `ListShares` and `ListNamesForNamespace`, closing the audit gap in
-   `TODO.md` for both zrok and Frontdoor.
+   `TODO.md` for both zrok and Frontdoor. Now has names to audit as well as shares.
 10. **Then decide whether the ziti-context leak needs an upstream fix**, with a measurement from a daemon that
     has been up for a week rather than from reading `sdk/listener.go`.
 
@@ -473,21 +534,27 @@ What genuinely needs an account, and belongs in a build-tagged integration test 
 
 Everything above cited to a file and line was read. These were not:
 
-- **The frontend endpoint hostname format.** `<name>.<namespace domain>` is what `endpointsMatchName` assumes
-  and what `init` prints (`init.go:263-264`), but no live share has been observed. The `JoinURL` tests use
-  `https://x.share.zrok.io` as a plausible-looking fixture (`expose_test.go:118`), not a recorded value.
+- **The frontend endpoint hostname format.** Now partly known: the endpoint is a **bare hostname with no scheme**,
+  which is why `Publish` prefixes `https://`. Whether its first DNS label is always the requested name is still an
+  assumption — `endpointsMatchName` (`zrok.go:445`) and `reapName` depend on it, and it has not been checked against
+  a name that would make the two differ. The `JoinURL` tests still use `https://x.share.zrok.io`
+  (`expose_test.go:118`), a plausible-looking fixture rather than a recorded value.
 - **What `permissionMode: closed` and `accessGrants` enforce on a public share**, and against what identity. The
   fields are sent (`sdk/share.go:88-91`) and `init` describes them as zrok accounts (`init.go:150`); the
   server-side behaviour is not in the vendored client.
-- **Whether deleting a share releases its name immediately**, or after a delay, or at all. The claim rests on
-  `rest_model_zrok.Name` carrying both `ShareToken` and a separate `Reserved` flag, which strongly implies a
-  non-reserved name is share-scoped — but that is inference from a model, not from behaviour. If it is wrong,
-  the entire stable-URL story needs `CreateShareName` and an explicit release, and item 3 of the build order
-  changes shape.
-- **Whether `CreateShare` fails, or silently succeeds with a different name, when the requested name is taken.**
-  `Publish`'s retry-once logic (`zrok.go:175-184`) assumes it fails. If it instead succeeds under an assigned
-  name, the returned endpoint would not match the requested name and the comment would carry a URL the database
-  did not predict — the `pub.URL != p.URL` path (`daemon.go:436`) would cover it, but noisily.
+- **Whether deleting a share releases its name.** This one moved: a name is *not* implicitly created with a share,
+  so it is not implicitly share-scoped either, and docpreview now registers names explicitly and never deletes
+  them. What is still unknown is whether the registered name is durable indefinitely, and whether
+  `rest_model_zrok.Name.Reserved` is set for a name created this way — `CreateShareNameBody` has no field for it.
+  Item 6 of the build order depends on the answer.
+- **Whether `CreateShare` fails, or silently succeeds with a different name, when the requested name is registered
+  but bound to somebody else's share.** `Publish`'s retry-once logic (`zrok.go:182-194`) assumes it fails. The
+  unregistered case is now known to fail with 409. If the taken case instead succeeds under an assigned name, the
+  returned endpoint would not match the requested name and the comment would carry a URL the database did not
+  predict — the `pub.URL != p.URL` path (`daemon.go:436`) would cover it, but noisily.
+- **Name limits on an account.** Names now accumulate one per preview name ever published and nothing releases
+  them, so a limit here is a slow-motion outage rather than a single failed build. Neither the limit nor the error
+  it produces is known.
 - **Share and name limits on a zrok account**: that they exist is asserted in `zrok.go:290-293` and
   `02-exposers.md`; the numbers, and what the controller returns when one is hit, are not known.
 - **What `ListShares` returns for a large account.** The parameters expose filters but no limit or offset

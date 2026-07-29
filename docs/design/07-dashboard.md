@@ -13,10 +13,26 @@ of `/`, and two things were wrong with that. A credential form permanently occup
 screen invites pasting into it by reflex. And a distinct path is something a proxy or a future authentication
 layer can gate — a panel inside `/` cannot be, since gating it means gating the status page with it.
 
-The control in the top bar is a plain `<a href="/secrets">` (`internal/daemon/dashboard.html:422`) rather than a
-button with a handler, so it can be middle-clicked, bookmarked, and pasted into a runbook.
+### There is no Secrets control on the dashboard
 
-It is still **the same embedded document**, switched on `location.pathname`
+Not hidden, not conditional: **gone** (`internal/daemon/dashboard.html:422-425`, where the comment stands in for
+it). `/secrets` is reached by typing it or from a runbook.
+
+Two reasons, and neither is about clutter. A control for credential management on an operations screen is
+unrelated to everything around it — the top bar is filters and search, and a link out to a write surface reads as
+one more of them. And a form for pasting a private key invites being pasted into, which is the same argument that
+moved the panel off `/` in the first place; a link to it from the same place keeps the reflex and only adds a
+click.
+
+An earlier attempt kept the link and hid it conditionally, driven by a `secrets` field on `/status` reporting
+whether a `SecretsAdmin` was wired. That field went with the link — `Status` is now exposer, pending, running,
+previews and events (`internal/daemon/daemon.go:1226`). A status payload growing a field to tell a page whether to
+render a link is the wrong shape: the route already 404s when nothing is wired (`internal/daemon/ingress.go:134`),
+which is the same answer without a field to keep in step.
+
+### One document, two paths
+
+It is **the same embedded document**, switched on `location.pathname`
 (`internal/daemon/dashboard.html:1491`). Splitting it into two files would mean two copies of the styles, the
 escaping helpers and the fetch wrapper, kept in step by hand.
 
@@ -51,7 +67,7 @@ one secret that opens everything into a form whose POST the server will refuse �
 
 ```
 ┌─ sticky top bar ─────────────────────────────────────────────┐
-│ docpreview  [All|Ready|Building|Queued|Failed]  [project ▾] [search] [Secrets] │
+│ docpreview  [All|Ready|Building|Queued|Failed]  [project ▾] [search] │
 ├──────────────────────────────────┬───────────────────────────┤
 │ Projects (4)                     │ Activity · all projects   │
 │                                  │ [All|Ready|Building|…]    │
@@ -59,7 +75,7 @@ one secret that opens everything into a form whose POST the server will refuse �
 │   ●3 ●1        [Building] 4s  Open ↗                         │
 │                                  │ 14:21 ● Building …        │
 │ ▼ handbook api-reference #7      │                           │
-│   [preview ▾] [Following][Expand][Download]                  │
+│   [preview ▾] [build ▾] [Following][Expand][Download]         │
 │   ● streaming this build                                     │
 │   ┌────────────────────────────┐ │                           │
 │   │ $ yarn build               │ │                           │
@@ -101,6 +117,22 @@ of projects actually changes, because rebuilding a `<select>` closes its dropdow
 to "ready" would hide the queued and building entries that led there. Only kinds actually present get a button —
 a row of five filters where four are always empty is four things to read and discount every time.
 
+## The activity feed survives a restart
+
+The feed is a 200-entry in-memory ring (`internal/daemon/events.go:43`), so before this it was empty after every
+restart — a list headed "recent activity" that forgot everything the moment the process did, which reads as a
+broken feed rather than as an empty one. `Daemon.backfill` seeds it from the `builds` table at startup
+(`internal/daemon/events.go:100`), before any worker can add to it, so the restored history sits behind this run's
+events rather than interleaved with them (`internal/daemon/daemon.go:351`).
+
+**Oldest first.** `add` writes into a ring and `recent` walks backwards from the last write, so the newest restored
+entry has to be the last one written. `RecentBuilds` returns newest-first, so `backfill` iterates it in reverse
+(`events.go:107`).
+
+Each row is stamped with `finished_at`, falling back to `started_at` for a build that was in flight when the
+process died — the time of the transition it describes, which is the rule below. Only the states the `builds` table
+records appear; `queued` lives in the job queue and nowhere else. See [08-storage.md](08-storage.md).
+
 ## The log pane
 
 Inline in the expanded row, 15 rem by default, `Expand` to 34 rem. The previous layout gave it 30 rem
@@ -123,6 +155,40 @@ Above the terminal, from the server's `start` event:
 
 A queued preview replays its last completed build. Without the banner the pane looked like the queued build had
 already produced all of it.
+
+### The build picker
+
+Beside the preview picker, listing every stored build of the selected preview with an outcome icon and the word
+for it — ✅ succeeded, ❌ failed, 🔨 running, ⏳ queued, ⏭️ skipped (`internal/daemon/dashboard.html:1064`).
+
+**The word is there as well as the icon.** An emoji alone is unreadable to a screen reader, and at a glance ❌ is
+as easily "cancelled" as "failed". The icons are the same ones the rows use, so one glance means the same thing in
+both places.
+
+**A build with no recorded row renders as unknown, not hidden** (`internal/daemon/stream.go:390-393`). Logs
+predating the `builds` table have no outcome, and so does a build whose row was pruned before its log. The log is
+still readable either way, and a picker that silently omits a log it could serve is worse than one that admits it
+does not know how the build ended.
+
+**The newest entry keeps the empty value**, which means "follow the live stream" rather than "download this file"
+(`internal/daemon/dashboard.html:1043-1047`). A running build's log file is still being written, so reading it as
+a file shows a truncated copy that never updates. There is no separate synthetic "latest" row above it: the newest
+build *is* the latest, so the extra entry said the same thing twice and made the list one longer than the number
+of builds.
+
+**Hidden, not disabled, when there is only one build** (`dashboard.html:1036`). A greyed-out control invites
+clicking; nothing at all reads as "there is only one build", which is the truth.
+
+Fetched on demand from `/logs/{preview}` when a row expands (`dashboard.html:1014`), not folded into `/status`.
+A status payload carrying every build of every preview grows without bound on a busy repository and is re-sent on
+every state change — for a list nobody is looking at unless a row is open. The outcomes are joined onto the log
+metadata server-side (`internal/daemon/stream.go:394-418`) rather than stored on the log file: the log is bytes on
+disk, and how a build ended is the daemon's knowledge.
+
+The rewrite is skipped while the picker is the active element, because rewriting an open `<select>` closes it with
+no visible cause (`dashboard.html:1032`). Skipped rather than stashed in `dataset.pending` as rule 3 does, because
+this list only changes when a build starts or ends and the next expand refetches it — there is no repeating tick
+to keep missing.
 
 ### Following
 
@@ -282,4 +348,6 @@ when nothing changes — which is exactly when "2s ago" has become a lie.
 6. Every interpolated value is escaped; every URL is scheme-checked.
 7. Every timestamp is the time of the transition it labels, never `time.Now()` at assembly.
 8. The page never offers a control the server would refuse: no `can_write`, no fields and no buttons.
-9. `/secrets` opens no `EventSource`.
+9. `/secrets` opens no `EventSource`, and nothing on `/` links to it.
+10. A stored build log is reachable from the picker even when nothing records how its build ended.
+11. `/status` carries only what changes on a state change; per-preview detail is fetched on demand.

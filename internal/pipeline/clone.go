@@ -67,17 +67,35 @@ func (w *Workspace) Remove() error {
 // process table, which is why the local build driver is documented as
 // trusted-repositories-only.
 func (c *Cloner) Clone(ctx context.Context, pr model.PullRequest, cloneURL string) (*Workspace, error) {
-	dir := filepath.Join(c.root, pr.PreviewID())
+	// One directory per build, not per preview.
+	//
+	// Two builds of the same pull request overlap by design: a newer push cancels
+	// the older build but does not wait for it, so the loser is still unwinding
+	// while the winner starts. Sharing a directory let them corrupt each other —
+	// the loser's cleanup deleting files under the winner, and a `.git` surviving
+	// a failed cleanup so the winner's `git remote add` found origin already
+	// there and the whole build failed on it.
+	//
+	// Nesting under the preview ID keeps teardown's RemoveAll of the preview's
+	// directory working unchanged.
+	previewDir := filepath.Join(c.root, pr.PreviewID())
+	dir := filepath.Join(previewDir, buildDirName(pr.HeadSHA))
 
-	// A leftover workspace from a previous build of this pull request would
-	// leave stale files in the tree — deleted pages would still be there, and
-	// the preview would show documentation that no longer exists.
+	// A leftover workspace for this same commit would leave stale files in the
+	// tree — deleted pages would still be there, and the preview would show
+	// documentation that no longer exists.
 	if err := os.RemoveAll(dir); err != nil {
 		return nil, fmt.Errorf("clearing workspace: %w", err)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("creating workspace: %w", err)
 	}
+
+	// Directories from earlier commits of this pull request. Best-effort and
+	// unlogged per failure: a sibling that will not delete is usually a build
+	// still shutting down and holding a file open, and that one must not be
+	// deleted anyway.
+	c.pruneSiblings(previewDir, filepath.Base(dir))
 
 	ctx, cancel := context.WithTimeout(ctx, cloneTimeout)
 	defer cancel()
@@ -89,10 +107,15 @@ func (c *Cloner) Clone(ctx context.Context, pr model.PullRequest, cloneURL strin
 	// quick succession is ordinary — and building a different commit than the
 	// one we are about to report on produces a preview that silently disagrees
 	// with its own comment.
+	// No named remote. Fetching the URL directly makes the sequence idempotent:
+	// `git remote add origin` fails outright on a repository that already has an
+	// origin, so a .git surviving an interrupted build turned the next attempt
+	// into a failed build — which is exactly what a supersede produced. Nothing
+	// here needs a remote to persist, since the URL carries a short-lived token
+	// and would be stale by the next build anyway.
 	steps := [][]string{
 		{"init", "--quiet"},
-		{"remote", "add", "origin", cloneURL},
-		{"fetch", "--quiet", "--depth", "1", "origin", pr.HeadSHA},
+		{"fetch", "--quiet", "--depth", "1", cloneURL, pr.HeadSHA},
 		{"checkout", "--quiet", "FETCH_HEAD"},
 	}
 
@@ -105,6 +128,43 @@ func (c *Cloner) Clone(ctx context.Context, pr model.PullRequest, cloneURL strin
 
 	c.log.Info("cloned", "pr", pr.String(), "sha", pr.HeadSHA, "dir", dir)
 	return ws, nil
+}
+
+// buildDirName is the per-build directory under a preview's workspace.
+//
+// The commit, so two builds of one pull request never share a directory. Twelve
+// characters is enough that a collision needs a deliberate effort, and short
+// enough to keep paths well clear of Windows' limit — the workspace holds
+// node_modules, whose paths are the deepest thing this program creates.
+func buildDirName(sha string) string {
+	if len(sha) > 12 {
+		sha = sha[:12]
+	}
+	if sha == "" {
+		return "build"
+	}
+	return sha
+}
+
+// pruneSiblings removes this preview's workspaces from earlier commits.
+//
+// Best-effort throughout. A sibling that will not delete is usually a superseded
+// build still shutting down with a file open, and that directory must survive
+// until it does — deleting it is what corrupted the winner's build before each
+// build had its own.
+func (c *Cloner) pruneSiblings(previewDir, keep string) {
+	entries, err := os.ReadDir(previewDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == keep {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(previewDir, e.Name())); err != nil {
+			c.log.Debug("leaving a workspace in place", "dir", e.Name(), "error", err)
+		}
+	}
 }
 
 // git runs one git command in dir, scrubbing credentials from any error.

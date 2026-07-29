@@ -34,6 +34,75 @@ func TestVerifyBaseURLAcceptsMatchingSite(t *testing.T) {
 	}
 }
 
+func TestVerifyBaseURLIgnoresNavigationLinks(t *testing.T) {
+	// The shape that broke a correct build. A landing page links into /docs/ many
+	// times, so counting every href made "docs" the dominant first path segment
+	// and a site built for "/" was reported as built for "/docs/" — while the
+	// asset the error quoted, /img/favicon.ico, was not under /docs/ at all.
+	//
+	// Nav links outnumber assets here on purpose; that is what a landing page
+	// looks like.
+	dir := writeIndex(t, `<html><head>
+<link rel=stylesheet href=/assets/css/styles.abc.css>
+<script src=/assets/js/main.def.js defer></script>
+<link rel=icon href=/img/favicon.ico>
+</head><body>
+<a href=/docs/intro>What this is</a>
+<a href=/docs/quickstart>Quickstart</a>
+<a href=/docs/architecture>Architecture</a>
+<a href=/docs/exposers>Exposers</a>
+<a href=/docs/reference/cli>CLI</a>
+<a href=/docs/reference/security>Security</a>
+<a href=/docs/runbooks/github-app>Runbook</a>
+</body></html>`)
+
+	if err := verifyBaseURL(dir, "/"); err != nil {
+		t.Fatalf("navigation links were counted as evidence about the base URL: %v", err)
+	}
+}
+
+func TestVerifyBaseURLStillCatchesAMisbuiltSiteAmongNavLinks(t *testing.T) {
+	// The other half: the asset corroboration must not blind the check. A site
+	// really built for /zrok/ prefixes everything Docusaurus emits — assets and
+	// routes alike — so a page full of links is exactly what a misbuilt site looks
+	// like, and volume must not hide it.
+	dir := writeIndex(t, `<html><head>
+<link rel=stylesheet href=/zrok/assets/css/styles.abc.css>
+<script src=/zrok/assets/js/main.def.js defer></script>
+<link rel=icon href=/zrok/img/favicon.ico>
+</head><body>
+<a href=/zrok/docs/intro>Intro</a>
+<a href=/zrok/docs/quickstart>Quickstart</a>
+<a href=/zrok/docs/architecture>Architecture</a>
+<a href=/zrok/docs/exposers>Exposers</a>
+</body></html>`)
+
+	if err := verifyBaseURL(dir, "/"); err == nil {
+		t.Fatal("a site built for /zrok/ was accepted at /")
+	}
+}
+
+func TestAssetRefsKeepsFilesAndDropsRoutes(t *testing.T) {
+	got := assetRefs([]string{
+		"/assets/css/styles.abc.css",
+		"/assets/js/main.def.js?v=2",
+		"/img/favicon.ico",
+		"/docs/intro",
+		"/docs/reference/cli",
+		"/",
+		"/assets/fonts/x.woff2#iefix",
+	})
+	want := []string{
+		"/assets/css/styles.abc.css",
+		"/assets/js/main.def.js?v=2",
+		"/img/favicon.ico",
+		"/assets/fonts/x.woff2#iefix",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("assetRefs = %v, want %v", got, want)
+	}
+}
+
 func TestVerifyBaseURLAcceptsMatchingPrefixedSite(t *testing.T) {
 	dir := writeIndex(t, `<html><head>
 <link rel="stylesheet" href="/zrok/assets/css/styles.abc.css">

@@ -9,7 +9,36 @@ directory and a build tree nobody can see. The irreversible half is in [04-concu
 func (c *Cloner) Clone(ctx, pr, cloneURL) (*Workspace, error)
 ```
 
-Shallow, single-branch, into a directory named by preview ID under `data/workspaces/`.
+Shallow, fetched by SHA rather than by branch name, into `data/workspaces/<preview>/<sha12>`.
+
+### One workspace directory per build, not per preview
+
+Two builds of one pull request overlap **by design**: a newer push cancels the older build but does not wait for
+it, so the loser is still unwinding while the winner clones. Sharing `workspaces/<preview>` let them corrupt each
+other two ways (`internal/pipeline/clone.go:69-98`):
+
+- The loser's cleanup deleted files under the winner mid-build.
+- On Windows a locked file made that cleanup *fail*, so a `.git` survived — and the winner's `git remote add
+  origin` then failed with "remote origin already exists", killing a build that had nothing wrong with it. This is
+  the failure that was never reachable from the local git simulator, where nothing holds a file open.
+
+Now `workspaces/<preview>/<sha12>` (`buildDirName`, `clone.go:139`). Nested under the preview ID so teardown's
+`RemoveAll` of the preview directory keeps working unchanged. Twelve characters of SHA: enough that a collision
+needs deliberate effort, short enough to keep paths clear of Windows' limit — the workspace holds `node_modules`,
+whose paths are the deepest thing this program creates.
+
+Siblings from earlier commits are pruned **best-effort**, and the failure is the point rather than a nuisance
+(`pruneSiblings`, `clone.go:155`). A sibling that will not delete is a superseded build still shutting down with a
+file open, and that directory must survive until it does. Deleting it is the original bug.
+
+### No named remote
+
+`git init`, `git fetch <url> <sha>`, `git checkout FETCH_HEAD` (`clone.go:116-120`). The remote is gone entirely.
+
+`git remote add origin` fails outright on a repository that already has an origin, so any `.git` surviving an
+interrupted build turned the next attempt into a failed build — which is exactly what a supersede produced.
+Fetching the URL directly is idempotent, and nothing here needs a remote to persist: the URL carries a short-lived
+token that would be stale by the next build anyway.
 
 **`cloneURL` carries an access token.** It is never logged, never placed in a git remote that persists, and
 never appears in an error. `internal/scm/local` has `scrubGitOutput` for the same reason: git puts the userinfo
@@ -163,6 +192,22 @@ silently passed on exactly the sites it exists to protect.
 Below `minRefsToInfer` (3) references, the check is skipped: a site built with relative URLs works at any
 prefix, and too small a sample cannot tell a base path from an ordinary directory.
 
+### 3. The check runs again at recovery, not only after a build
+
+`verifyBaseURL` is exported as `pipeline.VerifyBaseURL` (`internal/pipeline/build.go:454`) because it is needed
+twice. A build knows the base URL it just used and can check its own output. A **republish** takes the base URL out
+of a stored row (`Daemon.republish`, `internal/daemon/daemon.go:542`), and that row disagrees with the artifacts
+sitting beside it whenever `exposer.kind` has changed since the build: a path-mounting exposer folds its mount
+prefix into the base URL and a host-per-preview one does not.
+
+Serving anyway produces the failure at the top of this section, on startup, for every preview at once — index.html
+loads, every asset 404s, and nothing in any log explains it. So the artifacts are checked against the stored value
+before they are published, and a mismatch is `errArtifactsUnusable` (`daemon.go:466`), which drops the row exactly
+as a missing artifact directory does. The next push rebuilds against the current exposer.
+
+Dropping rather than keeping: leaving the row means this error on every startup forever, and a comment advertising
+a URL that serves a broken page. See [08-storage.md](08-storage.md).
+
 ## Serving the result
 
 `preview.New(dir, baseURL)` returns a `*Site`, an `http.Handler` mounted at `baseURL` that strips its own prefix
@@ -178,5 +223,8 @@ once in `runPipeline` and passed to both, so they cannot drift.
 3. Repository config cannot set any reserved environment variable.
 4. `build.command` is ignored under the local driver.
 5. The install command is chosen by the committed lockfile.
-6. The base URL used to build, to verify, and to serve is one value.
+6. The base URL used to build, to verify, and to serve is one value — including on a republish, where the value
+   comes from the database and is verified against the artifacts before anything is served.
 7. Every returned error and log is scrubbed.
+8. Two builds of one pull request never share a workspace directory.
+9. Nothing the clone does requires a clean `.git`, so an interrupted build cannot poison the next one.

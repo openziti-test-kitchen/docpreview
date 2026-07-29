@@ -49,12 +49,28 @@ type Report struct {
 	Name string
 
 	// Reason explains a skip or a failure in one line.
+	//
+	// Rendered into the comment only for a skip, where it is an explanation
+	// written for the pull request author — "no documentation changes". A
+	// failure's reason is an internal error string carrying host paths, internal
+	// hostnames and API detail, and the comment is public on any public
+	// repository. It stays in the daemon's log and the build log. See
+	// RenderComment.
 	Reason string
 
-	// LogExcerpt is the tail of the build output, included in the comment on
-	// failure. Trimmed by the renderer; the point is to save a round trip to
-	// the server, not to reproduce the whole log.
+	// LogExcerpt is the tail of the build output. Kept out of the comment for
+	// the same reason as a failure's Reason: it is the build host's stdout, and
+	// what a build prints is not a decision anybody made about what to publish.
+	//
+	// Still carried on the Report because the dashboard and the local platform's
+	// own pull request page render it, and neither is public.
 	LogExcerpt string
+
+	// DetailURL points at the build log for this preview, for a comment that
+	// declines to quote it. Empty when the operator has configured no address
+	// the link would work from, in which case the comment names the command
+	// instead.
+	DetailURL string
 
 	// Commit is the SHA that produced this state.
 	Commit string

@@ -78,6 +78,12 @@ type Daemon struct {
 	running map[string]*build
 	// commit serializes the publishing phase per preview. See commitLock.
 	commit map[string]*sync.Mutex
+	// reported is the furthest lifecycle state reported per preview, so a late
+	// report cannot move a comment backwards. See staleReport.
+	reported map[string]reportMark
+
+	// publisher coalesces platform writes. Not guarded by mu — it has its own.
+	publisher *publisher
 }
 
 // build is one generation of work for a pull request.
@@ -116,7 +122,7 @@ func New(
 		logs = nil
 	}
 
-	return &Daemon{
+	d := &Daemon{
 		cfg:     cfg,
 		log:     log,
 		store:   st,
@@ -134,8 +140,11 @@ func New(
 		live:     map[string]*expose.Publication{},
 		running:  map[string]*build{},
 		commit:   map[string]*sync.Mutex{},
+		reported: map[string]reportMark{},
 		events:   newEventLog(),
 	}
+	d.publisher = newPublisher(reportDebounce, d.publishReport)
+	return d
 }
 
 // recordFailure makes a failed build visible without destroying a working one.
@@ -197,6 +206,11 @@ func logBuildID(sha string) string {
 
 // Logs exposes the build log store, for the HTTP layer.
 func (d *Daemon) Logs() *buildlog.Store { return d.logs }
+
+// Builds returns a preview's recorded build attempts, newest first.
+func (d *Daemon) Builds(ctx context.Context, previewID string) ([]store.Build, error) {
+	return d.store.BuildsFor(ctx, previewID)
+}
 
 // Exposer exposes the publisher, for the HTTP layer to mount a path-serving
 // implementation on its own listener.
@@ -332,6 +346,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Before any worker can add to the feed, so the restored history sits behind
+	// this run's events rather than being interleaved with them.
+	d.backfill(ctx, eventLogSize)
+
 	var wg sync.WaitGroup
 	for i := 0; i < d.cfg.Workers; i++ {
 		wg.Add(1)
@@ -349,6 +367,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	<-ctx.Done()
 	wg.Wait()
+
+	// Flush held-back reports before tearing anything down. A shutdown inside the
+	// debounce window would otherwise lose the last report of every in-flight
+	// build — usually the terminal one, leaving a comment reading "Building" for a
+	// build that finished. Before the exposer closes, because a report can name a
+	// URL and the exposer is what serves it.
+	d.publisher.Close()
 
 	if err := d.exposer.Close(); err != nil {
 		d.log.Error("closing exposer", "error", err)
@@ -389,6 +414,18 @@ func (d *Daemon) recover(ctx context.Context) error {
 			continue
 		}
 		if err := d.republish(ctx, p); err != nil {
+			// Artifacts that cannot be served are the same situation as artifacts
+			// that are not there: drop the row so the next push rebuilds. Keeping
+			// it means this error on every startup forever, and a preview whose
+			// comment advertises a URL that serves a broken page.
+			if errors.Is(err, errArtifactsUnusable) {
+				d.log.Warn("dropping preview whose artifacts cannot be served",
+					"preview", p.PreviewID, "error", err)
+				if err := d.store.DeletePreview(ctx, p.PreviewID); err != nil {
+					d.log.Error("forgetting preview", "preview", p.PreviewID, "error", err)
+				}
+				continue
+			}
 			d.log.Error("restoring preview", "preview", p.PreviewID, "error", err)
 			continue
 		}
@@ -407,8 +444,108 @@ func (d *Daemon) recover(ctx context.Context) error {
 	return nil
 }
 
+// saveBuild records a build attempt, logging rather than propagating a failure.
+//
+// Best-effort on purpose. The history and the build picker are worth having, and
+// neither is worth failing a build that otherwise succeeded — the same reasoning
+// that makes reporting best-effort.
+//
+// Its own context, because this is called from paths whose context may already be
+// cancelled by a supersede, and a superseded build's outcome is exactly the thing
+// the history should record.
+func (d *Daemon) saveBuild(b store.Build) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.store.SaveBuild(ctx, b); err != nil {
+		d.log.Warn("recording the build", "preview", b.PreviewID, "build", b.BuildID, "error", err)
+	}
+}
+
+// errArtifactsUnusable marks a republish failure that rebuilding would fix, so
+// recovery drops the row instead of retrying it on every startup.
+var errArtifactsUnusable = errors.New("stored artifacts cannot be served")
+
+// reportRank orders the states a single commit moves through.
+//
+// A build goes queued → building → one of ready, failed or skipped, and never
+// backwards. That is what makes a stale report recognisable: any state ranked
+// below the furthest one already reported for the same commit is late, whatever
+// its timestamp says.
+//
+// A timestamp cannot do this job. It records when a report was *made*, and the
+// inversion being defended against is in the making — two goroutines producing
+// reports for one preview, where the earlier lifecycle state is sometimes the
+// later message. Sorting by time faithfully reproduces the wrong order.
+func reportRank(s scm.State) int {
+	switch s {
+	case scm.StateQueued:
+		return 1
+	case scm.StateBuilding:
+		return 2
+	case scm.StateReady, scm.StateFailed, scm.StateSkipped:
+		return 3
+	default:
+		// Anything unrecognised — a teardown, a state added later — is terminal
+		// rather than stale. Silently dropping a state this function has not been
+		// taught about would be the worse failure.
+		return 4
+	}
+}
+
+// reportMark is the furthest state reported for one commit.
+type reportMark struct {
+	commit string
+	rank   int
+}
+
+// staleReport reports whether r describes a state already passed for its commit,
+// and records it when it does not.
+//
+// Keyed by commit, because the lifecycle restarts with every push: ready → queued
+// is backwards within one commit and correct across two. A commit that differs
+// from the mark resets it rather than comparing against it.
+//
+// Equal ranks pass. Two ready reports for one commit are legitimate — a republish
+// after a restart can move the URL, and the comment has to be rewritten — so the
+// test is strictly-below, not below-or-equal.
+func (d *Daemon) staleReport(r scm.Report) bool {
+	rank := reportRank(r.State)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.reported == nil {
+		d.reported = map[string]reportMark{}
+	}
+	mark, seen := d.reported[r.PreviewID]
+
+	if seen && mark.commit == r.Commit && rank < mark.rank {
+		return true
+	}
+	d.reported[r.PreviewID] = reportMark{commit: r.Commit, rank: rank}
+	return false
+}
+
 // republish serves a preview's existing artifacts at its existing name.
+//
+// The stored base URL is the value the artifacts were baked with, which is also
+// the path they must be served at — one value, used twice, and that is the
+// invariant. It can still be wrong by the time this runs: a path-mounting exposer
+// folds its mount prefix into the base URL and a host-per-preview one does not, so
+// changing `exposer.kind` leaves every stored row describing a layout the current
+// exposer will not produce.
+//
+// Serving anyway yields a site whose HTML loads and whose every asset 404s, with
+// nothing in any log to explain it. So the artifacts are checked against the value
+// before they are published, and a mismatch is an error — which drops the row, the
+// same as a missing artifact directory, and lets the next push rebuild.
 func (d *Daemon) republish(ctx context.Context, p store.Preview) error {
+	if err := pipeline.VerifyBaseURL(p.ArtifactDir, p.BaseURL); err != nil {
+		return fmt.Errorf("%w: stored artifacts do not match the base URL they would be served at "+
+			"(most likely exposer.kind changed since this preview was built): %w",
+			errArtifactsUnusable, err)
+	}
+
 	site, err := preview.New(p.ArtifactDir, p.BaseURL)
 	if err != nil {
 		return err
@@ -463,6 +600,21 @@ func (d *Daemon) handleBuild(ctx context.Context, ev scm.Event) error {
 	pr := ev.PR
 	id := pr.PreviewID()
 
+	// Report queued before enqueueing, not after.
+	//
+	// Enqueue wakes a worker, and a worker that claims the job reports "building"
+	// — so reporting "queued" afterwards is a race this lost most of the time,
+	// leaving the comment showing queued for a build already running. Emitting it
+	// first means the job does not exist yet, so nothing can be building.
+	//
+	// The report is best-effort where the enqueue is not: a queue write that fails
+	// means no build, and the caller has to hear about it. A comment that fails to
+	// say "queued" is a cosmetic loss on the way to saying "building".
+	d.report(ctx, scm.Report{
+		PR: pr, PreviewID: id, State: scm.StateQueued,
+		Commit: pr.HeadSHA, UpdatedAt: time.Now(),
+	})
+
 	if err := d.store.Enqueue(ctx, pr); err != nil {
 		return err
 	}
@@ -481,11 +633,6 @@ func (d *Daemon) handleBuild(ctx context.Context, ev scm.Event) error {
 		b.cancel()
 	}
 	d.mu.Unlock()
-
-	d.report(ctx, scm.Report{
-		PR: pr, PreviewID: id, State: scm.StateQueued,
-		Commit: pr.HeadSHA, UpdatedAt: time.Now(),
-	})
 
 	d.nudge()
 	return nil
@@ -515,6 +662,10 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	pub := d.live[previewID]
 	delete(d.live, previewID)
 	delete(d.commit, previewID)
+	// The lifecycle is over, so the next report for this preview starts a new one.
+	// Keeping the mark would make a reopened pull request's "queued" look stale
+	// against the torn-down build's terminal state and be dropped.
+	delete(d.reported, previewID)
 	d.mu.Unlock()
 
 	var errs []error
@@ -756,6 +907,15 @@ func (d *Daemon) runPipeline(
 		log.Warn("could not open a build log; the build will run untailed", "error", logErr)
 	}
 
+	// Record the attempt before it runs, so a build in flight appears in the
+	// history rather than materialising only once it ends — which is when somebody
+	// looking at the dashboard most wants to see it.
+	startedAt := time.Now()
+	d.saveBuild(store.Build{
+		PreviewID: pr.PreviewID(), BuildID: buildID, PR: pr, Commit: pr.HeadSHA,
+		State: string(scm.StateBuilding), StartedAt: startedAt,
+	})
+
 	var sink io.Writer
 	if logw != nil {
 		sink = logw
@@ -781,8 +941,18 @@ func (d *Daemon) runPipeline(
 	}
 
 	if err != nil {
+		d.saveBuild(store.Build{
+			PreviewID: pr.PreviewID(), BuildID: buildID, PR: pr, Commit: pr.HeadSHA,
+			State: string(scm.StateFailed), Reason: d.scrub(firstLine(err.Error())),
+			StartedAt: startedAt, FinishedAt: time.Now(),
+		})
 		return out, decision, err
 	}
+
+	d.saveBuild(store.Build{
+		PreviewID: pr.PreviewID(), BuildID: buildID, PR: pr, Commit: pr.HeadSHA,
+		State: string(scm.StateReady), StartedAt: startedAt, FinishedAt: time.Now(),
+	})
 
 	// --- Commit phase ------------------------------------------------------
 	//
@@ -918,6 +1088,16 @@ func (d *Daemon) previewName(pr model.PullRequest) (string, error) {
 // and the preview is still live; failing the build because the comment could
 // not be written would throw away work that succeeded.
 func (d *Daemon) report(ctx context.Context, r scm.Report) {
+	// A state this commit has already moved past is dropped everywhere, not just
+	// on the way to the platform. The dashboard reads the same rows, so letting a
+	// stale report through here would move it backwards too — and the three
+	// surfaces disagreeing is worse than any of them being briefly behind.
+	if d.staleReport(r) {
+		d.log.Debug("dropping a report for a state already passed",
+			"pr", r.PR.String(), "preview", r.PreviewID, "state", r.State, "commit", r.Commit)
+		return
+	}
+
 	// Record before publishing, and regardless of whether a client exists.
 	// Every state change funnels through here, which makes it the one place
 	// that sees the whole lifecycle — and the dashboard should show a build
@@ -928,14 +1108,33 @@ func (d *Daemon) report(ctx context.Context, r scm.Report) {
 	if !ok {
 		return
 	}
+
+	// Where to read the detail the comment declines to quote. Set here rather
+	// than at each call site because this is the one funnel every report passes
+	// through, and a report that reached a platform without it would tell
+	// somebody a build failed and not where to look.
+	if r.State == scm.StateFailed && r.DetailURL == "" {
+		if base := strings.TrimRight(d.cfg.DashboardURL, "/"); base != "" {
+			r.DetailURL = fmt.Sprintf("%s/logs/%s", base, r.PreviewID)
+		}
+	}
+
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = time.Now()
 	}
-	// Use a detached context so a cancelled build can still report why.
-	reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+
+	d.publisher.send(r, client)
+}
+
+// publishReport writes one report to a platform.
+func (d *Daemon) publishReport(r scm.Report, client scm.Client) {
+	// A detached context with its own deadline: a cancelled build still has to be
+	// able to say why it stopped, and this runs from a timer rather than from the
+	// caller's goroutine, so there is no request context to inherit.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := client.Publish(reportCtx, r); err != nil {
+	if err := client.Publish(ctx, r); err != nil {
 		d.log.Error("publishing report", "pr", r.PR.String(), "state", r.State, "error", err)
 	}
 }
@@ -1001,6 +1200,13 @@ func (d *Daemon) reaper(ctx context.Context) {
 			d.log.Warn("sweeping build logs", "error", err)
 		} else if n > 0 {
 			d.log.Info("swept old build logs", "previews", n)
+		}
+
+		// The build history is bounded on the same window, so a row and its log
+		// disappear together and the picker never lists an outcome whose log has
+		// gone. A row per push otherwise accumulates forever.
+		if err := d.store.PruneBuilds(ctx, time.Now().Add(-d.cfg.Build.KeepLogs)); err != nil {
+			d.log.Warn("pruning the build history", "error", err)
 		}
 
 		// Anything the exposer holds that is not a recorded preview is a leak.

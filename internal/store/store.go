@@ -60,6 +60,37 @@ CREATE TABLE IF NOT EXISTS previews (
 
 CREATE INDEX IF NOT EXISTS previews_updated_at ON previews(updated_at);
 
+-- One row per build attempt, which the previews table cannot express: it holds
+-- the *current* state of a preview and is overwritten on every rebuild, so the
+-- history of what a branch has done is nowhere.
+--
+-- Two things needed it. The build-log picker lists stored logs and could say
+-- nothing about how each one ended, so choosing between them meant opening each
+-- in turn. And the activity feed was an in-memory ring, so it was empty after
+-- every restart — a feed of "recent activity" that forgot the moment the process
+-- did.
+--
+-- Keyed by (preview, build) because the build id already carries the commit and a
+-- timestamp, so the same commit rebuilt twice is two rows, which is what somebody
+-- reading the history wants to see.
+CREATE TABLE IF NOT EXISTS builds (
+    preview_id  TEXT NOT NULL,
+    build_id    TEXT NOT NULL,
+    platform    TEXT NOT NULL DEFAULT '',
+    owner       TEXT NOT NULL DEFAULT '',
+    repo        TEXT NOT NULL DEFAULT '',
+    number      INTEGER NOT NULL DEFAULT 0,
+    branch      TEXT NOT NULL DEFAULT '',
+    commit_sha  TEXT NOT NULL DEFAULT '',
+    state       TEXT NOT NULL DEFAULT '',
+    reason      TEXT NOT NULL DEFAULT '',
+    started_at  INTEGER NOT NULL DEFAULT 0,
+    finished_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (preview_id, build_id)
+);
+
+CREATE INDEX IF NOT EXISTS builds_started_at ON builds(started_at);
+
 -- Comments exist only for the local platform, which has nowhere else to put
 -- them. GitHub and Bitbucket keep the comment on the pull request, which is the
 -- point: the comment is self-identifying by its marker and needs no record
@@ -213,6 +244,106 @@ func (s *Store) PendingJobs(ctx context.Context) ([]PendingJob, error) {
 		out = append(out, PendingJob{PR: pr, EnqueuedAt: time.UnixMilli(enqueued)})
 	}
 	return out, rows.Err()
+}
+
+// Build is one attempt at building a preview.
+type Build struct {
+	PreviewID  string            `json:"preview_id"`
+	BuildID    string            `json:"build_id"`
+	PR         model.PullRequest `json:"pr"`
+	Commit     string            `json:"commit"`
+	State      string            `json:"state"`
+	Reason     string            `json:"reason,omitempty"`
+	StartedAt  time.Time         `json:"started_at"`
+	FinishedAt time.Time         `json:"finished_at,omitempty"`
+}
+
+// SaveBuild records or updates one build attempt.
+//
+// Upsert on (preview, build) so the same row can be written twice: once when the
+// build starts, so a build in flight is visible in the history rather than
+// appearing only after it ends, and once when it finishes with its outcome.
+func (s *Store) SaveBuild(ctx context.Context, b Build) error {
+	_, err := s.db.ExecContext(ctx, `
+        INSERT INTO builds (preview_id, build_id, platform, owner, repo, number, branch,
+            commit_sha, state, reason, started_at, finished_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(preview_id, build_id) DO UPDATE SET
+            state       = excluded.state,
+            reason      = excluded.reason,
+            finished_at = excluded.finished_at`,
+		b.PreviewID, b.BuildID, string(b.PR.Repo.Platform), b.PR.Repo.Owner, b.PR.Repo.Name,
+		b.PR.Number, b.PR.Branch, b.Commit, b.State, b.Reason,
+		b.StartedAt.UnixMilli(), b.FinishedAt.UnixMilli())
+	if err != nil {
+		return fmt.Errorf("saving build %s/%s: %w", b.PreviewID, b.BuildID, err)
+	}
+	return nil
+}
+
+// BuildsFor returns a preview's build attempts, newest first.
+func (s *Store) BuildsFor(ctx context.Context, previewID string) ([]Build, error) {
+	return s.queryBuilds(ctx,
+		`SELECT preview_id, build_id, platform, owner, repo, number, branch,
+                commit_sha, state, reason, started_at, finished_at
+         FROM builds WHERE preview_id = ? ORDER BY started_at DESC`, previewID)
+}
+
+// RecentBuilds returns the newest build attempts across every preview.
+//
+// This is what backfills the activity feed after a restart. Bounded rather than
+// paged: the feed is a window onto what just happened, and a caller wanting the
+// whole history wants the build logs on disk instead.
+func (s *Store) RecentBuilds(ctx context.Context, limit int) ([]Build, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.queryBuilds(ctx,
+		`SELECT preview_id, build_id, platform, owner, repo, number, branch,
+                commit_sha, state, reason, started_at, finished_at
+         FROM builds ORDER BY started_at DESC LIMIT ?`, limit)
+}
+
+func (s *Store) queryBuilds(ctx context.Context, query string, args ...any) ([]Build, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing builds: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Build
+	for rows.Next() {
+		var b Build
+		var platform string
+		var started, finished int64
+		if err := rows.Scan(&b.PreviewID, &b.BuildID, &platform, &b.PR.Repo.Owner,
+			&b.PR.Repo.Name, &b.PR.Number, &b.PR.Branch, &b.Commit, &b.State, &b.Reason,
+			&started, &finished); err != nil {
+			return nil, err
+		}
+		b.PR.Repo.Platform = model.Platform(platform)
+		b.StartedAt = time.UnixMilli(started)
+		if finished > 0 {
+			b.FinishedAt = time.UnixMilli(finished)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// PruneBuilds drops build rows older than cutoff.
+//
+// The history is bounded the same way build logs are, and for the same reason: a
+// row per push accumulates forever on a busy repository. Kept independent of the
+// log files rather than derived from them, because a log can fail to open while
+// the build still happened and belongs in the history.
+func (s *Store) PruneBuilds(ctx context.Context, cutoff time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM builds WHERE started_at < ?`, cutoff.UnixMilli())
+	if err != nil {
+		return fmt.Errorf("pruning builds: %w", err)
+	}
+	return nil
 }
 
 // Preview is a recorded preview.
