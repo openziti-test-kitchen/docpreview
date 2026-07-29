@@ -305,10 +305,42 @@ func (i *Ingress) status(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// Whether this caller can reach the credential surface at all, so the page
+	// can decide whether to offer a link to it.
+	//
+	// Answered per request rather than baked into the page, because the page is one
+	// embedded file served to everybody and the answer differs by caller: the
+	// dashboard proxy publishes this route and not /secrets, so a remote viewer
+	// following that link gets a 404 and concludes the dashboard is broken.
+	//
+	// Not a security control — /secrets and /api/secrets refuse remote callers on
+	// their own, twice over. This is about not showing somebody a door that is not
+	// there.
+	body := struct {
+		Status
+		Secrets bool `json:"secrets"`
+	}{Status: st, Secrets: i.secretsReachable(r)}
+
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(st); err != nil {
+	if err := enc.Encode(body); err != nil {
 		i.log.Error("writing status", "error", err)
 	}
+}
+
+// secretsReachable reports whether this request could manage credentials.
+//
+// Three conditions, matching what /secrets and the write endpoints will actually
+// decide: an admin has to be wired, the daemon has to be loopback-only, and the
+// request has to have originated here.
+func (i *Ingress) secretsReachable(r *http.Request) bool {
+	if i.secrets == nil {
+		return false
+	}
+	if ok, _ := i.secrets.Available(); !ok {
+		return false
+	}
+	ok, _ := isLocalRequest(r)
+	return ok
 }

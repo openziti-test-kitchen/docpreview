@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/netfoundry/docpreview/internal/buildlog"
+	"github.com/netfoundry/docpreview/internal/store"
 )
 
 // Server-sent events, replacing what used to be a one-second poll.
@@ -371,11 +372,46 @@ func (i *Ingress) listLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	_, live := i.daemon.Logs().Live(previewID)
 
+	// Each log's outcome, so the build picker can say what happened without the
+	// reader opening every one in turn. Joined here rather than stored on the log
+	// file: the log is bytes on disk, and how a build ended is the daemon's
+	// knowledge, recorded when the build finished.
+	//
+	// A log with no matching row still appears, with no state. That happens for
+	// builds from before the builds table existed, and for a build whose row was
+	// pruned before its log was — both cases where the log is still readable and
+	// hiding it would be worse than showing it unlabelled.
+	outcomes := map[string]store.Build{}
+	if builds, err := i.daemon.Builds(r.Context(), previewID); err != nil {
+		i.log.Warn("reading build outcomes", "preview", previewID, "error", err)
+	} else {
+		for _, b := range builds {
+			outcomes[b.BuildID] = b
+		}
+	}
+
+	type logView struct {
+		buildlog.Meta
+		State  string `json:"state,omitempty"`
+		Reason string `json:"reason,omitempty"`
+	}
+	out := make([]logView, 0, len(metas))
+	for _, m := range metas {
+		v := logView{Meta: m}
+		// A build in flight already carries "building": the row is written when the
+		// build starts and updated when it ends, so no separate live check is
+		// needed here.
+		if b, ok := outcomes[m.BuildID]; ok {
+			v.State, v.Reason = b.State, b.Reason
+		}
+		out = append(out, v)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(map[string]any{
 		"preview_id": previewID,
 		"live":       live,
-		"logs":       metas,
+		"logs":       out,
 	})
 }

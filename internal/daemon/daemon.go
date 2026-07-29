@@ -207,6 +207,11 @@ func logBuildID(sha string) string {
 // Logs exposes the build log store, for the HTTP layer.
 func (d *Daemon) Logs() *buildlog.Store { return d.logs }
 
+// Builds returns a preview's recorded build attempts, newest first.
+func (d *Daemon) Builds(ctx context.Context, previewID string) ([]store.Build, error) {
+	return d.store.BuildsFor(ctx, previewID)
+}
+
 // Exposer exposes the publisher, for the HTTP layer to mount a path-serving
 // implementation on its own listener.
 func (d *Daemon) Exposer() expose.Exposer { return d.exposer }
@@ -341,6 +346,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Before any worker can add to the feed, so the restored history sits behind
+	// this run's events rather than being interleaved with them.
+	d.backfill(ctx, eventLogSize)
+
 	var wg sync.WaitGroup
 	for i := 0; i < d.cfg.Workers; i++ {
 		wg.Add(1)
@@ -433,6 +442,23 @@ func (d *Daemon) recover(ctx context.Context) error {
 		d.nudge()
 	}
 	return nil
+}
+
+// saveBuild records a build attempt, logging rather than propagating a failure.
+//
+// Best-effort on purpose. The history and the build picker are worth having, and
+// neither is worth failing a build that otherwise succeeded — the same reasoning
+// that makes reporting best-effort.
+//
+// Its own context, because this is called from paths whose context may already be
+// cancelled by a supersede, and a superseded build's outcome is exactly the thing
+// the history should record.
+func (d *Daemon) saveBuild(b store.Build) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.store.SaveBuild(ctx, b); err != nil {
+		d.log.Warn("recording the build", "preview", b.PreviewID, "build", b.BuildID, "error", err)
+	}
 }
 
 // errArtifactsUnusable marks a republish failure that rebuilding would fix, so
@@ -881,6 +907,15 @@ func (d *Daemon) runPipeline(
 		log.Warn("could not open a build log; the build will run untailed", "error", logErr)
 	}
 
+	// Record the attempt before it runs, so a build in flight appears in the
+	// history rather than materialising only once it ends — which is when somebody
+	// looking at the dashboard most wants to see it.
+	startedAt := time.Now()
+	d.saveBuild(store.Build{
+		PreviewID: pr.PreviewID(), BuildID: buildID, PR: pr, Commit: pr.HeadSHA,
+		State: string(scm.StateBuilding), StartedAt: startedAt,
+	})
+
 	var sink io.Writer
 	if logw != nil {
 		sink = logw
@@ -906,8 +941,18 @@ func (d *Daemon) runPipeline(
 	}
 
 	if err != nil {
+		d.saveBuild(store.Build{
+			PreviewID: pr.PreviewID(), BuildID: buildID, PR: pr, Commit: pr.HeadSHA,
+			State: string(scm.StateFailed), Reason: d.scrub(firstLine(err.Error())),
+			StartedAt: startedAt, FinishedAt: time.Now(),
+		})
 		return out, decision, err
 	}
+
+	d.saveBuild(store.Build{
+		PreviewID: pr.PreviewID(), BuildID: buildID, PR: pr, Commit: pr.HeadSHA,
+		State: string(scm.StateReady), StartedAt: startedAt, FinishedAt: time.Now(),
+	})
 
 	// --- Commit phase ------------------------------------------------------
 	//
@@ -1155,6 +1200,13 @@ func (d *Daemon) reaper(ctx context.Context) {
 			d.log.Warn("sweeping build logs", "error", err)
 		} else if n > 0 {
 			d.log.Info("swept old build logs", "previews", n)
+		}
+
+		// The build history is bounded on the same window, so a row and its log
+		// disappear together and the picker never lists an outcome whose log has
+		// gone. A row per push otherwise accumulates forever.
+		if err := d.store.PruneBuilds(ctx, time.Now().Add(-d.cfg.Build.KeepLogs)); err != nil {
+			d.log.Warn("pruning the build history", "error", err)
 		}
 
 		// Anything the exposer holds that is not a recorded preview is a leak.

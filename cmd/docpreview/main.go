@@ -64,6 +64,8 @@ func run(args []string) error {
 		return cmdWebhookOnly(args[1:])
 	case "webhook-check":
 		return cmdWebhookCheck(args[1:])
+	case "dashboard-only":
+		return cmdDashboardOnly(args[1:])
 	case "vault":
 		return cmdVault(args[1:])
 	case "help", "-h", "--help":
