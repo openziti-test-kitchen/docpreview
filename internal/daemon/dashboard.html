@@ -462,6 +462,23 @@ pre.term .mask { color: var(--warning); font-weight: 700 }
 }
 .ev:last-child { border-bottom: 0 }
 
+/* Feedback for a click that changed nothing else. Every preview of one repository
+   shares a project row, so clicking an activity entry for the preview already
+   showing leaves the page identical — and silence is indistinguishable from a dead
+   button. The outline is on the row rather than the entry because the row is what
+   the click was about. */
+@keyframes flash {
+  from { box-shadow: inset 0 0 0 2px var(--ink) }
+  to   { box-shadow: inset 0 0 0 2px transparent }
+}
+.item.flash { animation: flash 0.6s ease-out }
+/* An animation is the whole mechanism here, so with motion suppressed the feedback
+   has to be something static that still ends — a border that never clears would
+   leave the row looking permanently selected. */
+@media (prefers-reduced-motion: reduce) {
+  .item.flash { animation: flash 0.6s steps(2, jump-none) }
+}
+
 /* An entry whose preview still exists is a button that opens it. The reset is
    what keeps it looking identical to the inert entries beside it — the affordance
    is the hover, not a different shape, because a rail of twenty buttons reads as
@@ -1416,6 +1433,36 @@ function renderFeedFilters(events) {
   }
 }
 
+// collapse drops the queued and building entries of an attempt that has finished.
+//
+// The feed records every state transition, so one build leaves "queued",
+// "building" and "ready" behind. That reads wrong: a row saying **Queued** four
+// minutes ago, with the same word and the same coloured dot a live queued row
+// uses, looks like a job that is stuck. It is a fact about the past written in
+// the present tense.
+//
+// So an attempt's non-terminal entries are dropped once that attempt reached a
+// terminal state, and kept while it has not — a build actually queued or building
+// right now still has its row, which is when that row is worth anything.
+//
+// Grouped by preview *and* commit, not by preview: two attempts of one pull
+// request are two builds, and collapsing them together would hide the older one's
+// outcome. Dropped rather than merged into one row with a duration, because the
+// timestamps are the history and a synthesised row has no honest one.
+//
+// The kind filter bypasses this. Picking "queued" is asking for exactly what was
+// hidden, and answering with nothing would be a filter that lies.
+function collapse(events) {
+  const terminal = new Set(["ready", "failed", "skipped", "torn-down"]);
+
+  const settled = new Set();
+  for (const e of events) {
+    if (terminal.has(e.kind)) settled.add(`${e.preview_id}|${e.commit}`);
+  }
+  return events.filter(e =>
+    terminal.has(e.kind) || !settled.has(`${e.preview_id}|${e.commit}`));
+}
+
 function renderEvents() {
   const el = document.getElementById("events");
 
@@ -1434,7 +1481,7 @@ function renderEvents() {
   document.getElementById("feed-scope").textContent = only ? only : "all projects";
   renderFeedFilters(scoped);
 
-  const shown = ui.kind ? scoped.filter(e => e.kind === ui.kind) : scoped;
+  const shown = ui.kind ? scoped.filter(e => e.kind === ui.kind) : collapse(scoped);
 
   if (shown.length === 0) {
     el.innerHTML = `<div class="empty">Nothing yet.</div>`;
@@ -1446,6 +1493,7 @@ function renderEvents() {
   // torn-down preview leaves its history behind — and a link that looks live
   // and goes nowhere is worse than one that never offered.
   const reachable = id => id && ui.previews.some(p => p.preview_id === id);
+
 
   el.innerHTML = shown.map(e => {
     const s = state(e.kind);
@@ -1463,12 +1511,13 @@ function renderEvents() {
 
     return go
       ? `<button class="ev linked" style="--edge:${s.color}" data-id="${esc(e.preview_id)}"
-                 title="Open this build">${inner}</button>`
+                 data-commit="${esc(e.commit || "")}"
+                 title="Show this build's log">${inner}</button>`
       : `<div class="ev" style="--edge:${s.color}">${inner}</div>`;
   }).join("");
 
   for (const b of el.querySelectorAll(".ev.linked")) {
-    b.onclick = () => reveal(b.dataset.id);
+    b.onclick = () => reveal(b.dataset.id, b.dataset.commit);
   }
 }
 
@@ -1478,7 +1527,14 @@ function renderEvents() {
 // clicked may well be hidden by the state filter or the search box you set
 // three minutes ago, and expanding a row that is not on screen looks like
 // nothing happened at all.
-function reveal(previewID) {
+//
+// The commit matters as much as the preview, and used to be ignored. Every
+// preview of one repository lands in a single group, so clicking an entry only
+// changed which preview was picked inside a row that was usually already open —
+// and clicking an entry for the preview already showing did nothing at all,
+// while the button's own tooltip promised to open that build. Selecting the
+// build the entry names is what the tooltip always said this did.
+function reveal(previewID, commit) {
   const p = ui.previews.find(x => x.preview_id === previewID);
   if (!p) return;
 
@@ -1505,7 +1561,50 @@ function reveal(previewID) {
   if (item) {
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     item.scrollIntoView({block: "nearest", behavior: still ? "auto" : "smooth"});
+    // Always something visible, even when the click changed no state — the row was
+    // already open on this preview and this build. Silence is indistinguishable
+    // from a broken button.
+    flash(item);
   }
+
+  if (commit) selectBuildForCommit(previewID, commit);
+}
+
+// selectBuildForCommit points the build picker at the build an activity entry names.
+//
+// Matched on the build id's suffix, because a build id is
+// "<date>-<time>-<short sha>" and the event carries only the sha. The newest build
+// takes the empty value rather than its own id: empty means "follow the live
+// stream", and the newest build's log is still being written while it runs, so
+// selecting it by id would read a truncated file that never updates.
+//
+// The list may not have arrived yet — it is fetched per preview — so this retries
+// once after it lands rather than silently doing nothing on the first click of a
+// row for a preview nobody has opened yet.
+async function selectBuildForCommit(previewID, commit) {
+  if (!ui.builds[previewID]) await loadBuilds(previewID);
+
+  const builds = ui.builds[previewID] || [];
+  const i = builds.findIndex(b => b.build_id.endsWith("-" + commit));
+  if (i < 0) return;
+
+  const buildID = i === 0 ? "" : builds[i].build_id;
+  ui.build[previewID] = buildID;
+  updateBuildPicker(previewID);
+  showBuild(previewID, buildID);
+}
+
+// flash marks an element as just-acted-on.
+//
+// The class is removed on animation end rather than by a timer, so a second click
+// during the animation restarts it instead of being swallowed.
+function flash(el) {
+  el.classList.remove("flash");
+  // Forces a reflow, without which removing and re-adding in one frame is a no-op
+  // and a repeated click produces no animation at all.
+  void el.offsetWidth;
+  el.classList.add("flash");
+  el.addEventListener("animationend", () => el.classList.remove("flash"), {once: true});
 }
 
 /* ── Setup panel ──────────────────────────────────────────────────────────
