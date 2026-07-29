@@ -553,6 +553,21 @@ func (s *Store) queryBuilds(ctx context.Context, query string, args ...any) ([]B
 	return out, rows.Err()
 }
 
+// ClearBuildShare forgets a build's share without touching the rest of its row.
+//
+// For a build whose artifacts have been pruned: the share is gone, so anything still
+// offering its URL is offering a dead link, but the row is history and history did
+// happen. Two columns, not a delete.
+func (s *Store) ClearBuildShare(ctx context.Context, previewID, buildID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE builds SET name = '', url = '' WHERE preview_id = ? AND build_id = ?`,
+		previewID, buildID)
+	if err != nil {
+		return fmt.Errorf("clearing the share on build %s/%s: %w", previewID, buildID, err)
+	}
+	return nil
+}
+
 // PruneBuilds drops build rows older than cutoff.
 //
 // The history is bounded the same way build logs are, and for the same reason: a

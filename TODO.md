@@ -6,6 +6,31 @@ Related: `www/docs/future/ziti-native-previews.md` holds the design research tha
 
 ## In flight
 
+**A share that exists before the build does.** Today a share is created after a successful build, so the first
+push to a branch gives a reviewer `share ... not found!` until it finishes, and a restart briefly 404s everything.
+
+The fix is a handler that can be swapped rather than a share that gets replaced. `Publish` takes an
+`http.Handler`, so publish a `switchable` holding an atomic pointer:
+
+- **Queued or building** — it serves a status page: which commit, how long, a spinner, and a poll against
+  `/_docpreview/status` on its own origin. Same share, so same origin, so no CORS and no daemon URL to know.
+- **Ready** — the pointer is swapped to the built site. The page's poll sees `ready` and reloads itself into it.
+- **Failed** — it serves the failure and the log excerpt, which is more use than a 404.
+
+Three things this fixes beyond the missing page. Publishing a name is destructive, so a rebuild currently
+withdraws a live share and takes the name again — with a swap there is nothing to withdraw and the supersede race
+that `commitLock` exists for gets narrower. A restart republishes once per preview instead of once per preview
+*and* once per build. And the reviewer gets a URL that is safe to paste into a review before the build lands.
+
+- [ ] `switchable` handler, and `Publish` called at enqueue rather than at commit.
+- [ ] `/_docpreview/status` on the placeholder, and the poll-and-reload page. Reserved prefix so it cannot
+      collide with a documentation route.
+- [ ] **Decide what a failed first build should hold.** Publishing at enqueue means a name is taken by a branch
+      that may never build, which matters because the zrok name is the quota-bearing object and is never released
+      (below). Serving the failure is the useful answer; leaking a name per abandoned branch is the cost.
+- [ ] Keep the artifact check. `errArtifactsUnusable` drops a preview whose stored `base_url` no longer matches
+      the exposer, and a swap must not skip it — serving a site whose every asset 404s is worse than a placeholder.
+
 **A share per build, not just per branch.** Today one preview owns one share, and it always serves the newest
 successful build. The consequence shows up on the dashboard: the log pane can be reading
 `build 20260729-190307-85912e2` while the Open button next to it goes to whatever is currently published. Two

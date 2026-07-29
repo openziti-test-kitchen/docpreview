@@ -459,7 +459,7 @@ func (d *Daemon) recover(ctx context.Context) error {
 		d.log.Warn("reaping orphaned shares at startup", "error", err)
 	}
 
-	restored := 0
+	restored, builds := 0, 0
 	for _, p := range previews {
 		if p.State != scm.StateReady || p.ArtifactDir == "" {
 			continue
@@ -488,18 +488,88 @@ func (d *Daemon) recover(ctx context.Context) error {
 			continue
 		}
 		restored++
+		builds += d.restoreBuildShares(ctx, p)
 	}
 
 	pending, err := d.store.PendingCount(ctx)
 	if err != nil {
 		return err
 	}
-	d.log.Info("recovered", "previews_restored", restored, "jobs_pending", pending)
+	d.log.Info("recovered",
+		"previews_restored", restored, "build_shares_restored", builds, "jobs_pending", pending)
 
 	if pending > 0 {
 		d.nudge()
 	}
 	return nil
+}
+
+// restoreBuildShares republishes one preview's per-build shares, and forgets the
+// ones it cannot.
+//
+// Without this a build share lasted exactly as long as the process that made it.
+// Startup reaps with an empty keep-set — nothing we own can have survived — and then
+// republished previews only, so every build URL 404'd after a restart while
+// `builds.url` went on advertising it. Reported as "that should still be there", and
+// it should have been.
+//
+// A row whose artifacts are gone has its URL cleared rather than being republished,
+// because `keep_builds` prunes artifacts and the row outlives them. Leaving the URL
+// would keep the dashboard offering a link to something no longer on disk, which is
+// the same failure in slower motion.
+//
+// Best effort per build, like the original publish: the branch share is already back
+// up by the time this runs, and one build URL missing is worth a warning rather than
+// a startup that gives up part-way through.
+func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
+	rows, err := d.store.BuildsFor(ctx, p.PreviewID)
+	if err != nil {
+		d.log.Warn("listing builds to restore their shares", "preview", p.PreviewID, "error", err)
+		return 0
+	}
+
+	n := 0
+	for _, b := range rows {
+		if b.URL == "" {
+			continue
+		}
+
+		dir := filepath.Join(d.cfg.ArtifactsDir(), p.PreviewID, b.BuildID)
+		if _, err := os.Stat(dir); err != nil {
+			// Pruned by keep_builds, or never written. Forget the URL so nothing
+			// offers it; the row itself stays, because the history is still true.
+			b.URL, b.Name = "", ""
+			if err := d.store.ClearBuildShare(ctx, p.PreviewID, b.BuildID); err != nil {
+				d.log.Warn("forgetting a pruned build's URL",
+					"preview", p.PreviewID, "build", b.BuildID, "error", err)
+			}
+			continue
+		}
+
+		site, err := preview.New(dir, p.BaseURL)
+		if err != nil {
+			d.log.Warn("serving a build's artifacts", "build", b.BuildID, "error", err)
+			continue
+		}
+
+		pub, err := d.exposer.Publish(ctx, expose.Spec{
+			PreviewID: p.PreviewID,
+			BuildID:   b.BuildID,
+			Name:      b.Name,
+			BaseURL:   p.BaseURL,
+			PR:        p.PR,
+		}, site)
+		if err != nil {
+			d.log.Warn("restoring a build share", "build", b.BuildID, "name", b.Name, "error", err)
+			continue
+		}
+
+		d.mu.Lock()
+		d.liveBuilds[buildKey(p.PreviewID, b.BuildID)] = pub
+		d.mu.Unlock()
+		n++
+	}
+	return n
 }
 
 // applyProject overlays the operator's project settings onto the repository's own.
