@@ -195,6 +195,52 @@ func (d *Daemon) recordFailure(ctx context.Context, pr model.PullRequest, buildE
 	}
 }
 
+// recordSkip records a pull request that was considered and not built.
+//
+// Without a row a skipped pull request appears only in the activity feed, so the
+// list shows nothing for it and the preview picker cannot offer it — while a
+// *failed* build does get a row and does appear. That inconsistency is the bug:
+// both outcomes are "docpreview looked at this pull request and produced no
+// preview", and both are things somebody needs to see to know the webhook is
+// working at all.
+//
+// A row with no name, URL or artifact directory. Recovery only republishes `ready`
+// rows and drops any whose artifact directory is missing, so this cannot resurrect
+// as a broken preview; the reaper ages it out on preview.ttl like any other.
+//
+// An existing preview survives a skip, for the same reason it survives a failed
+// rebuild: a branch whose latest push touched no documentation still has a working
+// preview of the documentation it did touch, and overwriting that row would make
+// the reaper delete a live share.
+func (d *Daemon) recordSkip(ctx context.Context, pr model.PullRequest, reason string) {
+	id := pr.PreviewID()
+
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+
+	existing, err := d.store.ListPreviews(saveCtx)
+	if err != nil {
+		d.log.Warn("checking for an existing preview before recording a skip", "error", err)
+		return
+	}
+	for _, p := range existing {
+		if p.PreviewID == id {
+			return
+		}
+	}
+
+	if err := d.store.SavePreview(saveCtx, store.Preview{
+		PreviewID: id,
+		PR:        pr,
+		Commit:    pr.HeadSHA,
+		State:     scm.StateSkipped,
+		Reason:    reason,
+		UpdatedAt: time.Now(),
+	}); err != nil {
+		d.log.Warn("recording a skipped pull request", "error", err)
+	}
+}
+
 // logBuildID names a build's log file.
 //
 // Commit plus timestamp: the commit alone collides when the same commit is
@@ -874,6 +920,7 @@ func (d *Daemon) build(parent context.Context, pr model.PullRequest) {
 
 	case !decision.Build:
 		log.Info("skipped", "reason", decision.Reason)
+		d.recordSkip(ctx, pr, decision.Reason)
 		d.report(ctx, scm.Report{
 			PR: pr, PreviewID: id, State: scm.StateSkipped,
 			Commit: pr.HeadSHA, Reason: decision.Reason, UpdatedAt: time.Now(),
