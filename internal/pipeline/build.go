@@ -428,6 +428,32 @@ func refsFrom(html string) []string {
 	return out
 }
 
+// assetRefs keeps the references that name a file, dropping navigation links.
+//
+// The test is a dot in the last path segment. Every emitted asset has an
+// extension — styles.160a45a5.css, main.079e6aeb.js, favicon.ico — and a
+// Docusaurus route does not: /docs/intro, /docs/reference/cli. That one property
+// separates "this 404s if the prefix is wrong" from "this is a link".
+//
+// Query and fragment are stripped first, so /assets/app.js?v=2 still counts.
+func assetRefs(refs []string) []string {
+	var out []string
+	for _, ref := range refs {
+		path := ref
+		if i := strings.IndexAny(path, "?#"); i >= 0 {
+			path = path[:i]
+		}
+		last := path
+		if i := strings.LastIndex(path, "/"); i >= 0 {
+			last = path[i+1:]
+		}
+		if strings.Contains(last, ".") {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
 // verifyBaseURL checks that the built site's asset URLs agree with the base URL
 // the preview will be served at.
 //
@@ -512,7 +538,46 @@ func verifyBaseURL(outputDir, baseURL string) error {
 	if built == baseURL || built == "/" {
 		return nil
 	}
+
+	// Corroborate against the assets before believing it.
+	//
+	// Dominance alone is not enough. It works because a site served at "/" scatters
+	// its references across many first segments — /assets/, /img/, /docs/, /blog/ —
+	// so none of them dominates. A landing page that links into /docs/ a dozen
+	// times breaks that assumption: "docs" dominated, a site correctly built for
+	// "/" was reported as built for "/docs/", and the build was refused. The error
+	// even quoted /img/favicon.ico, which is not under /docs/ at all.
+	//
+	// A real base prefix contains the assets — at "/zrok/" the stylesheet is at
+	// /zrok/assets/…. A dominant segment the assets do not share is a route
+	// directory, not a base path.
+	if !assetsUnder(refs, built) {
+		return nil
+	}
 	return baseURLMismatch(baseURL, built, refs[0])
+}
+
+// assetsUnder reports whether the site's assets sit under prefix.
+//
+// Assets rather than every reference, because this is the question dominance
+// cannot answer: routes and assets share a base prefix, so if the assets are
+// somewhere else then the thing dominating is not a base.
+//
+// With no assets to check it answers false, which lets the build through. That is
+// the same choice made for a site with too few references to draw a conclusion
+// from: refusing to publish needs positive evidence, and there is none here.
+func assetsUnder(refs []string, prefix string) bool {
+	assets := assetRefs(refs)
+	if len(assets) == 0 {
+		return false
+	}
+	var matched int
+	for _, ref := range assets {
+		if strings.HasPrefix(ref, prefix) {
+			matched++
+		}
+	}
+	return float64(matched)/float64(len(assets)) >= dominantShare
 }
 
 func baseURLMismatch(baseURL, built, sample string) error {

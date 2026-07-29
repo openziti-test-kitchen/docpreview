@@ -12,8 +12,11 @@ for the full state.
 - [x] **The daemon can boot with `github.app_id` set and the vault locked.** `Daemon.SetClient` and
       `Ingress.SetClient` make `scm.Client` swappable, and `rewireGitHub` installs the GitHub client from the
       `rearm` callback once the vault opens. Until then `/webhook/github` answers 501.
-- [ ] A tunnel to `127.0.0.1:8471/webhook/github`, then update the App's webhook URL
-- [ ] Install on the test repository and open a pull request
+- [x] A tunnel to `127.0.0.1:8471/webhook/github`, then update the App's webhook URL. `docpreview webhook-only`
+      over a named zrok share, per [www/docs/runbooks/webhook-tunnel.md](www/docs/runbooks/webhook-tunnel.md).
+- [x] Install on the test repository and open a pull request. Deliveries arrive, builds run, the comment is
+      upserted, and previews publish over `exposer.kind: zrok2`. Everything in "Fixed by running it for real"
+      below came out of this.
 
 - [ ] **Test the setup sequence against a live process.** Four bugs in the secrets UI were found by using it
       and none by the tests written alongside it, because those cover request/response and not
@@ -43,6 +46,52 @@ demoted to a fallback and locked-boot the default. See
 Seven design documents, 12–18, each ending with the order to build it in. See
 [docs/design/README.md](docs/design/README.md). What follows is only the work those plans surfaced as urgent —
 the plans themselves hold the reasoning.
+
+### Fixed by running it for real
+
+Against real GitHub and a real zrok account. **None of these was reachable from the local git simulator** — it
+creates no shares, renders no comment for a browser, and holds no files open — which is the argument for the smoke
+test having been the next thing to do rather than more tests.
+
+- [x] **No named zrok share could be created at all.** `CreateShare` with a `NameSelection` naming a name that is
+      not registered in the namespace answers 409, so every publish failed and no preview ever got a URL.
+      `Zrok.ensureName` registers it first and treats "already exists" as success — matched on the generated
+      `*share.CreateShareNameConflict` type rather than the message, because the 409 arrives with an empty body.
+      See [16-exposer-zrok.md](docs/design/16-exposer-zrok.md).
+- [x] **Preview URLs went into comments with no scheme.** `Share.FrontendEndpoints` reports a bare hostname, so
+      the link resolved relative to github.com and 404'd there. `Publish` prefixes `https://` when the endpoint has
+      none.
+- [x] **Two builds of one pull request shared a workspace directory.** A supersede leaves the older build unwinding
+      while the newer one clones, so the loser's cleanup deleted files under the winner — and on Windows a locked
+      file made that cleanup fail, leaving a `.git` that made the winner's `git remote add origin` fail with
+      "remote origin already exists". Now `workspaces/<preview>/<sha12>`, siblings pruned best-effort, and the named
+      remote is gone entirely: the clone fetches the URL directly, so nothing persists to conflict.
+      See [03-build-pipeline.md](docs/design/03-build-pipeline.md).
+- [x] **The comment said "Queued" for a build already running.** `handleBuild` reported queued *after*
+      `store.Enqueue`, which wakes a worker that reports building — a race it lost most of the time. Reported first
+      now.
+- [x] **Reports could move a comment backwards.** `Daemon.staleReport` drops any report ranked below the furthest
+      state already reported for the same commit. Keyed by commit, because ready→queued is backwards within one
+      commit and correct across two, and strictly-below, because two `ready` reports for one commit are legitimate.
+      A timestamp cannot do this: the inverted queued report was stamped *later*, since it was created later.
+      See [04-concurrency.md](docs/design/04-concurrency.md).
+- [x] **A build's state changes were four API writes.** `internal/daemon/publisher.go` coalesces platform writes per
+      preview over 250 ms, which is safe because a report is a snapshot and the comment is rewritten whole. The
+      timer is not reset on each report — that lets a steady stream postpone the write forever — and `Close`
+      flushes, because a shutdown inside the window loses the terminal report of every in-flight build.
+- [x] **A republish served artifacts against a base URL they were not built with.** The base URL comes out of a
+      stored row, and that row disagrees with the artifacts whenever `exposer.kind` changes — index.html loads and
+      every asset 404s, with nothing in any log. `pipeline.VerifyBaseURL` is now exported and called from
+      `Daemon.republish`; a mismatch drops the row so the next push rebuilds.
+- [x] **The activity feed was empty after every restart** and build history existed nowhere. A `builds` table holds
+      one row per attempt, written when the build starts and again with its outcome, pruned on the same
+      `build.keep_logs` window as the logs. `Daemon.backfill` seeds the feed from it at startup, and the dashboard
+      has a build picker that says how each stored log ended. See [08-storage.md](docs/design/08-storage.md) and
+      [07-dashboard.md](docs/design/07-dashboard.md).
+- [x] **The Secrets link is gone from the dashboard's top bar.** A control for credential management on an
+      operations screen is unrelated to everything around it, and a form for pasting a private key invites being
+      pasted into. `/secrets` is reached by URL or from a runbook; the `secrets` field on `/status` that used to
+      hide the link conditionally went with it.
 
 ### Fixed while planning
 
@@ -93,11 +142,13 @@ the plans themselves hold the reasoning.
       only route that must be reachable from outside, and an overlay dial authenticates the caller in a way a
       public URL plus an HMAC does not.
 
-**Two zrok v2 facts worth not relearning.** `zrok2 share public` takes one positional — the target — and its
+**Four zrok v2 facts worth not relearning.** `zrok2 share public` takes one positional — the target — and its
 `-n/--name-selection` flag sets only `NameSelection.NamespaceToken`, despite the name and despite its help text
 saying "frontends". So the rc8 CLI cannot bind a reserved name to a public share at all. The SDK can:
-`ShareRequest.NameSelections` carries `{Name, NamespaceToken}`, which `internal/expose/zrok.go:159` already
-uses. And `Share.FrontendEndpoints` reports where a share is reachable, so nothing needs to guess a DNS suffix.
+`ShareRequest.NameSelections` carries `{Name, NamespaceToken}`, which `internal/expose/zrok.go:160` already
+uses. **A name must be registered before a share can bind it** — `CreateShareName` first, or `CreateShare` answers
+409 with an empty body. And `Share.FrontendEndpoints` reports where a share is reachable, so nothing needs to guess
+a DNS suffix — but it is a **bare hostname**, not a URL, so anything putting it in a link has to add the scheme.
 
 ### Next, in rough order
 

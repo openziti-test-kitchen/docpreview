@@ -131,7 +131,9 @@ Only `ready` rows are republished. A `failed` row describes a build that produce
 describes a preview that was deliberately removed.
 
 If the artifact directory is gone, the row is dropped rather than republished — there is nothing to serve, and
-leaving the row would advertise a URL that 404s.
+leaving the row would advertise a URL that 404s. Artifacts that are *present but do not match the stored
+`base_url`* are dropped for the same reason (`errArtifactsUnusable`, `internal/daemon/daemon.go:466`): see
+[03-build-pipeline.md](03-build-pipeline.md).
 
 ### The URL can move
 
