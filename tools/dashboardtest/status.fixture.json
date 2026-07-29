@@ -1,0 +1,232 @@
+{
+  "exposer": "zrok2",
+  "pending": 0,
+  "running": 0,
+  "previews": [
+    {
+      "preview_id": "c20c57b6c898",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "number": 3,
+      "branch": "next-fixes-3",
+      "name": "docpreview-next-fixes-3",
+      "url": "https://docpreview-next-fixes-3.shares.zrok.io/",
+      "state": "ready",
+      "updated_at": "2026-07-29T15:08:05.131-04:00"
+    },
+    {
+      "preview_id": "19344c5ee369",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "number": 2,
+      "branch": "next-fixes",
+      "name": "docpreview-next-fixes",
+      "url": "https://docpreview-next-fixes.shares.zrok.io/",
+      "state": "ready",
+      "updated_at": "2026-07-29T14:38:25.651-04:00"
+    },
+    {
+      "preview_id": "7ac8b8042f54",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "number": 1,
+      "branch": "first-preview",
+      "name": "docpreview-first-preview",
+      "url": "https://docpreview-first-preview.shares.zrok.io/",
+      "state": "ready",
+      "updated_at": "2026-07-29T12:05:28.457-04:00"
+    }
+  ],
+  "events": [
+    {
+      "at": "2026-07-29T15:08:05.1523164-04:00",
+      "kind": "ready",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "c20c57b6c898",
+      "number": 3,
+      "branch": "next-fixes-3",
+      "commit": "0faa113",
+      "message": "ready in 24s",
+      "url": "https://docpreview-next-fixes-3.shares.zrok.io/"
+    },
+    {
+      "at": "2026-07-29T15:07:21.2035757-04:00",
+      "kind": "building",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "c20c57b6c898",
+      "number": 3,
+      "branch": "next-fixes-3",
+      "commit": "0faa113",
+      "message": "building"
+    },
+    {
+      "at": "2026-07-29T15:07:21.1965741-04:00",
+      "kind": "queued",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "c20c57b6c898",
+      "number": 3,
+      "branch": "next-fixes-3",
+      "commit": "0faa113",
+      "message": "queued"
+    },
+    {
+      "at": "2026-07-29T15:03:44.5178853-04:00",
+      "kind": "ready",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "c20c57b6c898",
+      "number": 3,
+      "branch": "next-fixes-3",
+      "commit": "85912e2",
+      "message": "ready in 24s",
+      "url": "https://docpreview-next-fixes-3.shares.zrok.io/"
+    },
+    {
+      "at": "2026-07-29T15:03:05.416493-04:00",
+      "kind": "building",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "c20c57b6c898",
+      "number": 3,
+      "branch": "next-fixes-3",
+      "commit": "85912e2",
+      "message": "building"
+    },
+    {
+      "at": "2026-07-29T15:03:05.4084725-04:00",
+      "kind": "queued",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "c20c57b6c898",
+      "number": 3,
+      "branch": "next-fixes-3",
+      "commit": "85912e2",
+      "message": "queued"
+    },
+    {
+      "at": "2026-07-29T15:02:18.5168177-04:00",
+      "kind": "ready",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "c20c57b6c898",
+      "number": 3,
+      "branch": "next-fixes-3",
+      "commit": "c8c5673",
+      "message": "ready in 36s",
+      "url": "https://docpreview-next-fixes-3.shares.zrok.io/"
+    },
+    {
+      "at": "2026-07-29T15:01:34.689607-04:00",
+      "kind": "building",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "c20c57b6c898",
+      "number": 3,
+      "branch": "next-fixes-3",
+      "commit": "c8c5673",
+      "message": "building"
+    },
+    {
+      "at": "2026-07-29T15:01:34.682623-04:00",
+      "kind": "queued",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "c20c57b6c898",
+      "number": 3,
+      "branch": "next-fixes-3",
+      "commit": "c8c5673",
+      "message": "queued"
+    },
+    {
+      "at": "2026-07-29T14:38:05.606-04:00",
+      "kind": "ready",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "19344c5ee369",
+      "number": 2,
+      "branch": "next-fixes",
+      "commit": "ee58f12",
+      "message": "ready"
+    },
+    {
+      "at": "2026-07-29T14:25:48.53-04:00",
+      "kind": "ready",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "19344c5ee369",
+      "number": 2,
+      "branch": "next-fixes",
+      "commit": "63515c1",
+      "message": "ready"
+    },
+    {
+      "at": "2026-07-29T14:17:50.559-04:00",
+      "kind": "ready",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "19344c5ee369",
+      "number": 2,
+      "branch": "next-fixes",
+      "commit": "8f01fa4",
+      "message": "ready"
+    },
+    {
+      "at": "2026-07-29T14:03:23.395-04:00",
+      "kind": "failed",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "19344c5ee369",
+      "number": 2,
+      "branch": "next-fixes",
+      "commit": "fc1e65e",
+      "message": "failed — docker build failed: the build exited 1"
+    },
+    {
+      "at": "2026-07-29T13:21:52.174-04:00",
+      "kind": "failed",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "19344c5ee369",
+      "number": 2,
+      "branch": "next-fixes",
+      "commit": "6acc421",
+      "message": "failed — docker build failed: exit status 125"
+    },
+    {
+      "at": "2026-07-29T12:49:51.672-04:00",
+      "kind": "failed",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "7ac8b8042f54",
+      "number": 1,
+      "branch": "first-preview",
+      "commit": "46224dc",
+      "message": "failed — the site was built for a different base URL than the preview will serve."
+    },
+    {
+      "at": "2026-07-29T12:40:17.657-04:00",
+      "kind": "failed",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "7ac8b8042f54",
+      "number": 1,
+      "branch": "first-preview",
+      "commit": "1a6288d",
+      "message": "failed — the site was built for a different base URL than the preview will serve."
+    },
+    {
+      "at": "2026-07-29T12:33:48.949-04:00",
+      "kind": "failed",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "7ac8b8042f54",
+      "number": 1,
+      "branch": "first-preview",
+      "commit": "a468079",
+      "message": "failed — the site was built for a different base URL than the preview will serve."
+    },
+    {
+      "at": "2026-07-29T12:05:07.531-04:00",
+      "kind": "ready",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "7ac8b8042f54",
+      "number": 1,
+      "branch": "first-preview",
+      "commit": "390358a",
+      "message": "ready"
+    },
+    {
+      "at": "2026-07-29T11:59:09.644-04:00",
+      "kind": "ready",
+      "repo": "github:openziti-test-kitchen/docpreview",
+      "preview_id": "7ac8b8042f54",
+      "number": 1,
+      "branch": "first-preview",
+      "commit": "532dcc0",
+      "message": "ready"
+    }
+  ]
+}

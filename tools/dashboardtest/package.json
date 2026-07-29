@@ -1,0 +1,13 @@
+{
+  "name": "docpreview-dashboardtest",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Clicks the embedded dashboard in a DOM and asserts each click does something visible. Not part of go test.",
+  "type": "module",
+  "scripts": {
+    "test": "node clicks.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}

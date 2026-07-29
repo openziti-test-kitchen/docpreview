@@ -1537,13 +1537,13 @@ function renderEvents() {
     return go
       ? `<button class="ev linked${sel}" style="--edge:${s.color}" data-id="${esc(e.preview_id)}"
                  data-commit="${esc(e.commit || "")}" data-at="${esc(e.at)}"
-                 ${sel ? 'aria-current="true"' : ""}
+                 data-kind="${esc(e.kind)}" ${sel ? 'aria-current="true"' : ""}
                  title="Show this build's log">${inner}</button>`
       : `<div class="ev${sel}" style="--edge:${s.color}">${inner}</div>`;
   }).join("");
 
   for (const b of el.querySelectorAll(".ev.linked")) {
-    b.onclick = () => reveal(b.dataset.id, b.dataset.commit, b.dataset.at);
+    b.onclick = () => reveal(b.dataset.id, b.dataset.commit, b.dataset.at, b.dataset.kind);
   }
 }
 
@@ -1560,7 +1560,7 @@ function renderEvents() {
 // and clicking an entry for the preview already showing did nothing at all,
 // while the button's own tooltip promised to open that build. Selecting the
 // build the entry names is what the tooltip always said this did.
-function reveal(previewID, commit, at) {
+function reveal(previewID, commit, at, kind) {
   const p = ui.previews.find(x => x.preview_id === previewID);
   if (!p) return;
 
@@ -1596,7 +1596,7 @@ function reveal(previewID, commit, at) {
     flash(item);
   }
 
-  if (commit) selectBuildForCommit(previewID, commit);
+  if (commit) selectBuildForCommit(previewID, commit, kind);
 }
 
 // selectBuildForCommit points the build picker at the build an activity entry names.
@@ -1611,18 +1611,44 @@ function reveal(previewID, commit, at) {
 // rather than silently doing nothing on the first click of a row for a preview
 // nobody has opened yet.
 //
-// A build with no entry in the list falls through to the live stream instead of
-// returning. That case is not an error and is not rare: a build that is queued or
-// running has no log file to list yet, so clicking its activity row used to do
-// visibly nothing — which is exactly the row somebody clicks when they want to
-// watch it. The live stream *is* that build.
-async function selectBuildForCommit(previewID, commit) {
+// Two ways there is no build to select, and they must not be treated alike.
+//
+// A build that is queued or running has no log file yet, and the live stream *is*
+// that build — so that falls through to the stream, and clicking a building row
+// shows the build running. Anything else with no log file has none to show: a
+// skipped build never writes one, and an old one may have been pruned. Falling
+// through there silently swapped in the newest build's log, so the picker moved
+// while the pane did not change — which is precisely how this was reported. Say so
+// instead.
+async function selectBuildForCommit(previewID, commit, kind) {
   if (!ui.builds[previewID]) await loadBuilds(previewID);
 
   const builds = ui.builds[previewID] || [];
   const i = builds.findIndex(b => b.build_id.endsWith("-" + commit));
-  const buildID = i <= 0 ? "" : builds[i].build_id;
 
+  if (i < 0) {
+    if (kind === "queued" || kind === "building") {
+      ui.build[previewID] = "";
+      updateBuildPicker(previewID);
+      showBuild(previewID, "");
+      return;
+    }
+    // Nothing to show, and the pane must not keep implying otherwise. Cleared
+    // rather than left alone: leaving the previous build on screen under a banner
+    // about a different one is the most confusing of the three options.
+    if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
+    const t = term();
+    if (t) t.innerHTML = "";
+    ui.buffer = "";
+    banner("none", `no build log was kept for ${commit}` +
+      (kind === "skipped" ? " — it was skipped, so nothing was built" : ""));
+    return;
+  }
+
+  // The newest build takes the picker's empty value rather than its own id: empty
+  // means "follow the live stream", and its log is still being written while it
+  // runs, so selecting it by id would read a truncated file that never updates.
+  const buildID = i === 0 ? "" : builds[i].build_id;
   ui.build[previewID] = buildID;
   updateBuildPicker(previewID);
   showBuild(previewID, buildID);
