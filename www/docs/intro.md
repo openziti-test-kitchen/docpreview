@@ -68,3 +68,5 @@ the reason the `baseUrl` handling described in [Troubleshooting](./troubleshooti
 - [Architecture](./architecture.md) — how the pieces fit and why they are shaped that way
 - [GitHub App runbook](./runbooks/github-app.md) — the click-through you cannot avoid
 - [age](./background/age.md) — what the credential vault is, if that name is unfamiliar
+
+<!-- docker build test -->
