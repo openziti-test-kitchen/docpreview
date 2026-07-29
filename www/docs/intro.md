@@ -16,6 +16,8 @@ it runs: docpreview is a single Go binary you can start on a laptop, and the pub
 [zrok](https://docs.zrok.io/) or [NetFoundry Frontdoor](https://netfoundry.io/docs/frontdoor/intro/) rather
 than from somebody else's cloud.
 
+If you are reading this page in a preview, docpreview built it from a pull request against its own repository.
+
 ## Why you might want this
 
 **The docs you cannot send to a SaaS.** Unreleased documentation, internal runbooks, anything under embargo.
