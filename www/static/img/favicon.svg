@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!--
+    The favicon is not the logo scaled down; it is the same idea drawn for 16 pixels.
+    The page is bigger, the node is bigger, the text lines are gone, and the corner
+    fold is gone — at 16px each of those is a smudge that only muddies the two shapes
+    doing the work. Keeping one file for both would mean the favicon looked like
+    dirt or the logo looked like a toy.
+  -->
+  <defs>
+    <linearGradient id="fv" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#035CE6"/>
+      <stop offset="1" stop-color="#77C2FC"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#fv)"/>
+  <path fill="#fff" d="M13 15a4 4 0 0 1 4-4h30a4 4 0 0 1 4 4v34a4 4 0 0 1-4 4H17a4 4 0 0 1-4-4z"/>
+  <circle cx="48" cy="48" r="14" fill="url(#fv)"/>
+  <circle cx="48" cy="48" r="9.5" fill="#4EDB3F"/>
+</svg>
