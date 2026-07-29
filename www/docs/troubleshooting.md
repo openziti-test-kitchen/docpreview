@@ -288,6 +288,33 @@ Or switch to the Docker driver, which gets a clean, predictable environment each
 
 ---
 
+## Every build takes minutes on `npm ci`
+
+Look for a line like this in the build log:
+
+```text
+added 1325 packages in 2m
+```
+
+If that number does not fall on the second build of the same pull request, the time is going into writing
+`node_modules`, not into downloading. Two things fix it, and both are already on by default under the Docker driver
+— so seeing this means one of them is not in effect.
+
+**`node_modules` must be on a volume, not on the mounted workspace.** The workspace is bind-mounted from the host,
+and on Windows that mount crosses into NTFS, where writing the tens of thousands of small files in a dependency tree
+is roughly twenty times slower. Measured on this project's own `www/`, with the same warm cache: **5m46s** with
+`node_modules` on the mount, **14s** with it on a volume. The driver mounts one at `<build dir>/node_modules` for
+you. Under the **local** driver there is no mount and no volume, so this does not apply.
+
+**The package cache has to survive between builds.** See [`build.cache_dir`](reference/configuration.md#the-build-cache).
+It is per pull request and deleted when the preview is, so the *first* build of each pull request pays for its
+downloads and every later one does not.
+
+If the second build is still slow, check that `cache_dir` is on a disk with room and that nothing is clearing it
+between builds.
+
+---
+
 ## The preview URL does not work
 
 ### `docpreview doctor` fails on zrok
