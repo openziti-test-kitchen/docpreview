@@ -6,6 +6,85 @@ actually load-bearing, and how much is a comment promising work.
 
 Read [09-scm.md](09-scm.md) first. Everything here is a second implementation of what that document describes.
 
+The question this document exists to answer is "how do I do the GitHub App thing, but on Bitbucket?" — and the
+short answer is that there is no single Bitbucket construct that does what a GitHub App does, because a GitHub App
+is three things fused together and Bitbucket sells them separately. The next section takes that apart. Everything
+after it is the consequence.
+
+## What a GitHub App actually is, and what Bitbucket has instead
+
+A GitHub App bundles three things docpreview depends on:
+
+1. **A non-human identity.** Comments and check runs are attributed to `docpreview[bot]`, not to whoever's
+   credential is in the vault.
+2. **A per-installation grant.** An installation token reaches exactly the repositories the App was installed on,
+   with exactly the permissions the App declared, and it expires in an hour
+   (`internal/scm/github/auth.go:43`).
+3. **A webhook subscription attached to that grant.** One webhook URL and one secret, configured once on the App,
+   covering every repository the App is later installed on.
+
+Bitbucket Cloud has five candidate constructs and not one of them provides all three.
+
+| Construct | Identity | Scope | Credential lifetime | Webhook story | Verdict |
+|---|---|---|---|---|---|
+| **Forge app** | app (bot) | per-installation grant, declared scopes | platform-managed | app-level, per installation | The structural analogue. Wrong shape for a self-hosted daemon — see below. |
+| **Atlassian Connect app** | app (bot) | per-installation grant | platform-managed | app-level | **Closed.** New Connect apps cannot be registered or installed since 2 Feb 2026; end of support Dec 2026. |
+| **OAuth 2.0 consumer** | the authorizing *user* | that user's whole visibility | access token 2h, refresh token 3 months | none — you still add a webhook per repository | Only construct with GitHub-like token expiry. Identity is a person. |
+| **Access token** (repository / project / workspace) | a bot, not a user | exactly one repo, project, or workspace, with a scope list | long-lived; expiry is optional and set at creation | none — per-repository webhook | **Recommended.** Two of the three properties. |
+| **App password** | the owning user | that user's whole visibility | never expires | none | **Dead.** Final removal 28 July 2026, after a seven-week brownout ramp. |
+| **Atlassian API token** | the owning user | that user's whole Atlassian identity | optional expiry, up to 1 year | none | The app-password replacement. Fallback only. |
+
+### Why not Forge
+
+Forge is where Atlassian points every new app, and if docpreview were a marketplace product it would be a Forge
+app. It is not the right vehicle here, for a reason that has nothing to do with Atlassian's roadmap: **a Forge
+app's code runs on Atlassian's infrastructure.** docpreview's entire job is to clone a branch and run
+`npm install` on hardware the operator controls, behind whatever network boundary the operator chose — which is
+why the exposer abstraction exists at all. A Forge app would therefore be a thin control plane that calls out to
+the operator's daemon (Forge remotes), and every credential problem would still be there on the daemon side, plus
+an app manifest, a deployment pipeline, a distribution decision, and an Atlassian developer account.
+
+That is a real option for a future in which docpreview is installed by people who did not build it. It is the
+wrong first implementation, and choosing it would mean the operator cannot get a preview working without becoming
+an Atlassian app developer. If this decision is reversed later, what changes is the authenticator and the runbook;
+the event mapping, the payload parsing, and the comment protocol below are all still needed, because a Forge
+remote receives the same webhook payloads.
+
+### Recommendation: a repository (or workspace) access token, plus a per-repository webhook
+
+This buys the non-human identity and the narrow scope, and gives up the short lifetime. Git operations by an
+access token show up under a synthetic bot address of the form `…@bots.bitbucket.org` rather than as a person,
+which is the property that keeps a comment from looking like a maintainer wrote it.
+
+What it costs an operator, in full — this is the shape of the Bitbucket sibling to
+[the GitHub App runbook](../../www/docs/runbooks/github-app.md):
+
+| Step | Where | Produces |
+|---|---|---|
+| Create the token | Repository settings → Security → Access tokens → Create | one bearer token, shown once |
+| Choose scopes | same dialog | `repository` (read, to clone) and `pullrequest:write` (to comment) |
+| Add the webhook | Repository settings → Webhooks → Add webhook | URL + secret, triggers = pull request events |
+| Store both | `docpreview vault set bitbucket.access_token`, `… bitbucket.webhook_secret` | vault entries |
+
+No app registration, no manifest, no review, no Atlassian developer account, and nothing global to the workspace.
+Compared with the GitHub runbook it is *shorter* — there is no App to create and no private key to download and
+delete. What it loses is the "create once, install many" property: the click-through above is per repository, so
+ten repositories is ten tokens and ten webhooks where a GitHub App is created once and installed ten times.
+
+Both halves have a workspace-level collapse, and one of them is not discoverable from the UI:
+
+- A **workspace access token** is one credential for every repository in the workspace, at the cost of a wider
+  blast radius if the vault leaks.
+- A **workspace webhook** fires for events from every repository in the workspace, and can carry a secret. It
+  exists only through the API — `POST /2.0/workspaces/{workspace}/hooks` — with no page in the web UI, which is
+  why most integration guides do not mention it.
+
+That second one is worth building a command around: `docpreview bitbucket install-hook -workspace acme` doing the
+one API call the UI will not do, generating the secret, storing it in the vault, and printing what it created. The
+GitHub runbook cannot automate its equivalent because creating a GitHub App genuinely requires a browser; here the
+browser is only a limitation of Atlassian's UI, and taking ten webhook forms down to one command is the single
+biggest usability difference available on this platform.
+
 ## What is already there, and what it is worth
 
 Real:
@@ -97,11 +176,57 @@ embarrassment; a non-expiring one is a credential.
 
 ## Webhook verification
 
-Bitbucket Cloud webhooks can carry a secret, and the delivery is signed with HMAC-SHA256 over the raw body — the
-same construction as GitHub's, with a different header name. The header is **not** `X-Hub-Signature-256`; see
-*Not verified*, because getting this wrong means every delivery is rejected and the error says nothing. The
-event name arrives in `X-Event-Key` (`pullrequest:created` and so on) rather than `X-GitHub-Event`, and the
-delivery identifier is `X-Request-UUID` rather than `X-GitHub-Delivery`.
+**Bitbucket Cloud has a real HMAC-SHA256 signature and this is confirmed, not recalled.** A webhook with a secret
+token set is delivered with an `X-Hub-Signature` header whose value is `method=signature` per WebSub — in practice
+`sha256=<hex>` — computed over the raw request body with the secret as the key. Atlassian's own documentation says
+to compare it in constant time and warns that reformatting the body before hashing changes the digest, which is
+the same pair of rules `internal/scm/github/webhook.go:33` already states. Sources:
+[Manage webhooks](https://support.atlassian.com/bitbucket-cloud/docs/manage-webhooks/),
+[Verify webhook signature (sample code)](https://support.atlassian.com/bitbucket-cloud/kb/bitbucket-cloud-python-sample-code-to-verify-webhook-signature/).
+
+The header is `X-Hub-Signature`, **not** `X-Hub-Signature-256` — GitHub's name without the suffix. GitHub sends
+both spellings (`-1` for the legacy SHA-1 digest, `-256` for the current one) and Bitbucket sends one, with the
+algorithm named inside the value instead of in the header. So the digest is selected by parsing `method=` rather
+than by the constant the GitHub client can hard-code, and Atlassian reserves the right to change it: *"Right now,
+Bitbucket will send HMACs using sha256"*. Parse the method, accept only `sha256`, and reject anything else rather
+than treating an unknown method as absent — an accepted-but-unverified delivery is a build trigger.
+
+Getting the header name wrong is a 401 on every delivery with no diagnostic, by design
+(`internal/daemon/ingress.go` answers a bare 401 and says nothing). That is why this is the one fact in this
+document worth two sources.
+
+The rest of the header set, all confirmed:
+
+| Bitbucket | GitHub equivalent | Use |
+|---|---|---|
+| `X-Event-Key` | `X-GitHub-Event` | `pullrequest:created`, etc. — event *and* action in one string |
+| `X-Request-UUID` | `X-GitHub-Delivery` | delivery ID → `scm.Event.Delivery` |
+| `X-Hook-UUID` | — | identifies the *webhook subscription*, not the delivery |
+| `X-Attempt-Number` | — | 1 on first delivery; higher means Bitbucket is retrying |
+| `X-Hub-Signature` | `X-Hub-Signature-256` | HMAC, see above |
+
+`X-Attempt-Number` has no GitHub counterpart and is worth logging rather than acting on. It tells an operator
+reading the daemon log that Bitbucket thinks earlier attempts failed — which, given that a successful build already
+answers 202 quickly, means either the tunnel dropped or something is slow. It must **not** be used to deduplicate:
+`store.Enqueue` already collapses repeat work for the same preview (see
+[04-concurrency.md](04-concurrency.md)), and a client that discarded attempt 2 would discard the retry of a
+delivery that genuinely never landed.
+
+### If the signature had not existed
+
+It does, so this is recorded to close the question rather than as a live option. Had Bitbucket offered no HMAC, the
+three alternatives and what each actually buys:
+
+| Alternative | What it defends against | What it does not |
+|---|---|---|
+| **Secret in the URL path** (`/webhook/bitbucket/<32 random bytes>`) | someone who guesses the hostname | anything that sees the URL: TLS-terminating proxies, tunnel dashboards, browser history, the webhook config page itself, and every access log on the path. It is a bearer token in the one field of an HTTPS request that everything logs. Also unrotatable without editing the hook. |
+| **IP allowlisting** (Atlassian publishes ranges at `ip-ranges.atlassian.com`) | random internet scanners | *anything else running on Atlassian's cloud*, which is a large multi-tenant estate — the allowlist authenticates a network, not a sender. Also breaks silently and asymmetrically when the published ranges change, and cannot work at all behind zrok or Frontdoor, where every request arrives from the tunnel's own address (see [10-security.md](10-security.md) on loopback not meaning local). |
+| **mTLS** | everything, cryptographically | being unavailable: the sender must support client certificates, and a hosted SaaS webhook does not let you install one. Viable only for the tunnel hop, where it authenticates the tunnel rather than Bitbucket. |
+
+The ranking is not close, and the reason is worth stating because it also explains why the fork refusal below is
+non-negotiable: this endpoint's authentication is the *only* thing standing between an internet stranger and
+`npm install` on the operator's machine. A path secret or an IP range would be a downgrade of exactly that
+boundary. If Bitbucket ever removes the HMAC, the correct answer is to stop supporting Bitbucket, not to fall back.
 
 The comparison logic itself is identical, which is exactly the problem: `verifySignature` already exists twice,
 at `internal/scm/github/webhook.go:62` and `internal/scm/local/local.go:205`, byte for byte. Bitbucket would be
@@ -112,23 +237,36 @@ moves to `scm` before this client is written, not after.
 // scm/webhook.go
 var ErrBadSignature = errors.New("webhook signature verification failed")
 
-// VerifyHMACSHA256 checks header, of the form "<prefix><hex>", against the
-// HMAC-SHA256 of body under secret.
-func VerifyHMACSHA256(secret, body []byte, header, prefix string) bool
+// VerifyHMACSHA256 checks header, of the form "sha256=<hex>", against the
+// HMAC-SHA256 of body under secret. A method other than sha256 is a
+// verification failure, not an unknown to be waved through.
+func VerifyHMACSHA256(secret, body []byte, header string) bool
 ```
 
-`prefix` is a parameter rather than a constant because the two platforms disagree about the header name and may
-disagree about the prefix; the digest and the comparison are the parts worth having one copy of.
+Both platforms spell the value `sha256=<hex>`, so the earlier plan to make the prefix a parameter was solving a
+problem that does not exist; the two disagree about the *header name*, which is the caller's business. One function,
+no configuration. GitHub also sends the legacy `X-Hub-Signature` with a SHA-1 digest, which is exactly why the
+github client must keep reading `X-Hub-Signature-256` specifically and the bitbucket client must keep reading
+`X-Hub-Signature` — the same header name means different things on the two hosts, and a shared "find the signature
+header" helper would be the bug.
 
 The order of operations in `VerifyWebhook` is not negotiable and the reasons are already written down at
 `internal/scm/github/webhook.go:22`: verify before parsing, because the endpoint is internet-facing by design
 and the JSON parser must never see unauthenticated bytes. The body cap is upstream in the ingress
 (`internal/daemon/ingress.go:31`) and platform-independent, so Bitbucket inherits it for free.
 
-**Missing secret is a hard failure, not a downgrade.** Bitbucket lets a webhook be configured without one, and a
-client that accepted unsigned deliveries when `bitbucket.webhook_secret` is absent would turn a forgotten field
-in a web form into an unauthenticated build trigger. The local client is allowed to skip the signature
+**Missing secret is a hard failure, not a downgrade.** This is not hypothetical: the API documentation is explicit
+that an empty or absent secret leaves the webhook unsigned, and that Bitbucket generates `X-Hub-Signature` *only*
+when the secret is set. So the failure mode is a webhook that works perfectly, delivers real payloads, and carries
+no authentication whatsoever — and a client that accepted unsigned deliveries when `bitbucket.webhook_secret` is
+absent would turn one blank field in a web form into an unauthenticated build trigger. Absent header is
+`ErrBadSignature` with a message naming the field to fill in, the same way the GitHub client does at
+`internal/scm/github/webhook.go:38`. The local client is allowed to skip the signature
 (`internal/scm/local/local.go:136`) because it is a loopback development loop; a hosted platform is not.
+
+The corollary is a check `doctor` should make and GitHub's equivalent cannot: with an access token in hand, the
+daemon can *read the webhook back* (`GET /2.0/repositories/{workspace}/{repo}/hooks`) and report a hook whose
+`secret_set` is false. An operator who has blanked the secret currently learns about it from a wall of 401s.
 
 ## Event mapping
 
