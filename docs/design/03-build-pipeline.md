@@ -108,25 +108,37 @@ front costs an hour less.
 #### The caches are mounted from outside the workspace
 
 A workspace is per commit and pruned with its siblings, which is what stops a superseded build corrupting its
-replacement — and it also means nothing a build downloads survives. `cacheMounts` mounts `<cache_dir>/npm`,
-`/yarn` and `/pnpm` at `/cache/*` and points each manager at its own with `npm_config_cache`,
+replacement — and it also means nothing a build downloads survives. `cacheMounts` mounts
+`<cache_dir>/<CacheKey>/{npm,yarn,pnpm}` at `/cache/*` and points each manager at its own with `npm_config_cache`,
 `YARN_CACHE_FOLDER` and `npm_config_store_dir`. Measured on this project's own `www/`: two minutes cold, seconds
 warm.
 
-One cache for every repository. Entries are content-addressed and verified against the integrity hashes in the
-lockfile requesting them, so a build cannot plant a package another build installs — the check fails and the fetch
-goes to the registry. Per-repository caches would surrender the whole benefit on each repository's first build to
-buy nothing.
+**One cache per repository, not one shared.** A shared cache is defensible — entries are content-addressed and
+verified against the integrity hashes in the lockfile requesting them, so a build cannot plant a package another
+build installs — and it is warmer on each repository's first build. It was rejected anyway: it puts every
+repository's builds behind a directory every other repository writes to, so a single corrupt entry fails every
+project identically, and the clear-cache button's blast radius becomes everything instead of the thing that is
+broken. The cost of not sharing is one miss per repository and a tarball on disk twice.
 
-`node_modules` is not cached. `npm ci` removes it before installing, which a bind mount cannot survive, and
-reusing an installed tree across repositories is the sharing that would be unsafe. The remaining cost is the link
+`node_modules` is not cached. `npm ci` removes it before installing, which a bind mount cannot survive, and an
+installed tree is the thing that would be unsafe to reuse between repositories. The remaining cost is the link
 step, not the download.
 
+`CacheKey` flattens platform, owner and repository into one path component, replacing everything outside
+`[A-Za-z0-9_-]`. Those names arrive from a webhook, so this is not cosmetic: an owner of `..` would put the cache
+outside the cache root and the clear below would then delete something else. It is exported because the daemon
+builds the same path to clear it, and two spellings of one path is how they drift.
+
 The host directories are created before the mount: docker creates a missing bind source as root, which on a Linux
-host leaves a cache the operator cannot clear. `DELETE /api/projects/cache` clears them, gated exactly as a
-project write is — clearing costs every project its next build's downloads. It removes only the three
-subdirectories this program creates, never `cache_dir` itself, because that path is one the operator chose and a
-typo in it must not turn "clear the caches" into "delete that directory".
+host leaves a cache the operator cannot clear — and would break the clear button the first time it was used.
+`DELETE /api/projects/{platform}/{owner}/{repo}/cache` clears one project's, gated exactly as a project write is,
+since a forced refetch is a way to hold the build host on the registry. It removes only the three subdirectories
+this program creates, never `cache_dir` itself, because that path is one the operator chose and a typo in it must
+not turn "clear the cache" into "delete that directory".
+
+Note that `http.ServeMux` cleans a literal `..` segment out of the path *before* routing, so the escape that
+reaches the handler is the percent-encoded one. A test that only tried the literal form would prove nothing about
+`CacheKey`.
 
 #### Symlinks in the output are refused
 

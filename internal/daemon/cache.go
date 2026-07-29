@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/netfoundry/docpreview/internal/model"
+	"github.com/netfoundry/docpreview/internal/pipeline"
 )
 
-// cacheManagers are the per-manager subdirectories under build.cache_dir.
+// cacheManagers are the per-manager subdirectories under a repository's cache.
 //
 // Named here rather than discovered by listing the directory, because clearing is
 // destructive and cache_dir may be somewhere the operator chose — a typo in the
@@ -19,17 +22,20 @@ import (
 // download rather than a lost file.
 var cacheManagers = []string{"npm", "yarn", "pnpm"}
 
-// clearCache empties the package manager caches.
+// clearCache empties one repository's package manager caches.
 //
-// The escape hatch for the one failure a shared cache introduces: a corrupt or
-// half-written entry that makes every build of every project fail the same way,
-// with an error about a tarball rather than about the cache. Without a button the
-// fix is a path an operator has to be told about, at the moment they are least
-// able to go looking.
+// The escape hatch for the one failure a cache introduces: a corrupt or
+// half-written entry that makes every build of a project fail the same way, with an
+// error about a tarball rather than about the cache. Without a button the fix is a
+// path an operator has to be told about, at the moment they are least able to go
+// looking.
 //
-// Gated exactly as a project write is — clearing forces every subsequent build to
-// re-download, so a remote caller could hold the build host on the registry
-// indefinitely.
+// Per repository, because the caches are — see pipeline.CacheKey. Clearing one
+// project's cache costs that project its next download and leaves everything else
+// warm, which is the whole reason the caches are not shared.
+//
+// Gated exactly as a project write is: clearing forces a refetch, so a remote
+// caller could otherwise hold the build host on the registry indefinitely.
 func (a *ProjectsAdmin) clearCache(w http.ResponseWriter, r *http.Request) {
 	root := a.cfg.Build.CacheDir
 	if root == "" {
@@ -39,29 +45,49 @@ func (a *ProjectsAdmin) clearCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key := pipeline.CacheKey(
+		model.Platform(r.PathValue("platform")),
+		r.PathValue("owner"),
+		r.PathValue("repo"),
+	)
+	dir := filepath.Join(root, key)
+
+	cleared, err := clearManagerDirs(dir)
+	if err != nil {
+		a.log.Warn("clearing a build cache", "dir", dir, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	a.log.Info("cleared a project's build cache", "project", key, "managers", cleared)
+	writeJSON(w, http.StatusOK, map[string]any{"project": key, "cleared": cleared})
+}
+
+// clearManagerDirs removes the manager subdirectories under one repository's cache
+// and recreates them.
+//
+// Recreated rather than left absent so the next build's bind mount finds a
+// directory that exists on the host. Docker creates a missing bind source itself,
+// as root — which on a Linux host leaves a cache the operator cannot clear, and
+// makes this button stop working the first time it is used.
+func clearManagerDirs(dir string) ([]string, error) {
 	var cleared []string
 	for _, m := range cacheManagers {
-		dir := filepath.Join(root, m)
-		if _, err := os.Stat(dir); err != nil {
+		sub := filepath.Join(dir, m)
+		if _, err := os.Stat(sub); err != nil {
 			continue
 		}
-		// Remove and recreate rather than walking the contents: a package cache
-		// holds tens of thousands of small files and RemoveAll is the only version
-		// of this that finishes quickly on Windows.
-		if err := os.RemoveAll(dir); err != nil {
-			a.log.Warn("clearing a build cache", "dir", dir, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{
-				"error": fmt.Sprintf("could not clear %s: %v — a build may be running and holding "+
-					"a file open in it; try again once the queue is idle", dir, err),
-			})
-			return
+		// RemoveAll rather than walking the contents: a package cache holds tens of
+		// thousands of small files and this is the only version of it that finishes
+		// quickly on Windows.
+		if err := os.RemoveAll(sub); err != nil {
+			return cleared, fmt.Errorf("could not clear %s: %w — a build may be running and "+
+				"holding a file open in it; try again once the queue is idle", sub, err)
 		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			a.log.Warn("recreating a build cache", "dir", dir, "error", err)
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			return cleared, fmt.Errorf("cleared %s but could not recreate it: %w", sub, err)
 		}
 		cleared = append(cleared, m)
 	}
-
-	a.log.Info("cleared the build caches", "managers", cleared)
-	writeJSON(w, http.StatusOK, map[string]any{"cleared": cleared})
+	return cleared, nil
 }

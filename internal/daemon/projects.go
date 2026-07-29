@@ -48,10 +48,10 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}", a.gated(a.save))
 	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}", a.gated(a.remove))
 
-	// Under /api/projects rather than a surface of its own so it inherits this
-	// admin's gate: clearing the cache costs every project its next build's
-	// downloads, which is a project-level decision even though the cache is shared.
-	mux.HandleFunc("DELETE /api/projects/cache", a.gated(a.clearCache))
+	// Under the project it belongs to, so it inherits this admin's gate and needs
+	// no separate notion of which repository is being talked about. The caches are
+	// per repository, so clearing is too.
+	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}/cache", a.gated(a.clearCache))
 	return mux
 }
 

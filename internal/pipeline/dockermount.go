@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/netfoundry/docpreview/internal/model"
 )
 
 // hostMountPath spells a host directory the way the docker daemon can see it.
@@ -42,34 +44,39 @@ func hostMountPath(dir string) (string, error) {
 		"the docker driver needs the workspace on a lettered drive", abs)
 }
 
-// cacheMounts are the package manager caches, and the environment that points
-// each manager at its own.
+// cacheMounts are the package manager caches for one repository, and the
+// environment that points each manager at its own.
 //
 // Without these every build downloads the whole dependency tree again: a workspace
 // is created per commit and pruned with its siblings, so nothing inside it
 // survives a push. Measured on this project's own www/: two minutes for `npm ci`
 // cold, against a few seconds warm.
 //
-// # Shared across repositories, deliberately
+// # One cache per repository
 //
-// One cache, not one per repository. The entries are content-addressed and
-// verified against the integrity hashes in the lockfile that asked for them, so a
-// build cannot plant a package another build will install — the check fails and
-// the fetch goes to the registry. Per-repository caches would give up the entire
-// benefit on the first build of every repository to buy back nothing.
+// Keyed by platform/owner/repo, not shared. A shared cache would be faster on a
+// repository's first build and is defensible on integrity grounds — entries are
+// content-addressed and checked against the lockfile's hashes — but it makes every
+// repository's builds depend on a directory every other repository writes to. One
+// corrupt entry then breaks every project at once, and the blast radius of the
+// clear-cache button is everything rather than the thing that is broken.
+//
+// The cost is bounded: the miss is per repository and happens once, and the same
+// tarball existing twice on disk is cheap next to a build that has to refetch it.
 //
 // What is deliberately *not* cached is node_modules. `npm ci` deletes it before
-// installing, which a bind mount cannot survive, and reusing an installed tree
-// across repositories is the sharing that would actually be unsafe.
+// installing, which a bind mount cannot survive, and an installed tree is the thing
+// that would be unsafe to reuse anyway.
 //
 // Directories are created on the host first. A bind mount of a path the daemon
 // cannot find creates it as root-owned, which on a Linux host leaves a cache
 // directory the operator cannot clear.
-func (b *Builder) cacheMounts() ([]string, error) {
+func (b *Builder) cacheMounts(pr model.PullRequest) ([]string, error) {
 	root := b.defaults.CacheDir
 	if root == "" {
 		return nil, nil
 	}
+	root = filepath.Join(root, CacheKey(pr.Repo.Platform, pr.Repo.Owner, pr.Repo.Name))
 
 	// One directory per manager. They have no common format and pnpm in
 	// particular hard-links out of its store, which requires the store to be on
@@ -96,6 +103,39 @@ func (b *Builder) cacheMounts() ([]string, error) {
 		)
 	}
 	return args, nil
+}
+
+// CacheKey is a repository's directory name under the cache root.
+//
+// One flat component rather than nested directories, so the path stays short —
+// node_modules paths are already the deepest thing this program creates and Windows
+// has a limit.
+//
+// Every character outside a small set becomes an underscore. The owner and
+// repository names arrive from a webhook, and the failure being prevented is not
+// cosmetic: an owner of ".." would place a cache directory outside the cache root,
+// and a clear would then delete something else. Exported because the daemon builds
+// the same path to clear it, and two spellings of one path is how they drift.
+func CacheKey(platform model.Platform, owner, repo string) string {
+	return sanitizeCacheComponent(string(platform)) + "-" +
+		sanitizeCacheComponent(owner) + "-" +
+		sanitizeCacheComponent(repo)
+}
+
+func sanitizeCacheComponent(s string) string {
+	if s == "" {
+		return "_"
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
 }
 
 // rejectSymlinks fails a build whose output directory contains a symlink.

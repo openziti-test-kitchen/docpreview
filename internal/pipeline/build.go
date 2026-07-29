@@ -358,7 +358,7 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	var log bytes.Buffer
 	out := tee(&log, sink)
 
-	caches, err := b.cacheMounts()
+	caches, err := b.cacheMounts(ws.PR)
 	if err != nil {
 		return "", err
 	}

@@ -194,7 +194,7 @@ The private key and webhook secret are **not here**. They live in the vault — 
 | `driver` | `local` | `local` runs npm on this host. `docker` runs it in a throwaway container. |
 | `image` | `node:24-bookworm-slim` | Docker driver only. |
 | `timeout` | `15m` | Per build. |
-| `cache_dir` | `<data_dir>/cache` | Package downloads, shared by every build under the docker driver. |
+| `cache_dir` | `<data_dir>/cache` | Package downloads, one directory per repository, under the docker driver. |
 
 ### Choosing a driver
 
@@ -208,19 +208,21 @@ choice if the set of people who can open a pull request is larger than the set o
 ### The build cache
 
 A workspace is created per commit and deleted with its siblings, so nothing a build downloads survives inside it.
-`cache_dir` is where the downloads go instead — `npm/`, `yarn/` and `pnpm/`, mounted into the container at
-`/cache/`. Without it every push refetches the whole dependency tree, which for a Docusaurus site is about two
-minutes before the build starts.
+`cache_dir` is where the downloads go instead. Without it every push refetches the whole dependency tree, which for
+a Docusaurus site is about two minutes before the build starts.
 
-One cache, shared by every project. Package entries are content-addressed and checked against the integrity hashes
-in the lockfile that asked for them, so a build cannot leave behind something another build will install — a
-mismatch fails the check and the fetch goes to the registry. `node_modules` is deliberately **not** cached: `npm
-ci` deletes it before installing, and reusing an installed tree between repositories is the sharing that would
-actually be unsafe.
+One cache per repository, at `<cache_dir>/<platform>-<owner>-<repo>/`, holding `npm/`, `yarn/` and `pnpm/` and
+mounted into the container at `/cache/`. Not shared: a shared cache is warmer on a repository's first build, but it
+puts every project's builds behind a directory every other project writes to, so one bad entry breaks everything at
+once and clearing it costs everything too.
 
-It is the largest and most frequently rewritten directory docpreview owns, so it is worth pointing at a disk with
-room. Clear it from **Projects → Clear the build cache** when builds start failing on a package that has not
-changed; the next build of each project refetches what it needs.
+`node_modules` is **not** cached. `npm ci` deletes it before installing, which a bind mount cannot survive, and an
+installed tree is the thing that would actually be unsafe to reuse between repositories. The download is what the
+cache saves; the link step still costs.
+
+This is the largest and most frequently rewritten directory docpreview owns, so it is worth pointing at a disk with
+room. Clear one project's from **Projects → Clear cache** when its builds start failing on a package that has not
+changed. Only that project refetches; every other project stays warm.
 
 Fork pull requests are refused at the webhook under either driver, so the exposure is limited to people with
 push access to a branch. Whether that is a meaningful limit depends on your repository.
