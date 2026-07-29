@@ -1041,6 +1041,15 @@ function updateBody(item, g) {
       <div class="logbar">
         <select class="control sm" data-role="pick" aria-label="Preview"></select>
         <select class="control sm" data-role="build" aria-label="Build"></select>
+        <!-- The second Open. The row's Open goes to the branch share, which follows
+             whatever built last; this one goes to the selected build's own share,
+             pinned to its commit. One button could never be honest about both, which
+             is why the log pane could say "build 85912e2 — not live" beside a button
+             that went somewhere else entirely.
+
+             Beside the build picker rather than in the footer, because it belongs to
+             the selection immediately above it. -->
+        <a class="btn" data-role="open-build" target="_blank" rel="noreferrer">Open build ↗</a>
         <span class="grow"></span>
       </div>
       <div class="logstate"></div>
@@ -1107,6 +1116,7 @@ function updateBody(item, g) {
       const buildID = e.target.value;
       ui.build[g.current.preview_id] = buildID;
       showBuild(g.current.preview_id, buildID);
+      updateOpenBuild(g.current.preview_id, buildID);
     };
     body.querySelector(".term").addEventListener("scroll", () => {
       if (ui.autoScrolling) return;
@@ -1318,6 +1328,36 @@ function updateBuildPicker(previewID) {
     `${buildIcon(b)} ${esc(buildLabel(b))} · ${esc(b.build_id)} · ${ago(b.mod_time)} ago` +
     `</option>`).join("");
   sel.value = current;
+
+  updateOpenBuild(previewID, current);
+}
+
+// updateOpenBuild points the second Open at the selected build's own share.
+//
+// Greyed rather than hidden when that build has none. Hidden, the control would
+// come and go as the picker moved and read as a rendering fault; greyed with a
+// reason reads as the fact it is. A build has no share of its own when it failed,
+// when it predates per-build publishing, or when creating the share did not work —
+// the branch share is the contract and this one is best effort.
+function updateOpenBuild(previewID, buildID) {
+  const a = document.querySelector('.item.open [data-role="open-build"]');
+  if (!a) return;
+
+  const builds = ui.builds[previewID] || [];
+  // The empty value means "the newest build", which is what the picker uses for it
+  // so the live stream stays selectable.
+  const b = buildID ? builds.find(x => x.build_id === buildID) : builds[0];
+  const url = safeURL(b && b.url);
+
+  if (url) {
+    a.href = url;
+    a.title = url;
+  } else {
+    a.removeAttribute("href");
+    a.title = b
+      ? "this build has no URL of its own — open the branch instead"
+      : "no build selected";
+  }
 }
 
 // buildIcon and buildLabel describe how a build ended.
@@ -2288,6 +2328,7 @@ function render() {
 }
 
 function applyStatus(d) {
+  checkInstance(d.instance);
   ui.previews = d.previews || [];
   ui.events = d.events || [];
   ui.status = d;
@@ -2400,6 +2441,37 @@ async function showAdminLinks() {
 // admin is what /api/admin last said. Absent until it answers, which is why every
 // consumer treats a missing answer as "no".
 let admin = {};
+
+// The daemon instance this page loaded against, and the banner shown when it
+// changes.
+//
+// This page is one embedded file with no cache busting, so a tab left open across a
+// rebuild keeps running the code it loaded. That produced three false bug reports in
+// one afternoon — a layout that had already moved, a filter that had already been
+// fixed, a row that was already collapsed — each costing a diagnosis before somebody
+// thought to reload.
+//
+// Not an automatic reload. The reader may be part-way through a log, or have a
+// selection they are copying, and a page that reloads itself under them is worse
+// than a stale one. It says so and waits.
+let instance = null;
+
+function checkInstance(seen) {
+  if (!seen) return;
+  if (instance === null) { instance = seen; return; }
+  if (instance === seen || document.getElementById("stale")) return;
+
+  const n = document.createElement("div");
+  n.id = "stale";
+  n.className = "notice warn";
+  n.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:1rem;" +
+    "z-index:9;margin:0;box-shadow:0 4px 16px rgba(0,0,0,0.2)";
+  n.innerHTML = `<strong>The daemon restarted.</strong> This page is running older
+    code, so what you see may not match what it does.
+    <button class="btn" id="stale-go" style="margin-left:0.5rem">Reload</button>`;
+  document.body.appendChild(n);
+  document.getElementById("stale-go").onclick = () => location.reload();
+}
 
 // wireClearCache wires the one cache control, in the top bar.
 //

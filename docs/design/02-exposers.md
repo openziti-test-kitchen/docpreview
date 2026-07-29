@@ -131,12 +131,45 @@ Nothing logged an error, because withdrawing a preview you believe you own is a 
 symptom was a dashboard full of `ready` rows whose links answered connection-refused. Measured: **1 of 10 ready
 previews answered.**
 
-**Invariant: `live` is keyed by preview ID in every implementation.**
+**Invariant: `live` is keyed by the publication in every implementation** — `Spec.Key()`, not `Spec.Name`.
 
 Consequence, since the name is now free to collide: `zrok`, `frontdoor` and `ziti` **refuse** a name another
-preview holds, with an error naming the other preview and the template that would separate them. Serving the
+publication holds, with an error naming the other one and the template that would separate them. Serving the
 wrong site under somebody else's URL is worse than failing the build. `local` refuses too, since the name is
 the path.
+
+### The key is the publication, not the preview
+
+`Spec.Key()` is the preview id for a preview's own share and `<preview>/<build>` for one build's share. That
+distinction arrived with per-build publishing and it was the whole blocker, because `Publish` withdraws whatever
+holds the key before taking it — so while the key *was* the preview id, publishing a build share tore down the
+branch share it was meant to sit beside. One live share per preview, by construction, in all four
+implementations.
+
+A preview's own share keeps the **bare preview id** as its key, which is not cosmetic: the key is the remote tag
+(`docpreview:<key>`) and the vocabulary of `Reap`'s keep-set. Change the branch share's spelling and the first
+sweep after an upgrade finds an unfamiliar tag on every share it just restored and deletes all of them.
+
+`TestTwoPublicationsPerPreview` pins the property: three publications of one preview live at three URLs, and
+closing one leaves its siblings alone — which matters because the daemon closes the old publication *after*
+publishing the new one.
+
+### One preview, several shares, and one thing that is not cleaned up
+
+A pull request now has a **branch** share following its newest successful build and a share per **build** pinned
+to its commit. The branch share is what the pull request comment links to and is the contract; a build share is
+best effort. Every way the second publish can fail — a reserved-name quota, a collision, an exposer that will not
+mint two — logs a warning and costs one URL, because the alternative is a comment saying the docs did not build
+when they did.
+
+**The zrok *name* is never released.** Teardown deletes the share; the name is a separate object that
+deliberately outlives its share, since that is what keeps a URL stable across rebuilds and restarts. Nothing in
+this codebase deletes one — `reapName` deletes shares *holding* a name, never the name. Confirmed by merging a
+real pull request: the share 404s and the name remains.
+
+That is a slow leak at one name per branch and an unbounded one at one name per commit, because **the name is the
+quota-bearing object, not the share**. It is tracked as a prerequisite for per-build shares rather than a
+follow-up — see `TODO.md` and [19-zrok-namespacing.md](19-zrok-namespacing.md).
 
 ### 2. Close matched on key instead of identity
 

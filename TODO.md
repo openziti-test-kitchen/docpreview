@@ -23,12 +23,27 @@ share following the newest, plus five that stay pinned to their commit.
       (`85912e2.docpreview.shares.zrok.io`) rather than flat siblings — see
       [docs/design/19-zrok-namespacing.md](docs/design/19-zrok-namespacing.md). A provisional flat
       `<branch>-<sha7>` is enough to build against and is one template away from either answer.
-- [ ] **Publish the build share.** `runPipeline` publishes once, keyed by preview. It needs a second `Publish`
-      with `BuildID` set, the daemon's `live` map keyed by publication rather than preview, and `Reap`'s keep-set
-      widened to include every build key — a keep-set still listing only preview ids reaps every build share on
-      the next sweep.
-- [ ] **Record the per-build URL.** The `builds` table has no `name` or `url`, so nothing can link to a build
-      share after a restart.
+- [x] **Publish the build share.** `publishBuildShare` runs after the branch share, best effort: the branch share
+      is the contract and is already live, so a reserved-name quota or a collision logs a warning and costs one URL
+      rather than failing a build that succeeded. `d.liveBuilds` holds them, teardown closes them, and the reap
+      keep-set lists every build with a recorded URL.
+- [x] **Record the per-build URL.** `builds.name` and `builds.url`, with the project's first schema migration —
+      `CREATE TABLE IF NOT EXISTS` does nothing to an existing table, so the columns had to be added by `ALTER`.
+- [ ] **Reclaim the zrok name on teardown. This blocks the feature, it does not follow it.** Teardown deletes the
+      *share*; the *name* is a separate object that deliberately outlives its share, because that is what keeps a
+      URL stable across rebuilds and restarts. Nothing anywhere deletes one — `reapName` deletes shares *holding* a
+      name, never the name. Confirmed by merging pull request #1: the share 404s and the name remains.
+
+      That is a slow leak at one name per branch and an unbounded one at one name per commit, because **the name is
+      the quota-bearing object, not the share**. Thirty pull requests at ten pushes each is three hundred permanent
+      names produced by a feature whose whole point is being bounded by `keep_builds`. Two unknowns first: whether
+      zrok v2 exposes name deletion at all, and what the per-account name limit actually is — see
+      [docs/design/19-zrok-namespacing.md](docs/design/19-zrok-namespacing.md).
+- [ ] **Decide what happens to `builds` rows on teardown.** `DeletePreview` removes only the `previews` row, so a
+      torn-down preview's build rows survive and `backfill` puts them back in the feed after a restart. They render
+      inert, because `markOpenable` finds no log and no artifacts, and `PruneBuilds` ages them out at `keep_logs`
+      — so this is bounded and arguably correct: the history outlives the preview on purpose elsewhere. It is
+      accidental rather than decided, and nothing says which it is.
 - [ ] **Find the per-account reserved-share limit.** One share per build multiplies share count by the number of
       pushes to every open pull request. If zrok caps reserved shares per account, that cap is the feature's real
       ceiling and has to be known before this is built, not after.
@@ -48,9 +63,16 @@ share following the newest, plus five that stay pinned to their commit.
 **Limits, because the above makes unbounded growth the default.** Nothing in this project caps disk today. One
 share and one artifact directory per preview kept that survivable by accident; per-build artifacts do not.
 
-- [ ] **Per-build and total disk caps.** A byte limit per build output, a cap on retained builds per preview, and
-      a total ceiling for the artifacts tree — with a documented eviction order when one is hit. Oldest build of
-      the least recently updated preview is the obvious first rule.
+- [x] **A cap on retained builds per preview.** `preview.keep_builds`, default 10, pruned after each publish and
+      never removing the build that just published — a clock stepping backwards would otherwise delete what is
+      being served.
+- [ ] **Byte and total caps.** A limit on one build's output size and a ceiling for the whole artifacts tree, with
+      a documented eviction order. `keep_builds` bounds the *count*, which says nothing about a repository whose
+      site is a gigabyte. Oldest build of the least recently updated preview is the obvious first rule.
+- [ ] **Startup is serial and slow.** Reap-then-republish took 55 seconds for three previews, roughly 14 seconds
+      per zrok round trip, with nothing reachable until it finishes. Thirty open pull requests is about seven
+      minutes of downtime per restart. Republishing concurrently is the obvious fix; the reason it is not done yet
+      is that `Reap` must complete first and publishing a name is destructive, so the ordering needs care.
 - [ ] **Report usage where it can be acted on.** A dashboard that does not say how much disk the previews are
       using is a dashboard nobody can use to decide what to delete.
 - [ ] **Exempt the paid exposers.** These limits exist because zrok's hosted service is free and shared. Frontdoor

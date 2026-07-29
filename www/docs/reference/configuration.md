@@ -61,6 +61,7 @@ build:
 preview:
   ttl: 72h
   teardown_on_close: true
+  keep_builds: 10
 ```
 
 ## Top level
@@ -241,6 +242,32 @@ push access to a branch. Whether that is a meaningful limit depends on your repo
 |---|---|---|
 | `ttl` | `72h` | Idle lifetime. Refreshed on every rebuild, so an active pull request never expires. |
 | `teardown_on_close` | `true` | Remove the preview and its comment when the pull request closes. |
+| `keep_builds` | `10` | How many builds of one pull request keep their artifacts, and so stay openable. |
+
+### Every build gets its own URL
+
+A pull request has one **branch** URL that always serves whatever built last, and one URL per **build** pinned to
+the commit it was built from. Five builds of a branch means six URLs. The pull request comment links to the branch
+URL, because that is the one that stays current; the dashboard's build picker has an **Open build** button beside it
+for the rest.
+
+This is why `keep_builds` exists. Artifacts are stored per build so an older commit still has something to serve,
+which means disk use grows with every push instead of staying at one built site per pull request. When the limit is
+reached the oldest build's artifacts are deleted; the build that just published is never pruned. Its log survives
+independently, under `build.keep_logs`, so a build whose site is gone can still be read for why it failed.
+
+An activity entry whose build has been cleaned up stops being clickable and says so, rather than offering a link to
+an empty page.
+
+A build's own URL is best effort. If the exposer refuses it — a quota on reserved names is the likely reason — the
+build still succeeds, the branch URL is unaffected, and the daemon logs a warning. The comment never mentions it,
+so a reviewer sees no difference.
+
+:::note
+Under zrok, each URL needs a reserved name, and a name is **not** released when its preview is torn down. One name
+per pull request accumulates slowly; one per build does not. Watch your account's reserved names if you leave this
+running against many repositories — see `TODO.md`.
+:::
 
 The reaper runs hourly. Preview TTLs are measured in days, so finer is wasted wakeups and coarser leaves a
 dead link in a comment for most of a working day.

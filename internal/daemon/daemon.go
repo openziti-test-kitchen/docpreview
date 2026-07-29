@@ -74,6 +74,10 @@ type Daemon struct {
 	mu sync.Mutex
 	// live maps preview ID to its publication, so a rebuild can replace it.
 	live map[string]*expose.Publication
+	// liveBuilds maps "<preview>/<build>" to that build's own publication, held
+	// separately from live so the branch share's lifecycle — supersede, teardown,
+	// the commit lock — is untouched by however many build shares exist beside it.
+	liveBuilds map[string]*expose.Publication
 	// running maps preview ID to the in-flight build for that pull request, so
 	// a newer push can abandon an older build rather than queue behind it.
 	running map[string]*build
@@ -85,6 +89,11 @@ type Daemon struct {
 
 	// publisher coalesces platform writes. Not guarded by mu — it has its own.
 	publisher *publisher
+
+	// instance identifies this process, so an open dashboard can notice that the
+	// daemon behind it has restarted and its own code is stale. Set once at
+	// construction and never written again, so it needs no lock.
+	instance string
 }
 
 // build is one generation of work for a pull request.
@@ -138,7 +147,9 @@ func New(
 		secrets:  map[string]string{},
 		logs:     logs,
 		wake:     make(chan struct{}, 1),
-		live:     map[string]*expose.Publication{},
+		instance:   time.Now().UTC().Format("20060102-150405.000"),
+		live:       map[string]*expose.Publication{},
+		liveBuilds: map[string]*expose.Publication{},
 		running:  map[string]*build{},
 		commit:   map[string]*sync.Mutex{},
 		reported: map[string]reportMark{},
@@ -771,6 +782,15 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	}
 	pub := d.live[previewID]
 	delete(d.live, previewID)
+	// Every build share of this preview goes with it. Collected under the lock and
+	// closed below, outside it, because closing reaches the exposer's API.
+	var buildPubs []*expose.Publication
+	for key, bp := range d.liveBuilds {
+		if strings.HasPrefix(key, previewID+"/") {
+			buildPubs = append(buildPubs, bp)
+			delete(d.liveBuilds, key)
+		}
+	}
 	delete(d.commit, previewID)
 	// The lifecycle is over, so the next report for this preview starts a new one.
 	// Keeping the mark would make a reopened pull request's "queued" look stale
@@ -782,6 +802,11 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	if pub != nil {
 		if err := pub.Close(); err != nil {
 			errs = append(errs, err)
+		}
+	}
+	for _, bp := range buildPubs {
+		if err := bp.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("withdrawing a build share: %w", err))
 		}
 	}
 	if err := os.RemoveAll(filepath.Join(d.cfg.ArtifactsDir(), previewID)); err != nil {
@@ -948,8 +973,12 @@ func (d *Daemon) build(parent context.Context, pr model.PullRequest) {
 
 // buildOutcome is the successful result of runPipeline.
 type buildOutcome struct {
-	URL      string
-	Name     string
+	URL  string
+	Name string
+	// BuildURL is this build's own share, empty when it has none. Recorded on the
+	// build row so the dashboard can offer it after a restart; the pull request
+	// comment keeps linking to the branch URL, which is the one that stays current.
+	BuildURL string
 	Duration time.Duration
 }
 
@@ -1177,13 +1206,90 @@ func (d *Daemon) runPipeline(
 		return out, decision, fmt.Errorf("recording the preview failed, so it was withdrawn: %w", err)
 	}
 
+	// A second share, pinned to this commit, beside the branch share that follows
+	// whatever is newest. Best effort: see publishBuildShare.
+	buildURL := d.publishBuildShare(ctx, pr, buildID, name, repoCfg, site)
+	if buildURL != "" {
+		// The row was already written as ready above, before this URL existed. The
+		// upsert keeps a non-empty name and url and refreshes the rest, so writing
+		// it again is how the share reaches the row it belongs to — and it has to
+		// reach it, or the next reap treats the share as an orphan.
+		d.saveBuild(store.Build{
+			PreviewID: pr.PreviewID(), BuildID: buildID, PR: pr, Commit: pr.HeadSHA,
+			State: string(scm.StateReady), StartedAt: startedAt, FinishedAt: time.Now(),
+			Name: name + "-" + model.ShortSHA(pr.HeadSHA), URL: buildURL,
+		})
+	}
+
 	// Artifacts are per build now, so this is where the growth is bounded. After
 	// the row is saved, never before: a prune that ran first could delete the
 	// directory this build is about to publish from.
 	d.pruneArtifacts(pr.PreviewID(), buildID)
 
-	return buildOutcome{URL: pub.URL, Name: pub.Name, Duration: result.Duration}, decision, nil
+	return buildOutcome{
+		URL: pub.URL, Name: pub.Name, BuildURL: buildURL, Duration: result.Duration,
+	}, decision, nil
 }
+
+// publishBuildShare gives one build a URL of its own and returns it, empty on any
+// failure.
+//
+// The branch share follows the newest successful build, which is what a reviewer
+// wants and what the pull request comment links to. It is also why an older build
+// could be selected in the dashboard's picker while the only Open button on screen
+// went somewhere else: one share cannot represent two builds.
+//
+// # Best effort, deliberately
+//
+// The branch share is the contract and it is already live by the time this runs.
+// This one is extra, and every way it can fail is a reason to keep going rather
+// than to fail the build: a reserved-name quota on the exposer account, a name
+// collision, an exposer that cannot mint a second share. Returning an error here
+// would turn "you get one fewer URL than you hoped" into a failed build and a
+// comment saying the docs did not build, which is a much worse trade.
+//
+// So it logs at warn and returns empty. A caller with no build URL renders the same
+// as a daemon that has never had one.
+func (d *Daemon) publishBuildShare(
+	ctx context.Context, pr model.PullRequest, buildID, branchName string,
+	repoCfg config.RepoConfig, site http.Handler,
+) string {
+	// Derived from the branch name rather than rendered from the template again,
+	// so a name_template that separates repositories keeps doing so here, and the
+	// two names sort next to each other in any list of shares.
+	name := branchName + "-" + model.ShortSHA(pr.HeadSHA)
+
+	pub, err := d.exposer.Publish(ctx, expose.Spec{
+		PreviewID: pr.PreviewID(),
+		BuildID:   buildID,
+		Name:      name,
+		BaseURL:   repoCfg.Build.BaseURL,
+		PR:        pr,
+	}, site)
+	if err != nil {
+		d.log.Warn("this build has no URL of its own; the branch URL is unaffected",
+			"pr", pr.String(), "build", buildID, "name", name, "error", err)
+		return ""
+	}
+
+	d.mu.Lock()
+	if old := d.liveBuilds[buildKey(pr.PreviewID(), buildID)]; old != nil {
+		// The same build published twice is a rebuild of one commit. Close the
+		// older publication *after* the new one exists, which is the ordering
+		// every other publish here uses.
+		old.Close()
+	}
+	d.liveBuilds[buildKey(pr.PreviewID(), buildID)] = pub
+	d.mu.Unlock()
+
+	d.log.Info("published build", "pr", pr.String(), "build", buildID,
+		"name", pub.Name, "url", pub.URL)
+	return pub.URL
+}
+
+// buildKey names one build's publication in d.liveBuilds. Same shape as
+// expose.Spec.Key, and deliberately so: the two maps are indexed alike.
+func buildKey(previewID, buildID string) string { return previewID + "/" + buildID }
 
 // markOpenable sets Openable on each event that still has something to show.
 //
@@ -1473,14 +1579,39 @@ func (d *Daemon) reaper(ctx context.Context) {
 			d.log.Warn("pruning the build history", "error", err)
 		}
 
-		// Anything the exposer holds that is not a recorded preview is a leak.
+		// Anything the exposer holds that is not a recorded publication is a leak.
+		//
+		// Both kinds have to be listed. The keep-set is expressed in publication
+		// keys, and a set holding only preview ids would mark every build share as
+		// an orphan — so this sweep would delete each one minutes after it was
+		// published, and the dashboard would offer URLs that had already gone.
 		keep := map[string]bool{}
 		if all, err := d.store.ListPreviews(ctx); err == nil {
 			for _, p := range all {
 				keep[p.PreviewID] = true
+
+				// Only builds that recorded a share. A build row with no URL never
+				// had one, and adding its key would keep nothing while making the
+				// set larger.
+				builds, err := d.store.BuildsFor(ctx, p.PreviewID)
+				if err != nil {
+					// Reaping with an incomplete keep-set deletes live shares, so
+					// skip the sweep entirely rather than sweep on partial truth.
+					d.log.Warn("listing builds for the reap keep-set; skipping this sweep",
+						"preview", p.PreviewID, "error", err)
+					keep = nil
+					break
+				}
+				for _, b := range builds {
+					if b.URL != "" {
+						keep[buildKey(p.PreviewID, b.BuildID)] = true
+					}
+				}
 			}
-			if err := d.exposer.Reap(ctx, keep); err != nil {
-				d.log.Warn("reaping shares", "error", err)
+			if keep != nil {
+				if err := d.exposer.Reap(ctx, keep); err != nil {
+					d.log.Warn("reaping shares", "error", err)
+				}
 			}
 		}
 	}
@@ -1488,7 +1619,23 @@ func (d *Daemon) reaper(ctx context.Context) {
 
 // Status is the payload of the status endpoint.
 type Status struct {
-	Exposer  string          `json:"exposer"`
+	Exposer string `json:"exposer"`
+
+	// Instance changes when the daemon restarts, which is how an open tab learns
+	// its JavaScript is older than the daemon answering it.
+	//
+	// The dashboard is one embedded file with no cache busting, so a tab left open
+	// across a rebuild keeps running the code it loaded. That produced three false
+	// bug reports in one afternoon — a fixed layout that had not moved, a filter
+	// that had not applied, a stale row — each costing a diagnosis before somebody
+	// thought to reload.
+	//
+	// The process start time, not a build id: a version stamped at compile time
+	// cannot tell a restart of the same binary from no restart at all, and restart
+	// is the event that matters. The page compares rather than trusts, so any
+	// change prompts a reload.
+	Instance string `json:"instance"`
+
 	Pending  int             `json:"pending"`
 	Running  int             `json:"running"`
 	Previews []StatusPreview `json:"previews"`
@@ -1532,10 +1679,11 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 	d.mu.Unlock()
 
 	out := Status{
-		Exposer: d.exposer.Kind(),
-		Pending: pending,
-		Running: len(running),
-		Events:  d.markOpenable(d.events.recent(60)),
+		Exposer:  d.exposer.Kind(),
+		Instance: d.instance,
+		Pending:  pending,
+		Running:  len(running),
+		Events:   d.markOpenable(d.events.recent(60)),
 	}
 
 	// The stored rows are the committed history: a preview is written when a

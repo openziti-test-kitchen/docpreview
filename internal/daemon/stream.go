@@ -404,6 +404,11 @@ func (i *Ingress) listLogs(w http.ResponseWriter, r *http.Request) {
 		buildlog.Meta
 		State  string `json:"state,omitempty"`
 		Reason string `json:"reason,omitempty"`
+		// URL is this build's own share, empty when it has none — a failed build, a
+		// build from before per-build publishing, or one whose share could not be
+		// created. It is what lets the picker offer an Open per build instead of one
+		// Open per row pointing at whatever is newest.
+		URL string `json:"url,omitempty"`
 	}
 	out := make([]logView, 0, len(metas))
 	for _, m := range metas {
@@ -412,7 +417,7 @@ func (i *Ingress) listLogs(w http.ResponseWriter, r *http.Request) {
 		// build starts and updated when it ends, so no separate live check is
 		// needed here.
 		if b, ok := outcomes[m.BuildID]; ok {
-			v.State, v.Reason = b.State, b.Reason
+			v.State, v.Reason, v.URL = b.State, b.Reason, b.URL
 		}
 		out = append(out, v)
 	}
