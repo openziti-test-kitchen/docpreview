@@ -129,8 +129,9 @@ input.control::placeholder { color: var(--muted) }
    nothing on an operations screen should draw the eye toward a form for pasting
    a private key. */
 .admin-nav { display: inline-flex; gap: 0.4rem }
-.admin-nav a.control { color: var(--muted); background: transparent }
-.admin-nav a.control:hover { color: var(--ink); background: var(--raised) }
+.admin-nav .control { color: var(--muted); background: transparent; cursor: pointer }
+.admin-nav .control:hover { color: var(--ink); background: var(--raised) }
+.admin-nav .control:disabled { cursor: default; opacity: 0.6 }
 
 /* ── Setup panel ────────────────────────────────────────────────────────── */
 .setup { border-bottom: 1px solid var(--hairline); background: var(--surface) }
@@ -907,19 +908,34 @@ function updateHead(item, g) {
 // rendering either as live sends the reader to an error page. An anchor with no
 // href is not a link, which is exactly the state wanted, and the tooltip says
 // why.
+// updateGoLink points a row's Open button at the preview.
+//
+// A URL, not a state, decides whether this is clickable. It used to require
+// state === "ready", which greyed the button on every rebuild — but a rebuild does
+// not withdraw anything: the previous build is still published and still serving,
+// which is the whole point of building the new one beside it rather than in place.
+// The button went grey exactly when somebody was most likely to be watching a
+// build and wanting to look at what is live.
+//
+// A preview with no URL is a different case and still greys: nothing has ever been
+// published for it, or it has been withdrawn.
 function updateGoLink(a, p) {
-  const url = p.state === "ready" ? safeURL(p.url) : "";
+  const url = safeURL(p.url);
   a.textContent = "Open ↗";
   if (url) {
     a.href = url;
     a.target = "_blank";
     a.rel = "noreferrer";
-    a.title = url;
+    // Says which build is behind the link when that is not the one on screen,
+    // so a stale-looking page is explained rather than confusing.
+    a.title = p.state === "ready"
+      ? url
+      : `${url} — still serving the last successful build while this one ${state(p.state).label.toLowerCase()}`;
   } else {
     a.removeAttribute("href");
     a.title = p.state === "ready"
       ? "this preview has no URL"
-      : `no preview while ${state(p.state).label.toLowerCase()}`;
+      : `nothing published yet — this preview is ${state(p.state).label.toLowerCase()}`;
   }
 }
 
@@ -944,13 +960,9 @@ function updateBody(item, g) {
         <button class="btn" data-role="follow" aria-pressed="true">Following</button>
         <button class="btn" data-role="tall" aria-pressed="false">Expand</button>
         <a class="btn" data-role="download" download>Download</a>
-        <!-- Beside the log because that is where somebody looking at a build that
-             failed on a package download already is. Hidden unless the daemon says
-             this request may write — see showAdminLinks. Teardown deletes the cache
-             with the rest of the preview, so this is for the pull request that is
-             still open and whose next build has to work. -->
-        <button class="btn" data-role="clear-cache" hidden
-                title="Delete this preview's cached package downloads">Clear cache</button>
+        <!-- No cache control here. It was per row, which put the same button on
+             every open row and made a rare action look like part of reading a log.
+             It lives once, in the top bar. -->
       </div>
       <div class="logstate"></div>
       <div class="termwrap">
@@ -1044,10 +1056,6 @@ function updateBody(item, g) {
   body.querySelector('[data-role="download"]').href =
     `/logs/${encodeURIComponent(p.preview_id)}/download`;
 
-  // Re-pointed on every render rather than wired once, because a row's selected
-  // preview changes under it — a button still holding the previous preview's id
-  // would clear a cache nobody asked about.
-  wireClearCache(body.querySelector('[data-role="clear-cache"]'), p.preview_id);
 
   // The preview link lives on the row, not here. See updateGoLink.
 
@@ -2080,53 +2088,56 @@ async function showAdminLinks() {
   const links = [];
   if (admin.projects) links.push(`<a class="control" href="/projects">Projects</a>`);
   if (admin.secrets) links.push(`<a class="control" href="/secrets">Secrets</a>`);
-
-  // Rows already drawn were built before the answer arrived, so this reveals
-  // theirs; wireClearCache handles every row rendered after.
-  for (const b of document.querySelectorAll('[data-role="clear-cache"]')) {
-    b.hidden = !admin.projects;
+  if (admin.projects) {
+    links.push(`<button class="control" id="cache-clear"
+      title="Delete every preview's cached package downloads">Clear caches</button>`);
   }
   if (!links.length) return;
 
   const nav = document.getElementById("admin-nav");
   nav.innerHTML = links.join("");
   nav.hidden = false;
+  wireClearCache(document.getElementById("cache-clear"));
 }
 
 // admin is what /api/admin last said. Absent until it answers, which is why every
 // consumer treats a missing answer as "no".
 let admin = {};
 
-// wireClearCache points one row's button at one preview and reveals it if the
-// daemon accepts writes from here.
+// wireClearCache wires the one cache control, in the top bar.
 //
-// The whole cache, not one manager: a build that fails on a package download does
-// not say which manager's cache is at fault, and clearing two extra directories
-// costs a download that was going to happen anyway.
-function wireClearCache(btn, previewID) {
+// One button rather than one per row. Per row it appeared on every open row at once,
+// which reads as part of looking at a log rather than as the rare repair it is — and
+// a cache is deleted with its preview anyway, so the manual version exists only for
+// the pull request whose next build has to work now.
+//
+// Confirmed, unlike the per-row version. It clears every preview's cache, so the
+// next build of everything currently open pays for it, and that is not visible from
+// the button.
+function wireClearCache(btn) {
   if (!btn) return;
-  btn.hidden = !admin.projects;
 
   btn.onclick = async () => {
-    // No confirmation. It costs this preview one download and cannot lose anything
-    // — and a prompt here is what trains somebody to dismiss prompts.
+    if (!confirm("Delete every preview's cached package downloads? " +
+                 "The next build of each will re-download its dependencies.")) return;
+
     const label = btn.textContent;
     btn.disabled = true;
     btn.textContent = "…";
     try {
-      const out = await api("DELETE", `/api/cache/${encodeURIComponent(previewID)}`);
-      const what = (out.cleared || []).join(", ");
-      btn.textContent = what ? "Cleared" : "Nothing cached";
+      const out = await api("DELETE", "/api/cache");
+      const n = (out.cleared || []).length;
+      btn.textContent = n ? `Cleared ${n}` : "Nothing cached";
     } catch (e) {
       btn.textContent = "Failed";
       btn.title = e.message;
     }
-    // Back to a usable button. Long enough to read, short enough that the row does
-    // not sit lying about its state.
+    // Back to a usable button. Long enough to read, short enough that the top bar
+    // does not sit lying about its state.
     setTimeout(() => {
       btn.textContent = label;
       btn.disabled = false;
-      btn.title = "Delete this preview's cached package downloads";
+      btn.title = "Delete every preview's cached package downloads";
     }, 2500);
   };
 }

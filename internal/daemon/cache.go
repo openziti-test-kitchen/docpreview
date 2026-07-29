@@ -67,6 +67,59 @@ func (a *ProjectsAdmin) clearCache(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"preview": preview, "cleared": cleared})
 }
 
+// clearAllCaches empties every preview's package manager caches.
+//
+// What the dashboard's one cache control calls. Per preview is the right shape for
+// the *code* — the cache's lifetime is the preview's — but it is the wrong shape for
+// a button, because an operator reaching for this has a build failing on a package
+// download and does not yet know which preview owns the bad entry.
+//
+// Only directories that look like a preview ID are touched, and inside each only the
+// three this program creates. cache_dir may be a path the operator chose, and
+// anything else living under it is not this button's business.
+func (a *ProjectsAdmin) clearAllCaches(w http.ResponseWriter, _ *http.Request) {
+	root := a.cfg.CacheRoot()
+	if root == "" {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "no build.cache_dir is configured, so there is no cache to clear",
+		})
+		return
+	}
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Nothing has built under the docker driver yet. Not an error.
+			writeJSON(w, http.StatusOK, map[string]any{"cleared": []string{}})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": fmt.Sprintf("could not read %s: %v", root, err),
+		})
+		return
+	}
+
+	var cleared []string
+	var failed []string
+	for _, e := range entries {
+		if !e.IsDir() || !previewIDPattern.MatchString(e.Name()) {
+			continue
+		}
+		if _, err := clearManagerDirs(filepath.Join(root, e.Name())); err != nil {
+			// One preview's cache held open by a running build must not stop the
+			// rest: the operator asked for this because something is broken, and a
+			// partial clear is more use than none.
+			a.log.Warn("clearing a build cache", "preview", e.Name(), "error", err)
+			failed = append(failed, e.Name())
+			continue
+		}
+		cleared = append(cleared, e.Name())
+	}
+
+	a.log.Info("cleared the build caches", "cleared", len(cleared), "failed", len(failed))
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": cleared, "failed": failed})
+}
+
 // clearManagerDirs removes the manager subdirectories under one cache and recreates
 // them.
 //

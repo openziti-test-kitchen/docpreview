@@ -168,6 +168,7 @@ func (i *Ingress) Handler() http.Handler {
 
 		// The build cache clear, which is keyed on a preview rather than a project
 		// but is served by the same admin so there is one gate rather than two.
+		mux.Handle("/api/cache", i.projects.Handler())
 		mux.Handle("/api/cache/", i.projects.Handler())
 
 		// Its own address, for the same reasons /secrets has one: it can be linked

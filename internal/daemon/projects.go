@@ -52,6 +52,8 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// projects route — it lives here to inherit this admin's gate rather than
 	// grow a third surface with the same two checks to keep in step.
 	mux.HandleFunc("DELETE /api/cache/{preview}", a.gated(a.clearCache))
+	mux.HandleFunc("DELETE /api/cache", a.gated(a.clearAllCaches))
+	mux.HandleFunc("DELETE /api/cache/{$}", a.gated(a.clearAllCaches))
 	return mux
 }
 
