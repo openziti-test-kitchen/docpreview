@@ -208,17 +208,20 @@ choice if the set of people who can open a pull request is larger than the set o
 ### The build cache
 
 A workspace is created per commit and deleted with its siblings, so nothing a build downloads survives inside it.
-`cache_dir` is where the downloads go instead. Without it every push refetches the whole dependency tree, which for
-a Docusaurus site is about two minutes before the build starts.
+`cache_dir` is where the downloads go instead, so a second build of the same pull request does not refetch the
+dependency tree.
+
+Set your expectations from the measurement rather than from the idea: on a fast connection this saves less than you
+would think. A cold install of this project's own `www/` — 1325 packages, downloaded fresh — completes in 14 seconds
+once `node_modules` is off the bind mount. The cache earns its keep on a slow link, a large tree, or a registry
+having a bad day, and it is close to free the rest of the time.
 
 One cache per pull request, at `<cache_dir>/<preview-id>/`, holding `npm/`, `yarn/` and `pnpm/` and mounted into the
 container at `/cache/`. **It is deleted when the preview is** — the same teardown that removes the workspace, the
 artifacts and the pull request comment. That is the reason for the key: a cache shared by every branch has no moment
 at which anything knows it is safe to remove, and grows until somebody notices the disk.
 
-The cost is that the first build of each pull request is cold. Every build after it is warm, which is where the
-pushes actually repeat. The branch name is not part of the key, so a force-push or a rename keeps the cache the pull
-request already filled.
+The branch name is not part of the key, so a force-push or a rename keeps the cache the pull request already filled.
 
 `node_modules` is **not** cached, and does not touch the mounted workspace at all — it gets its own docker volume for
 the life of the build. That is where the build time actually went: installing this project's own `www/` took 5m46s

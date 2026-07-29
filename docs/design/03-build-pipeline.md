@@ -110,8 +110,13 @@ front costs an hour less.
 A workspace is per commit and pruned with its siblings, which is what stops a superseded build corrupting its
 replacement — and it also means nothing a build downloads survives. `cacheMounts` mounts
 `<cache_dir>/<preview-id>/{npm,yarn,pnpm}` at `/cache/*` and points each manager at its own with
-`npm_config_cache`, `YARN_CACHE_FOLDER` and `npm_config_store_dir`. Measured on this project's own `www/`: two
-minutes cold, seconds warm.
+`npm_config_cache`, `YARN_CACHE_FOLDER` and `npm_config_store_dir`.
+
+**This was built to fix a problem it turned out not to cause, and the measurement is worth keeping.** A warm build
+took 4m21s against 4m28s cold — no gain — because the cost was never the download. See the section below. A cold
+install of 1325 packages now takes 14 seconds, so on a fast link the cache saves almost nothing; it is kept because
+it is correct, cheap, and does matter on a slow link or a large tree. Do not present it as the reason builds are
+fast.
 
 **Keyed on the preview, which decides its lifetime.** `teardown` deletes it alongside the workspace, the artifacts
 and the logs. That is the argument for the key rather than a wider one: a cache shared across branches has no
@@ -140,6 +145,10 @@ Measured with an identical warm cache (`TestWhereNodeModulesShouldLive`):
 |---|---|
 | the bind mount | 5m46s |
 | a docker volume | 14s |
+
+Confirmed in the real pipeline afterwards: `added 1325 packages in 14s`, clone to published in 38 seconds against
+4m21s before — and on a *cold* package cache, which is the number that settles it. Downloading 1325 packages fresh
+and extracting them to a volume beat extracting cached ones through the bind mount by four minutes.
 
 So the driver mounts an anonymous volume at `<build dir>/node_modules`. Two things about that path are load-bearing
 and neither is visible in a log, which is why `TestNodeModulesGetsAVolume` exists:

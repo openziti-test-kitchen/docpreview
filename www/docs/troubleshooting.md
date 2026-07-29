@@ -296,22 +296,19 @@ Look for a line like this in the build log:
 added 1325 packages in 2m
 ```
 
-If that number does not fall on the second build of the same pull request, the time is going into writing
-`node_modules`, not into downloading. Two things fix it, and both are already on by default under the Docker driver
-— so seeing this means one of them is not in effect.
+A minute or more there means the time is going into **writing** `node_modules`, not into downloading it. Under the
+Docker driver the workspace is bind-mounted from the host, and on Windows that mount crosses into NTFS, where the
+tens of thousands of small files in a dependency tree are roughly twenty times slower to write. Measured on this
+project's own `www/` with the same warm cache: **5m46s** with `node_modules` on the mount, **14s** with it on a
+volume.
 
-**`node_modules` must be on a volume, not on the mounted workspace.** The workspace is bind-mounted from the host,
-and on Windows that mount crosses into NTFS, where writing the tens of thousands of small files in a dependency tree
-is roughly twenty times slower. Measured on this project's own `www/`, with the same warm cache: **5m46s** with
-`node_modules` on the mount, **14s** with it on a volume. The driver mounts one at `<build dir>/node_modules` for
-you. Under the **local** driver there is no mount and no volume, so this does not apply.
+The driver mounts a volume at `<build dir>/node_modules` to avoid exactly this, so a slow install means it is not in
+effect. Check the driver actually in use — under **local** there is no mount and no volume, and the install writes
+wherever the daemon's disk is.
 
-**The package cache has to survive between builds.** See [`build.cache_dir`](reference/configuration.md#the-build-cache).
-It is per pull request and deleted when the preview is, so the *first* build of each pull request pays for its
-downloads and every later one does not.
-
-If the second build is still slow, check that `cache_dir` is on a disk with room and that nothing is clearing it
-between builds.
+Do not reach for [`build.cache_dir`](reference/configuration.md#the-build-cache) to fix this. A cold install of 1325
+packages, downloading every one, finishes in 14 seconds once `node_modules` is on a volume. The cache is not what
+makes builds fast here.
 
 ---
 
