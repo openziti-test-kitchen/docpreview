@@ -20,6 +20,18 @@ import type * as Preset from '@docusaurus/preset-classic';
 const baseUrl = process.env.DOCUSAURUS_BASE_URL ?? '/';
 const siteUrl = process.env.DOCUSAURUS_URL ?? 'https://docpreview.example.com';
 
+// The repository this site documents. Named once because it appears in the star
+// banner, the footer, the navbar and the docs edit link, and a wrong one is the
+// kind of thing nobody notices until a reader clicks it.
+const repoUrl = 'https://github.com/openziti-test-kitchen/docpreview';
+
+// The NetFoundry footer renders its link columns as plain <a href>, not as
+// Docusaurus <Link>, so nothing applies baseUrl for us. Deriving the href from
+// the same `baseUrl` constant above keeps footer links working when docpreview
+// mounts this site under a preview prefix instead of at '/'. baseUrl always
+// ends in a slash, hence no separator here.
+const sitePath = (p: string) => `${baseUrl}${p}`;
+
 const config: Config = {
   title: 'docpreview',
   tagline: 'Documentation previews for pull requests, running anywhere',
@@ -50,6 +62,14 @@ const config: Config = {
     locales: ['en'],
   },
 
+  // The shared NetFoundry theme. It overrides @theme/Layout — so every page,
+  // including the landing page, picks up the NetFoundry navbar, footer and star
+  // banner without importing anything — and injects its own CSS (brand colours,
+  // the --nf-* custom properties, the code-block palette) via getClientModules.
+  // Registered here rather than in the preset so it loads after theme-classic
+  // and its component overrides win.
+  themes: ['@netfoundry/docusaurus-theme'],
+
   presets: [
     [
       'classic',
@@ -57,7 +77,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           routeBasePath: 'docs',
-          editUrl: 'https://github.com/netfoundry/docpreview/tree/main/www/',
+          editUrl: `${repoUrl}/tree/main/www/`,
         },
         blog: false,
         theme: {
@@ -68,6 +88,42 @@ const config: Config = {
   ],
 
   themeConfig: {
+    // Configuration read by @netfoundry/docusaurus-theme. Only the keys the
+    // theme actually declares (see its options.ts) do anything here; unknown
+    // keys are silently ignored, which is why this block stays minimal.
+    netfoundry: {
+      // Path-aware: one entry with no pathPrefix means the banner shows on
+      // every page, which is what we want on a single-product site.
+      starBanners: [
+        {repoUrl, label: 'Star docpreview on GitHub'},
+      ],
+      footer: {
+        description:
+          'Documentation previews for pull requests. One Go binary, running on your hardware, ' +
+          'publishing over an OpenZiti overlay.',
+        socialProps: {
+          githubUrl: repoUrl,
+        },
+        // The theme's defaults for these three columns point at the OpenZiti
+        // docs, which do not exist on this site. Override rather than inherit.
+        documentationLinks: [
+          {href: sitePath('docs/intro'), label: 'What this is'},
+          {href: sitePath('docs/quickstart'), label: 'Quickstart'},
+          {href: sitePath('docs/architecture'), label: 'Architecture'},
+          {href: sitePath('docs/reference/configuration'), label: 'Configuration'},
+        ],
+        communityLinks: [
+          {href: repoUrl, label: 'GitHub'},
+          {href: `${repoUrl}/issues`, label: 'Issues'},
+          {href: 'https://openziti.discourse.group/', label: 'Discourse forum'},
+        ],
+        resourceLinks: [
+          {href: sitePath('docs/exposers'), label: 'Exposers'},
+          {href: 'https://docs.zrok.io/', label: 'zrok'},
+          {href: 'https://netfoundry.io/docs/frontdoor/intro/', label: 'NetFoundry Frontdoor'},
+        ],
+      },
+    },
     image: 'img/docusaurus-social-card.jpg',
     colorMode: {
       respectPrefersColorScheme: true,
@@ -86,42 +142,16 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          href: 'https://github.com/netfoundry/docpreview',
+          href: repoUrl,
           label: 'GitHub',
           position: 'right',
         },
       ],
     },
-    footer: {
-      style: 'dark',
-      links: [
-        {
-          title: 'Start here',
-          items: [
-            {label: 'What this is', to: '/docs/intro'},
-            {label: 'Quickstart', to: '/docs/quickstart'},
-            {label: 'GitHub App runbook', to: '/docs/runbooks/github-app'},
-          ],
-        },
-        {
-          title: 'Reference',
-          items: [
-            {label: 'Architecture', to: '/docs/architecture'},
-            {label: 'Configuration', to: '/docs/reference/configuration'},
-            {label: 'Exposers', to: '/docs/exposers'},
-          ],
-        },
-        {
-          title: 'Background',
-          items: [
-            {label: 'zrok', href: 'https://docs.zrok.io/'},
-            {label: 'NetFoundry Frontdoor', href: 'https://netfoundry.io/docs/frontdoor/intro/'},
-            {label: 'Docusaurus', href: 'https://docusaurus.io/'},
-          ],
-        },
-      ],
-      copyright: `Copyright © ${new Date().getFullYear()} NetFoundry. Built with Docusaurus.`,
-    },
+    // No `footer` key here on purpose. The NetFoundry theme replaces
+    // @theme/Layout with one that renders its own footer from
+    // themeConfig.netfoundry.footer above, so Infima's footer config would be
+    // dead weight that reads as if it were live.
     prism: {
       theme: prismThemes.github,
       darkTheme: prismThemes.dracula,

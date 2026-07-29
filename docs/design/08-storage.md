@@ -4,13 +4,15 @@ sqlite via `modernc.org/sqlite` — pure Go, no cgo, so `go build` produces a st
 without a C toolchain. That constraint comes from "must run ANYWHERE", and it is the reason this is not
 `mattn/go-sqlite3`.
 
-One file, `<data_dir>/docpreview.db`. Two tables.
+One file, `<data_dir>/docpreview.db`. Four tables: `previews`, `jobs`, `builds`, and `comments` — the last of
+which exists only for the local platform, which has nowhere else to keep a comment
+(`internal/store/store.go:94-109`, and [09-scm.md](09-scm.md) for the protocol it serves).
 
 ## Layout on disk
 
 ```
 <data_dir>/
-  docpreview.db          previews, jobs
+  docpreview.db          previews, jobs, builds, comments
   vault.age              secrets
   workspaces/<id>/       scratch clones, deleted when output is copied out
   artifacts/<id>/        what is being served
@@ -60,9 +62,52 @@ leaves one job holding the fifth.
 you click the number and see which ones needs them — and a queued build has no preview record yet: the first
 build of a branch exists nowhere but here until it finishes.
 
+`PendingJobs` returns `enqueued_at` alongside the payload (`internal/store/store.go:225`), so the caller gets a
+`PendingJob{PR, EnqueuedAt}` rather than a bare pull request. The column was already there for `Claim`'s
+ordering; carrying it out of the store is what lets a queued row on the dashboard show how long it has been
+waiting. Without it the only timestamp available for a re-queued preview was the stored row's `updated_at` —
+the age of its last *finished* build — so a job enqueued seconds ago rendered as hours old. See rule 6 in
+[07-dashboard.md](07-dashboard.md).
+
+## `builds`
+
+| Column | Notes |
+|---|---|
+| `preview_id`, `build_id` | composite primary key |
+| `platform`, `owner`, `repo`, `number`, `branch` | the pull request, exploded — this table is read for display |
+| `commit_sha` | head SHA of the attempt |
+| `state` | `building`, `ready` or `failed` |
+| `reason` | failure summary, already scrubbed |
+| `started_at`, `finished_at` | unix millis; `finished_at` is 0 while the build runs |
+
+One row per build attempt (`internal/store/store.go:76`). It exists because `previews` cannot express this:
+that table holds the **current** state of a preview and is overwritten on every rebuild, so the history of what
+a branch had done lived nowhere. Two surfaces needed it — the dashboard's build picker, which could list stored
+log files but say nothing about how each one ended, and the activity feed, which was an in-memory ring and so
+empty after every restart. See [07-dashboard.md](07-dashboard.md).
+
+**Written twice per build.** Once when the build starts, with `building` (`internal/daemon/daemon.go:914`), so a
+build in flight appears in the history rather than materialising only when it ends — which is precisely when
+somebody is watching. Once with its outcome (`daemon.go:944` and `daemon.go:952`). `SaveBuild` is an upsert on
+`(preview_id, build_id)` that updates only `state`, `reason` and `finished_at`, so the second write cannot move
+`started_at`.
+
+**Keyed `(preview_id, build_id)`, not by commit.** The build id is `<timestamp>-<sha12>`
+(`internal/daemon/daemon.go:203`), so one commit rebuilt twice — a retry, a reopened pull request — is two rows,
+which is what somebody reading the history wants to see.
+
+`d.saveBuild` (`daemon.go:456`) logs a failure rather than propagating it, and uses its own context rather than
+the build's: it is called from paths whose context may already have been cancelled by a supersede, and a
+superseded build's outcome is exactly what the history should record.
+
+Only the three states above are recorded. `queued` is in `jobs` and nowhere else, and a skipped build never
+reaches `saveBuild` — the dashboard's picker renders both anyway, because a row it cannot label is better than a
+row it hides.
+
 ## Why JSON payloads rather than columns
 
-`model.PullRequest` is carried whole as JSON in both tables rather than exploded into columns.
+`model.PullRequest` is carried whole as JSON in `previews` and `jobs` rather than exploded into columns.
+`builds` explodes it, because that table is read to render a list and never to reconstruct a build.
 
 It is written by one program and read by the same program; nothing queries by owner or branch. Exploding it
 would mean a migration every time the struct gains a field, in exchange for query capability nobody uses. The
@@ -108,7 +153,11 @@ Each tick:
 1. Tear down previews older than `preview.ttl`.
 2. `logs.Sweep(build.keep_logs)`. Build logs outlive their previews only until the retention window closes —
    they can contain anything a build printed, so an unbounded pile is a liability rather than an asset.
-3. `exposer.Reap(ctx, keep)` with the current preview IDs.
+3. `store.PruneBuilds` on the **same** `build.keep_logs` window (`internal/daemon/daemon.go:1208`), so a build
+   row and its log file disappear together and the picker never offers an outcome whose log has gone. Deliberately
+   not derived from the log files: a log can fail to open while the build still happened, and that build belongs
+   in the history (`internal/store/store.go:334`).
+4. `exposer.Reap(ctx, keep)` with the current preview IDs.
 
 ## Path safety
 
@@ -129,3 +178,5 @@ would make it fail if the mux's normalization changed — which would be a false
 4. Recovery reaps before it republishes.
 5. `base_url` is stored, not recomputed.
 6. A preview ID from a URL cannot escape its directory.
+7. A build row is written when the build starts, not only when it ends.
+8. Build rows and build logs are pruned on one window, so neither outlives the other.

@@ -419,11 +419,11 @@ footer {
     <span class="grow"></span>
     <select class="control" id="project" aria-label="Project"></select>
     <input class="control" id="search" type="search" placeholder="branch, PR, project…" aria-label="Filter">
-    <!-- Hidden until /status says this caller can reach /secrets. Fail closed:
-         render() runs before the first status event, so defaulting to visible
-         flashes the link locally and leaves it up permanently for a remote
-         viewer whose stream never connects. -->
-    <a class="control" id="btn-setup" href="/secrets" hidden>Secrets</a>
+    <!-- No Secrets link. Credential management lives at /secrets, reached by
+         typing it or from the runbooks — not from a control on an operations
+         screen, where the thing it does is unrelated to everything around it and
+         a form for pasting a private key invites being pasted into. -->
+
   </div>
 </div>
 
@@ -1036,13 +1036,19 @@ function updateBuildPicker(previewID) {
   sel.hidden = builds.length < 2;
   if (builds.length < 2) return;
 
+  // No separate "latest" row. The newest build *is* the latest, so a synthetic
+  // entry above it said the same thing twice and made the list one longer than
+  // the number of builds.
+  //
+  // It keeps the empty value, which is what means "follow the live stream" rather
+  // than "download this file" — the newest build's log is still being written
+  // while it runs, so reading it as a file would show a truncated copy that never
+  // updates.
   const current = ui.build[previewID] || "";
-  sel.innerHTML =
-    `<option value="">latest · live or most recent</option>` +
-    builds.map(b =>
-      `<option value="${esc(b.build_id)}">` +
-      `${buildIcon(b)} ${esc(buildLabel(b))} · ${esc(b.build_id)} · ${ago(b.mod_time)} ago` +
-      `</option>`).join("");
+  sel.innerHTML = builds.map((b, i) =>
+    `<option value="${i === 0 ? "" : esc(b.build_id)}">` +
+    `${buildIcon(b)} ${esc(buildLabel(b))} · ${esc(b.build_id)} · ${ago(b.mod_time)} ago` +
+    `</option>`).join("");
   sel.value = current;
 }
 
@@ -1629,16 +1635,6 @@ function applyStatus(d) {
 
   document.getElementById("exposer").textContent = `exposer: ${d.exposer}`;
 
-  // Reveal the Secrets link only for a caller that can reach /secrets. Hidden in
-  // the markup, so anything short of an explicit yes leaves it hidden — a remote
-  // viewer through the dashboard proxy, where that route is not published, and
-  // equally a page whose status stream never arrived.
-  //
-  // The server refuses those callers anyway, twice over. This is about not
-  // offering a link that 404s, which reads as a broken dashboard rather than a
-  // closed door.
-  const secretsLink = document.getElementById("btn-setup");
-  if (secretsLink) secretsLink.hidden = d.secrets !== true;
 
   // A project whose last preview was torn down must not keep a stream open
   // behind a panel nobody can see. ui.open is a project name, so the test is
@@ -1685,7 +1681,6 @@ if (isSetupPage) {
   document.getElementById("counters").hidden = true;
   document.getElementById("project").hidden = true;
   document.getElementById("search").hidden = true;
-  document.getElementById("btn-setup").hidden = true;
   document.getElementById("conn").textContent = "setup";
   setupEl().hidden = false;
   loadSetup();

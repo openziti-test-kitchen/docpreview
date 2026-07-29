@@ -1,23 +1,418 @@
 /**
- * CSS files with the .module.css suffix will be treated as CSS modules
- * and scoped locally.
+ * Landing page styles.
+ *
+ * Everything here is expressed in the theme's own custom properties -- the
+ * --nf-* brand triple and the ifm variables @netfoundry/docusaurus-theme
+ * redefines for each colour scheme. That is deliberate: the site sets
+ * `respectPrefersColorScheme: true`, so any hardcoded colour would be wrong for
+ * half the visitors, and the two flavours would drift apart the first time the
+ * brand palette moves. The one exception is the rgb() triples fed to
+ * colour-mix-style alpha blends, which need the channel form (--nf-color-*)
+ * rather than the composed rgb() value.
  */
 
-.heroBanner {
-  padding: 4rem 0;
-  text-align: center;
-  position: relative;
+/* ── Shared section scaffolding ──────────────────────────────────────────── */
+
+/* NetFoundryHorizontalSection centres itself and caps its own width, so these
+   only own vertical rhythm and the inner measure. */
+.section {
+  width: 100%;
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 3.5rem 1rem;
+}
+
+.sectionTinted {
+  /* The theme's section component reads --nf-section-bg for its background, so
+     tinting a band is a variable, not an override. */
+  --nf-section-bg: var(--ifm-background-surface-color);
+}
+
+.sectionTitle {
+  font-size: 2rem;
+  line-height: 1.2;
+  margin: 0 0 0.5rem;
+}
+
+.sectionLead {
+  font-size: 1.0625rem;
+  color: var(--ifm-color-emphasis-700);
+  max-width: 62ch;
+  margin: 0 0 2rem;
+}
+
+/* ── Hero ────────────────────────────────────────────────────────────────── */
+
+.hero {
+  /* Brand gradient at low alpha so it reads as a tint over whichever
+     background colour the active theme supplies. */
+  --nf-section-bg: transparent;
+  background:
+    radial-gradient(
+      ellipse 90% 120% at 15% 0%,
+      rgba(var(--nf-color-tertiary), 0.16),
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 80% 100% at 85% 10%,
+      rgba(var(--nf-color-primary), 0.14),
+      transparent 70%
+    );
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  width: 100%;
+}
+
+.heroInner {
+  display: grid;
+  /* minmax(0, ...) rather than 1fr: grid items default to min-content width,
+     and a <pre> full of a long command line would otherwise push the whole
+     page wider than the viewport on a phone. */
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 2.5rem;
+  align-items: center;
+  width: 100%;
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 4rem 1rem;
+}
+
+.heroTitle {
+  font-size: clamp(2.5rem, 6vw, 3.75rem);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.heroTagline {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--nf-tertiary);
+  margin: 0.75rem 0 0;
+}
+
+[data-theme='dark'] .heroTagline {
+  /* --nf-tertiary is a saturated mid-blue: legible on white, muddy on the
+     dark surface. The primary tint is the light end of the same family. */
+  color: var(--nf-primary);
+}
+
+.heroBody {
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  margin: 1.25rem 0 0;
+  max-width: 52ch;
+}
+
+.heroButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.heroAside {
+  min-width: 0;
+}
+
+.heroAsideNote {
+  font-size: 0.875rem;
+  color: var(--ifm-color-emphasis-600);
+  margin: 0.75rem 0 0;
+}
+
+/* ── Terminal card ───────────────────────────────────────────────────────── */
+
+.terminal {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
   overflow: hidden;
+  background: var(--ifm-background-surface-color);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.09);
 }
 
-@media screen and (max-width: 996px) {
-  .heroBanner {
-    padding: 2rem;
-  }
+[data-theme='dark'] .terminal {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
 }
 
-.buttons {
+.terminalBar {
   display: flex;
   align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  background: var(--ifm-color-emphasis-100);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.75rem;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.terminalDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ifm-color-emphasis-400);
+  flex: 0 0 auto;
+}
+
+.terminalTitle {
+  margin-left: 0.25rem;
+}
+
+/* Docusaurus code blocks carry their own margin and radius; inside the card
+   both fight the frame. */
+.terminal :global(.theme-code-block) {
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* ── Step list ───────────────────────────────────────────────────────────── */
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+  counter-reset: step;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.step {
+  position: relative;
+  padding-top: 2.75rem;
+  border-top: 3px solid var(--ifm-color-emphasis-200);
+}
+
+.step::before {
+  counter-increment: step;
+  content: counter(step);
+  position: absolute;
+  top: 0.75rem;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--nf-tertiary);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stepTitle {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  margin: 0 0 0.4rem;
+}
+
+.stepBody {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-700);
+}
+
+/* ── Card grids ──────────────────────────────────────────────────────────── */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.25rem;
+}
+
+.card {
+  padding: 1.5rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-left: 3px solid var(--nf-primary);
+  border-radius: 10px;
+  background: var(--ifm-background-color);
+}
+
+.cardTitle {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+
+.cardBody {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-700);
+}
+
+/* ── Exposers ────────────────────────────────────────────────────────────── */
+
+.exposers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.25rem;
+}
+
+.exposer {
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 10px;
+  background: var(--ifm-background-color);
+}
+
+.exposerName {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 1.0625rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+/* The whole point of the four exposers is that the public surface differs, so
+   that is the field the badge carries -- not a decorative label. */
+.exposerBadge {
+  align-self: flex-start;
+  margin: 0.6rem 0 0.9rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.surfacePublic {
+  background: rgba(var(--nf-color-tertiary), 0.14);
+  color: var(--nf-tertiary);
+}
+
+[data-theme='dark'] .surfacePublic {
+  color: var(--nf-primary);
+}
+
+.surfaceNone {
+  background: rgba(var(--nf-color-secondary), 0.16);
+  /* --nf-secondary is a bright green -- fine as a fill, thin as text on white.
+     colour-mix would be nicer; this stays within what the ifm scale offers. */
+  color: var(--ifm-color-emphasis-900);
+}
+
+.surfaceLoopback {
+  background: var(--ifm-color-emphasis-200);
+  color: var(--ifm-color-emphasis-800);
+}
+
+.exposerBody {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--ifm-color-emphasis-700);
+}
+
+/* ── The pull request comment mock ───────────────────────────────────────── */
+
+.commentLayout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2.5rem;
+  align-items: start;
+}
+
+.comment {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ifm-background-color);
+  min-width: 0;
+}
+
+.commentHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  background: var(--ifm-color-emphasis-100);
+  font-size: 0.875rem;
+}
+
+.commentAuthor {
+  font-weight: 700;
+}
+
+.commentBot {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--ifm-color-emphasis-400);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.commentBodyTitle {
+  margin: 1rem 1rem 0.75rem;
+  font-weight: 700;
+}
+
+/* A table of one-line values is the honest shape here, and it is also what
+   GitHub renders. It gets its own scroll container so a long preview URL
+   cannot widen the page on a phone. */
+.commentTableWrap {
+  overflow-x: auto;
+  padding: 0 1rem 1rem;
+}
+
+.commentTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.commentTable th,
+.commentTable td {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  text-align: left;
+}
+
+.commentTable th {
+  width: 9rem;
+  white-space: nowrap;
+  background: var(--ifm-color-emphasis-100);
+}
+
+/* ── Closing call to action ──────────────────────────────────────────────── */
+
+.closing {
+  text-align: center;
+  max-width: 44rem;
+  margin: 0 auto;
+}
+
+.closingButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
   justify-content: center;
+  margin-top: 1.75rem;
+}
+
+/* ── Narrow viewports ────────────────────────────────────────────────────── */
+
+@media screen and (max-width: 996px) {
+  .heroInner {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+    padding: 2.5rem 1rem;
+  }
+
+  .section {
+    padding: 2.5rem 1rem;
+  }
+
+  .commentLayout {
+    gap: 1.5rem;
+  }
 }

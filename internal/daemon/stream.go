@@ -353,7 +353,17 @@ func (i *Ingress) downloadLog(w http.ResponseWriter, r *http.Request) {
 	// "the build stopped there" — which is worse than an obvious failure.
 	w.Header().Set("Content-Length", strconv.FormatInt(meta.Size, 10))
 
-	if _, err := io.Copy(w, f); err != nil {
+	// CopyN, not Copy, and bounded by the length just declared.
+	//
+	// The size was measured when the log was opened, and a build that is still
+	// running keeps appending — so Copy sent more bytes than the header promised
+	// and net/http rejected the write with "wrote more than the declared
+	// Content-Length". Downloading a live build's log is an ordinary thing to do,
+	// which made this reachable from the dashboard's own Download button.
+	//
+	// A download of a running build is a snapshot either way. Bounding it makes
+	// the snapshot exactly the one the header describes.
+	if _, err := io.CopyN(w, f, meta.Size); err != nil && !errors.Is(err, io.EOF) {
 		i.log.Warn("serving a build log", "preview", previewID, "error", err)
 	}
 }
