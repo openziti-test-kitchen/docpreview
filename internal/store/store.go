@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -86,10 +87,48 @@ CREATE TABLE IF NOT EXISTS builds (
     reason      TEXT NOT NULL DEFAULT '',
     started_at  INTEGER NOT NULL DEFAULT 0,
     finished_at INTEGER NOT NULL DEFAULT 0,
+    -- This build's own share, when per-build publishing is on. Also declared in
+    -- migrate(), because a database created before these existed gets them there
+    -- and one created after gets them here.
+    name        TEXT NOT NULL DEFAULT '',
+    url         TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (preview_id, build_id)
 );
 
 CREATE INDEX IF NOT EXISTS builds_started_at ON builds(started_at);
+
+-- A project is a repository docpreview is willing to build, and how to build it.
+--
+-- It exists to move the build instructions off the pull request. .docpreview.yml
+-- lives in the branch, so on any repository where opening a pull request is not a
+-- privilege, whoever opens one chooses the command that runs — and the local
+-- driver runs it. An operator-authored row cannot be edited by a contributor.
+--
+-- Every build field is nullable-by-emptiness: empty means "no opinion, fall back
+-- to the repository's own .docpreview.yml". That keeps a project row useful as
+-- just an allowlist entry, which is the common case, without forcing an operator
+-- to restate settings the repository already gets right.
+--
+-- Keyed by (platform, owner, repo) rather than by a surrogate id, because that is
+-- what a webhook arrives carrying and a lookup per delivery should not need a
+-- second query to resolve.
+CREATE TABLE IF NOT EXISTS projects (
+    platform      TEXT NOT NULL,
+    owner         TEXT NOT NULL,
+    repo          TEXT NOT NULL,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    build_dir     TEXT NOT NULL DEFAULT '',
+    build_command TEXT NOT NULL DEFAULT '',
+    build_output  TEXT NOT NULL DEFAULT '',
+    base_url      TEXT NOT NULL DEFAULT '',
+    detect_script TEXT NOT NULL DEFAULT '',
+    driver        TEXT NOT NULL DEFAULT '',
+    image         TEXT NOT NULL DEFAULT '',
+    notes         TEXT NOT NULL DEFAULT '',
+    created_at    INTEGER NOT NULL DEFAULT 0,
+    updated_at    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (platform, owner, repo)
+);
 
 -- Comments exist only for the local platform, which has nowhere else to put
 -- them. GitHub and Bitbucket keep the comment on the pull request, which is the
@@ -133,8 +172,44 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("applying schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return &Store{db: db}, nil
+}
+
+// migrate adds columns that were introduced after their table shipped.
+//
+// `CREATE TABLE IF NOT EXISTS` does nothing at all to a table that already exists,
+// so a column added to the schema above appears only in databases created after the
+// change — every existing one silently lacks it and every query naming it fails.
+// This is the whole of the migration story: one list, applied every start.
+//
+// Each statement must be idempotent, because there is no version table deciding
+// what has run. `ADD COLUMN` is not, so "duplicate column name" is treated as the
+// success it is. That is the trade for having no schema versioning: the check is on
+// the error text, and a future sqlite that rewords it would make these look failed.
+// The alternative — a schema_version table — is worth adding at the second
+// migration that cannot be expressed this way, not the first that can.
+//
+// Additive only. A column that has to change type or go away needs a real
+// migration, and doing that here would run it again on every restart.
+func migrate(db *sql.DB) error {
+	stmts := []string{
+		// A build's own share. Per-build publishing gives each build a URL of its
+		// own, and without these a restart cannot tell the exposer which build
+		// shares to keep — so Reap deletes every one of them on the first sweep.
+		`ALTER TABLE builds ADD COLUMN name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE builds ADD COLUMN url TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("migrating: %s: %w", s, err)
+		}
+	}
+	return nil
 }
 
 // Close releases the database.
@@ -246,6 +321,138 @@ func (s *Store) PendingJobs(ctx context.Context) ([]PendingJob, error) {
 	return out, rows.Err()
 }
 
+// Project is a repository docpreview will build, and how.
+//
+// Every build field is optional. Empty means "defer to the repository's own
+// .docpreview.yml", so a row that only names a repository is a valid project and
+// is the common case — an operator should not have to restate settings the
+// repository already gets right in order to allow it.
+type Project struct {
+	Platform string `json:"platform"`
+	Owner    string `json:"owner"`
+	Repo     string `json:"repo"`
+	Enabled  bool   `json:"enabled"`
+
+	BuildDir     string `json:"build_dir,omitempty"`
+	BuildCommand string `json:"build_command,omitempty"`
+	BuildOutput  string `json:"build_output,omitempty"`
+	BaseURL      string `json:"base_url,omitempty"`
+	DetectScript string `json:"detect_script,omitempty"`
+
+	// Driver and Image override the server-wide build.driver and build.image for
+	// this project. Empty means the server default.
+	Driver string `json:"driver,omitempty"`
+	Image  string `json:"image,omitempty"`
+
+	// Notes is free text for whoever added the project. It appears in the UI and
+	// nowhere else; the build never reads it.
+	Notes string `json:"notes,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Key is the project's identity, as it appears in a webhook.
+func (p Project) Key() string { return p.Platform + ":" + p.Owner + "/" + p.Repo }
+
+// SaveProject creates or replaces a project.
+func (s *Store) SaveProject(ctx context.Context, p Project) error {
+	now := time.Now().UnixMilli()
+	created := now
+	if !p.CreatedAt.IsZero() {
+		created = p.CreatedAt.UnixMilli()
+	}
+
+	_, err := s.db.ExecContext(ctx, `
+        INSERT INTO projects (platform, owner, repo, enabled, build_dir, build_command,
+            build_output, base_url, detect_script, driver, image, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(platform, owner, repo) DO UPDATE SET
+            enabled       = excluded.enabled,
+            build_dir     = excluded.build_dir,
+            build_command = excluded.build_command,
+            build_output  = excluded.build_output,
+            base_url      = excluded.base_url,
+            detect_script = excluded.detect_script,
+            driver        = excluded.driver,
+            image         = excluded.image,
+            notes         = excluded.notes,
+            updated_at    = excluded.updated_at`,
+		p.Platform, p.Owner, p.Repo, p.Enabled, p.BuildDir, p.BuildCommand,
+		p.BuildOutput, p.BaseURL, p.DetectScript, p.Driver, p.Image, p.Notes,
+		created, now)
+	if err != nil {
+		return fmt.Errorf("saving project %s: %w", p.Key(), err)
+	}
+	return nil
+}
+
+// ErrNoProject is returned when a repository has no project row.
+var ErrNoProject = errors.New("no such project")
+
+// ProjectFor returns the project for a repository.
+//
+// ErrNoProject is an ordinary answer, not a failure: it is what every repository
+// returns before anybody adds it, and the caller decides what that means.
+func (s *Store) ProjectFor(ctx context.Context, platform, owner, repo string) (Project, error) {
+	rows, err := s.queryProjects(ctx,
+		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
+                base_url, detect_script, driver, image, notes, created_at, updated_at
+         FROM projects WHERE platform = ? AND owner = ? AND repo = ?`,
+		platform, owner, repo)
+	if err != nil {
+		return Project{}, err
+	}
+	if len(rows) == 0 {
+		return Project{}, fmt.Errorf("%w: %s:%s/%s", ErrNoProject, platform, owner, repo)
+	}
+	return rows[0], nil
+}
+
+// ListProjects returns every project, ordered for display.
+func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
+	return s.queryProjects(ctx,
+		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
+                base_url, detect_script, driver, image, notes, created_at, updated_at
+         FROM projects ORDER BY platform, owner, repo`)
+}
+
+// DeleteProject removes a project. Removing one does not touch its previews:
+// those are live shares and database rows with their own lifecycle, and silently
+// tearing them down because somebody edited a list would be a surprise.
+func (s *Store) DeleteProject(ctx context.Context, platform, owner, repo string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM projects WHERE platform = ? AND owner = ? AND repo = ?`,
+		platform, owner, repo)
+	if err != nil {
+		return fmt.Errorf("deleting project %s:%s/%s: %w", platform, owner, repo, err)
+	}
+	return nil
+}
+
+func (s *Store) queryProjects(ctx context.Context, query string, args ...any) ([]Project, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing projects: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Project
+	for rows.Next() {
+		var p Project
+		var created, updated int64
+		if err := rows.Scan(&p.Platform, &p.Owner, &p.Repo, &p.Enabled, &p.BuildDir,
+			&p.BuildCommand, &p.BuildOutput, &p.BaseURL, &p.DetectScript, &p.Driver,
+			&p.Image, &p.Notes, &created, &updated); err != nil {
+			return nil, err
+		}
+		p.CreatedAt = time.UnixMilli(created)
+		p.UpdatedAt = time.UnixMilli(updated)
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // Build is one attempt at building a preview.
 type Build struct {
 	PreviewID  string            `json:"preview_id"`
@@ -256,6 +463,15 @@ type Build struct {
 	Reason     string            `json:"reason,omitempty"`
 	StartedAt  time.Time         `json:"started_at"`
 	FinishedAt time.Time         `json:"finished_at,omitempty"`
+
+	// Name and URL are this build's own share, empty when it has none — a failed
+	// or skipped build, or a daemon with per-build publishing off.
+	//
+	// Recorded rather than derived, for the same reason a preview's URL is: after a
+	// restart the exposer has to be told which shares to keep, and a share whose
+	// key nothing remembers is indistinguishable from an orphan and gets reaped.
+	Name string `json:"name,omitempty"`
+	URL  string `json:"url,omitempty"`
 }
 
 // SaveBuild records or updates one build attempt.
@@ -266,15 +482,21 @@ type Build struct {
 func (s *Store) SaveBuild(ctx context.Context, b Build) error {
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO builds (preview_id, build_id, platform, owner, repo, number, branch,
-            commit_sha, state, reason, started_at, finished_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            commit_sha, state, reason, started_at, finished_at, name, url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(preview_id, build_id) DO UPDATE SET
             state       = excluded.state,
             reason      = excluded.reason,
-            finished_at = excluded.finished_at`,
+            finished_at = excluded.finished_at,
+            -- Only when the new row carries one. The row is written twice, and the
+            -- first write — at build start — has no share yet; taking its empty
+            -- value on the second would erase the URL the publish just produced if
+            -- the writes ever arrive out of order.
+            name        = CASE WHEN excluded.name <> '' THEN excluded.name ELSE builds.name END,
+            url         = CASE WHEN excluded.url  <> '' THEN excluded.url  ELSE builds.url  END`,
 		b.PreviewID, b.BuildID, string(b.PR.Repo.Platform), b.PR.Repo.Owner, b.PR.Repo.Name,
 		b.PR.Number, b.PR.Branch, b.Commit, b.State, b.Reason,
-		b.StartedAt.UnixMilli(), b.FinishedAt.UnixMilli())
+		b.StartedAt.UnixMilli(), b.FinishedAt.UnixMilli(), b.Name, b.URL)
 	if err != nil {
 		return fmt.Errorf("saving build %s/%s: %w", b.PreviewID, b.BuildID, err)
 	}
@@ -285,7 +507,7 @@ func (s *Store) SaveBuild(ctx context.Context, b Build) error {
 func (s *Store) BuildsFor(ctx context.Context, previewID string) ([]Build, error) {
 	return s.queryBuilds(ctx,
 		`SELECT preview_id, build_id, platform, owner, repo, number, branch,
-                commit_sha, state, reason, started_at, finished_at
+                commit_sha, state, reason, started_at, finished_at, name, url
          FROM builds WHERE preview_id = ? ORDER BY started_at DESC`, previewID)
 }
 
@@ -300,7 +522,7 @@ func (s *Store) RecentBuilds(ctx context.Context, limit int) ([]Build, error) {
 	}
 	return s.queryBuilds(ctx,
 		`SELECT preview_id, build_id, platform, owner, repo, number, branch,
-                commit_sha, state, reason, started_at, finished_at
+                commit_sha, state, reason, started_at, finished_at, name, url
          FROM builds ORDER BY started_at DESC LIMIT ?`, limit)
 }
 
@@ -318,7 +540,7 @@ func (s *Store) queryBuilds(ctx context.Context, query string, args ...any) ([]B
 		var started, finished int64
 		if err := rows.Scan(&b.PreviewID, &b.BuildID, &platform, &b.PR.Repo.Owner,
 			&b.PR.Repo.Name, &b.PR.Number, &b.PR.Branch, &b.Commit, &b.State, &b.Reason,
-			&started, &finished); err != nil {
+			&started, &finished, &b.Name, &b.URL); err != nil {
 			return nil, err
 		}
 		b.PR.Repo.Platform = model.Platform(platform)

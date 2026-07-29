@@ -236,10 +236,14 @@ func (z *Ziti) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	}
 
 	name := strings.ToLower(spec.Name)
-	entry := &zitiPreview{previewID: spec.PreviewID, handler: h}
+	// Keyed by publication, not preview: a preview's branch share and its
+	// per-build shares are different publications of the same preview and take
+	// different hostnames, so comparing preview ids alone would let one of them
+	// silently take another's name.
+	entry := &zitiPreview{previewID: spec.Key(), handler: h}
 
 	z.mu.Lock()
-	if existing, ok := z.live[name]; ok && existing.previewID != spec.PreviewID {
+	if existing, ok := z.live[name]; ok && existing.previewID != spec.Key() {
 		z.mu.Unlock()
 		return nil, fmt.Errorf("the name %q is already serving a different preview (%s); "+
 			"two previews render to the same hostname under this name_template — "+

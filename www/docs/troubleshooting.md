@@ -288,6 +288,30 @@ Or switch to the Docker driver, which gets a clean, predictable environment each
 
 ---
 
+## Every build takes minutes on `npm ci`
+
+Look for a line like this in the build log:
+
+```text
+added 1325 packages in 2m
+```
+
+A minute or more there means the time is going into **writing** `node_modules`, not into downloading it. Under the
+Docker driver the workspace is bind-mounted from the host, and on Windows that mount crosses into NTFS, where the
+tens of thousands of small files in a dependency tree are roughly twenty times slower to write. Measured on this
+project's own `www/` with the same warm cache: **5m46s** with `node_modules` on the mount, **14s** with it on a
+volume.
+
+The driver mounts a volume at `<build dir>/node_modules` to avoid exactly this, so a slow install means it is not in
+effect. Check the driver actually in use — under **local** there is no mount and no volume, and the install writes
+wherever the daemon's disk is.
+
+Do not reach for [`build.cache_dir`](reference/configuration.md#the-build-cache) to fix this. A cold install of 1325
+packages, downloading every one, finishes in 14 seconds once `node_modules` is on a volume. The cache is not what
+makes builds fast here.
+
+---
+
 ## The preview URL does not work
 
 ### `docpreview doctor` fails on zrok

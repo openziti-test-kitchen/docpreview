@@ -6,6 +6,57 @@ Related: `www/docs/future/ziti-native-previews.md` holds the design research tha
 
 ## In flight
 
+**A share per build, not just per branch.** Today one preview owns one share, and it always serves the newest
+successful build. The consequence shows up on the dashboard: the log pane can be reading
+`build 20260729-190307-85912e2` while the Open button next to it goes to whatever is currently published. Two
+different builds described side by side, and no way to look at the older one at all.
+
+Wanted: a share per commit built **and** one for the branch. Five builds of a branch means six shares — the branch
+share following the newest, plus five that stay pinned to their commit.
+
+- [x] **One preview can hold more than one publication.** `expose.Spec.BuildID` and `Spec.Key()`, and all four
+      exposers key their live map, their remote tag and `Reap`'s keep-set on the key rather than on the preview id.
+      This was the structural blocker: `Publish` withdraws whatever holds the key before taking it, so a build
+      share used to tear down the branch share it was meant to sit beside. The branch share keeps the bare preview
+      id as its key so an in-place upgrade does not reap every restored preview on the first sweep.
+- [ ] **Decide the naming.** Blocked on whether zrok v2 can hang shares off one owned subdomain
+      (`85912e2.docpreview.shares.zrok.io`) rather than flat siblings — see
+      [docs/design/19-zrok-namespacing.md](docs/design/19-zrok-namespacing.md). A provisional flat
+      `<branch>-<sha7>` is enough to build against and is one template away from either answer.
+- [ ] **Publish the build share.** `runPipeline` publishes once, keyed by preview. It needs a second `Publish`
+      with `BuildID` set, the daemon's `live` map keyed by publication rather than preview, and `Reap`'s keep-set
+      widened to include every build key — a keep-set still listing only preview ids reaps every build share on
+      the next sweep.
+- [ ] **Record the per-build URL.** The `builds` table has no `name` or `url`, so nothing can link to a build
+      share after a restart.
+- [ ] **Find the per-account reserved-share limit.** One share per build multiplies share count by the number of
+      pushes to every open pull request. If zrok caps reserved shares per account, that cap is the feature's real
+      ceiling and has to be known before this is built, not after.
+- [ ] **Artifacts per build, not per preview.** `artifacts/<preview>` currently holds one built site. Per-build
+      shares need `artifacts/<preview>/<build>`, which changes what teardown removes and what the base-URL check
+      compares against.
+- [ ] **Two Open buttons, not one.** The row's Open goes to the branch share, which follows the newest successful
+      build. Each entry in the build dropdown gets its own Open, going to that build's share. This is what fixes
+      the mismatch that prompted the whole idea: the log pane can read `build 20260729-190307-85912e2 — not live`
+      while the only Open button on screen goes somewhere else entirely, and no wording makes one button honest
+      about two different things.
+- [ ] **Decide what an Open button does for a build with no share.** Older builds will have been evicted by the
+      disk limits below, and a skipped build never had one. The dropdown will therefore contain entries that
+      cannot be opened, and the button has to say so rather than 404 — the same rule the log pane already follows
+      for a build whose log was not kept.
+
+**Limits, because the above makes unbounded growth the default.** Nothing in this project caps disk today. One
+share and one artifact directory per preview kept that survivable by accident; per-build artifacts do not.
+
+- [ ] **Per-build and total disk caps.** A byte limit per build output, a cap on retained builds per preview, and
+      a total ceiling for the artifacts tree — with a documented eviction order when one is hit. Oldest build of
+      the least recently updated preview is the obvious first rule.
+- [ ] **Report usage where it can be acted on.** A dashboard that does not say how much disk the previews are
+      using is a dashboard nobody can use to decide what to delete.
+- [ ] **Exempt the paid exposers.** These limits exist because zrok's hosted service is free and shared. Frontdoor
+      is a paid product and should not inherit a cap written for a free tier, so the limit belongs in
+      configuration with a per-exposer default rather than as a constant in the pipeline.
+
 **The GitHub App smoke test.** See [docs/design/11-github-setup-state.md](docs/design/11-github-setup-state.md)
 for the full state.
 

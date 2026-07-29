@@ -56,6 +56,7 @@ build:
   driver: local                  # local | docker
   image: node:24-bookworm-slim   # docker driver only
   timeout: 15m
+  # cache_dir: D:\docpreview-cache  # default <data_dir>/cache
 
 preview:
   ttl: 72h
@@ -193,6 +194,7 @@ The private key and webhook secret are **not here**. They live in the vault — 
 | `driver` | `local` | `local` runs npm on this host. `docker` runs it in a throwaway container. |
 | `image` | `node:24-bookworm-slim` | Docker driver only. |
 | `timeout` | `15m` | Per build. |
+| `cache_dir` | `<data_dir>/cache` | Package downloads, one directory per pull request, under the docker driver. |
 
 ### Choosing a driver
 
@@ -200,9 +202,35 @@ The private key and webhook secret are **not here**. They live in the vault — 
 privileges. That is fine for a repository whose contributors you already trust, and it is fast because the npm
 cache is warm between builds.
 
-**`docker`** runs the same thing in a container with a memory and CPU cap and no host environment. Slower, and
-the correct choice if the set of people who can open a pull request is larger than the set of people you would
-give a shell to.
+**`docker`** runs the same thing in a container with a memory and CPU cap and no host environment. The correct
+choice if the set of people who can open a pull request is larger than the set of people you would give a shell to.
+
+### The build cache
+
+A workspace is created per commit and deleted with its siblings, so nothing a build downloads survives inside it.
+`cache_dir` is where the downloads go instead, so a second build of the same pull request does not refetch the
+dependency tree.
+
+Set your expectations from the measurement rather than from the idea: on a fast connection this saves less than you
+would think. A cold install of this project's own `www/` — 1325 packages, downloaded fresh — completes in 14 seconds
+once `node_modules` is off the bind mount. The cache earns its keep on a slow link, a large tree, or a registry
+having a bad day, and it is close to free the rest of the time.
+
+One cache per pull request, at `<cache_dir>/<preview-id>/`, holding `npm/`, `yarn/` and `pnpm/` and mounted into the
+container at `/cache/`. **It is deleted when the preview is** — the same teardown that removes the workspace, the
+artifacts and the pull request comment. That is the reason for the key: a cache shared by every branch has no moment
+at which anything knows it is safe to remove, and grows until somebody notices the disk.
+
+The branch name is not part of the key, so a force-push or a rename keeps the cache the pull request already filled.
+
+`node_modules` is **not** cached, and does not touch the mounted workspace at all — it gets its own docker volume for
+the life of the build. That is where the build time actually went: installing this project's own `www/` took 5m46s
+writing `node_modules` through the bind mount and 14s writing it to a volume, with the same warm package cache.
+Downloading was never the slow part.
+
+This is the largest and most frequently rewritten directory docpreview owns, so it is worth pointing at a disk with
+room. To clear one pull request's by hand, use **Clear cache** beside its build log — reach for it when a build
+fails on a package that has not changed. Only that pull request refetches.
 
 Fork pull requests are refused at the webhook under either driver, so the exposure is limited to people with
 push access to a branch. Whether that is a meaningful limit depends on your repository.

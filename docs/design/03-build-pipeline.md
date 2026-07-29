@@ -90,6 +90,105 @@ because it would be arbitrary shell on the host chosen by whoever opened the pul
 under `local`, put it behind `npm run build` in `package.json` — which puts the decision in the hands of
 whoever can merge rather than whoever can open a pull request.
 
+#### Spelling the host path (Windows)
+
+The mount source has to be a path the *daemon* can resolve, and on Windows that is never the path the host uses.
+The daemon is Linux and has no drive letters: `--volume` splits its fields on a colon and reports
+`invalid mode: /workspace`, `--mount` reports the path is not absolute. `hostMountPath`
+(`internal/pipeline/dockermount.go`) rewrites `D:\ws` as `/mnt/d/ws`, which is where a dockerd running inside
+WSL2 sees the Windows disks, and the driver passes `--mount` rather than `--volume` so the remaining colon in
+`type=bind,source=…` is the only one.
+
+Two daemons this does not handle, both deliberately an error rather than a guess: Docker Desktop's own engine
+exposes the host at `/run/desktop/mnt/host/<letter>`, and a daemon on another machine cannot see the host's disk
+at all. A wrong path that the daemon *accepts* mounts an empty directory, and the build then fails on a missing
+`package.json` — which sends whoever is debugging it into the repository instead of at the mount. Refusing up
+front costs an hour less.
+
+#### The caches are mounted from outside the workspace
+
+A workspace is per commit and pruned with its siblings, which is what stops a superseded build corrupting its
+replacement — and it also means nothing a build downloads survives. `cacheMounts` mounts
+`<cache_dir>/<preview-id>/{npm,yarn,pnpm}` at `/cache/*` and points each manager at its own with
+`npm_config_cache`, `YARN_CACHE_FOLDER` and `npm_config_store_dir`.
+
+**This was built to fix a problem it turned out not to cause, and the measurement is worth keeping.** A warm build
+took 4m21s against 4m28s cold — no gain — because the cost was never the download. See the section below. A cold
+install of 1325 packages now takes 14 seconds, so on a fast link the cache saves almost nothing; it is kept because
+it is correct, cheap, and does matter on a slow link or a large tree. Do not present it as the reason builds are
+fast.
+
+**Keyed on the preview, which decides its lifetime.** `teardown` deletes it alongside the workspace, the artifacts
+and the logs. That is the argument for the key rather than a wider one: a cache shared across branches has no
+moment at which anything knows it is safe to remove — the branch is gone, the preview row is gone, and the
+directory stays until somebody notices the disk. Per preview, the question never arises.
+
+A shared cache is otherwise defensible: entries are content-addressed and verified against the integrity hashes in
+the lockfile requesting them, so a build cannot plant a package another build installs. It was rejected anyway,
+for the lifetime above and because it puts every build behind a directory every other build writes to — one
+corrupt entry then fails everything identically and clearing it costs everything. The price paid is the first
+build of each pull request.
+
+The branch name is deliberately not in the key. `PreviewID` excludes the branch and the commit, so a force-push or
+a rename keeps the cache the pull request already filled — see `TestCacheFollowsThePullRequestNotTheBranch`.
+
+#### node_modules is on a volume, and this is the largest decision here
+
+The package cache made no measurable difference on its own. A warm build of this project's own `www/` still reported
+`added 1325 packages in 2m`, identical to cold, because the download was never the cost. The cost was the write: 1325
+packages is tens of thousands of small files, and `npm ci` was putting every one of them through the bind mount,
+across WSL into NTFS.
+
+Measured with an identical warm cache (`TestWhereNodeModulesShouldLive`):
+
+| node_modules on | `npm ci` |
+|---|---|
+| the bind mount | 5m46s |
+| a docker volume | 14s |
+
+Confirmed in the real pipeline afterwards: `added 1325 packages in 14s`, clone to published in 38 seconds against
+4m21s before — and on a *cold* package cache, which is the number that settles it. Downloading 1325 packages fresh
+and extracting them to a volume beat extracting cached ones through the bind mount by four minutes.
+
+So the driver mounts an anonymous volume at `<build dir>/node_modules`. Two things about that path are load-bearing
+and neither is visible in a log, which is why `TestNodeModulesGetsAVolume` exists:
+
+- **Under the build directory, not the workspace root.** npm resolves `node_modules` from the directory it runs in,
+  so a volume anywhere else is mounted where npm never looks and the install goes through the mount anyway — five
+  minutes lost, with nothing to indicate why.
+- **Anonymous, and removed by `docker rm -fv`.** Without `-v` every build leaves a few hundred megabytes of orphaned
+  volume behind. A *named* volume would let `node_modules` survive between builds, but `npm ci` deletes its contents
+  before installing regardless, so there is little left to win above 14s and it would add volumes to reap.
+
+`node_modules` is therefore never cached across builds and never reaches the host, which also settles the safety
+question: an installed tree is the thing that would be unsafe to reuse between repositories.
+
+A preview ID is a hex digest, which is the second reason to key on it: nothing derived from webhook text is ever
+joined onto this path, so there is no traversal to defend against. An owner of `..` would otherwise have put a
+cache outside the cache root and made the clear below delete something else.
+
+`Server.CacheRoot` is the single definition of the default. `validate` writes it into `Build.CacheDir` because the
+build package is handed `BuildDefaults` and never sees `DataDir`; everything else derives it. Two independent
+spellings of one default is how the daemon ends up clearing a directory the builder is not using.
+
+The host directories are created before the mount: docker creates a missing bind source as root, which on a Linux
+host leaves a cache the operator cannot clear — and would break the clear button the first time it was used.
+`DELETE /api/cache/{preview}` clears one, gated exactly as a project write is, since a forced refetch is a way to
+hold the build host on the registry. The path value is checked against twelve hex characters rather than trusted,
+and only the three subdirectories this program creates are removed — never `cache_dir` itself, because that path
+is one the operator chose and a typo in it must not turn "clear the cache" into "delete that directory".
+
+Note that `http.ServeMux` cleans a literal `..` segment out of the path *before* routing, so the escape that
+reaches the handler is the percent-encoded one. A test that only tried the literal form would prove nothing.
+
+#### Symlinks in the output are refused
+
+A mount is the one place the docker driver's containment leaks in the wrong direction. The preview server hands
+the output directory to `http.Dir`, which refuses a URL that climbs out of the root but follows a symlink that
+leaves it — so a build could publish a host file by writing `build/leak -> /etc/passwd`. The container cannot
+read the host, but the server serving its output can. `rejectSymlinks` walks the output directory and fails the
+build, naming the file. A static site has no use for a symlink, so one appearing is either an attempt or a bug.
+
 ### The package manager comes from the lockfile
 
 | Committed | Runs |

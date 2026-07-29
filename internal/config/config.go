@@ -403,6 +403,19 @@ type BuildDefaults struct {
 	// KeepLogs is how long a build log is kept on disk. Logs can contain
 	// almost anything a build printed, so they are not kept forever.
 	KeepLogs time.Duration `yaml:"keep_logs"`
+
+	// CacheDir holds the package manager caches, shared by every build under the
+	// docker driver.
+	//
+	// Not a per-build directory, which is the point: a workspace is created per
+	// commit and deleted with its siblings, so without somewhere outside it to
+	// keep downloads, every build fetches the whole dependency tree again — two
+	// minutes of network per push for a Docusaurus site.
+	//
+	// Blank means <data_dir>/cache, set during loading. Set it explicitly to put
+	// the cache on a different disk, which is worth doing: it is the largest and
+	// most rewritten directory docpreview owns.
+	CacheDir string `yaml:"cache_dir"`
 }
 
 // PreviewConfig governs preview lifetime.
@@ -414,6 +427,20 @@ type PreviewConfig struct {
 	// TeardownOnClose removes the preview when its pull request is closed or
 	// merged.
 	TeardownOnClose bool `yaml:"teardown_on_close"`
+
+	// KeepBuilds is how many builds of one pull request keep their artifacts, and
+	// therefore how many remain openable.
+	//
+	// Artifacts are per build so an older commit is still there to serve. That
+	// makes disk use grow with every push instead of staying at one built site per
+	// pull request, so something has to bound it, and a count is the cheapest bound
+	// that an operator can reason about.
+	//
+	// Not zero, and not unlimited: zero would delete the build that just
+	// published, and unlimited fills a disk on the one repository somebody pushes
+	// to fifty times in an afternoon. The full story — byte caps, a total ceiling,
+	// eviction order, exempting the paid exposers — is in TODO.md.
+	KeepBuilds int `yaml:"keep_builds"`
 }
 
 // DefaultNameTemplate builds the public label for a preview.
@@ -490,6 +517,7 @@ func DefaultServer() Server {
 		Preview: PreviewConfig{
 			TTL:             72 * time.Hour,
 			TeardownOnClose: true,
+			KeepBuilds:      10,
 		},
 	}
 }
@@ -537,6 +565,10 @@ func (s *Server) validate() error {
 	if s.DataDir == "" {
 		return fmt.Errorf("data_dir must be set")
 	}
+	// Written into the field, not merely derivable, because the build package is
+	// handed BuildDefaults and never sees DataDir. CacheRoot is the definition; this
+	// is where it becomes the value everything downstream reads.
+	s.Build.CacheDir = s.CacheRoot()
 
 	if err := s.validateKeySource(); err != nil {
 		return err
@@ -558,6 +590,12 @@ func (s *Server) validate() error {
 	if s.Preview.TTL <= 0 {
 		return fmt.Errorf("preview.ttl must be positive, got %s "+
 			"(every preview would be reaped on the next sweep)", s.Preview.TTL)
+	}
+	// An explicit zero would delete the build that just published, taking the
+	// preview's artifacts with it. A missing key still takes the default.
+	if s.Preview.KeepBuilds < 1 {
+		return fmt.Errorf("preview.keep_builds must be at least 1, got %d "+
+			"(the build that just finished would be pruned)", s.Preview.KeepBuilds)
 	}
 	if s.Build.KeepLogs <= 0 {
 		return fmt.Errorf("build.keep_logs must be positive, got %s "+
@@ -621,6 +659,37 @@ func (s Server) DatabasePath() string  { return filepath.Join(s.DataDir, "docpre
 func (s Server) WorkspacesDir() string { return filepath.Join(s.DataDir, "workspaces") }
 func (s Server) ArtifactsDir() string  { return filepath.Join(s.DataDir, "artifacts") }
 func (s Server) LogsDir() string       { return filepath.Join(s.DataDir, "logs") }
+
+// CacheRoot is where the package manager caches live.
+//
+// The one definition of the default. `validate` writes it into Build.CacheDir so the
+// build package — which is handed BuildDefaults and never sees DataDir — can read it
+// from there, and this derives the same answer for anything holding a Server that
+// did not come through the loader. Two independent spellings of one default is how
+// the daemon ends up clearing a directory the builder is not using.
+func (s Server) CacheRoot() string {
+	if s.Build.CacheDir != "" {
+		return s.Build.CacheDir
+	}
+	if s.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(s.DataDir, "cache")
+}
+
+// PreviewCacheDir is one preview's package manager caches.
+//
+// Under CacheRoot rather than DataDir, because that one is meant to be moved to a
+// disk with room. A preview ID is a hex digest, so it needs no sanitizing to be a
+// safe path component — which is most of why the cache is keyed on it rather than on
+// names that arrive from a webhook.
+func (s Server) PreviewCacheDir(previewID string) string {
+	root := s.CacheRoot()
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, previewID)
+}
 
 // RepoConfigName is the file docpreview looks for in the root of a previewed
 // repository.

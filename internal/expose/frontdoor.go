@@ -135,8 +135,8 @@ type shareResponse struct {
 
 // Publish binds a local port, then asks Frontdoor to route a public URL to it.
 func (f *Frontdoor) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publication, error) {
-	// Replaces this preview's own share and nothing else.
-	f.withdraw(ctx, spec.PreviewID)
+	// Replaces this publication's own share and nothing else.
+	f.withdraw(ctx, spec.Key())
 
 	// The name is the public hostname, so a second preview taking it would
 	// point somebody else's URL at these artifacts. Refuse rather than
@@ -144,7 +144,7 @@ func (f *Frontdoor) Publish(ctx context.Context, spec Spec, h http.Handler) (*Pu
 	// silently serving the wrong site is the worst way to report one.
 	f.mu.Lock()
 	for id, entry := range f.live {
-		if entry.name == spec.Name && id != spec.PreviewID {
+		if entry.name == spec.Name && id != spec.Key() {
 			f.mu.Unlock()
 			return nil, fmt.Errorf("the name %q is already serving a different preview (%s); "+
 				"two previews render to the same name under this name_template — "+
@@ -162,7 +162,7 @@ func (f *Frontdoor) Publish(ctx context.Context, spec Spec, h http.Handler) (*Pu
 		Name:      spec.Name,
 		Frontend:  f.cfg.Frontend,
 		TargetURL: fmt.Sprintf("http://%s:%d", f.ports.host, local.port),
-		Tag:       targetPrefix + spec.PreviewID,
+		Tag:       targetPrefix + spec.Key(),
 	}
 
 	var created shareResponse
@@ -206,15 +206,16 @@ func (f *Frontdoor) Publish(ctx context.Context, spec Spec, h http.Handler) (*Pu
 
 	entry := &frontdoorShare{id: created.ID, name: spec.Name, local: local}
 	f.mu.Lock()
-	f.live[spec.PreviewID] = entry
+	f.live[spec.Key()] = entry
 	f.mu.Unlock()
 
 	url := JoinURL(created.URL, spec.BaseURL)
 	f.log.Info("published preview",
-		"preview", spec.PreviewID, "name", spec.Name, "url", url, "share", created.ID)
+		"preview", spec.PreviewID, "build", spec.BuildID,
+		"name", spec.Name, "url", url, "share", created.ID)
 
 	return NewPublication(url, spec.Name, func() error {
-		f.withdrawEntry(context.Background(), spec.PreviewID, entry)
+		f.withdrawEntry(context.Background(), spec.Key(), entry)
 		return nil
 	}), nil
 }

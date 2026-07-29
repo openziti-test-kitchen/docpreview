@@ -45,6 +45,9 @@ type Ingress struct {
 	// credential management should not advertise one.
 	secrets *SecretsAdmin
 
+	// projects is the project admin surface, on the same terms.
+	projects *ProjectsAdmin
+
 	// mu guards clients, which the setup page can add to after the daemon is
 	// already serving. See SetClient.
 	mu      sync.Mutex
@@ -77,6 +80,12 @@ func (i *Ingress) client(platform model.Platform) (scm.Client, bool) {
 // WithSecrets attaches the credential admin surface.
 func (i *Ingress) WithSecrets(a *SecretsAdmin) *Ingress {
 	i.secrets = a
+	return i
+}
+
+// WithProjects attaches the project admin surface.
+func (i *Ingress) WithProjects(a *ProjectsAdmin) *Ingress {
+	i.projects = a
 	return i
 }
 
@@ -117,6 +126,11 @@ func (i *Ingress) Handler() http.Handler {
 
 	mux.HandleFunc("GET /{$}", i.dashboard)
 
+	// What the page asks before drawing the Secrets and Projects links. Registered
+	// unconditionally so the page gets an answer rather than a 404 it has to
+	// interpret, and it reports false for a surface that is not wired. See admin.go.
+	mux.HandleFunc("GET /api/admin", i.admin)
+
 	// /v2 was the second dashboard while the two layouts sat side by side. It
 	// won and replaced the original, so the path redirects rather than 404s —
 	// it was linked from the old page's footer and is in browser histories.
@@ -146,6 +160,22 @@ func (i *Ingress) Handler() http.Handler {
 		// helper to keep in step.
 		mux.HandleFunc("GET /secrets", i.dashboard)
 		mux.HandleFunc("GET /secrets/{$}", i.dashboard)
+	}
+
+	if i.projects != nil {
+		mux.Handle("/api/projects", i.projects.Handler())
+		mux.Handle("/api/projects/", i.projects.Handler())
+
+		// The build cache clear, which is keyed on a preview rather than a project
+		// but is served by the same admin so there is one gate rather than two.
+		mux.Handle("/api/cache", i.projects.Handler())
+		mux.Handle("/api/cache/", i.projects.Handler())
+
+		// Its own address, for the same reasons /secrets has one: it can be linked
+		// from a runbook, and a proxy or a future authentication layer can gate one
+		// path where it cannot gate a panel inside "/".
+		mux.HandleFunc("GET /projects", i.dashboard)
+		mux.HandleFunc("GET /projects/{$}", i.dashboard)
 	}
 	return mux
 }

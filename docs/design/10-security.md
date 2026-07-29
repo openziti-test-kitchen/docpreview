@@ -23,7 +23,9 @@ Two things follow, and they hold each other up:
 1. **Fork pull requests are refused** at the webhook layer (`internal/scm/github/webhook.go`). There is no flag
    for this.
 2. **The `docker` driver exists** for repositories whose contributors are not fully trusted: a throwaway
-   container, the workspace bind-mounted, 4 GB, 2 CPUs, no host environment.
+   container, the workspace bind-mounted, 4 GB, 2 CPUs, no host environment. Symlinks in the build output are
+   refused, because the preview server follows them and the container's containment does not extend to whoever
+   serves its output — see [03-build-pipeline.md](03-build-pipeline.md).
 
 Removing the fork refusal without switching to docker turns "anyone on the internet can open a pull request"
 into "anyone on the internet can run code on this host". They are one decision, not two.

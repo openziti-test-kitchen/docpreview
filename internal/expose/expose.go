@@ -57,8 +57,34 @@ type Spec struct {
 	// nothing at "/".
 	BaseURL string
 
+	// BuildID names one build of this preview, empty for the preview's own share.
+	//
+	// A preview has one share that follows its newest successful build — the branch
+	// share — and, when per-build publishing is on, one more per build that stays
+	// pinned to the commit it was built from. Both are publications of the same
+	// preview, so PreviewID alone can no longer identify one.
+	BuildID string
+
 	// PR is carried for logging and for name templating.
 	PR model.PullRequest
+}
+
+// Key identifies one publication.
+//
+// Every exposer keys its live publications and tags its remote objects with this,
+// and Reap's keep-set is expressed in it. It used to be PreviewID, which made a
+// second share for the same preview impossible by construction: Publish withdraws
+// whatever holds the key before taking it, so publishing a build share tore down
+// the branch share it was meant to sit beside.
+//
+// The preview id alone for the branch share, so the tag of an existing share is
+// unchanged and a daemon upgraded in place does not reap every preview it restored
+// as an orphan on the first sweep.
+func (s Spec) Key() string {
+	if s.BuildID == "" {
+		return s.PreviewID
+	}
+	return s.PreviewID + "/" + s.BuildID
 }
 
 // PathExposer is implemented by exposers that serve previews under a path on

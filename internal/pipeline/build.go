@@ -50,6 +50,34 @@ type Builder struct {
 	redactor *redact.Redactor
 }
 
+// WithDriver returns a copy of the builder using a different driver and image.
+//
+// The driver decides whether repository code runs on the host or in a container,
+// so it must come from the operator — never from RepoConfig, which arrives in the
+// pull request. A project row is the operator's, which is why this takes plain
+// arguments the daemon resolves rather than reading anything out of cfg.
+//
+// A copy, so two projects building at once cannot see each other's driver. The
+// secrets map and the redactor are shared by reference deliberately: both are
+// immutable once built, and rebuilding a redactor per build would recompile every
+// pattern for nothing.
+//
+// Empty arguments keep the server default, which is what a project that expresses
+// no preference gets.
+func (b *Builder) WithDriver(driver, image string) *Builder {
+	if driver == "" && image == "" {
+		return b
+	}
+	copied := *b
+	if driver != "" {
+		copied.defaults.Driver = driver
+	}
+	if image != "" {
+		copied.defaults.Image = image
+	}
+	return &copied
+}
+
 // NewBuilder returns a Builder with no injected secrets.
 func NewBuilder(defaults config.BuildDefaults, log *slog.Logger) *Builder {
 	r, _ := redact.New(nil)
@@ -296,15 +324,26 @@ func exists(path string) bool {
 
 // buildDocker runs the build inside a throwaway container.
 //
-// The container gets the workspace bind-mounted and nothing else: no network
-// namespace sharing, no host environment, a read-only root filesystem would be
-// nice but npm needs to write, so instead the mount is the only writable path
-// that outlives the container. This is the driver to use for repositories whose
-// contributors are not fully trusted.
+// The container gets one directory and nothing else: the workspace, bind-mounted
+// at /workspace, plus the environment variables named in the config and capped
+// memory and CPU. Nothing else on the host is reachable. A read-only root would be
+// nice but npm needs to write, so the containment is the mount rather than the
+// filesystem. This is the driver to use for repositories whose contributors are not
+// fully trusted.
+//
+// Mounting, rather than copying the tree in and the built site back out, means the
+// build's output is on the host the moment it is written and the exposer can serve
+// it from where it landed. What makes it work on Windows is spelling the host path
+// the way the daemon sees it — see hostMountPath.
 func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir string, cfg config.RepoConfig, sink io.Writer) (string, error) {
 	image := b.defaults.Image
 	if image == "" {
 		image = "node:24-bookworm-slim"
+	}
+
+	source, err := hostMountPath(ws.Dir)
+	if err != nil {
+		return "", err
 	}
 
 	// The workspace-relative path of the build directory, as the container will
@@ -316,44 +355,118 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	containerDir := "/workspace/" + filepath.ToSlash(rel)
 	containerDir = strings.TrimSuffix(containerDir, "/.")
 
-	hostPath, err := filepath.Abs(ws.Dir)
+	var log bytes.Buffer
+	out := tee(&log, sink)
+
+	args, err := b.createArgs(ws.PR, cfg, source, containerDir, buildDir, image)
 	if err != nil {
-		return "", fmt.Errorf("resolving workspace path: %w", err)
+		return "", err
 	}
-	if runtime.GOOS == "windows" {
-		// Docker Desktop accepts forward-slashed Windows paths; backslashes are
-		// parsed as part of the mount option string and produce a baffling
-		// "invalid reference format".
-		hostPath = filepath.ToSlash(hostPath)
+
+	created, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		fmt.Fprintf(out, "docker create failed: %v\n", err)
+		return log.String(), fmt.Errorf("docker create failed: %w", err)
+	}
+	container := strings.TrimSpace(string(created))
+	if container == "" {
+		return log.String(), fmt.Errorf("docker create returned no container id")
+	}
+
+	// Removed on every path out, including a cancelled build. Its own context,
+	// because the build's is already cancelled in exactly the case where a
+	// container is most likely to be left running.
+	//
+	// -v, not just -f: the node_modules volume is anonymous, and without it every
+	// build leaves a few hundred megabytes behind that nothing ever looks at again.
+	defer func() {
+		rmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := exec.CommandContext(rmCtx, "docker", "rm", "-fv", container).Run(); err != nil {
+			b.log.Warn("removing the build container", "container", container, "error", err)
+		}
+	}()
+
+	fmt.Fprintf(out, "$ docker create %s → %s\n", image, container[:min(12, len(container))])
+	fmt.Fprintf(out, "$ mount %s → /workspace\n", source)
+	fmt.Fprintf(out, "$ %s\n$ %s\n", installCommand(buildDir), cfg.Build.Command)
+
+	if err := b.runContainer(ctx, container, out); err != nil {
+		return log.String(), err
+	}
+
+	// The mount means the site is already on the host. What is worth checking is
+	// that it is where the caller is about to look — a build that exits 0 having
+	// written nothing is otherwise reported as a success and published as a 404.
+	outputDir := filepath.Join(buildDir, filepath.FromSlash(cfg.Build.Output))
+	if !exists(outputDir) {
+		err := fmt.Errorf("the build exited cleanly but produced no %s directory", cfg.Build.Output)
+		fmt.Fprintf(out, "%v\n", err)
+		return log.String(), err
+	}
+
+	if err := rejectSymlinks(outputDir); err != nil {
+		fmt.Fprintf(out, "%v\n", err)
+		return log.String(), err
+	}
+
+	return log.String(), nil
+}
+
+// createArgs is the whole `docker create` command line.
+//
+// Extracted from buildDocker so it can be asserted on without starting a container.
+// Two of these arguments are worth five minutes a build each and neither is visible
+// in any log, which makes this the part of the driver most worth pinning.
+func (b *Builder) createArgs(
+	pr model.PullRequest, cfg config.RepoConfig,
+	source, containerDir, buildDir, image string,
+) ([]string, error) {
+	caches, err := b.cacheMounts(pr)
+	if err != nil {
+		return nil, err
 	}
 
 	args := []string{
-		"run", "--rm",
+		"create",
+		// --mount, not --volume: --volume's fields are colon-separated, so a
+		// Windows source path collides with its own separator.
+		"--mount", "type=bind,source=" + source + ",target=/workspace",
+		// node_modules gets a volume, so npm writes it to the container's own
+		// filesystem instead of through the bind mount. This is not a small
+		// optimisation: measured on this project's www/, `npm ci` takes 5m46s
+		// writing node_modules across the mount and 14s writing it to a volume,
+		// with an identical warm package cache. 1325 packages is tens of thousands
+		// of small files, and every one of them was crossing WSL into NTFS.
+		//
+		// Under the build directory, not the workspace root: npm resolves
+		// node_modules from the directory it runs in, so a volume anywhere else is
+		// mounted where npm never looks and the install goes through the mount
+		// anyway — five minutes lost with nothing to show it.
+		//
+		// Anonymous, so it is created per build and removed with the container by
+		// `docker rm -fv`. A named volume would let node_modules persist, but
+		// `npm ci` deletes its contents before installing anyway, so there is
+		// almost nothing left to win above 14s — and it would add volumes to reap.
+		//
+		// Nested inside the bind mount above, which docker handles: mounts are
+		// applied shallowest first, so the volume lands on top.
+		"--mount", "type=volume,target=" + containerDir + "/node_modules",
 		"--workdir", containerDir,
-		"--volume", hostPath + ":/workspace",
 		// Containers that outlive their build are the usual way a small build
 		// host runs out of memory.
 		"--memory", "4g",
 		"--cpus", "2",
 	}
-	for _, kv := range b.buildEnv(ws.PR, cfg, nil) {
+	args = append(args, caches...)
+	// After the caches, so a repository that names one of these variables in its
+	// own config wins — which is the general rule for build env here, and the
+	// escape hatch if a manager needs a cache somewhere else.
+	for _, kv := range b.buildEnv(pr, cfg, nil) {
 		args = append(args, "--env", kv)
 	}
-	args = append(args, image, "sh", "-lc",
-		installCommand(buildDir)+" && "+cfg.Build.Command)
-
-	var log bytes.Buffer
-	out := tee(&log, sink)
-	fmt.Fprintf(out, "$ docker run %s ...\n", image)
-
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdout = out
-	cmd.Stderr = out
-
-	if err := cmd.Run(); err != nil {
-		return log.String(), fmt.Errorf("docker build failed: %w", err)
-	}
-	return log.String(), nil
+	return append(args, image, "sh", "-lc",
+		installCommand(buildDir)+" && "+cfg.Build.Command), nil
 }
 
 // tee returns a writer feeding both the in-memory log and the live sink.

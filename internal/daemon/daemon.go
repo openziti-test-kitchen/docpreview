@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -192,6 +193,52 @@ func (d *Daemon) recordFailure(ctx context.Context, pr model.PullRequest, buildE
 		UpdatedAt: time.Now(),
 	}); err != nil {
 		d.log.Warn("recording a failed build", "error", err)
+	}
+}
+
+// recordSkip records a pull request that was considered and not built.
+//
+// Without a row a skipped pull request appears only in the activity feed, so the
+// list shows nothing for it and the preview picker cannot offer it — while a
+// *failed* build does get a row and does appear. That inconsistency is the bug:
+// both outcomes are "docpreview looked at this pull request and produced no
+// preview", and both are things somebody needs to see to know the webhook is
+// working at all.
+//
+// A row with no name, URL or artifact directory. Recovery only republishes `ready`
+// rows and drops any whose artifact directory is missing, so this cannot resurrect
+// as a broken preview; the reaper ages it out on preview.ttl like any other.
+//
+// An existing preview survives a skip, for the same reason it survives a failed
+// rebuild: a branch whose latest push touched no documentation still has a working
+// preview of the documentation it did touch, and overwriting that row would make
+// the reaper delete a live share.
+func (d *Daemon) recordSkip(ctx context.Context, pr model.PullRequest, reason string) {
+	id := pr.PreviewID()
+
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+
+	existing, err := d.store.ListPreviews(saveCtx)
+	if err != nil {
+		d.log.Warn("checking for an existing preview before recording a skip", "error", err)
+		return
+	}
+	for _, p := range existing {
+		if p.PreviewID == id {
+			return
+		}
+	}
+
+	if err := d.store.SavePreview(saveCtx, store.Preview{
+		PreviewID: id,
+		PR:        pr,
+		Commit:    pr.HeadSHA,
+		State:     scm.StateSkipped,
+		Reason:    reason,
+		UpdatedAt: time.Now(),
+	}); err != nil {
+		d.log.Warn("recording a skipped pull request", "error", err)
 	}
 }
 
@@ -444,6 +491,69 @@ func (d *Daemon) recover(ctx context.Context) error {
 	return nil
 }
 
+// applyProject overlays the operator's project settings onto the repository's own.
+//
+// Field by field, and only where the project states one. An empty project field
+// means "no opinion", which keeps a row that merely names a repository useful —
+// the common case, where the repository already configures itself correctly and
+// the row exists to say the repository is allowed at all.
+//
+// A missing project row changes nothing. Requiring one to build would break every
+// repository the App is already installed on, which is a decision for whoever
+// turns that requirement on rather than a side effect of adding this.
+//
+// Failure is a warning, not an error. The alternative is refusing to build because
+// a lookup failed, which trades a build for nothing.
+func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg config.RepoConfig) config.RepoConfig {
+	p, err := d.store.ProjectFor(ctx, string(pr.Repo.Platform), pr.Repo.Owner, pr.Repo.Name)
+	if err != nil {
+		if !errors.Is(err, store.ErrNoProject) {
+			d.log.Warn("reading the project settings", "repo", pr.Repo.String(), "error", err)
+		}
+		return cfg
+	}
+
+	if p.BuildDir != "" {
+		cfg.Build.Dir = p.BuildDir
+	}
+	if p.BuildCommand != "" {
+		cfg.Build.Command = p.BuildCommand
+	}
+	if p.BuildOutput != "" {
+		cfg.Build.Output = p.BuildOutput
+	}
+	if p.BaseURL != "" {
+		cfg.Build.BaseURL = p.BaseURL
+	}
+	if p.DetectScript != "" {
+		cfg.Detect.Script = p.DetectScript
+	}
+	return cfg
+}
+
+// projectDriver returns the build driver and image for a pull request.
+//
+// Per-project, falling back to the server default. A project that runs a command
+// somebody outside your trust boundary can influence wants docker; the repository
+// whose contributors you all know wants local and its two-second builds. Making it
+// one server-wide setting forces the stricter answer on everything or the looser
+// answer on everything.
+func (d *Daemon) projectDriver(ctx context.Context, pr model.PullRequest) (driver, image string) {
+	driver, image = d.cfg.Build.Driver, d.cfg.Build.Image
+
+	p, err := d.store.ProjectFor(ctx, string(pr.Repo.Platform), pr.Repo.Owner, pr.Repo.Name)
+	if err != nil {
+		return driver, image
+	}
+	if p.Driver != "" {
+		driver = p.Driver
+	}
+	if p.Image != "" {
+		image = p.Image
+	}
+	return driver, image
+}
+
 // saveBuild records a build attempt, logging rather than propagating a failure.
 //
 // Best-effort on purpose. The history and the build picker are worth having, and
@@ -680,6 +790,15 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	if err := os.RemoveAll(filepath.Join(d.cfg.WorkspacesDir(), previewID)); err != nil {
 		errs = append(errs, fmt.Errorf("removing workspace: %w", err))
 	}
+	// The package cache is keyed on the preview for exactly this: it has the same
+	// lifetime as the workspace and artifacts above, so it goes the same way. A
+	// cache with a longer life than the branch that filled it has no moment at which
+	// anything knows it is safe to delete, and grows until somebody notices the disk.
+	if dir := d.cfg.PreviewCacheDir(previewID); dir != "" {
+		if err := os.RemoveAll(dir); err != nil {
+			errs = append(errs, fmt.Errorf("removing the build cache: %w", err))
+		}
+	}
 	if err := d.logs.Remove(previewID); err != nil {
 		errs = append(errs, fmt.Errorf("removing build logs: %w", err))
 	}
@@ -811,6 +930,7 @@ func (d *Daemon) build(parent context.Context, pr model.PullRequest) {
 
 	case !decision.Build:
 		log.Info("skipped", "reason", decision.Reason)
+		d.recordSkip(ctx, pr, decision.Reason)
 		d.report(ctx, scm.Report{
 			PR: pr, PreviewID: id, State: scm.StateSkipped,
 			Commit: pr.HeadSHA, Reason: decision.Reason, UpdatedAt: time.Now(),
@@ -868,6 +988,14 @@ func (d *Daemon) runPipeline(
 		return out, pipeline.Decision{}, err
 	}
 
+	// The project's settings win over the branch's.
+	//
+	// .docpreview.yml arrived in the pull request, so on any repository where
+	// opening one is not a privilege, its author chose what runs — and the local
+	// driver runs it. An operator-authored project row cannot be edited by a
+	// contributor, so where the two disagree the row is the trustworthy one.
+	repoCfg = d.applyProject(ctx, pr, repoCfg)
+
 	changed, err := client.ChangedFiles(ctx, pr)
 	if err != nil {
 		return out, pipeline.Decision{}, err
@@ -896,7 +1024,11 @@ func (d *Daemon) runPipeline(
 	// rebuilt, and a timestamp alone would sort correctly but tell you nothing.
 	// One builder for the whole build, read once. A rotation mid-build must not
 	// leave the log scrubbed by one redactor and the environment set by another.
-	builder := d.currentBuilder()
+	// One builder for the whole build, with this project's driver applied. Taken
+	// once and reused below, so a rotation mid-build cannot leave the log scrubbed
+	// by one redactor and the environment set by another.
+	driver, image := d.projectDriver(ctx, pr)
+	builder := d.currentBuilder().WithDriver(driver, image)
 
 	buildID := logBuildID(pr.HeadSHA)
 	logw, logErr := d.logs.Begin(pr.PreviewID(), buildID, builder.Redactor())
@@ -979,7 +1111,15 @@ func (d *Daemon) runPipeline(
 	}
 
 	// Move the output out of the workspace before the workspace is deleted.
-	artifactDir := filepath.Join(d.cfg.ArtifactsDir(), pr.PreviewID())
+	//
+	// One directory per build, not per preview. A single directory per preview was
+	// overwritten by every build, so an older commit had nothing left to serve —
+	// which is why the log pane could offer a build the Open button beside it could
+	// not reach. Retention is what bounds this; see TODO.md.
+	//
+	// buildID is safe as a path component: buildlog.Begin refuses one containing a
+	// separator, and this is the same value.
+	artifactDir := filepath.Join(d.cfg.ArtifactsDir(), pr.PreviewID(), buildID)
 	if err := replaceDir(result.OutputDir, artifactDir); err != nil {
 		return out, decision, err
 	}
@@ -1037,7 +1177,131 @@ func (d *Daemon) runPipeline(
 		return out, decision, fmt.Errorf("recording the preview failed, so it was withdrawn: %w", err)
 	}
 
+	// Artifacts are per build now, so this is where the growth is bounded. After
+	// the row is saved, never before: a prune that ran first could delete the
+	// directory this build is about to publish from.
+	d.pruneArtifacts(pr.PreviewID(), buildID)
+
 	return buildOutcome{URL: pub.URL, Name: pub.Name, Duration: result.Duration}, decision, nil
+}
+
+// markOpenable sets Openable on each event that still has something to show.
+//
+// Retention prunes old builds, so "this entry names a preview that exists" — which
+// is all the page could check for itself — stopped being the right question. An
+// entry whose build has been pruned must go inert rather than offer a click that
+// lands on an empty pane.
+//
+// A build log is enough on its own. The log outlives the artifacts under a shorter
+// keep_builds than keep_logs, and reading why a build failed is worth a click even
+// when the site it produced is gone.
+//
+// Matched on the build id's suffix, because an event carries a short sha and a build
+// id is `<date>-<time>-<sha>`. An event with no commit — a teardown, anything
+// recorded against the preview rather than a build — is openable when the preview
+// still exists, which is what the page used to assume for everything.
+//
+// One listing per preview, cached across the batch: sixty events over three previews
+// is three directory reads, not sixty.
+func (d *Daemon) markOpenable(events []Event) []Event {
+	logs := map[string][]string{}
+	buildsFor := func(previewID string) []string {
+		if got, ok := logs[previewID]; ok {
+			return got
+		}
+		var ids []string
+		// A listing error means no logs to offer, which is the same answer as an
+		// empty listing for this purpose.
+		metas, _ := d.logs.List(previewID)
+		for _, m := range metas {
+			ids = append(ids, m.BuildID)
+		}
+		// Artifacts too: a build whose log has aged out past keep_logs may still be
+		// serving, and that is even more worth opening than the log was.
+		if entries, err := os.ReadDir(filepath.Join(d.cfg.ArtifactsDir(), previewID)); err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					ids = append(ids, e.Name())
+				}
+			}
+		}
+		logs[previewID] = ids
+		return ids
+	}
+
+	out := make([]Event, 0, len(events))
+	for _, e := range events {
+		if e.PreviewID == "" {
+			out = append(out, e)
+			continue
+		}
+		if e.Commit == "" {
+			// Nothing build-specific to look for. The preview's own existence is the
+			// only thing that could make this openable, and the page already knows it.
+			e.Openable = true
+			out = append(out, e)
+			continue
+		}
+		for _, id := range buildsFor(e.PreviewID) {
+			if strings.HasSuffix(id, "-"+e.Commit) {
+				e.Openable = true
+				break
+			}
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// pruneArtifacts keeps the newest preview.keep_builds build directories.
+//
+// Build ids are `<date>-<time>-<sha>`, so sorting the directory names in reverse
+// puts the newest first and no timestamps need parsing. That is a real dependency
+// on the id's shape rather than a convenience, which is why it is stated here: a
+// build id that stopped starting with a sortable timestamp would silently prune the
+// wrong builds.
+//
+// keep is the build that just published and is never removed, whatever the sort
+// says. A clock that went backwards — an NTP correction, or a daemon restarted in a
+// different timezone — would otherwise make the newest build sort last and delete
+// the artifacts it is serving from.
+//
+// Best effort throughout. A directory that will not delete is usually one a request
+// is reading, and failing the build over it would turn a disk-space concern into a
+// failed pull request comment.
+func (d *Daemon) pruneArtifacts(previewID, keep string) {
+	limit := d.cfg.Preview.KeepBuilds
+	if limit < 1 {
+		return
+	}
+
+	dir := filepath.Join(d.cfg.ArtifactsDir(), previewID)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() && e.Name() != keep {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+
+	// limit-1, because the build being kept counts against the limit.
+	for i, name := range names {
+		if i < limit-1 {
+			continue
+		}
+		victim := filepath.Join(dir, name)
+		if err := os.RemoveAll(victim); err != nil {
+			d.log.Debug("leaving old artifacts in place", "dir", victim, "error", err)
+			continue
+		}
+		d.log.Info("pruned old build artifacts",
+			"preview", previewID, "build", name, "keep_builds", limit)
+	}
 }
 
 // unpublish withdraws the live publication for a preview and forgets it.
@@ -1271,7 +1535,7 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 		Exposer: d.exposer.Kind(),
 		Pending: pending,
 		Running: len(running),
-		Events:  d.events.recent(60),
+		Events:  d.markOpenable(d.events.recent(60)),
 	}
 
 	// The stored rows are the committed history: a preview is written when a

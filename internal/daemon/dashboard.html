@@ -124,6 +124,15 @@ select.control { max-width: 15rem }
 input.control { width: 13rem }
 input.control::placeholder { color: var(--muted) }
 
+/* The admin links, present only on a local request — see showAdminLinks. Kept
+   visually quieter than the filters beside them: they leave this page, and
+   nothing on an operations screen should draw the eye toward a form for pasting
+   a private key. */
+.admin-nav { display: inline-flex; gap: 0.4rem }
+.admin-nav .control { color: var(--muted); background: transparent; cursor: pointer }
+.admin-nav .control:hover { color: var(--ink); background: var(--raised) }
+.admin-nav .control:disabled { cursor: default; opacity: 0.6 }
+
 /* ── Setup panel ────────────────────────────────────────────────────────── */
 .setup { border-bottom: 1px solid var(--hairline); background: var(--surface) }
 .setup-inner { max-width: 96rem; margin: 0 auto; padding: 1rem 1.25rem 1.25rem }
@@ -224,6 +233,59 @@ input.control::placeholder { color: var(--muted) }
 }
 .counts .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--edge, var(--idle)) }
 @media (max-width: 52rem) { .counts { display: none } }
+
+/* ── Under 1000px ───────────────────────────────────────────────────────────
+   The layout already stacks at 68rem and the header and toolbar already wrap, so
+   nothing here is structural. What remains is everything sized for a mouse and a
+   wide viewport: controls that assumed room beside each other, fixed-height panes
+   that eat a phone screen, and a copy button positioned for a desktop scrollbar. */
+@media (max-width: 62.5rem) {
+  .wrap { padding: 0.75rem; gap: 0.75rem }
+  .topbar .row { gap: 0.6rem; padding: 0.6rem 0.75rem }
+
+  /* Full width, each on its own line. Side by side at this width they were two
+     truncated controls instead of one usable one. */
+  select#project, input#search { width: 100%; max-width: none }
+
+  /* The counters scroll rather than wrap. Wrapping reflowed the header every time
+     a build changed state, which moved everything under it while being read. */
+  .seg {
+    display: flex; width: 100%;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .seg::-webkit-scrollbar { display: none }
+  .seg button { flex: 1 0 auto; padding: 0.45rem 0.6rem }
+
+  /* A phone gets a taller log because there is nothing beside it competing for
+     the screen, and Expand becomes nearly the whole viewport. */
+  pre.term { height: 20rem; font-size: 12px }
+  pre.term.tall { height: 75vh }
+
+  /* Touch has no hover, so the copy button would never appear. Show it always,
+     make it a touch target, and move it clear of a narrow scrollbar. */
+  .termwrap .copy {
+    opacity: 1; pointer-events: auto;
+    width: 2.25rem; height: 2.25rem;
+    top: 0.4rem; right: 0.4rem;
+  }
+  .termwrap .copy svg { width: 1.1rem; height: 1.1rem }
+
+  /* Selects take the row; the buttons share the next one. */
+  .logbar select.control.sm { flex: 1 1 100%; max-width: none }
+  .logbar .grow, .logfoot .grow { display: none }
+  .logbar .btn, .logfoot .btn { flex: 1 1 auto; text-align: center }
+
+  /* The go-to-preview link stops being a narrow column beside the row title and
+     becomes a full-width tap target under it. */
+  .row { flex-wrap: wrap }
+  .row .head { flex: 1 1 100% }
+  .row .go {
+    flex: 1 1 100%; justify-content: center;
+    border-left: 0; border-top: 1px solid var(--hairline);
+    padding: 0.55rem 0.9rem;
+  }
+}
 .head:hover { background: var(--raised) }
 .head:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
 .item.open .row { background: var(--raised) }
@@ -293,6 +355,15 @@ input.control::placeholder { color: var(--muted) }
   padding: 0 0 0.5rem;
 }
 .logbar .grow { flex: 1 }
+
+/* The view controls, under the pane they act on. Separated from the row's Open
+   button, which is the control anybody reaches for most and used to sit a few
+   pixels away — see the markup for why that mattered. */
+.logfoot {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0.5rem 0 0;
+}
+.logfoot .grow { flex: 1 }
 select.control.sm {
   font-size: 0.75rem; padding: 0.2rem 0.4rem; max-width: 24rem;
 }
@@ -335,6 +406,32 @@ pre.term {
   white-space: pre-wrap; word-break: break-word;
 }
 pre.term.tall { height: 34rem }
+
+/* The copy button floats over the log rather than sitting in the toolbar.
+   Reaching for it happens while reading the scrollback, so that is where it
+   should be — and a log pane has no spare horizontal room in the bar above it.
+
+   Hidden until the pointer is in the pane, or the button itself has keyboard
+   focus. Permanently visible, it covers the first line of output. */
+.termwrap { position: relative }
+.termwrap .copy {
+  position: absolute; top: 0.5rem;
+  /* Clear of the scrollbar. At 0.75rem the button straddled the scrollbar gutter
+     and looked like it belonged to the page rather than to the log. */
+  right: 1.6rem;
+  opacity: 0; pointer-events: none;
+  transition: opacity 120ms ease;
+  display: grid; place-items: center;
+  width: 1.75rem; height: 1.75rem;
+  background: var(--raised); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 6px;
+  padding: 0; cursor: pointer;
+}
+.termwrap .copy svg { width: 0.95rem; height: 0.95rem; display: block }
+/* focus-within rather than :focus, so tabbing to it reveals it. */
+.termwrap:hover .copy,
+.termwrap:focus-within .copy { opacity: 1; pointer-events: auto }
+.termwrap .copy:hover { border-color: var(--ink) }
 pre.term .cmd { color: #9fd2ff }
 pre.term .err { color: #ff9a8c }
 pre.term .mask { color: var(--warning); font-weight: 700 }
@@ -374,19 +471,70 @@ pre.term .mask { color: var(--warning); font-weight: 700 }
 }
 .ev:last-child { border-bottom: 0 }
 
-/* An entry whose preview still exists is a button that opens it. The reset is
-   what keeps it looking identical to the inert entries beside it — the affordance
-   is the hover, not a different shape, because a rail of twenty buttons reads as
-   a menu rather than a history. */
-button.ev {
-  width: 100%; text-align: left; font: inherit; font-size: 0.79rem;
-  background: none; border: 0; border-bottom: 1px solid var(--hairline);
-  color: inherit; cursor: pointer;
+/* Feedback for a click that changed nothing else. Every preview of one repository
+   shares a project row, so clicking an activity entry for the preview already
+   showing leaves the page identical — and silence is indistinguishable from a dead
+   button. The outline is on the row rather than the entry because the row is what
+   the click was about. */
+@keyframes flash {
+  from { box-shadow: inset 0 0 0 2px var(--ink) }
+  to   { box-shadow: inset 0 0 0 2px transparent }
+}
+.item.flash { animation: flash 0.6s ease-out }
+/* An animation is the whole mechanism here, so with motion suppressed the feedback
+   has to be something static that still ends — a border that never clears would
+   leave the row looking permanently selected. */
+@media (prefers-reduced-motion: reduce) {
+  .item.flash { animation: flash 0.6s steps(2, jump-none) }
+}
+
+/* An entry with something left to open. The affordance is the hover rather than a
+   different shape, because a rail of twenty buttons reads as a menu rather than as
+   a history. */
+.ev.linked {
+  cursor: pointer;
   margin: 0 -0.3rem; padding: 0.4rem 0.3rem; width: calc(100% + 0.6rem);
 }
-button.ev:hover { background: var(--raised) }
-button.ev:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
-button.ev:hover .k { text-decoration: underline }
+.ev.linked:hover { background: var(--raised) }
+.ev.linked:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
+.ev.linked:hover .k { text-decoration: underline }
+
+/* Copy the commit. Hidden until the row is hovered or the button itself is
+   focused: one of these per row, always visible, turns the rail into a column of
+   icons and buries the history it exists to show. Kept reachable by keyboard —
+   :focus-within covers tabbing to it. */
+.evcopy {
+  border: 0; background: none; padding: 0 0.15rem; margin-left: 0.1rem;
+  color: var(--muted); cursor: pointer; vertical-align: -0.15em;
+  opacity: 0; transition: opacity 0.1s;
+}
+.ev:hover .evcopy, .ev:focus-within .evcopy { opacity: 1 }
+.evcopy:hover { color: var(--ink) }
+.evcopy svg { width: 12px; height: 12px; display: block }
+@media (hover: none) {
+  /* No hover to reveal it on a touch screen. */
+  .evcopy { opacity: 1 }
+}
+
+/* The entry whose build is on screen. Some clicks change nothing else — an entry
+   naming the build already showing leaves the page identical — so this is the only
+   confirmation those clicks can give. It also answers "which of these am I looking
+   at", which the feed could not say before.
+
+   A left bar in the entry's own state colour, rather than a background: the rail is
+   dense, and a filled row at this size reads as a different kind of entry instead of
+   as the selected one. */
+.ev.sel { box-shadow: inset 3px 0 0 var(--edge, var(--ink)) }
+.ev.sel .k { color: var(--ink) }
+button.ev.sel { background: var(--raised) }
+
+/* An entry with nothing left to open. Dimmed rather than removed: the history is
+   the point of the rail, and a build that ran is worth knowing about after its
+   artifacts have been pruned. Dimmed rather than merely non-clickable, because a
+   row that looks identical to its clickable neighbours and does nothing is the
+   thing this whole rail was reported for twice. */
+div.ev { opacity: 0.55 }
+div.ev .k { font-weight: 500 }
 .ev .t {
   color: var(--muted); font: 11px/1.5 ui-monospace, Consolas, monospace;
   font-variant-numeric: tabular-nums;
@@ -419,10 +567,16 @@ footer {
     <span class="grow"></span>
     <select class="control" id="project" aria-label="Project"></select>
     <input class="control" id="search" type="search" placeholder="branch, PR, project…" aria-label="Filter">
-    <!-- No Secrets link. Credential management lives at /secrets, reached by
-         typing it or from the runbooks — not from a control on an operations
-         screen, where the thing it does is unrelated to everything around it and
-         a form for pasting a private key invites being pasted into. -->
+    <!-- The admin links appear only for a request the daemon accepts writes from,
+         and it answers that question itself: /api/admin is gated by the same
+         isLocalRequest the write endpoints use, and is absent from the
+         dashboard-only proxy's allowlist, so a tunnelled page's fetch 404s.
+
+         Hiding a link is not a security boundary and is not doing any work as
+         one — the gate is on the server, and typing /secrets from a tunnel still
+         gets nowhere. This is about not offering an operator a control that will
+         answer 403. -->
+    <span class="admin-nav" id="admin-nav" hidden></span>
 
   </div>
 </div>
@@ -440,6 +594,16 @@ footer {
          when you are debugging, absent when you are not. -->
     <h2 id="setup-head">Secrets</h2>
     <div id="setup-body"></div>
+    <p style="margin:1rem 0 0"><a href="/">← back to previews</a></p>
+  </div>
+</div>
+
+<!-- Projects, on /projects. Same arrangement as the secrets panel: one document,
+     switched on pathname, so the styles and the fetch helper exist once. -->
+<div class="setup" id="projects" hidden>
+  <div class="setup-inner">
+    <h2>Projects</h2>
+    <div id="projects-body"></div>
     <p style="margin:1rem 0 0"><a href="/">← back to previews</a></p>
   </div>
 </div>
@@ -513,6 +677,18 @@ const ui = {
   // silently drop you onto a different build than the one you were reading.
   build: {},
   builds: {},         // preview id -> the build list last fetched for it
+  // The timestamp of the activity entry that was clicked.
+  //
+  // Marked in the feed because there are clicks that change nothing else: every
+  // preview of one repository shares a project row, so an entry naming the build
+  // already showing leaves the page identical. Without a mark, those clicks are
+  // indistinguishable from a dead button — which is how they were reported.
+  //
+  // Keyed on the timestamp, which is unique per entry, rather than on preview and
+  // commit. An attempt that is still running has two entries — queued and building
+  // — and keying on the attempt marked both, so clicking between them changed
+  // nothing again. One entry marked means every click moves the mark.
+  evPick: null,
   follow: true,
   tall: false,
   autoScrolling: false,
@@ -524,6 +700,24 @@ const ui = {
   logSource: null,
   logFor: null,       // preview id the open stream belongs to
 };
+
+// Inline SVG rather than an icon font or an emoji. A font is a network request
+// for two glyphs, and 📋 renders as a different picture on every platform and at
+// a size nothing here controls.
+//
+// stroke=currentColor so both follow the button's colour in light and dark mode.
+const ICON_COPY =
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+     <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+     <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"></path>
+   </svg>`;
+
+const ICON_CHECK =
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+     <path d="M20 6 9 17l-5-5"></path>
+   </svg>`;
 
 const ORDER = ["failed", "building", "queued", "ready"];
 
@@ -786,19 +980,34 @@ function updateHead(item, g) {
 // rendering either as live sends the reader to an error page. An anchor with no
 // href is not a link, which is exactly the state wanted, and the tooltip says
 // why.
+// updateGoLink points a row's Open button at the preview.
+//
+// A URL, not a state, decides whether this is clickable. It used to require
+// state === "ready", which greyed the button on every rebuild — but a rebuild does
+// not withdraw anything: the previous build is still published and still serving,
+// which is the whole point of building the new one beside it rather than in place.
+// The button went grey exactly when somebody was most likely to be watching a
+// build and wanting to look at what is live.
+//
+// A preview with no URL is a different case and still greys: nothing has ever been
+// published for it, or it has been withdrawn.
 function updateGoLink(a, p) {
-  const url = p.state === "ready" ? safeURL(p.url) : "";
+  const url = safeURL(p.url);
   a.textContent = "Open ↗";
   if (url) {
     a.href = url;
     a.target = "_blank";
     a.rel = "noreferrer";
-    a.title = url;
+    // Says which build is behind the link when that is not the one on screen,
+    // so a stale-looking page is explained rather than confusing.
+    a.title = p.state === "ready"
+      ? url
+      : `${url} — still serving the last successful build while this one ${state(p.state).label.toLowerCase()}`;
   } else {
     a.removeAttribute("href");
     a.title = p.state === "ready"
       ? "this preview has no URL"
-      : `no preview while ${state(p.state).label.toLowerCase()}`;
+      : `nothing published yet — this preview is ${state(p.state).label.toLowerCase()}`;
   }
 }
 
@@ -816,17 +1025,70 @@ function updateBody(item, g) {
     body = document.createElement("div");
     body.className = "body";
     body.innerHTML = `
+      <!-- Above the log: what you are looking at. Below it: how you are looking at
+           it. They used to share one bar, which put Following, Expand and Download
+           a few pixels from the row's Open button — the one control here anybody
+           reaches for often — so the cost of a misclick was landing on a different
+           preview or losing your place in a live log.
+
+           The selects stay on top because they are navigation and belong with the
+           row's own controls. The view toggles move under the pane they act on,
+           where nothing destructive is adjacent to them.
+
+           No cache control in either: it was per row, which put the same button on
+           every open row and made a rare repair look like part of reading a log. It
+           lives once, in the top bar. -->
       <div class="logbar">
         <select class="control sm" data-role="pick" aria-label="Preview"></select>
         <select class="control sm" data-role="build" aria-label="Build"></select>
         <span class="grow"></span>
-        <button class="btn" data-role="follow" aria-pressed="true">Following</button>
-        <button class="btn" data-role="tall" aria-pressed="false">Expand</button>
-        <a class="btn" data-role="download" download>Download</a>
       </div>
       <div class="logstate"></div>
-      <pre class="term"></pre>`;
+      <div class="termwrap">
+        <button class="copy" data-role="copy" type="button"
+                title="Copy the whole log" aria-label="Copy the whole log"></button>
+        <pre class="term"></pre>
+      </div>
+      <div class="logfoot">
+        <button class="btn" data-role="follow" aria-pressed="true">Following</button>
+        <button class="btn" data-role="tall" aria-pressed="false">Expand</button>
+        <span class="grow"></span>
+        <a class="btn" data-role="download" download>Download</a>
+      </div>`;
     item.appendChild(body);
+
+    const copyBtn = body.querySelector('[data-role="copy"]');
+    copyBtn.innerHTML = ICON_COPY;
+
+    // Copies the log's text, not its HTML. The pane renders spans for command
+    // lines, errors and redaction masks, so innerHTML would paste markup and
+    // innerText is what somebody pasting into an issue actually wants — masks
+    // included, since ***** is the truth about that line.
+    copyBtn.onclick = async e => {
+      const t = term();
+      if (!t) return;
+      const btn = e.currentTarget;
+      try {
+        await navigator.clipboard.writeText(t.innerText);
+        btn.innerHTML = ICON_CHECK;
+        btn.title = "Copied";
+      } catch {
+        // clipboard needs a secure context. http://127.0.0.1 qualifies, but not
+        // every browser agrees and the dashboard is also reachable over a tunnel
+        // — so fall back to selecting the pane and saying so in the tooltip,
+        // since there is no room for words in an icon button.
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(t);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        btn.title = "Selected — press Ctrl+C";
+      }
+      setTimeout(() => {
+        btn.innerHTML = ICON_COPY;
+        btn.title = "Copy the whole log";
+      }, 1500);
+    };
 
     body.querySelector('[data-role="follow"]').onclick = () => setFollow(!ui.follow);
     body.querySelector('[data-role="tall"]').onclick = () => setTall(!ui.tall);
@@ -878,6 +1140,7 @@ function updateBody(item, g) {
   const p = g.current;
   body.querySelector('[data-role="download"]').href =
     `/logs/${encodeURIComponent(p.preview_id)}/download`;
+
 
   // The preview link lives on the row, not here. See updateGoLink.
 
@@ -1031,10 +1294,15 @@ function updateBuildPicker(previewID) {
   // select that is open closes it with no visible cause.
   if (document.activeElement === sel) return;
 
-  // Hidden rather than disabled with one entry. A greyed-out control invites
-  // clicking; nothing at all reads as "there is only one build", which is true.
-  sel.hidden = builds.length < 2;
-  if (builds.length < 2) return;
+  // Shown from the first build, not the second.
+  //
+  // It was hidden below two entries on the reasoning that a one-item picker is
+  // useless. That was wrong: the entry carries the outcome and the age, so with
+  // one build it is not a picker at all, it is the only place the dashboard says
+  // whether that build succeeded. Hiding it left a failed build with no visible
+  // result beside the row.
+  sel.hidden = builds.length === 0;
+  if (builds.length === 0) return;
 
   // No separate "latest" row. The newest build *is* the latest, so a synthetic
   // entry above it said the same thing twice and made the list one longer than
@@ -1233,6 +1501,49 @@ function renderFeedFilters(events) {
   }
 }
 
+// collapse drops the queued and building entries of an attempt that has finished.
+//
+// The feed records every state transition, so one build leaves "queued",
+// "building" and "ready" behind. That reads wrong: a row saying **Queued** four
+// minutes ago, with the same word and the same coloured dot a live queued row
+// uses, looks like a job that is stuck. It is a fact about the past written in
+// the present tense.
+//
+// So an attempt's non-terminal entries are dropped once that attempt reached a
+// terminal state, and kept while it has not — a build actually queued or building
+// right now still has its row, which is when that row is worth anything.
+//
+// Grouped by preview *and* commit, not by preview: two attempts of one pull
+// request are two builds, and collapsing them together would hide the older one's
+// outcome. Dropped rather than merged into one row with a duration, because the
+// timestamps are the history and a synthesised row has no honest one.
+//
+// The kind filter bypasses this. Picking "queued" is asking for exactly what was
+// hidden, and answering with nothing would be a filter that lies.
+//
+// One pass, newest first, which is the order the daemon sends. A non-terminal entry
+// is dropped only when a *newer* terminal entry for the same attempt has already
+// been seen. Collecting every terminal key up front instead — the first version of
+// this — dropped a queued entry whose terminal entry was older, so re-running a
+// commit that had already finished lost the row saying the new attempt was waiting.
+// That row is the one thing somebody watching a rebuild is looking for.
+function collapse(events) {
+  const terminal = new Set(["ready", "failed", "skipped", "torn-down"]);
+
+  const settled = new Set();
+  const out = [];
+  for (const e of events) {
+    const key = `${e.preview_id}|${e.commit}`;
+    if (terminal.has(e.kind)) {
+      settled.add(key);
+      out.push(e);
+      continue;
+    }
+    if (!settled.has(key)) out.push(e);
+  }
+  return out;
+}
+
 function renderEvents() {
   const el = document.getElementById("events");
 
@@ -1251,22 +1562,56 @@ function renderEvents() {
   document.getElementById("feed-scope").textContent = only ? only : "all projects";
   renderFeedFilters(scoped);
 
-  const shown = ui.kind ? scoped.filter(e => e.kind === ui.kind) : scoped;
+  const shown = ui.kind ? scoped.filter(e => e.kind === ui.kind) : collapse(scoped);
 
   if (shown.length === 0) {
     el.innerHTML = `<div class="empty">Nothing yet.</div>`;
     return;
   }
 
-  // An entry is a button when the preview it names still exists, and inert
-  // text when it does not. An event log outlives the previews in it — a
-  // torn-down preview leaves its history behind — and a link that looks live
-  // and goes nowhere is worse than one that never offered.
-  const reachable = id => id && ui.previews.some(p => p.preview_id === id);
+  // An entry is a button only while there is something left to show, and inert
+  // text once there is not. A link that looks live and goes nowhere is worse than
+  // one that never offered.
+  //
+  // The server decides. It used to be "does the preview still exist", checked here,
+  // which was the right question only while a preview had exactly one build: now
+  // retention prunes older builds, so an entry can name a live preview and a build
+  // that is gone. Only the daemon knows what is still on disk — see markOpenable.
+  //
+  // The preview check stays as well, because an entry whose preview has been torn
+  // down cannot be revealed no matter what the server says about its build.
+  const reachable = e =>
+    e.openable && e.preview_id && ui.previews.some(p => p.preview_id === e.preview_id);
+
 
   el.innerHTML = shown.map(e => {
     const s = state(e.kind);
-    const go = reachable(e.preview_id);
+    const go = reachable(e);
+
+    // The commit, because it is what distinguishes one entry from the next.
+    // Without it a branch built eight times produced eight rows reading
+    // "docpreview#3 / next-fixes-3 — ready", identical apart from the clock, and
+    // the one thing a reader wants — which push was this — was the one thing the
+    // feed had and did not show.
+    //
+    // And the message is dropped when it only repeats the label: the daemon sends
+    // "ready" for a ready event, so the row said Ready twice and spent its second
+    // line saying nothing. A message that carries more than that — "ready in 24s",
+    // a skip reason, a failure — is kept.
+    const echo = e.message && e.message.toLowerCase() !== s.label.toLowerCase();
+    const detail = [
+      e.branch ? `<code>${esc(e.branch)}</code>` : "",
+      // The copy control sits on the commit rather than the row, because the commit
+      // is what anybody wants out of here — a sha to paste into a terminal or a
+      // message. Copying the whole row would give them the clock and the branch too
+      // and make them edit it back down.
+      e.commit
+        ? `<code>${esc(e.commit)}</code><button class="evcopy" data-copy="${esc(e.commit)}"
+             type="button" title="Copy ${esc(e.commit)}"
+             aria-label="Copy commit ${esc(e.commit)}">${ICON_COPY}</button>`
+        : "",
+    ].filter(Boolean).join(" · ") + (echo ? ` — ${esc(e.message)}` : "");
+
     const inner = `
       <div class="t">${clock(e.at)}</div>
       <div>
@@ -1275,17 +1620,68 @@ function renderEvents() {
           <span class="k">${esc(s.label)}</span>
           <span class="l2">${esc(project(e))}#${e.number}</span>
         </div>
-        <div class="l2"><code>${esc(e.branch)}</code> — ${esc(e.message)}</div>
+        <div class="l2">${detail}</div>
       </div>`;
 
-    return go
-      ? `<button class="ev linked" style="--edge:${s.color}" data-id="${esc(e.preview_id)}"
-                 title="Open this build">${inner}</button>`
-      : `<div class="ev" style="--edge:${s.color}">${inner}</div>`;
+    const sel = ui.evPick === e.at ? " sel" : "";
+
+    // A div with role=button, not a <button>.
+    //
+    // Two things a real button made impossible. Text inside one cannot be selected,
+    // so the commit on screen could be read and not copied — and the commit is the
+    // one string anybody wants out of this rail, to paste into a terminal or a
+    // message. And a button cannot contain a button, so there was nowhere to put a
+    // copy control.
+    //
+    // The cost is doing by hand what the element gave for free: role, tabindex, and
+    // Enter/Space in the keydown handler below. Worth it for a rail whose whole
+    // purpose is telling you which commit did what.
+    if (!go) {
+      return `<div class="ev${sel}" style="--edge:${s.color}"
+                   title="nothing left to open — this build has been cleaned up">${inner}</div>`;
+    }
+    return `<div class="ev linked${sel}" role="button" tabindex="0"
+                 style="--edge:${s.color}" data-id="${esc(e.preview_id)}"
+                 data-commit="${esc(e.commit || "")}" data-at="${esc(e.at)}"
+                 data-kind="${esc(e.kind)}" ${sel ? 'aria-current="true"' : ""}
+                 title="Show this build's log">${inner}</div>`;
   }).join("");
 
   for (const b of el.querySelectorAll(".ev.linked")) {
-    b.onclick = () => reveal(b.dataset.id);
+    const open = () => reveal(b.dataset.id, b.dataset.commit, b.dataset.at, b.dataset.kind);
+    b.onclick = ev => {
+      // A click that landed on the copy button, or on a selection the reader is
+      // making, is not a request to open anything.
+      if (ev.target.closest(".evcopy")) return;
+      if (!window.getSelection().isCollapsed) return;
+      open();
+    };
+    // What role=button costs: the keyboard behaviour a real button had for free.
+    b.onkeydown = ev => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      open();
+    };
+  }
+
+  for (const c of el.querySelectorAll(".evcopy")) {
+    c.innerHTML = ICON_COPY;
+    c.onclick = async ev => {
+      // Or the row underneath opens as well, which is not what reaching for a copy
+      // button means.
+      ev.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(c.dataset.copy);
+        c.innerHTML = ICON_CHECK;
+        c.title = "Copied";
+      } catch {
+        // clipboard needs a secure context; http://127.0.0.1 qualifies but a
+        // tunnelled http:// origin does not. Selecting the text still works, which
+        // is why the row is no longer a button.
+        c.title = "could not copy — select the text instead";
+      }
+      setTimeout(() => { c.innerHTML = ICON_COPY; c.title = `Copy ${c.dataset.copy}`; }, 1500);
+    };
   }
 }
 
@@ -1295,11 +1691,21 @@ function renderEvents() {
 // clicked may well be hidden by the state filter or the search box you set
 // three minutes ago, and expanding a row that is not on screen looks like
 // nothing happened at all.
-function reveal(previewID) {
+//
+// The commit matters as much as the preview, and used to be ignored. Every
+// preview of one repository lands in a single group, so clicking an entry only
+// changed which preview was picked inside a row that was usually already open —
+// and clicking an entry for the preview already showing did nothing at all,
+// while the button's own tooltip promised to open that build. Selecting the
+// build the entry names is what the tooltip always said this did.
+function reveal(previewID, commit, at, kind) {
   const p = ui.previews.find(x => x.preview_id === previewID);
   if (!p) return;
 
   const name = project(p);
+
+  // Set before render, so the feed draws the mark in the same pass.
+  ui.evPick = at || null;
 
   ui.state = null;
   ui.query = "";
@@ -1322,7 +1728,81 @@ function reveal(previewID) {
   if (item) {
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     item.scrollIntoView({block: "nearest", behavior: still ? "auto" : "smooth"});
+    // Always something visible, even when the click changed no state — the row was
+    // already open on this preview and this build. Silence is indistinguishable
+    // from a broken button.
+    flash(item);
   }
+
+  if (commit) selectBuildForCommit(previewID, commit, kind);
+}
+
+// selectBuildForCommit points the build picker at the build an activity entry names.
+//
+// Matched on the build id's suffix, because a build id is
+// "<date>-<time>-<short sha>" and the event carries only the sha. The newest build
+// takes the empty value rather than its own id: empty means "follow the live
+// stream", and the newest build's log is still being written while it runs, so
+// selecting it by id would read a truncated file that never updates.
+//
+// The list may not have arrived yet — it is fetched per preview — so this loads it
+// rather than silently doing nothing on the first click of a row for a preview
+// nobody has opened yet.
+//
+// Two ways there is no build to select, and they must not be treated alike.
+//
+// A build that is queued or running has no log file yet, and the live stream *is*
+// that build — so that falls through to the stream, and clicking a building row
+// shows the build running. Anything else with no log file has none to show: a
+// skipped build never writes one, and an old one may have been pruned. Falling
+// through there silently swapped in the newest build's log, so the picker moved
+// while the pane did not change — which is precisely how this was reported. Say so
+// instead.
+async function selectBuildForCommit(previewID, commit, kind) {
+  if (!ui.builds[previewID]) await loadBuilds(previewID);
+
+  const builds = ui.builds[previewID] || [];
+  const i = builds.findIndex(b => b.build_id.endsWith("-" + commit));
+
+  if (i < 0) {
+    if (kind === "queued" || kind === "building") {
+      ui.build[previewID] = "";
+      updateBuildPicker(previewID);
+      showBuild(previewID, "");
+      return;
+    }
+    // Nothing to show, and the pane must not keep implying otherwise. Cleared
+    // rather than left alone: leaving the previous build on screen under a banner
+    // about a different one is the most confusing of the three options.
+    if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
+    const t = term();
+    if (t) t.innerHTML = "";
+    ui.buffer = "";
+    banner("none", `no build log was kept for ${commit}` +
+      (kind === "skipped" ? " — it was skipped, so nothing was built" : ""));
+    return;
+  }
+
+  // The newest build takes the picker's empty value rather than its own id: empty
+  // means "follow the live stream", and its log is still being written while it
+  // runs, so selecting it by id would read a truncated file that never updates.
+  const buildID = i === 0 ? "" : builds[i].build_id;
+  ui.build[previewID] = buildID;
+  updateBuildPicker(previewID);
+  showBuild(previewID, buildID);
+}
+
+// flash marks an element as just-acted-on.
+//
+// The class is removed on animation end rather than by a timer, so a second click
+// during the animation restarts it instead of being swallowed.
+function flash(el) {
+  el.classList.remove("flash");
+  // Forces a reflow, without which removing and re-adding in one frame is a no-op
+  // and a repeated click produces no animation at all.
+  void el.offsetWidth;
+  el.classList.add("flash");
+  el.addEventListener("animationend", () => el.classList.remove("flash"), {once: true});
 }
 
 /* ── Setup panel ──────────────────────────────────────────────────────────
@@ -1617,7 +2097,186 @@ async function run(btn, fn) {
 
 // The Secrets control is an ordinary link now, so there is no click handler.
 // Which of the two pages this document is depends on the path it was served at.
-const isSetupPage = location.pathname.replace(/\/+$/, "") === "/secrets";
+const currentPath = location.pathname.replace(/\/+$/, "");
+const isSetupPage = currentPath === "/secrets";
+const isProjectsPage = currentPath === "/projects";
+
+/* ── Projects ─────────────────────────────────────────────────────────────
+   A project is a repository docpreview will build, and how. The row lives in
+   sqlite and wins over the repository's own .docpreview.yml, because that file
+   arrives in the pull request — so on any repository where opening one is not a
+   privilege, its author would otherwise choose the command that runs.
+
+   Every build field may be blank, meaning "defer to the repository". A row that
+   only names a repository is valid and is the common case: it says the repository
+   is allowed, not that the operator wants to restate its config. */
+
+async function loadProjects() {
+  const body = document.getElementById("projects-body");
+  try {
+    renderProjectsPage(await api("GET", "/api/projects"));
+  } catch (e) {
+    body.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
+  }
+}
+
+function renderProjectsPage(s) {
+  const el = document.getElementById("projects-body");
+  const ro = !s.can_write;
+
+  const banner = ro
+    ? `<div class="notice warn"><strong>Read-only from here.</strong> ${esc(s.read_only_why || "")}
+       <p>A project decides what command runs on the build host, so it can only be changed on
+       that machine.</p></div>`
+    : `<div class="notice ok">A project's settings win over the repository's own
+       <code>.docpreview.yml</code>, which arrives in the pull request. Leave a field blank to
+       defer to the repository.</div>`;
+
+  const rows = s.projects.length ? s.projects.map(p => projectRow(p, s, ro)).join("") :
+    `<div class="notice">No projects yet. Every repository the App is installed on still builds
+     using its own <code>.docpreview.yml</code> — adding a project is how you take the build
+     command out of the branch.</div>`;
+
+  el.innerHTML = `${banner}${rows}${ro ? "" : projectForm(s)}`;
+  if (!ro) wireProjectHandlers(s);
+}
+
+function projectRow(p, s, ro) {
+  const driver = p.driver || `${s.defaults.driver} (server default)`;
+  const fields = [
+    ["directory", p.build_dir],
+    ["command", p.build_command],
+    ["output", p.build_output],
+    ["base URL", p.base_url],
+    ["ignore script", p.detect_script],
+    ["image", p.image],
+  ].filter(([, v]) => v);
+
+  return `<div class="sec">
+    <div>
+      <div class="name">${esc(p.owner)}/${esc(p.repo)}
+        <span class="flag ${p.enabled ? "on" : "off"}">${p.enabled ? "enabled" : "disabled"}</span>
+        <span class="flag ${p.driver === "docker" || (!p.driver && s.defaults.driver === "docker")
+          ? "on" : "opt"}">${esc(driver)}</span>
+      </div>
+      <div class="key">${esc(p.platform)}</div>
+      ${fields.length
+        ? `<div class="hint">${fields.map(([k, v]) => `${esc(k)}: <code>${esc(v)}</code>`).join(" · ")}</div>`
+        : `<div class="hint">defers entirely to the repository's .docpreview.yml</div>`}
+      ${p.notes ? `<div class="hint">${esc(p.notes)}</div>` : ""}
+    </div>
+    <div></div>
+    <!-- No cache control here. The cache is per preview, not per project, so it
+         belongs beside the build log where the failure it fixes is visible. -->
+    <div class="act">${ro ? "" :
+      `<button class="btn" data-edit="${esc(projectKey(p))}">Edit</button>
+       <button class="btn" data-del-project="${esc(projectKey(p))}">Delete</button>`}</div>
+  </div>`;
+}
+
+function projectKey(p) { return `${p.platform}/${p.owner}/${p.repo}`; }
+
+function projectForm(s) {
+  return `<div class="sec" style="display:block">
+    <div class="name" id="project-form-title">Add a project</div>
+    <div class="hint" style="margin-bottom:0.6rem">Blank fields defer to the repository.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));gap:0.5rem">
+      <select class="control" id="p-platform" aria-label="Platform">
+        <option value="github">github</option>
+        <option value="bitbucket">bitbucket</option>
+        <option value="local">local</option>
+      </select>
+      <input class="control" id="p-owner" placeholder="owner, e.g. openziti-test-kitchen">
+      <input class="control" id="p-repo" placeholder="repository, e.g. docpreview">
+      <select class="control" id="p-driver" aria-label="Driver">
+        <option value="">driver: ${esc(s.defaults.driver)} (server default)</option>
+        <option value="docker">driver: docker — build in a container</option>
+        <option value="local">driver: local — build on this host</option>
+      </select>
+      <input class="control" id="p-dir" placeholder="build directory, e.g. www">
+      <input class="control" id="p-command" placeholder="build command, e.g. ./gendoc.sh">
+      <input class="control" id="p-output" placeholder="output directory, e.g. build">
+      <input class="control" id="p-baseurl" placeholder="base URL, e.g. /">
+      <input class="control" id="p-detect" placeholder="ignore-build script, e.g. ci/needs-build.sh">
+      <input class="control" id="p-image" placeholder="docker image, blank for the default">
+      <input class="control" id="p-notes" placeholder="notes, for whoever reads this next">
+    </div>
+    <div class="act" style="margin-top:0.6rem">
+      <button class="btn" id="p-save">Save project</button>
+      <button class="btn" id="p-clear">Clear</button>
+    </div>
+  </div>`;
+}
+
+const projectFields = {
+  platform: "p-platform", owner: "p-owner", repo: "p-repo", driver: "p-driver",
+  build_dir: "p-dir", build_command: "p-command", build_output: "p-output",
+  base_url: "p-baseurl", detect_script: "p-detect", image: "p-image", notes: "p-notes",
+};
+
+function wireProjectHandlers(s) {
+  const val = id => document.getElementById(id).value.trim();
+
+  document.getElementById("p-save").onclick = async e => {
+    const platform = val("p-platform"), owner = val("p-owner"), repo = val("p-repo");
+    if (!platform || !owner || !repo) {
+      alert("platform, owner and repository are all required");
+      return;
+    }
+    const path = `/api/projects/${encodeURIComponent(platform)}` +
+      `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    await run(e.target, async () => {
+      const out = await api("PUT", path, {
+        enabled: true,
+        driver: val("p-driver"),
+        build_dir: val("p-dir"),
+        build_command: val("p-command"),
+        build_output: val("p-output"),
+        base_url: val("p-baseurl"),
+        detect_script: val("p-detect"),
+        image: val("p-image"),
+        notes: val("p-notes"),
+      });
+      renderProjectsPage(out);
+      return out;
+    });
+  };
+
+  document.getElementById("p-clear").onclick = () => {
+    for (const id of Object.values(projectFields)) document.getElementById(id).value = "";
+  };
+
+  // Edit fills the form rather than opening a second one. The form is already the
+  // full set of fields, and a PUT is an upsert, so "edit" and "add" are the same
+  // request — two different UIs for one operation would drift.
+  for (const b of document.querySelectorAll("[data-edit]")) {
+    b.onclick = () => {
+      const p = s.projects.find(x => projectKey(x) === b.dataset.edit);
+      if (!p) return;
+      for (const [field, id] of Object.entries(projectFields)) {
+        document.getElementById(id).value = p[field] || "";
+      }
+      document.getElementById("project-form-title").textContent =
+        `Editing ${p.owner}/${p.repo}`;
+      document.getElementById("p-owner").scrollIntoView({block: "center"});
+    };
+  }
+
+  for (const b of document.querySelectorAll("[data-del-project]")) {
+    b.onclick = async () => {
+      const key = b.dataset.delProject;
+      if (!confirm(`Delete the project ${key}? Its existing previews are left alone.`)) return;
+      const [platform, owner, repo] = key.split("/");
+      const path = `/api/projects/${encodeURIComponent(platform)}` +
+        `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+      await run(b, async () => {
+        renderProjectsPage(await api("DELETE", path));
+        return {};
+      });
+    };
+  }
+
+}
 
 /* ── Wiring ───────────────────────────────────────────────────────────── */
 
@@ -1673,23 +2332,111 @@ function connect() {
   src.onerror = () => { conn.textContent = "reconnecting…"; conn.className = "stale"; };
 }
 
-if (isSetupPage) {
-  // Only the setup panel. No status stream and no polling: this page has nothing
-  // live on it, and an open EventSource per idle browser tab is a connection the
-  // daemon holds for nothing.
+// hideOperationsChrome strips the parts of the page that only make sense with a
+// live status stream behind them.
+//
+// Shared by both admin pages, because leaving a project filter and a search box
+// above a form that neither one filters is worse than leaving the page bare.
+function hideOperationsChrome(label) {
   document.querySelector(".wrap").hidden = true;
   document.getElementById("counters").hidden = true;
   document.getElementById("project").hidden = true;
   document.getElementById("search").hidden = true;
-  document.getElementById("conn").textContent = "setup";
+  document.getElementById("conn").textContent = label;
+}
+
+if (isSetupPage) {
+  // Only the setup panel. No status stream and no polling: this page has nothing
+  // live on it, and an open EventSource per idle browser tab is a connection the
+  // daemon holds for nothing.
+  hideOperationsChrome("setup");
   setupEl().hidden = false;
   loadSetup();
+} else if (isProjectsPage) {
+  hideOperationsChrome("projects");
+  document.getElementById("projects").hidden = false;
+  loadProjects();
 } else {
   connect();
   render();
+  showAdminLinks();
   // Relative timestamps drift without a redraw, and the status stream is silent
   // when nothing changes — which is exactly when "2s ago" has become a lie.
   setInterval(() => { if (ui.previews.length) renderList(); }, 5000);
+}
+
+// showAdminLinks draws the Secrets and Projects links, and only for a request the
+// daemon would accept a write from.
+//
+// The server decides, not the page: /api/admin runs the same isLocalRequest check
+// the write endpoints run. A Host-header test here would be worthless — Host is
+// whatever the client typed, so a tunnelled visitor sending "localhost" would pass
+// it. Where the connection came from is the daemon's to know.
+//
+// Anything other than an outright yes leaves the links absent. Through the
+// dashboard-only proxy this endpoint is not in the allowlist and the fetch 404s,
+// which lands here as a failure and hides them.
+async function showAdminLinks() {
+  try {
+    admin = await api("GET", "/api/admin");
+  } catch {
+    return;
+  }
+  const links = [];
+  if (admin.projects) links.push(`<a class="control" href="/projects">Projects</a>`);
+  if (admin.secrets) links.push(`<a class="control" href="/secrets">Secrets</a>`);
+  if (admin.projects) {
+    links.push(`<button class="control" id="cache-clear"
+      title="Delete every preview's cached package downloads">Clear caches</button>`);
+  }
+  if (!links.length) return;
+
+  const nav = document.getElementById("admin-nav");
+  nav.innerHTML = links.join("");
+  nav.hidden = false;
+  wireClearCache(document.getElementById("cache-clear"));
+}
+
+// admin is what /api/admin last said. Absent until it answers, which is why every
+// consumer treats a missing answer as "no".
+let admin = {};
+
+// wireClearCache wires the one cache control, in the top bar.
+//
+// One button rather than one per row. Per row it appeared on every open row at once,
+// which reads as part of looking at a log rather than as the rare repair it is — and
+// a cache is deleted with its preview anyway, so the manual version exists only for
+// the pull request whose next build has to work now.
+//
+// Confirmed, unlike the per-row version. It clears every preview's cache, so the
+// next build of everything currently open pays for it, and that is not visible from
+// the button.
+function wireClearCache(btn) {
+  if (!btn) return;
+
+  btn.onclick = async () => {
+    if (!confirm("Delete every preview's cached package downloads? " +
+                 "The next build of each will re-download its dependencies.")) return;
+
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "…";
+    try {
+      const out = await api("DELETE", "/api/cache");
+      const n = (out.cleared || []).length;
+      btn.textContent = n ? `Cleared ${n}` : "Nothing cached";
+    } catch (e) {
+      btn.textContent = "Failed";
+      btn.title = e.message;
+    }
+    // Back to a usable button. Long enough to read, short enough that the top bar
+    // does not sit lying about its state.
+    setTimeout(() => {
+      btn.textContent = label;
+      btn.disabled = false;
+      btn.title = "Delete every preview's cached package downloads";
+    }, 2500);
+  };
 }
 </script>
 </body>
