@@ -15,6 +15,7 @@ import (
 	"github.com/openziti/zrok/v2/environment"
 	"github.com/openziti/zrok/v2/environment/env_core"
 	"github.com/openziti/zrok/v2/rest_client_zrok/metadata"
+	"github.com/openziti/zrok/v2/rest_client_zrok/share"
 	"github.com/openziti/zrok/v2/sdk/golang/sdk"
 
 	"github.com/netfoundry/docpreview/internal/config"
@@ -169,6 +170,15 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 		req.OauthRefreshInterval = 3 * time.Hour
 	}
 
+	// The name has to exist before a share can bind it. zrok v2 does not create
+	// one implicitly for a named share — it answers 409 "error finding name … in
+	// namespace" — so every preview needs its name registered first. Naming a
+	// share is the whole point of name_template, so the alternative is ephemeral
+	// shares whose hostname changes on every rebuild.
+	if err := z.ensureName(ctx, spec.Name); err != nil {
+		return nil, err
+	}
+
 	shr, err := sdk.CreateShare(z.root, req)
 	if err != nil {
 		// A name held by a share we do not know about — left behind by a
@@ -216,7 +226,13 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 
 	origin := ""
 	if len(shr.FrontendEndpoints) > 0 {
+		// The controller reports a bare hostname, not a URL. Without the scheme
+		// every preview link in a pull request comment renders as a relative
+		// path, so it resolves against github.com and 404s there.
 		origin = shr.FrontendEndpoints[0]
+		if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
+			origin = "https://" + origin
+		}
 	} else {
 		// Should not happen for a public share, but a preview with no URL is
 		// useless and silently returning "" would surface as a broken comment.
@@ -339,6 +355,54 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ensureName registers a name in the namespace, tolerating one that is already
+// there.
+//
+// Idempotent by design rather than by check: asking whether the name exists and
+// then creating it is a race against another publish, and the create is the
+// cheaper of the two calls anyway. An "already exists" answer is the success
+// case, so it is matched on rather than returned.
+//
+// The name outlives the share bound to it. That is what keeps a preview's URL
+// stable across rebuilds and restarts — the same reason the webhook tunnel
+// reserves its own name — and it means the account accumulates one name per
+// preview name ever published. See the note on Withdraw.
+func (z *Zrok) ensureName(ctx context.Context, name string) error {
+	client, err := z.root.Client()
+	if err != nil {
+		return fmt.Errorf("building zrok client: %w", err)
+	}
+
+	params := share.NewCreateShareNameParamsWithContext(ctx)
+	params.Body = share.CreateShareNameBody{Name: name, NamespaceToken: z.namespace}
+
+	if _, err := client.Share.CreateShareName(params, z.auth()); err != nil {
+		if isNameAlreadyExists(err) {
+			z.log.Debug("zrok name already registered", "name", name, "namespace", z.namespace)
+			return nil
+		}
+		return fmt.Errorf("registering zrok name %q in namespace %q: %w", name, z.namespace, err)
+	}
+	z.log.Info("registered zrok name", "name", name, "namespace", z.namespace)
+	return nil
+}
+
+// isNameAlreadyExists recognises the conflict that means the name is present.
+//
+// The generated type, not the message: the 409 arrives with an empty body, so
+// there is no text to match — `[POST /share/name][409] createShareNameConflict ""`
+// is the whole of it. The swagger definition names this response "name already
+// exists", which makes the type the only signal there is.
+//
+// It cannot distinguish a name this account owns from one another account holds.
+// Nothing here can, given the empty body. Treating both as success is safe
+// because the CreateShare that follows binds the name and fails on its own if it
+// is not ours — one call later, with its own error.
+func isNameAlreadyExists(err error) bool {
+	var conflict *share.CreateShareNameConflict
+	return errors.As(err, &conflict)
 }
 
 // reapName deletes any docpreview-owned share currently bound to name. It

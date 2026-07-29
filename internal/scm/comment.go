@@ -8,9 +8,13 @@ import (
 	"github.com/netfoundry/docpreview/internal/model"
 )
 
-// maxLogExcerpt caps how much build output goes into a comment. GitHub's limit
-// is 65536 characters; this leaves the rendering room and, more to the point,
-// keeps a runaway build from producing a comment nobody can scroll past.
+// maxLogExcerpt caps how much build output is quoted anywhere a length limit
+// applies. GitHub's comment limit is 65536 characters; this leaves the rendering
+// room and keeps a runaway build from producing something nobody can scroll past.
+//
+// No longer used by RenderComment, which quotes no build output at all — see the
+// failure branch there. Kept for the surfaces that do quote it and are not
+// public.
 const maxLogExcerpt = 4000
 
 // RenderComment produces the pull request comment body.
@@ -51,16 +55,34 @@ func RenderComment(r Report) string {
 	}
 	b.WriteString(fmt.Sprintf("| **Updated** | %s |\n", updated.UTC().Format("2006-01-02 15:04:05 UTC")))
 
+	// A failure says where to look, and nothing else.
+	//
+	// This comment is public on any public repository, and neither the error
+	// string nor the build output was written with that in mind: the reason
+	// carries host paths, internal hostnames and third-party API detail, and the
+	// log is whatever a build script chose to print. The redactor removes known
+	// secret *values*, which is not the same as deciding a line is fit to
+	// publish.
+	//
+	// The detail is not lost. It is in the daemon's log and in the build log,
+	// both of which stay on the machine that ran the build.
+	if r.State == StateFailed {
+		b.WriteString("\nThe build failed. See the build log for details")
+		if r.DetailURL != "" {
+			b.WriteString(": " + r.DetailURL)
+		} else {
+			b.WriteString(" on the docpreview dashboard")
+		}
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	// A skip is an explanation written for the person who opened the pull
+	// request — "no documentation changes" — so it belongs here.
 	if r.Reason != "" {
 		b.WriteString("\n")
 		b.WriteString(r.Reason)
 		b.WriteString("\n")
-	}
-
-	if r.LogExcerpt != "" {
-		b.WriteString("\n<details>\n<summary>Build output</summary>\n\n```\n")
-		b.WriteString(tail(r.LogExcerpt, maxLogExcerpt))
-		b.WriteString("\n```\n\n</details>\n")
 	}
 
 	return b.String()

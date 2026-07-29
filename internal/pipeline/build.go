@@ -443,6 +443,16 @@ func refsFrom(html string) []string {
 // So we check, and refuse to publish a preview we know is broken. The error
 // says which value the site was built with and how to fix it, which turns a
 // half-hour of confusion into a one-line config change.
+//
+// Exported as VerifyBaseURL because the check is needed twice. A build knows the
+// value it just used; a **republish** at startup does not — it takes the base URL
+// from a stored row, and that row can disagree with the artifacts beside it. It
+// does so whenever the exposer changes, since a path-mounting exposer folds its
+// prefix into the base URL and a host-per-preview one does not. Republishing
+// without checking serves a site built for one prefix at another, which is
+// precisely the unstyled-wall-of-text this function exists to prevent.
+func VerifyBaseURL(outputDir, baseURL string) error { return verifyBaseURL(outputDir, baseURL) }
+
 func verifyBaseURL(outputDir, baseURL string) error {
 	index := filepath.Join(outputDir, "index.html")
 	raw, err := os.ReadFile(index)

@@ -334,10 +334,35 @@ func TestHandleBuildReportsQueuedAndEnqueues(t *testing.T) {
 		t.Errorf("pending = %d, want 1", n)
 	}
 
-	states := client.reportStates()
-	if len(states) != 1 || states[0] != scm.StateQueued {
-		t.Errorf("reports = %v, want one %q", states, scm.StateQueued)
+	// Reports are debounced, so the write lands after a short delay rather than
+	// inside Handle. Polling rather than sleeping the full window keeps the test
+	// fast when it passes and still fails when nothing ever arrives.
+	waitForStates(t, client, scm.StateQueued)
+}
+
+// waitForStates waits for the client to have received exactly want.
+func waitForStates(t *testing.T, client *fakeClient, want ...scm.State) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	var states []scm.State
+	for time.Now().Before(deadline) {
+		states = client.reportStates()
+		if len(states) == len(want) {
+			match := true
+			for i := range want {
+				if states[i] != want[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	t.Errorf("reports = %v, want %v", states, want)
 }
 
 func TestHandleTeardownRetractsTheComment(t *testing.T) {

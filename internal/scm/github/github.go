@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/netfoundry/docpreview/internal/config"
@@ -38,6 +39,41 @@ type Client struct {
 	http *http.Client
 
 	webhookSecret vault.Secret
+
+	// comments maps a preview ID to the comment carrying its marker.
+	//
+	// A cache over findComment, and the reason is correctness rather than speed:
+	// GitHub's list-comments endpoint does not return a comment created moments
+	// earlier, so two reports in quick succession both concluded there was none
+	// and created one each. See upsertComment.
+	//
+	// Deliberately in memory only. A persisted ID outlives the comment it names
+	// and turns every later update into a 404; the marker search is what makes a
+	// cold start correct.
+	commentsMu sync.Mutex
+	comments   map[string]int64
+}
+
+func (c *Client) knownComment(previewID string) (int64, bool) {
+	c.commentsMu.Lock()
+	defer c.commentsMu.Unlock()
+	id, ok := c.comments[previewID]
+	return id, ok
+}
+
+func (c *Client) rememberComment(previewID string, id int64) {
+	c.commentsMu.Lock()
+	defer c.commentsMu.Unlock()
+	if c.comments == nil {
+		c.comments = map[string]int64{}
+	}
+	c.comments[previewID] = id
+}
+
+func (c *Client) forgetComment(previewID string) {
+	c.commentsMu.Lock()
+	defer c.commentsMu.Unlock()
+	delete(c.comments, previewID)
 }
 
 // New builds a GitHub client from configuration and vault contents.
@@ -210,34 +246,74 @@ func (c *Client) Publish(ctx context.Context, r scm.Report) error {
 }
 
 // upsertComment posts docpreview's comment, or edits the one already there.
+//
+// The comment ID is remembered per preview for the life of the process, and the
+// marker search is the fallback. Both halves are needed.
+//
+// Searching alone is not enough: GitHub's list-comments endpoint is not
+// read-your-writes consistent. A `queued` report created a comment and the
+// `building` report 182 ms later listed the comments, did not see it, and created
+// a second — leaving one comment stranded on "Building" forever while the other
+// went on updating. Any two reports close together hit that window, so moving
+// where reports are emitted would hide this rather than fix it.
+//
+// Remembering alone is not enough either: the map is process-local, so a restart
+// or a rebuilt database must still be able to find the comment. That is what the
+// marker is for, and why the ID is never persisted — a stored ID that outlives
+// the comment produces a 404 on every update, where a marker search produces the
+// right answer or an honest miss.
 func (c *Client) upsertComment(ctx context.Context, r scm.Report) error {
 	body := scm.RenderComment(r)
 	marker := scm.Marker(r.PreviewID)
 
-	existing, err := c.findComment(ctx, r.PR, marker)
-	if err != nil {
-		return err
+	existing, ok := c.knownComment(r.PreviewID)
+	if !ok {
+		var err error
+		existing, err = c.findComment(ctx, r.PR, marker)
+		if err != nil {
+			return err
+		}
+		if existing != 0 {
+			c.rememberComment(r.PreviewID, existing)
+		}
 	}
 
 	if existing == 0 {
-		path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments", r.PR.Repo.Owner, r.PR.Repo.Name, r.PR.Number)
-		var created struct {
-			ID int64 `json:"id"`
-		}
-		if err := c.do(ctx, r.PR.InstallationID, http.MethodPost, path,
-			map[string]string{"body": body}, &created); err != nil {
-			return fmt.Errorf("creating preview comment on %s: %w", r.PR, err)
-		}
-		c.log.Info("created preview comment", "pr", r.PR.String(), "comment", created.ID, "state", r.State)
-		return nil
+		return c.createComment(ctx, r, body)
 	}
 
 	path := fmt.Sprintf("/repos/%s/%s/issues/comments/%d", r.PR.Repo.Owner, r.PR.Repo.Name, existing)
-	if err := c.do(ctx, r.PR.InstallationID, http.MethodPatch, path,
-		map[string]string{"body": body}, nil); err != nil {
+	err := c.do(ctx, r.PR.InstallationID, http.MethodPatch, path, map[string]string{"body": body}, nil)
+
+	// The comment is gone — somebody deleted it. Forget it and post a new one,
+	// rather than 404ing on this and every later report for the rest of the
+	// process. Once, because a 404 on the freshly created comment would mean
+	// something is wrong that a second attempt will not fix.
+	if IsNotFound(err) {
+		c.log.Warn("the preview comment was deleted; posting a new one",
+			"pr", r.PR.String(), "comment", existing)
+		c.forgetComment(r.PreviewID)
+		return c.createComment(ctx, r, body)
+	}
+	if err != nil {
 		return fmt.Errorf("updating preview comment on %s: %w", r.PR, err)
 	}
 	c.log.Debug("updated preview comment", "pr", r.PR.String(), "comment", existing, "state", r.State)
+	return nil
+}
+
+// createComment posts a new preview comment and remembers its ID.
+func (c *Client) createComment(ctx context.Context, r scm.Report, body string) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments", r.PR.Repo.Owner, r.PR.Repo.Name, r.PR.Number)
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := c.do(ctx, r.PR.InstallationID, http.MethodPost, path,
+		map[string]string{"body": body}, &created); err != nil {
+		return fmt.Errorf("creating preview comment on %s: %w", r.PR, err)
+	}
+	c.rememberComment(r.PreviewID, created.ID)
+	c.log.Info("created preview comment", "pr", r.PR.String(), "comment", created.ID, "state", r.State)
 	return nil
 }
 
@@ -380,16 +456,31 @@ func checkTitle(r scm.Report) string {
 // what happened to a specific commit, and erasing that history when a pull
 // request closes would be revisionist.
 func (c *Client) Retract(ctx context.Context, pr model.PullRequest) error {
-	marker := scm.Marker(pr.PreviewID())
-	existing, err := c.findComment(ctx, pr, marker)
-	if err != nil {
-		return err
+	previewID := pr.PreviewID()
+
+	// Forget it either way. A preview that is torn down and later rebuilt must not
+	// PATCH the comment this is about to delete, and dropping the entry before the
+	// request means a failed delete still leaves the next report searching rather
+	// than reusing an ID that may be gone.
+	defer c.forgetComment(previewID)
+
+	existing, ok := c.knownComment(previewID)
+	if !ok {
+		var err error
+		existing, err = c.findComment(ctx, pr, scm.Marker(previewID))
+		if err != nil {
+			return err
+		}
 	}
 	if existing == 0 {
 		return nil
 	}
 	path := fmt.Sprintf("/repos/%s/%s/issues/comments/%d", pr.Repo.Owner, pr.Repo.Name, existing)
 	if err := c.do(ctx, pr.InstallationID, http.MethodDelete, path, nil, nil); err != nil {
+		// Already gone is the outcome this wanted.
+		if IsNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("deleting preview comment on %s: %w", pr, err)
 	}
 	return nil
