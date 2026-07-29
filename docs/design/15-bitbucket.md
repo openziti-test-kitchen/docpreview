@@ -434,18 +434,45 @@ The interface comment explains why this is a platform call and not a git call (`
 answer needs a merge base, a merge base needs history, and the whole appeal of a preview builder is cloning at
 depth 1. Both hosts already know.
 
-On Bitbucket Cloud that is the pull request **diffstat** endpoint — a paginated list of changed paths with old
-and new names, which is exactly the shape `ChangedFiles` wants and cheaper than the full `/diff`. Renames must
-contribute both paths, for the reason GitHub's client already handles at
-`internal/scm/github/github.go:181`: a file moved out of `docs/` is a documentation change even though its new
-path matches no doc glob.
+On Bitbucket Cloud that is the pull request **diffstat** endpoint,
+`GET /2.0/repositories/{ws}/{slug}/pullrequests/{id}/diffstat` — cheaper than the full `/diff` and exactly the shape
+`ChangedFiles` wants. A real response, read back from the live repository:
 
-Pagination differs in a way that matters. GitHub takes `?per_page=&page=` and the client stops when a short page
-comes back (`internal/scm/github/github.go:185`). Bitbucket returns an envelope with a `next` field holding an
-absolute URL to follow. Following a server-supplied URL blindly is not something this codebase should do: check
-that its scheme and host match the configured `api_base` before issuing the request, and keep the same hard page
-bound GitHub has (`maxChangedFilePages`, `internal/scm/github/github.go:159`) with the same reasoning — past
-thirty pages the answer is "yes, build it".
+```json
+{ "pagelen": 500, "size": 2, "page": 1,
+  "values": [ { "type": "diffstat", "status": "modified",
+                "lines_added": 23, "lines_removed": 5,
+                "old": { "path": "docusaurus/docs/…/role-grants.md", "escaped_path": "…" },
+                "new": { "path": "docusaurus/docs/…/role-grants.md", "escaped_path": "…" } } ] }
+```
+
+Four things fall out of that, and only the first was in the earlier plan.
+
+**Renames must contribute both paths**, for the reason GitHub's client already handles at
+`internal/scm/github/github.go:181`: a file moved out of `docs/` is a documentation change even though its new path
+matches no doc glob. Bitbucket makes this easy — `old.path` and `new.path` are separate fields rather than GitHub's
+`previous_filename` — and also easy to get wrong, because on `status: "added"` there is no `old` and on
+`status: "removed"` there is no `new`. Both are nil-able; a naive `entry.Old.Path` is a panic on the first pull
+request that adds a file.
+
+**`pagelen` defaults to 500, not 10.** So the pagination loop almost never runs a second iteration, which means the
+pagination code is almost never exercised, which means it will be wrong when it finally matters. Test it against a
+fake server that returns two short pages; do not trust it because real pull requests pass.
+
+**`next` is absent, not empty, on the last page.** The envelope here has `values`, `pagelen`, `size`, `page` and no
+`next` at all. A loop conditioned on `next != ""` works; one conditioned on the field's presence in a map does not
+generalize. There is also a `size` giving the total, so the loop has a cross-check available: if the paths
+collected do not number `size`, something was dropped silently.
+
+Following a server-supplied URL blindly is not something this codebase should do: check that `next`'s scheme and host
+match the configured `api_base` before issuing the request, and keep the same hard page bound GitHub has
+(`maxChangedFilePages`, `internal/scm/github/github.go:159`) with the same reasoning — past thirty pages the answer
+is "yes, build it".
+
+One incidental gift: the `old.links.self` and `new.links.self` hrefs inside a diffstat entry contain the **full
+forty-character** commit hashes for the base and head. That is where the 12-versus-40 discrepancy above was
+discovered, and it is a second way to resolve the full head SHA without an extra request — though a `src` link is a
+worse thing to parse than a commit endpoint is to call, so it is a corroboration, not the plan.
 
 ## CloneURL
 
@@ -455,8 +482,25 @@ cloner treats it accordingly, passing it as a git argument and scrubbing it out 
 whatever this returns is as long-lived as the stored credential. There is no short-lived form to reach for; the
 mitigation is a narrower credential (a repository access token) rather than a shorter-lived one.
 
-Under `auth: api_token` the URL is `https://<email>:<api-token>@bitbucket.org/<workspace>/<repo>.git`, and
-**the email must be percent-encoded**, not merely appended.
+Under `auth: access_token` the URL is `https://x-token-auth:<token>@bitbucket.org/<workspace>/<slug>.git`. The
+username is the **literal string `x-token-auth`** — not the token, as on GitHub, and not the workspace. Under
+`auth: api_token` it is `https://<email>:<api-token>@bitbucket.org/<workspace>/<slug>.git`, and **the email must be
+percent-encoded**, not merely appended.
+
+**Construct this URL; do not decorate the one Bitbucket hands you.** The repository object's HTTPS clone link comes
+back already carrying a username:
+
+```json
+"links": { "clone": [ { "name": "https",
+  "href": "https://dovholuknf@bitbucket.org/netfoundry/customer-connect-docs.git" } ] }
+```
+
+Whose username that is depends on who asked. A client that inserted credentials into that string would produce
+`https://x-token-auth:TOKEN@dovholuknf@bitbucket.org/…` — two `@` in the authority, git failing with a message
+containing the token, and the scrubber's userinfo-boundary logic doing the work it was only just fixed to do. Parse
+the workspace and slug, build the URL from `api_base`'s sibling host, and use `links.clone` only to *check* that
+the repository is where you think it is. Note also that the array must be searched by `name == "https"` rather than
+indexed: the `ssh` entry is also there, and its order is not a promise.
 
 This uncovered a live leak in code that predates any Bitbucket work. `scrubLine` found `://` and then the
 **first** `@`, and redacted the span between them. An unescaped email contains an `@`, so the scrubber redacted
@@ -577,28 +621,32 @@ Two consequences for `CommentStore`:
 `pending: true` is a comment in an unpublished review draft. docpreview never creates one; skipping those on read
 costs nothing and avoids one more way to match something invisible.
 
-### Tables render. `<details>` does not.
+### Tables render, and `Flavor` is not needed after all
 
 `content.html` for Vercel's status comment contains a real `<table>`, `<thead>`, `<td>`, and even an `<img>` from
-Markdown image syntax. So the Markdown half of `RenderComment` needs no change: pipe tables, bold, code spans,
-links, and images all work. What does not work is raw HTML, which means the failure-log `<details>` block
-(`internal/scm/comment.go:61`) would render as a visible `<details>` tag.
+Markdown image syntax. So pipe tables, bold, code spans, links and images all work, and the Markdown half of
+`RenderComment` needs no change.
 
-That is a smaller problem than the earlier plan assumed, and the fix is smaller too. `FlavorPlain` as originally
-sketched — "no tables, no raw HTML" — would have thrown away a table that works. The remaining difference is one
-element:
+Which leaves the question of what raw HTML `RenderComment` actually emits — and the answer, read from the current
+code rather than from this document's earlier draft, is **none**. `RenderComment`
+(`internal/scm/comment.go:28`) emits the marker, a bold line, a pipe table, and for a failure one sentence of plain
+prose. Its doc comment still describes a collapsed `<details>` block holding the build log, but that branch was
+removed when failures stopped quoting build output into a public comment; there is no `<details>` in the function
+any more. The doc comment is stale and should be corrected while this is fresh, independently of Bitbucket.
 
-```go
-const (
-    FlavorGitHub Flavor = iota // raw HTML honored: <details> collapses the log
-    FlavorNoRawHTML            // tables and images fine, log in a fenced block
-)
-```
+So the whole `Flavor` / `RenderCommentFlavor` design in the earlier plan is **dropped**. There is nothing to flavor.
+The marker is the only raw-HTML dependency in the rendered comment, and `MarkerStyle` above handles it. If a future
+change reintroduces a `<details>` block, `Flavor` comes back — and the note to leave behind is that it must, because
+Bitbucket will render it as visible text.
 
-One incidental observation while reading these comments: a four-space-indented `-` list immediately after a
-paragraph line rendered as literal text with the dashes visible, in Vercel's other comment. Bitbucket's renderer is
+One incidental observation while reading these comments: a four-space-indented `-` list immediately after a paragraph
+line rendered as literal text with the dashes visible, in Vercel's other comment. Bitbucket's renderer is
 CommonMark-ish but not GitHub-flavored Markdown, and nested lists are where it diverges. `RenderComment` does not
-currently emit a nested list; it should not start.
+emit a nested list; it should not start.
+
+The emoji in `stateIcon` (`internal/scm/comment.go:91`) are literal Unicode, not GitHub `:shortcode:` syntax, so they
+carry across unchanged. That was luck rather than design and is worth a comment on the function, because switching to
+shortcodes would silently break one platform.
 
 ## There are no check runs
 
@@ -606,25 +654,89 @@ GitHub gets a check run alongside the comment (`internal/scm/github/github.go:28
 updated in place through queued → in progress → conclusion. Bitbucket has **commit build statuses** instead:
 keyed by a `key` string on a commit, with a state, a name, a description, and a URL.
 
-Three consequences.
+The request body is `{state, key, url, name, description}`, of which **`state`, `key` and `url` are required** and
+`name`/`description` are optional but displayed. The four states are `INPROGRESS`, `SUCCESSFUL`, `FAILED` and
+`STOPPED`. Four consequences.
 
 The state vocabulary is narrower. `checkConclusion` maps `StateSkipped` to GitHub's `neutral`
-(`internal/scm/github/github.go:348`) — "this ran and deliberately did nothing", which is the honest report for
-a pull request that touched no documentation. Bitbucket's states have no neutral. A skip has to be reported as
-either a success, which claims a preview exists, or a stopped/failed state, which reads as a problem on the pull
-request. Recommend the stopped form with a description that says why, and accept that it looks worse than it is.
+(`internal/scm/github/github.go:348`) — "this ran and deliberately did nothing", which is the honest report for a
+pull request that touched no documentation. **Bitbucket has no neutral.** A skip has to be reported as either
+`SUCCESSFUL`, which claims a preview exists, or `STOPPED`, which reads as a problem. Recommend `STOPPED` with a
+description that says why, and accept that it looks worse than it is.
 
-A build status wants a URL, and before the preview is ready there is not one. GitHub's check run only sets
-`details_url` once the state is ready (`internal/scm/github/github.go:299`); the Bitbucket equivalent needs
-something at every state. The dashboard is the natural target, and under the ziti listener or a loopback-only
-daemon there is no address a reviewer's browser could open (`localOrigin`, `cmd/docpreview/main.go:276`, returns
-`""`). So build statuses are **optional**: skipped entirely when there is no reachable dashboard URL, and
-best-effort otherwise — logged and swallowed exactly as the check run is (`internal/scm/github/github.go:205`),
-because the comment is the durable artifact and the status is a convenience.
+There is no queued state either. GitHub's check run starts at `queued` before the build picks the job up; Bitbucket's
+narrowest equivalent is `INPROGRESS`, so a preview sitting in the queue is reported as building. Nobody is harmed by
+that, but it means the build status cannot be used to distinguish "waiting" from "running" — the dashboard and the
+comment can, and they are the sources of truth.
 
-`Retract` deletes the comment and deliberately leaves the check run alone, on the grounds that erasing what
-happened to a specific commit is revisionist (`internal/scm/github/github.go:378`). The same rule applies to a
-build status, for the same reason.
+**`url` being required settles the earlier open question.** GitHub's check run only sets `details_url` once the state
+is ready (`internal/scm/github/github.go:299`); here there is no such option, and before the preview exists the only
+candidate is the dashboard — which under the ziti listener or a loopback-only daemon has no address a reviewer's
+browser could open (`localOrigin`, `cmd/docpreview/main.go:276`, returns `""`). So build statuses are not merely
+optional as a matter of taste: **the API cannot be called at all without a reachable URL.** Skip them entirely when
+`localOrigin` is empty, and make them best-effort otherwise — logged and swallowed exactly as the check run is
+(`internal/scm/github/github.go:205`), because the comment is the durable artifact and the status is a convenience.
+
+`Retract` deletes the comment and deliberately leaves the check run alone, on the grounds that erasing what happened
+to a specific commit is revisionist (`internal/scm/github/github.go:378`). The same rule applies to a build status,
+for the same reason.
+
+One caveat worth knowing before an operator asks: Atlassian documents that a commit build status created through the
+API does not necessarily satisfy a pull request's *merge check* for builds. So "make the docs preview a required
+check" is not a promise this feature can make on Bitbucket, and the runbook should not imply it.
+
+## Rate limits, error envelopes, and retry
+
+Both are different enough from GitHub that `errorFromResponse` and the retry predicate must be written fresh even
+though `APIError` and `Retryable` are shared.
+
+**The error envelope is nested and, unusually, tells you the fix.** A 403 for a missing scope, observed live:
+
+```json
+{"type": "error", "error": {
+  "message": "Your credentials lack one or more required privilege scopes.",
+  "detail": {"required": ["read:webhook:bitbucket"],
+             "granted": ["read:repository:bitbucket", "read:pullrequest:bitbucket", …]}}}
+```
+
+GitHub puts its message at `{"message": …}`; Bitbucket puts it at `{"error": {"message": …}}` and sometimes adds
+`error.detail`. When `detail.required` is present the parser should lift it into the error text, because that turns
+an opaque 403 into *"the token lacks read:webhook:bitbucket; add it to bitbucket.access_token"* — which is the
+house rule about errors naming the fix, handed over for free.
+
+Note the scope spelling while it is in front of us: granular, colon-separated, product-suffixed —
+`read:repository:bitbucket`, `write:pullrequest:bitbucket`, `read:webhook:bitbucket`. Not GitHub's
+`contents: read`, and not the older Bitbucket `repository:write` spelling either. The runbook's scope table has to
+use whatever the token-creation dialog shows, which is a third naming (checkbox labels), so **write the scope table
+from a screenshot of the dialog, not from the API error strings.**
+
+**Rate limiting has a different header set and a nastier `Retry-After`.**
+
+| | GitHub | Bitbucket Cloud |
+|---|---|---|
+| Status | 403 *or* 429 | 429 |
+| "how many left" | `X-RateLimit-Remaining: 0` | `X-RateLimit-NearLimit: true` once under 20% |
+| "when can I retry" | `X-RateLimit-Reset`, epoch seconds | `Retry-After`, seconds **or an HTTP-date** |
+| Ceiling | documented per endpoint class | rolling one-hour window, scaled by the workspace's paid seat count |
+| Secondary limit | yes, a 403 with non-zero remaining | not documented as a separate mechanism |
+
+Two traps, and this codebase has already been bitten by the first one on the other platform. `internal/scm/CLAUDE.md`
+records that `X-RateLimit-Reset` was parsed as RFC3339 when it is epoch seconds, so every rate-limited response
+reported a zero wait. Bitbucket's `Retry-After` is the mirror image: it is *usually* an integer and *may* be an
+HTTP-date, so a parser that only handles the integer form will silently produce zero on the day it is a date. Handle
+both, and keep the existing distinction between an explicit zero (retry now) and an absent header (no idea, use the
+caller's fallback) — that one is also already documented as a bug that was fixed once.
+
+The second trap is `X-RateLimit-NearLimit`. It is a **boolean**, not a count, and it is present only when the
+remaining allowance has fallen below 20%. There is no equivalent of GitHub's "remaining: 0" to test, so
+`Retryable()` for Bitbucket keys on the 429 alone. `NearLimit` is worth logging at warn — it is the only early
+warning available that a supersede storm is about to start failing — and worth nothing at all as a control input,
+because a client that slowed itself down on a boolean would slow down for the rest of the hour.
+
+**The 5xx rule carries over unchanged and for the identical reason.** A 5xx is not retried even though `Retryable()`
+would allow it, because the upsert finds-then-creates and a 500 may have created the comment before failing to say
+so, so a retry posts a second comment. Bitbucket's create-comment endpoint has exactly the same shape and exactly
+the same hazard.
 
 ## Config surface
 
