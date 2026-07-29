@@ -492,6 +492,18 @@ button.ev {
 button.ev:hover { background: var(--raised) }
 button.ev:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
 button.ev:hover .k { text-decoration: underline }
+
+/* The entry whose build is on screen. Some clicks change nothing else — an entry
+   naming the build already showing leaves the page identical — so this is the only
+   confirmation those clicks can give. It also answers "which of these am I looking
+   at", which the feed could not say before.
+
+   A left bar in the entry's own state colour, rather than a background: the rail is
+   dense, and a filled row at this size reads as a different kind of entry instead of
+   as the selected one. */
+.ev.sel { box-shadow: inset 3px 0 0 var(--edge, var(--ink)) }
+.ev.sel .k { color: var(--ink) }
+button.ev.sel { background: var(--raised) }
 .ev .t {
   color: var(--muted); font: 11px/1.5 ui-monospace, Consolas, monospace;
   font-variant-numeric: tabular-nums;
@@ -634,6 +646,18 @@ const ui = {
   // silently drop you onto a different build than the one you were reading.
   build: {},
   builds: {},         // preview id -> the build list last fetched for it
+  // The timestamp of the activity entry that was clicked.
+  //
+  // Marked in the feed because there are clicks that change nothing else: every
+  // preview of one repository shares a project row, so an entry naming the build
+  // already showing leaves the page identical. Without a mark, those clicks are
+  // indistinguishable from a dead button — which is how they were reported.
+  //
+  // Keyed on the timestamp, which is unique per entry, rather than on preview and
+  // commit. An attempt that is still running has two entries — queued and building
+  // — and keying on the attempt marked both, so clicking between them changed
+  // nothing again. One entry marked means every click moves the mark.
+  evPick: null,
   follow: true,
   tall: false,
   autoScrolling: false,
@@ -1509,15 +1533,17 @@ function renderEvents() {
         <div class="l2"><code>${esc(e.branch)}</code> — ${esc(e.message)}</div>
       </div>`;
 
+    const sel = ui.evPick === e.at ? " sel" : "";
     return go
-      ? `<button class="ev linked" style="--edge:${s.color}" data-id="${esc(e.preview_id)}"
-                 data-commit="${esc(e.commit || "")}"
+      ? `<button class="ev linked${sel}" style="--edge:${s.color}" data-id="${esc(e.preview_id)}"
+                 data-commit="${esc(e.commit || "")}" data-at="${esc(e.at)}"
+                 ${sel ? 'aria-current="true"' : ""}
                  title="Show this build's log">${inner}</button>`
-      : `<div class="ev" style="--edge:${s.color}">${inner}</div>`;
+      : `<div class="ev${sel}" style="--edge:${s.color}">${inner}</div>`;
   }).join("");
 
   for (const b of el.querySelectorAll(".ev.linked")) {
-    b.onclick = () => reveal(b.dataset.id, b.dataset.commit);
+    b.onclick = () => reveal(b.dataset.id, b.dataset.commit, b.dataset.at);
   }
 }
 
@@ -1534,11 +1560,14 @@ function renderEvents() {
 // and clicking an entry for the preview already showing did nothing at all,
 // while the button's own tooltip promised to open that build. Selecting the
 // build the entry names is what the tooltip always said this did.
-function reveal(previewID, commit) {
+function reveal(previewID, commit, at) {
   const p = ui.previews.find(x => x.preview_id === previewID);
   if (!p) return;
 
   const name = project(p);
+
+  // Set before render, so the feed draws the mark in the same pass.
+  ui.evPick = at || null;
 
   ui.state = null;
   ui.query = "";
@@ -1578,17 +1607,22 @@ function reveal(previewID, commit) {
 // stream", and the newest build's log is still being written while it runs, so
 // selecting it by id would read a truncated file that never updates.
 //
-// The list may not have arrived yet — it is fetched per preview — so this retries
-// once after it lands rather than silently doing nothing on the first click of a
-// row for a preview nobody has opened yet.
+// The list may not have arrived yet — it is fetched per preview — so this loads it
+// rather than silently doing nothing on the first click of a row for a preview
+// nobody has opened yet.
+//
+// A build with no entry in the list falls through to the live stream instead of
+// returning. That case is not an error and is not rare: a build that is queued or
+// running has no log file to list yet, so clicking its activity row used to do
+// visibly nothing — which is exactly the row somebody clicks when they want to
+// watch it. The live stream *is* that build.
 async function selectBuildForCommit(previewID, commit) {
   if (!ui.builds[previewID]) await loadBuilds(previewID);
 
   const builds = ui.builds[previewID] || [];
   const i = builds.findIndex(b => b.build_id.endsWith("-" + commit));
-  if (i < 0) return;
+  const buildID = i <= 0 ? "" : builds[i].build_id;
 
-  const buildID = i === 0 ? "" : builds[i].build_id;
   ui.build[previewID] = buildID;
   updateBuildPicker(previewID);
   showBuild(previewID, buildID);

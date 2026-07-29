@@ -117,6 +117,36 @@ of projects actually changes, because rebuilding a `<select>` closes its dropdow
 to "ready" would hide the queued and building entries that led there. Only kinds actually present get a button —
 a row of five filters where four are always empty is four things to read and discount every time.
 
+### Finished attempts show one row, not three
+
+Every state transition is recorded, so one build leaves `queued`, `building` and `ready` behind. Shown as three
+rows that reads wrong, and an operator said so: a row saying **Queued** four minutes ago, wearing the same word and
+the same coloured dot a live queued row wears, looks like a job that is stuck. It is a fact about the past written
+in the present tense.
+
+`collapse` drops an attempt's non-terminal entries once that attempt has reached a terminal state, and keeps them
+while it has not — a build queued or building *now* still has its row, which is when that row carries information.
+Grouped by preview **and** commit: two attempts of one pull request are two builds, and collapsing them together
+would hide the older one's outcome. Verified against a real 19-entry history: 13 rows, and all 13 attempts still
+represented.
+
+**The kind filter bypasses it.** Picking "queued" is asking for exactly what was hidden, so a filter that answered
+with nothing would be a filter that lies. The filter counts come from the uncollapsed set for the same reason.
+
+### An entry opens the build it names, not just the preview
+
+Clicking one used to call `reveal(preview_id)` and ignore the commit — while its own tooltip promised to open the
+build. Every preview of one repository shares a project row, so the visible effect was re-picking the preview
+*inside* a row that was usually already open, and clicking an entry for the preview already showing did nothing at
+all. It read as a dead button, which is what it was reported as.
+
+`reveal` now takes the commit and selects that build in the picker, matching on the build id's suffix — a build id
+is `<date>-<time>-<short sha>` and the event carries only the sha. The newest build takes the picker's empty value
+rather than its own id, because empty means "follow the live stream" and the newest log is still being written.
+
+The row also flashes on every click. A click that legitimately changes nothing is indistinguishable from a broken
+one, and that case is the common one here rather than the edge.
+
 ## The activity feed survives a restart
 
 The feed is a 200-entry in-memory ring (`internal/daemon/events.go:43`), so before this it was empty after every
