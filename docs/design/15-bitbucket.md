@@ -119,33 +119,64 @@ Not real, despite appearances:
 
 So the anticipation is worth about a day. The interface fits; the wiring does not generalize yet.
 
-## Authentication
+## Authentication: how a token is obtained, and what refreshes
 
-The reserved key names — an email and an API token — encode a decision that was correct when it was made and is
-now the only remaining option for a user credential. Bitbucket Cloud app passwords are being switched off; an
-Atlassian account email as the username plus an Atlassian **API token** as the password, over HTTP Basic, is the
-replacement. Nothing in the naming is wrong. `bitbucket.email` looks odd next to `github.private_key` only
-because Basic auth is odd: the username half of a credential is not usually a secret, and it is in the vault
-here because it is half of an `Authorization` header and because it also has to be percent-encoded into a clone
-URL, which is a place secrets go.
+The reserved key names — an email and an API token — encode a decision that was correct when it was made and is now
+the fallback rather than the recommendation. The dates matter, because one of them has already passed:
+
+| Credential | Obtained by | Refresh | Status (July 2026) |
+|---|---|---|---|
+| App password | account settings | never expires | **Removed 28 July 2026**, after brownouts from 9 June. Not an option. |
+| Atlassian API token | Account settings → Security → API tokens | none; expiry chosen at creation, up to 1 year | The app-password replacement. `Basic <base64(email:token)>`. |
+| Repository / project / workspace access token | the resource's own settings → Access tokens | none; optional expiry at creation | **Recommended.** `Bearer <token>`. |
+| OAuth 2.0 consumer | 3LO browser dance, or `client_credentials` | access token 2h, refresh token 3 months of disuse | Only expiring option. See below for why it is not the answer. |
 
 The security difference from GitHub is not a detail of header construction. A GitHub App private key mints a
 ten-minute JWT which mints a **one-hour installation token scoped to the repositories that installation covers**
-(`internal/scm/github/auth.go:31`, `:103`). Three properties fall out of that, and docpreview relies on all
-three: a token that leaks into a log expires by itself; a token cannot reach a repository the app was not
-installed on; and the comment is attributed to the app rather than to a person.
+(`internal/scm/github/auth.go:31`, `:103`). Three properties fall out of that, and docpreview relies on all three:
+a token that leaks into a log expires by itself; a token cannot reach a repository the app was not installed on;
+and the comment is attributed to the app rather than to a person.
 
-An Atlassian API token has none of them. It does not expire on a schedule the daemon can rely on, it carries
-**everything the human it belongs to can see** — every workspace, every repository, Jira as well if the token is
-not scoped — and every comment docpreview writes is written by that human. If the vault leaks, the blast radius
-is a person's whole Atlassian identity rather than one app installation's repository list. That is the price of
-the platform, not a defect in this design, and it belongs in the operator documentation next to the
-recommendation to use a dedicated bot account rather than a maintainer's own.
+An Atlassian API token has none of them. It carries **everything the human it belongs to can see** — every
+workspace, every repository, and Jira and Confluence too unless the token was created with Bitbucket-only scopes —
+and every comment docpreview writes is written by that human. If the vault leaks, the blast radius is a person's
+whole Atlassian identity rather than one app installation's repository list.
 
-There is a partial answer and the design should reach for it. Bitbucket Cloud has repository, project, and
-workspace **access tokens**: bearer credentials that belong to a resource rather than to a user, with a scope
-list, revocable individually. A repository access token is the closest thing Bitbucket has to an installation
-token — it is scoped like one, and it is not a person — and it fails only the "expires on its own" property. So:
+A **repository access token** recovers two of the three. It is scoped to one repository with an explicit scope
+list, it is revocable on its own, and it is not a person: git operations by an access token are attributed to a
+synthetic `…@bots.bitbucket.org` address. What it does not recover is short lifetime, and there is no way to
+recover that with a stored credential — which is the whole reason the redactor note below matters.
+
+That "not a person" claim is worth being precise about, because it has an observed counterexample. **Vercel's own
+Bitbucket integration cannot manage it.** Every comment it posted on `customer-connect-docs` comes back from the
+API with `user.type: "user"`, `user.display_name: "Clint Dovholuk"`, and the account ID of the human who connected
+Vercel to the workspace. So the pull request shows a maintainer cheerfully announcing his own deploy failures. If
+Vercel — with a Connect app, a marketplace listing and an Atlassian partnership — writes comments as a person, then
+"comments attributed to a bot" is not something docpreview is going to achieve on Bitbucket either. The best
+available answer is the one the runbook should state plainly: **create a dedicated Atlassian account for the bot,
+or use an access token and accept that comments are attributed to whoever's account created it.** Do not let an
+operator discover this from a screenshot.
+
+### Why not OAuth 2.0, despite being the only expiring credential
+
+A two-hour access token with a refresh token is structurally the closest thing to GitHub's installation token, and
+the reason to refuse it is architectural rather than about tokens.
+
+Bitbucket's refresh tokens can rotate: the refresh response may contain a new refresh token, and the old one stops
+working. That makes the credential *mutable state owned by the request path* — and this daemon's credential store is
+an age-encrypted file that can be **locked**, that a human unlocks through the dashboard, and that the daemon is
+specifically designed not to read during wiring (`cmd/docpreview/CLAUDE.md`). A client that must write a new
+refresh token into the vault from inside `Publish` introduces: a vault write on a hot path, two concurrent
+`Publish` calls racing to store two different refresh tokens, a restart window in which the token in the vault is
+the one that was just invalidated, and an authentication failure mode whose fix is "clear the vault key and do the
+browser dance again" — which requires a human, which is precisely what `vault.key_source` exists to avoid.
+
+That is a real feature for someone who needs a genuinely short-lived Bitbucket credential, and it should be built as
+`auth: oauth` when someone does. It is not the first implementation, and if this decision is reversed the thing to
+design first is not the token exchange but *where the rotated refresh token is written and what happens when two
+goroutines write it at once.*
+
+### Config and vault surface
 
 ```go
 // BitbucketConfig, internal/config/config.go
@@ -153,22 +184,42 @@ type BitbucketConfig struct {
     Enabled bool   `yaml:"enabled"`
     APIBase string `yaml:"api_base"`
 
-    // Auth is "access_token" (a repository or workspace access token, preferred)
-    // or "api_token" (an Atlassian account email plus API token).
+    // Auth is "access_token" (a repository, project or workspace access token,
+    // recommended) or "api_token" (an Atlassian account email plus API token).
     Auth string `yaml:"auth"`
 }
 ```
 
-Two auth modes, one `authorizer` type inside the client that turns a mode plus the vault into an
-`Authorization` header, chosen once at construction. `access_token` reads a fourth vault key
-(`bitbucket.access_token`) and sends `Bearer`; `api_token` reads the two reserved keys and sends `Basic`. Default
-`api_token`, because that is what the reserved keys already imply and what an operator following today's
-`www/docs/reference/cli.md:582` table will have stored — but `doctor` should say plainly which mode is active and
-that the other one is narrower.
+Two auth modes, one `authorizer` type inside the client that turns a mode plus the vault into an `Authorization`
+header, chosen once at construction. `access_token` reads a fourth vault key (`bitbucket.access_token`) and sends
+`Bearer`; `api_token` reads the two reserved keys and sends `Basic`. **Default `access_token`**, reversing the
+earlier plan in this document: the reserved key names implied `api_token`, but an operator following the reserved
+names today would be storing the credential with the wider blast radius by default, and a default should be the
+recommendation. `doctor` reports which mode is active either way.
 
-Do **not** infer the mode from which keys happen to be present. A vault mid-setup contains a subset of
-everything, and a client that silently picks the wider credential because the narrower one is not stored yet is
-the kind of magic that is discovered during an incident.
+Do **not** infer the mode from which keys happen to be present. A vault mid-setup contains a subset of everything,
+and a client that silently picks the wider credential because the narrower one is not stored yet is the kind of
+magic that is discovered during an incident.
+
+What the daemon stores, in full:
+
+| Vault key | Mode | Notes |
+|---|---|---|
+| `bitbucket.access_token` | `access_token` | bearer; `x-token-auth` is the literal username for clone |
+| `bitbucket.email` | `api_token` | not itself secret, but half an `Authorization` header and half a clone URL |
+| `bitbucket.api_token` | `api_token` | Basic password half |
+| `bitbucket.webhook_secret` | both | HMAC key; hard-required, see above |
+
+Nothing is cached, because nothing expires on a schedule — so there is no `authenticator` with a mutex and a token
+map, and no `invalidate` on 401. That is genuinely simpler than the GitHub client, and the simplicity is bought with
+a credential that never expires on its own. One consequence: **register the token with the redactor**
+(`internal/redact`) the way `build.secrets` values are. An expiring installation token in a log is an
+embarrassment; a non-expiring one is a credential.
+
+One API-base constraint to encode rather than discover: as of 4 May 2026 Bitbucket requires authenticated REST
+calls to go to `https://api.bitbucket.org` with the token as a bearer per RFC 6750, not to `bitbucket.org/api`.
+`validate` should reject an `api_base` pointing at `bitbucket.org`, with an error naming the right value — that is a
+403 with an unhelpful body otherwise.
 
 The token is long-lived, which makes one more thing worth doing that GitHub did not need: register it with the
 redactor (`internal/redact`) the way `build.secrets` values are. An expiring installation token in a log is an
@@ -265,8 +316,10 @@ absent would turn one blank field in a web form into an unauthenticated build tr
 (`internal/scm/local/local.go:136`) because it is a loopback development loop; a hosted platform is not.
 
 The corollary is a check `doctor` should make and GitHub's equivalent cannot: with an access token in hand, the
-daemon can *read the webhook back* (`GET /2.0/repositories/{workspace}/{repo}/hooks`) and report a hook whose
-`secret_set` is false. An operator who has blanked the secret currently learns about it from a wall of 401s.
+daemon can *read the webhook back* (`GET /2.0/repositories/{workspace}/{repo}/hooks`) and report a hook that has no
+secret. An operator who has blanked the secret currently learns about it from a wall of 401s. This costs one more
+token scope, `read:webhook:bitbucket` — verified by asking for that endpoint without it, see the error-envelope
+section — so `doctor` must degrade to "cannot check, token lacks read:webhook:bitbucket" rather than failing.
 
 ## Event mapping
 
@@ -294,17 +347,86 @@ fresh install. The machinery to absorb the churn already exists: `store.Enqueue`
 the same preview, and a newer build cancels the one in flight (see [04-concurrency.md](04-concurrency.md)). The
 cost is a wasted `npm install`, not a wrong answer.
 
-Two events have no counterpart in either direction. GitHub's `converted_to_draft` is deliberately not a teardown
-(`internal/scm/github/webhook.go:151`) — drafts are where documentation gets written — and Bitbucket has no
-draft concept to mirror it. Bitbucket's approval events have no GitHub equivalent in this codebase because
-docpreview does not care who approved anything.
+**Bitbucket does have drafts, contrary to what this document previously said.** A real pull request object read
+back from the API carries `"draft": false` as a first-class field, alongside `"state": "OPEN"`. So the GitHub rule
+at `internal/scm/github/webhook.go:154` — a draft is still worth previewing, because drafts are where documentation
+gets written — transfers directly: **do not filter on `pullrequest.draft`.** Which is the same as ignoring the
+field, but ignoring it by decision rather than by not knowing it exists. Bitbucket's approval events have no GitHub
+equivalent in this codebase because docpreview does not care who approved anything.
 
-**Fork pull requests are refused here too**, and this is the one piece of platform-specific logic that must not
-be got wrong. GitHub compares `pull_request.head.repo.full_name` against the base repository
-(`internal/scm/github/webhook.go:138`); Bitbucket's payload carries `pullrequest.source.repository.full_name`
-and `pullrequest.destination.repository.full_name`, and the check is the same comparison against
-`pr.Repo.Slug()`. Invariant 5 of 09-scm.md and invariant 1 of 10-security.md apply to every platform, and a new
-client that omitted the check would satisfy every existing test.
+### The payload fields `model.PullRequest` needs
+
+Field paths below were read off a live pull request object
+(`GET /2.0/repositories/netfoundry/customer-connect-docs/pullrequests/20`), not from documentation. The webhook body
+nests the same object under `pullrequest`, plus a top-level `repository` — which is the one part still worth
+confirming against a captured delivery.
+
+| `model.PullRequest` | Bitbucket path | GitHub path | Note |
+|---|---|---|---|
+| `Repo.Owner` | `repository.workspace.slug` | `repository.owner.login` | `full_name` split on `/` also works and needs no extra field |
+| `Repo.Name` | `repository.slug` | `repository.name` | `slug` is URL-safe; `name` is the display name and can contain spaces |
+| `Repo.CloneURL` | `repository.links.clone[]` (`{name: "https"\|"ssh", href}`) | `repository.clone_url` | an array to search by `name`, not a scalar |
+| `Number` | `pullrequest.id` | `pull_request.number` | |
+| `Branch` | `pullrequest.source.branch.name` | `pull_request.head.ref` | |
+| `HeadSHA` | `pullrequest.source.commit.hash` | `pull_request.head.sha` | **abbreviated — see below** |
+| `BaseBranch` | `pullrequest.destination.branch.name` | `pull_request.base.ref` | |
+| fork? | `pullrequest.source.repository.full_name` vs `destination` | `head.repo.full_name` vs base | |
+| `InstallationID` | — | `installation.id` | unused on Bitbucket, already documented as such |
+
+### `source.commit.hash` is twelve characters, not forty
+
+This is the finding most likely to cost a day if it is discovered during implementation instead of now. The live
+pull request object returns:
+
+```json
+"source": { "commit": { "hash": "a4fd6c9db194" } }
+```
+
+Twelve hex characters. The same commit's full hash, visible in the `src` links inside the *diffstat* response for
+the same pull request, is `a4fd6c9db1940992c8af5c48401462100bd7d2f1`. `GET /pullrequests/{id}/commits` also returns
+the full forty.
+
+So Bitbucket's pull request serialization abbreviates commit hashes and GitHub's does not. What that touches:
+
+- **`git checkout` is fine.** Git resolves an unambiguous abbreviation, so the clone and build work and nothing
+  visibly fails — which is exactly why this is dangerous.
+- **Comparisons are not fine.** Any code that asks "is the SHA I built the SHA I was told about" against a hash
+  from a different source compares 12 characters with 40 and finds them unequal. The supersede logic and anything
+  keyed on `HeadSHA` need to agree about width.
+- **The build status key is not fine.** A commit status posted against `a4fd6c9db194` and one posted against the
+  full hash are, as far as an operator reading the pull request is concerned, two statuses on one commit.
+- **The comment says the wrong thing.** `Report.Commit` is rendered, so a reviewer sees a hash that does not match
+  what `git log` shows them locally.
+
+**Decision: normalize to the full SHA in the client, at parse time, and treat a 12-character `HeadSHA` as a bug.**
+Two ways to get it, and the cheap one is better: the clone already happens, so `git rev-parse HEAD` after checkout is
+free and authoritative — but it is too late, because the preview is enqueued before the clone. So the client resolves
+it with one request (`GET /2.0/repositories/{ws}/{slug}/commit/{abbrev}`, whose `hash` is full) during
+`VerifyWebhook`, and a failure to resolve is a hard error rather than a fallback to the abbreviation. An extra API
+call inside webhook verification is a real cost — it is on the path that must answer 202 quickly — and it is still
+the right trade, because the alternative is a preview identity that silently disagrees with itself.
+
+If the captured webhook payload turns out to carry a full hash where the REST object carries an abbreviation, this
+whole subsection collapses to one line of validation. Check it first; it is the single highest-value item in the
+testdata step.
+
+**Fork pull requests are refused here too**, and this is the one piece of platform-specific logic that must not be
+got wrong. GitHub compares `pull_request.head.repo.full_name` against the base repository
+(`internal/scm/github/webhook.go:138`); Bitbucket carries `pullrequest.source.repository.full_name` and
+`pullrequest.destination.repository.full_name` — both confirmed present and both equal on a same-repo pull request —
+and the check is the same comparison against `pr.Repo.Slug()`. Invariant 5 of 09-scm.md and invariant 1 of
+10-security.md apply to every platform, and a new client that omitted the check would satisfy every existing test.
+
+Two Bitbucket-specific notes on the refusal:
+
+- The repository object also carries a `parent` field, populated only when the repository is itself a fork. That is
+  the answer to "is this repository a fork", not "is this pull request from a fork", and confusing the two would
+  refuse every pull request on a forked repository while still building cross-repository ones. Compare the two
+  `full_name`s; ignore `parent`.
+- GitHub's known gap — a null `head.repo` from a deleted fork skips the refusal
+  (`docs/design/12-github-roadmap.md`) — should not be reproduced. Bitbucket's `source.repository` can likewise be
+  absent, and the Bitbucket client should treat **absent as untrusted** and refuse. Getting the safer default on the
+  new platform costs nothing and makes the GitHub fix a matter of copying.
 
 ## ChangedFiles
 
@@ -351,43 +473,132 @@ The client should still escape both halves of the userinfo, as the GitHub client
 (`internal/scm/github/github.go:136`). The scrubber fix means forgetting to is no longer a credential leak, which
 is the difference between a defence and a convention.
 
-## The comment
+## The comment, and the marker that must change
 
-`scm.Marker` and `scm.RenderComment` are platform-neutral by construction and stay that way: `Marker` is a
-`fmt.Sprintf` over the preview ID (`internal/scm/scm.go:133`) and `RenderComment` is a pure function of
-`Report` (`internal/scm/comment.go:24`). Neither imports a platform. The upsert protocol — list comments, find
-the marker, edit or create — needs only a list endpoint, a create, an update, and a delete, and Bitbucket has
-all four: comments live under the pull request, the body is a `content.raw` field rather than a bare `body`
-string, and an edit is a `PUT` rather than GitHub's `PATCH`.
+This section is no longer speculation. Vercel's own Bitbucket integration is live on
+`bitbucket.org/netfoundry/customer-connect-docs`, doing the same job docpreview does, and its comments were read
+back through the API (`GET /2.0/repositories/{ws}/{repo}/pullrequests/{id}/comments`). Bitbucket returns both the
+source and the rendering — `content.raw`, `content.markup: "markdown"`, `content.html` — so the renderer's
+behaviour can be observed rather than guessed. Two findings, and the first one breaks `scm.Marker`.
 
-What is *not* portable is the assumption that a rendered Markdown table and an HTML `<details>` block survive.
-The marker is an HTML comment specifically because it is invisible when rendered
-(`internal/scm/scm.go:126`); Bitbucket Cloud's comment renderer is not GitHub-flavored Markdown, and raw HTML
-may be escaped rather than honored. If it is, two things happen: the marker becomes a visible line of text, and
-the failure-log `<details>` block (`internal/scm/comment.go:61`) becomes a literal `<details>` on screen.
+### `<!-- -->` is escaped. The current marker would be a visible line of text.
 
-Matching still works either way — the marker is matched against the raw body the API returns, not against
-rendered HTML — so the *protocol* is safe and invariant 1 holds. The damage is cosmetic and it is on the most
-public surface this system has. The fix that preserves invariant 2 is to make rendering a pure function of one
-more input rather than to fork the renderer:
+Bitbucket Cloud's comment renderer escapes raw HTML. On `customer-connect-docs` PR 17, Vercel's own comment ends
+with `<!-- vercel-commit-author-required -->` and Bitbucket rendered it as:
 
-```go
-// scm/comment.go
-type Flavor int
-
-const (
-    FlavorGitHub Flavor = iota // HTML comments honored, tables, <details>
-    FlavorPlain                // marker on its own line, no raw HTML, fenced log
-)
-
-func RenderCommentFlavor(r Report, f Flavor) string
+```html
+<p>&lt;!-- vercel-commit-author-required --&gt;</p>
 ```
 
-`RenderComment(r)` stays as `RenderCommentFlavor(r, FlavorGitHub)` so no existing caller or test moves. The
-Bitbucket client passes `FlavorPlain` until somebody confirms what Bitbucket renders — and if it turns out to
-render everything GitHub does, the constant is deleted and one call site changes. Guessing in the optimistic
-direction costs a broken comment on a stranger's pull request; guessing pessimistically costs a slightly plainer
-table.
+That is a paragraph of literal text on a public pull request, put there by a company whose whole business is this
+feature. `scm.Marker` (`internal/scm/scm.go:161`) produces exactly the same construction, so shipping it unchanged
+means every docpreview comment on Bitbucket ends with a visible `<!-- docpreview:a1b2c3 -->`. The upsert protocol
+would still work — the marker is matched against `content.raw`, not against the rendering — so this is cosmetic,
+but it is cosmetic on the most public surface this system has, and it is the kind of thing an operator screenshots.
+
+### The technique that does work: a Markdown link reference definition
+
+The *other* Vercel comment on the same pull request begins with:
+
+```text
+[vc]: #BCny46AmJOpyQ8M97Lhe+CT5i8xIQNMmijZxYpja8io=:eyJpc01vbm9yZXBvIjp0cnVlLCJ0eXBlIjoiYml0YnVja2V0Iiwi…
+The latest updates on your projects. …
+```
+
+and the rendered `content.html` for that comment starts at `<p>The latest updates…`. **The first line is gone
+entirely.** It is a CommonMark *link reference definition* — `[label]: destination` — which every conforming
+renderer consumes as a definition and emits no output for, whether or not raw HTML is allowed. It needs no HTML
+support, survives escaping because there is nothing to escape, and is invisible on GitHub for the same reason it is
+invisible on Bitbucket. Note also that no blank line separates it from the following paragraph and it still
+disappeared, so it does not need to be its own block.
+
+So `Marker` becomes platform-dependent, and the honest shape is a marker *and* a matcher, both in `scm`:
+
+```go
+// MarkerStyle selects how the self-identifying marker is embedded in a comment
+// body. The protocol is the same on every platform — list, find the marker, edit
+// or create — but the syntax that renders to nothing is not.
+type MarkerStyle int
+
+const (
+    // MarkerHTMLComment is "<!-- docpreview:<id> -->". Invisible on GitHub.
+    MarkerHTMLComment MarkerStyle = iota
+    // MarkerLinkRef is "[docpreview]: #<id>", a CommonMark link reference
+    // definition. Invisible everywhere, because it renders to nothing rather
+    // than relying on raw HTML being honored. Bitbucket Cloud escapes raw HTML,
+    // which turns MarkerHTMLComment into a visible line of text; observed on a
+    // real Vercel comment, see docs/design/15-bitbucket.md.
+    MarkerLinkRef
+)
+
+func MarkerFor(previewID string, s MarkerStyle) string
+func HasMarker(body, previewID string) bool // matches either style
+```
+
+`HasMarker` matching **both** styles is the load-bearing part, and it is why this is not simply "change the
+constant". A daemon upgraded across this change will find comments it wrote in the old style, and a matcher that
+only knew the new one would create a second comment on every open pull request at once — the exact failure
+`scm.Marker`'s doc comment says the marker exists to prevent (`internal/scm/scm.go:151`). `Marker(previewID)` stays
+as `MarkerFor(previewID, MarkerHTMLComment)` so no GitHub caller or test moves.
+
+If this decision is reversed — if `MarkerLinkRef` is adopted for GitHub too, which is defensible since it is
+invisible there as well — what breaks is nothing, provided `HasMarker` keeps recognising both forever. Deleting the
+old branch of `HasMarker` is the change that cannot be made safely, and the comment on it should say so.
+
+### Vercel also puts state in the marker, and that is worth copying later, not now
+
+The base64 after Vercel's `#` decodes to JSON: `{"isMonorepo":true,"type":"bitbucket","bitbucketBranchUrl":…,
+"projects":[{"name":"customer-connect-docs","projectId":"prj_…","rootDirectory":"docusaurus","inspectorUrl":…,
+"previewUrl":"","nextCommitStatus":"FAILED"}]}` — preceded by what is almost certainly an HMAC of it, given the
+shape (`#<44-char base64 with trailing =>:<base64 json>`). They are using the comment body as a signed,
+tamper-evident state store, which is a genuinely good idea: it removes any need for a database row keyed to a
+comment, and the signature stops a pull request author from editing the comment to change what the integration
+believes.
+
+docpreview does not need it. Its state is in sqlite (`internal/store/`) and `PreviewID` is derived, not stored
+(`internal/model/model.go:75`), so there is nothing to carry. Recording it because it is the answer if a future
+feature ever wants per-comment state, and because it explains why Vercel's marker looks like line noise.
+
+### The protocol itself carries over
+
+Comments live under the pull request, the body is `content.raw` rather than a bare `body` string, and the list
+response is the standard `{values, page, pagelen, next}` envelope. Confirmed from the response object: `id` is a
+JSON number (`831492365`), and there are `deleted` and `pending` booleans with no GitHub analogue.
+
+Two consequences for `CommentStore`:
+
+- **`Comment.ID` stays a string in the interface** even though both platforms happen to use integers. The interface
+  should not care, and a string cannot be silently truncated by a JSON decode into the wrong-width integer.
+- **`deleted: true` comments are still returned by the list endpoint.** A soft-deleted comment retains its body, so
+  a marker match against one would produce an update to a comment nobody can see — and the preview would appear to
+  publish successfully while showing nothing. `List` must drop `deleted` entries, and that is a "must not" with a
+  test: *a deleted comment carrying our marker must not be matched.*
+
+`pending: true` is a comment in an unpublished review draft. docpreview never creates one; skipping those on read
+costs nothing and avoids one more way to match something invisible.
+
+### Tables render. `<details>` does not.
+
+`content.html` for Vercel's status comment contains a real `<table>`, `<thead>`, `<td>`, and even an `<img>` from
+Markdown image syntax. So the Markdown half of `RenderComment` needs no change: pipe tables, bold, code spans,
+links, and images all work. What does not work is raw HTML, which means the failure-log `<details>` block
+(`internal/scm/comment.go:61`) would render as a visible `<details>` tag.
+
+That is a smaller problem than the earlier plan assumed, and the fix is smaller too. `FlavorPlain` as originally
+sketched — "no tables, no raw HTML" — would have thrown away a table that works. The remaining difference is one
+element:
+
+```go
+const (
+    FlavorGitHub Flavor = iota // raw HTML honored: <details> collapses the log
+    FlavorNoRawHTML            // tables and images fine, log in a fenced block
+)
+```
+
+One incidental observation while reading these comments: a four-space-indented `-` list immediately after a
+paragraph line rendered as literal text with the dashes visible, in Vercel's other comment. Bitbucket's renderer is
+CommonMark-ish but not GitHub-flavored Markdown, and nested lists are where it diverges. `RenderComment` does not
+currently emit a nested list; it should not start.
 
 ## There are no check runs
 

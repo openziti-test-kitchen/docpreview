@@ -87,6 +87,26 @@ func (s Spec) Key() string {
 	return s.PreviewID + "/" + s.BuildID
 }
 
+// NameReleaser is implemented by exposers whose names are objects with a lifetime
+// of their own, separate from the shares bound to them.
+//
+// Only zrok, today. A reserved zrok name survives the share it was created for —
+// which is the point, since that is what keeps a preview's URL stable across
+// rebuilds and restarts — and is also the object an account's quota counts. So
+// something has to delete it when the preview is gone for good, and nothing did:
+// docpreview leaked one name per branch, and would have leaked one per commit once
+// builds got their own shares.
+//
+// Optional rather than part of Exposer, because for the other three there is no such
+// object. `local` mounts a path, `frontdoor` names the share itself, `ziti` derives a
+// hostname — none of them has anything left over to release, and giving them all a
+// method that returns nil would suggest they do.
+//
+// Called from teardown only. See Zrok.ReleaseName for why a rebuild must not.
+type NameReleaser interface {
+	ReleaseName(ctx context.Context, name string) error
+}
+
 // PathExposer is implemented by exposers that serve previews under a path on
 // the daemon's own listener instead of giving each one its own host.
 //

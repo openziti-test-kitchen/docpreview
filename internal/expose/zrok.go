@@ -406,6 +406,64 @@ func isNameAlreadyExists(err error) bool {
 	return errors.As(err, &conflict)
 }
 
+// ReleaseName deletes a reserved name, which is the other half of ensureName and
+// was missing for long enough to leak one name per branch.
+//
+// # Why this is not part of withdrawing a share
+//
+// A name deliberately outlives the share bound to it: that is what keeps a preview's
+// URL stable across rebuilds and restarts, and every republish depends on it. So this
+// is called from teardown, when the pull request is gone and the URL is never coming
+// back — never from the withdraw that replaces a preview's share on a rebuild.
+//
+// Wiring it into withdrawEntry instead would give every rebuilt preview a new URL,
+// silently, and the pull request comment would keep advertising the old one.
+//
+// # Ordering
+//
+// The controller refuses with 409 while a share is still bound, so the share has to
+// go first. That is a programming error rather than a transient one, and it is logged
+// as such: retrying will not help, and the name stays leaked until the code is fixed.
+//
+// A 404 is success. The name is already gone, which is exactly what was wanted, and
+// treating it as a failure would make every second teardown log one. Matched on the
+// generated type rather than a message, because the body is empty — the same reason
+// isNameAlreadyExists matches a type.
+func (z *Zrok) ReleaseName(ctx context.Context, name string) error {
+	if name == "" {
+		return nil
+	}
+
+	client, err := z.root.Client()
+	if err != nil {
+		return fmt.Errorf("building zrok client: %w", err)
+	}
+
+	params := share.NewDeleteShareNameParamsWithContext(ctx)
+	params.Body = share.DeleteShareNameBody{Name: name, NamespaceToken: z.namespace}
+
+	if _, err := client.Share.DeleteShareName(params, z.auth()); err != nil {
+		var gone *share.DeleteShareNameNotFound
+		if errors.As(err, &gone) {
+			z.log.Debug("zrok name was already gone", "name", name, "namespace", z.namespace)
+			return nil
+		}
+		var bound *share.DeleteShareNameConflict
+		if errors.As(err, &bound) {
+			// The share was not withdrawn first. Reported loudly because the name
+			// stays leaked and no retry fixes it.
+			z.log.Error("refusing to release a zrok name that still has a live share; "+
+				"the share must be withdrawn first",
+				"name", name, "namespace", z.namespace)
+			return fmt.Errorf("zrok name %q still has a live share bound to it", name)
+		}
+		return fmt.Errorf("releasing zrok name %q in namespace %q: %w", name, z.namespace, err)
+	}
+
+	z.log.Info("released zrok name", "name", name, "namespace", z.namespace)
+	return nil
+}
+
 // reapName deletes any docpreview-owned share currently bound to name. It
 // reports whether it deleted anything, so Publish knows a retry is worthwhile.
 func (z *Zrok) reapName(ctx context.Context, name string) bool {

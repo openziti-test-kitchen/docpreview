@@ -54,16 +54,23 @@ share following the newest, plus five that stay pinned to their commit.
       keep-set lists every build with a recorded URL.
 - [x] **Record the per-build URL.** `builds.name` and `builds.url`, with the project's first schema migration —
       `CREATE TABLE IF NOT EXISTS` does nothing to an existing table, so the columns had to be added by `ALTER`.
-- [ ] **Reclaim the zrok name on teardown. This blocks the feature, it does not follow it.** Teardown deletes the
-      *share*; the *name* is a separate object that deliberately outlives its share, because that is what keeps a
-      URL stable across rebuilds and restarts. Nothing anywhere deletes one — `reapName` deletes shares *holding* a
-      name, never the name. Confirmed by merging pull request #1: the share 404s and the name remains.
-
-      That is a slow leak at one name per branch and an unbounded one at one name per commit, because **the name is
-      the quota-bearing object, not the share**. Thirty pull requests at ten pushes each is three hundred permanent
-      names produced by a feature whose whole point is being bounded by `keep_builds`. Two unknowns first: whether
-      zrok v2 exposes name deletion at all, and what the per-account name limit actually is — see
-      [docs/design/19-zrok-namespacing.md](docs/design/19-zrok-namespacing.md).
+- [ ] **Reclaim the zrok name on teardown.** Answered and half-built — read
+      [docs/design/20-handoff-zrok-names.md](docs/design/20-handoff-zrok-names.md) first. `Zrok.ReleaseName` and
+      `expose.NameReleaser` exist, compile, and are called by nothing; the research says de-reserving via
+      `PATCH /share/name` and letting `unshare` reap the name is the better mechanism, and that `close(entry)` has
+      to be split by caller before either is safe to wire.
+- [ ] **`isNameAlreadyExists` treats a quota rejection as success.** `"names limit reached"` and `"name already
+      exists"` are both `*share.CreateShareNameConflict`, so an account at its name limit reports a registered
+      name and the following `CreateShare` fails for an unrelated-sounding reason. Payload presence is the only
+      discriminator. One name per commit reaches that limit far sooner than one per branch did.
+      Background: the name is the quota-bearing object, not the share, so this leaks one per branch today and one
+      per commit under per-build shares. Confirmed by merging pull request #1 — the share 404s and the name remains.
+      Both original unknowns are now answered in
+      [docs/design/19-zrok-namespacing.md](docs/design/19-zrok-namespacing.md): a name **can** be deleted, and no
+      account limit is enforced by default, so no quota blocks per-build shares.
+- [ ] **Recover the names already leaked.** Every teardown so far left one behind. Wants a one-shot sweep that
+      lists reserved names in the namespace, keeps the ones matching a live preview or a recorded build, and
+      releases the rest — the same keep-set logic `Reap` uses for shares, applied to names.
 - [ ] **Decide what happens to `builds` rows on teardown.** `DeletePreview` removes only the `previews` row, so a
       torn-down preview's build rows survive and `backfill` puts them back in the feed after a restart. They render
       inert, because `markOpenable` finds no log and no artifacts, and `PruneBuilds` ages them out at `keep_logs`

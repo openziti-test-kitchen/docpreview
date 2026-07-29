@@ -10,9 +10,9 @@ Short version:
 
 | Question | Answer |
 |---|---|
-| Can a reserved name be deleted? | Yes — `DELETE /share/name`, after the share. Or de-reserve it and let `unshare` do it |
-| Per-account limits? | Six countable dimensions exist, all `Unlimited` and unenforced by default. No rate limit anywhere |
-| Several shares under one owned subdomain? | Only by creating a namespace, which is admin-only plus wildcard DNS and TLS |
+| Can a reserved name be deleted? | Yes — `DELETE /share/name`, after the share. Or de-reserve it and let `unshare` |
+| Per-account limits? | Six countable dimensions, all `Unlimited` and unenforced by default. No rate limit anywhere |
+| Several shares under one owned subdomain? | Only via a new namespace: admin-only, plus wildcard DNS and TLS |
 
 ## 1. Can a reserved zrok name be deleted?
 
@@ -82,7 +82,43 @@ distinguishable from the other without reading the log on the controller. This i
 records. It is not what docpreview should use: shelling out cannot report the 409 payload as a typed error, and the
 SDK path is already wired.
 
-### What it means for one-share-per-build
+### A second way, and a better one: stop reserving
+
+There is a cheaper way to plug the leak than calling `deleteShareName`, and it makes the controller the reaper.
+`unshare` already deletes names on its own — but **only names whose `reserved` flag is false**:
+
+```go
+// controller/unshare.go, cleanupShareNameMappings
+// only delete names that are not reserved and are not already deleted
+if !detail.Reserved && !detail.NameDeleted {
+	if err := str.DeleteName(detail.NameId, trx); err != nil { ... }
+}
+```
+
+That single condition is the entire cause of docpreview's leak. `createShareName` hardcodes `Reserved: true`
+(`controller/createShareName.go:88`) with no way to ask for otherwise, so every name `ensureName` creates is exempted
+from the cleanup that would otherwise have handled it.
+
+`PATCH /share/name` — `updateShareName`, `client.Share.UpdateShareName`, body `{name, namespaceToken, reserved}` —
+flips the flag. It has no live-share conflict check, so it works on a name that is currently bound. A teardown can
+therefore be: de-reserve the name, then delete the share, and the controller deletes the name for us.
+
+Both are two ordered calls. What differs is what a crash between them leaves behind.
+
+| Strategy | Ordering hazard | If the daemon dies mid-teardown |
+|---|---|---|
+| `DeleteShare` then `DeleteShareName` | 409 if reversed | the name leaks, findable only via `ListAllNames` |
+| `UpdateShareName{reserved:false}` then `DeleteShare` | none possible | a non-reserved name on a live share, so the next `Reap` deletes the share and the controller deletes the name |
+
+The second is self-healing and the first is not, which is why it is the one to prefer. It also frees the quota slot
+the instant the flag flips, for the reason given in section 2. The cost is that a de-reserved name has given up its
+durability: if the daemon then decides *not* to delete the share, the name is one `unshare` away from vanishing. So
+the flip belongs immediately before the delete and nowhere earlier.
+
+Both are worth having. `deleteShareName` is still needed for a reaper that cleans up what previous processes left
+behind, because those names are already reserved and no share deletion will ever touch them.
+
+### Plugging the leak
 
 Per-build shares become viable. The leak is real today — teardown calls `sdk.DeleteShare` and nothing else, so
 `internal/expose/zrok.go` accumulates one name per distinct `spec.Name` ever published — but it is a missing call,
@@ -232,7 +268,7 @@ Two things get conflated in the question and they are different:
 | Relationship | Supported | Enforced by |
 |---|---|---|
 | many names → one namespace | yes, this is what happens today | `uk_names on names(namespace_id, name)` |
-| many names → one share | yes, `NameSelections` is a slice and the controller loops it | `FindNamesForShare` returns many |
+| many names → one share | yes, `NameSelections` is a slice the controller loops | `FindNamesForShare` returns many |
 | one name → many shares | **no** | `uk_share_name_mappings_name on share_name_mappings(name_id) where not deleted` |
 
 So "several shares hanging off one owned subdomain" is already true in the weak sense: every docpreview share today

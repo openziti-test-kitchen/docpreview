@@ -36,6 +36,7 @@ that now describes it, and deleted.
 | [16-exposer-zrok.md](16-exposer-zrok.md) | zrok2 in production: names, namespaces, the reap footgun, access grants |
 | [17-exposer-frontdoor.md](17-exposer-frontdoor.md) | Frontdoor in production: the bound port, tenant-wide reaping, authorization |
 | [18-exposer-ziti.md](18-exposer-ziti.md) | Plain OpenZiti, and the per-preview authorization question that gates it |
+| [19-zrok-namespacing.md](19-zrok-namespacing.md) | Deleting a leaked zrok name, what the account limits count, and why an owned subdomain is admin-only |
 
 ## CLAUDE.md files
 
