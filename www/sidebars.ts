@@ -90,6 +90,7 @@ const sidebars: SidebarsConfig = {
     section('REFERENCE'),
     'reference/configuration',
     'reference/repo-config',
+    'reference/projects',
     'reference/cli',
     'reference/build-logs',
     'reference/security',

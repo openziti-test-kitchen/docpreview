@@ -6,10 +6,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/netfoundry/docpreview/internal/config"
 	"github.com/netfoundry/docpreview/internal/store"
+	"github.com/netfoundry/docpreview/internal/vault"
 )
 
 // ProjectsAdmin is the surface for adding and editing projects.
@@ -30,10 +32,31 @@ type ProjectsAdmin struct {
 	store *store.Store
 	cfg   config.Server
 	log   *slog.Logger
+
+	// vault resolves the open vault, or nil while it is locked. A function, not the
+	// vault, because the page that unlocks it is served by this daemon — capturing
+	// the value at construction would make every project's secrets permanently
+	// missing on a daemon that booted locked, which is the ordinary case.
+	vault func() *vault.Vault
 }
 
 func NewProjectsAdmin(st *store.Store, cfg config.Server, log *slog.Logger) *ProjectsAdmin {
 	return &ProjectsAdmin{store: st, cfg: cfg, log: log.With("component", "projects")}
+}
+
+// WithVault gives this admin the ability to manage a project's own environment
+// variables. Without it the secrets half of the page reports itself unavailable
+// rather than absent, for the same reason the read-only banner exists.
+func (a *ProjectsAdmin) WithVault(fn func() *vault.Vault) *ProjectsAdmin {
+	a.vault = fn
+	return a
+}
+
+func (a *ProjectsAdmin) openVault() *vault.Vault {
+	if a.vault == nil {
+		return nil
+	}
+	return a.vault()
 }
 
 // Handler routes the projects API.
@@ -47,6 +70,14 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{$}", a.list)
 	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}", a.gated(a.save))
 	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}", a.gated(a.remove))
+
+	// A project's own environment variables. Routed under the project rather than
+	// under /api/secrets so the scope is expressed by the URL and cannot be spelled
+	// wrong: the vault key is composed here from path values that are already
+	// validated as a project identity, and the global secrets route rejects the
+	// slash that this namespace is built on.
+	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.setSecret))
+	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.delSecret))
 
 	// The build cache is per preview, not per project, so this is not really a
 	// projects route — it lives here to inherit this admin's gate rather than
@@ -102,14 +133,41 @@ func (a *ProjectsAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
 
 // projectsState is what the page renders.
 type projectsState struct {
-	CanWrite    bool            `json:"can_write"`
-	ReadOnlyWhy string          `json:"read_only_why,omitempty"`
-	Projects    []store.Project `json:"projects"`
+	CanWrite    bool           `json:"can_write"`
+	ReadOnlyWhy string         `json:"read_only_why,omitempty"`
+	Projects    []projectView  `json:"projects"`
 
 	// Defaults are the server-wide values a project inherits when it states none,
 	// so the form can show what an empty field will actually do rather than
 	// leaving it blank and unexplained.
 	Defaults projectDefaults `json:"defaults"`
+
+	// GlobalSecrets are the environment variable names every project already gets
+	// from the server config. Names only. The page shows them as inherited, because
+	// "this project has no secrets" and "this project has none of its own" look
+	// identical otherwise and only one of them means a build will fail.
+	GlobalSecrets []string `json:"global_secrets"`
+
+	// VaultLocked distinguishes "no secrets" from "cannot see them". A locked vault
+	// renders the panel with an unlock link rather than an empty list, which would
+	// read as data loss.
+	VaultLocked bool `json:"vault_locked"`
+
+	// SecretsAvailable is false when no vault is wired at all, which is a different
+	// thing again: not locked, not empty, just not a feature on this daemon.
+	SecretsAvailable bool `json:"secrets_available"`
+}
+
+// projectView is a project row plus the names of the secrets scoped to it.
+//
+// Names, never values, and for the same reason the credential page returns none: a
+// project row is readable from anywhere the dashboard is, while writing is loopback
+// only. See docs/design/05-secrets.md.
+type projectView struct {
+	store.Project
+
+	// Secrets are the environment variable names this project injects, sorted.
+	Secrets []string `json:"secrets"`
 }
 
 type projectDefaults struct {
@@ -123,13 +181,29 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 		return projectsState{}, err
 	}
 
+	v := a.openVault()
 	st := projectsState{
-		Projects: projects,
-		Defaults: projectDefaults{Driver: a.cfg.Build.Driver, Image: a.cfg.Build.Image},
+		Projects:         []projectView{},
+		Defaults:         projectDefaults{Driver: a.cfg.Build.Driver, Image: a.cfg.Build.Image},
+		SecretsAvailable: a.vault != nil,
+		VaultLocked:      v == nil,
 	}
-	if st.Projects == nil {
-		st.Projects = []store.Project{}
+	for _, p := range projects {
+		view := projectView{Project: p, Secrets: []string{}}
+		if v != nil {
+			prefix := vault.ProjectSecretPrefix(p.Platform, p.Owner, p.Repo)
+			for _, k := range v.KeysWithPrefix(prefix) {
+				view.Secrets = append(view.Secrets, strings.TrimPrefix(k, prefix))
+			}
+		}
+		st.Projects = append(st.Projects, view)
 	}
+
+	st.GlobalSecrets = []string{}
+	for env := range a.cfg.Build.Secrets {
+		st.GlobalSecrets = append(st.GlobalSecrets, env)
+	}
+	sort.Strings(st.GlobalSecrets)
 
 	switch ok, why := a.available(); {
 	case !ok:
@@ -247,6 +321,128 @@ func (a *ProjectsAdmin) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// setSecret stores one environment variable for one project.
+//
+// The project does not have to exist first. A row and its credentials are two halves
+// of the same setup, and refusing here would force an order on the operator for no
+// reason the operator can see — the secret is simply unused until a project claims
+// it, exactly like a vault entry nothing reads.
+func (a *ProjectsAdmin) setSecret(w http.ResponseWriter, r *http.Request) {
+	p, env, v, bad, code := a.secretRequest(r)
+	if bad != "" {
+		writeJSON(w, code, map[string]string{"error": bad})
+		return
+	}
+
+	var body struct {
+		Value string `json:"value"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	// Same trim as the global surface: trailing whitespace from a paste is the
+	// commonest way a token is wrong in a way nothing reports.
+	body.Value = strings.TrimSpace(body.Value)
+	if body.Value == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "empty value"})
+		return
+	}
+
+	key := vault.ProjectSecretKey(p.Platform, p.Owner, p.Repo, env)
+	if err := v.Set(key, vault.NewSecretString(body.Value)); err != nil {
+		a.log.Error("storing a project secret", "project", p.Key(), "env", env, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	// No rearm. The resolver reads the vault at the start of each build, so this
+	// applies to the next one — see Daemon.SetProjectSecrets. The variable name is
+	// logged and the value is not; the name is the operator's own and is what makes
+	// this line worth having.
+	a.log.Info("project secret stored", "project", p.Key(), "env", env, "bytes", len(body.Value))
+	a.respond(w, r)
+}
+
+func (a *ProjectsAdmin) delSecret(w http.ResponseWriter, r *http.Request) {
+	p, env, v, bad, code := a.secretRequest(r)
+	if bad != "" {
+		writeJSON(w, code, map[string]string{"error": bad})
+		return
+	}
+
+	if err := v.Delete(vault.ProjectSecretKey(p.Platform, p.Owner, p.Repo, env)); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	a.log.Info("project secret deleted", "project", p.Key(), "env", env)
+	a.respond(w, r)
+}
+
+// secretRequest validates the parts every secret call needs. The returned reason is
+// empty on success; code is the status to answer with when it is not.
+func (a *ProjectsAdmin) secretRequest(r *http.Request) (
+	p store.Project, env string, v *vault.Vault, bad string, code int,
+) {
+	p, bad = projectFromRequest(r)
+	if bad != "" {
+		return p, "", nil, bad, http.StatusBadRequest
+	}
+
+	env = strings.TrimSpace(r.PathValue("env"))
+	if why := validEnvName(env); why != "" {
+		return p, env, nil, why, http.StatusBadRequest
+	}
+
+	if a.vault == nil {
+		return p, env, nil, "this daemon has no credential store wired", http.StatusNotImplemented
+	}
+	if v = a.openVault(); v == nil {
+		return p, env, nil, "the vault is locked; unlock it at /secrets first", http.StatusConflict
+	}
+	return p, env, v, "", 0
+}
+
+// respond answers with a fresh snapshot, so one round trip both changes something
+// and returns the state the page should now show.
+func (a *ProjectsAdmin) respond(w http.ResponseWriter, r *http.Request) {
+	st, err := a.snapshot(r.Context(), r)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// validEnvName enforces the shell-safe form, returning why not.
+//
+// Stricter than the global key rule on purpose, because this name is not a lookup
+// key — it becomes an environment variable in a process that runs a build script. A
+// name with a dot or a dash in it is settable in Go's exec.Cmd and unreadable from
+// sh, so the operator would set a value the build could never see. The leading digit
+// is refused for the same reason.
+//
+// Uppercase is not required by any shell, but every convention for an injected
+// credential follows it and the build scripts this exists for use it throughout.
+func validEnvName(env string) string {
+	if env == "" {
+		return "an environment variable name is required"
+	}
+	if len(env) > 128 {
+		return "that environment variable name is too long"
+	}
+	for i, r := range env {
+		switch {
+		case r >= 'A' && r <= 'Z', r == '_':
+		case r >= '0' && r <= '9' && i > 0:
+		default:
+			return "an environment variable name is upper-case letters, digits and " +
+				"underscore, and cannot start with a digit — e.g. BB_REPO_TOKEN_ONPREM"
+		}
+	}
+	return ""
 }
 
 // projectFromRequest reads the identity out of the path, returning a reason when

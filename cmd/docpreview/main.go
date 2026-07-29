@@ -443,9 +443,22 @@ func cmdServe(args []string) error {
 	// opened rather than the locked answer cached at boot.
 	w.setUnlockSource(admin.Vault)
 
+	// A project's own environment variables come out of the same vault, read at the
+	// start of each build rather than cached here. That is deliberate: it needs no
+	// entry in the rearm callback, and a token added from the projects page applies
+	// to the next build — which is what the operator expects, since they are usually
+	// looking at the build that just failed without it.
+	d.SetProjectSecrets(func(platform, owner, repo string) map[string]string {
+		v := admin.Vault()
+		if v == nil {
+			return nil
+		}
+		return v.RevealPrefix(vault.ProjectSecretPrefix(platform, owner, repo))
+	})
+
 	ingress = daemon.NewIngress(d, w.clients, w.store, w.log).
 		WithSecrets(admin).
-		WithProjects(daemon.NewProjectsAdmin(w.store, w.cfg, w.log))
+		WithProjects(daemon.NewProjectsAdmin(w.store, w.cfg, w.log).WithVault(admin.Vault))
 
 	listeners, err := daemon.Open(w.cfg.Listeners, w.log)
 	if err != nil {

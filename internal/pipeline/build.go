@@ -58,9 +58,8 @@ type Builder struct {
 // arguments the daemon resolves rather than reading anything out of cfg.
 //
 // A copy, so two projects building at once cannot see each other's driver. The
-// secrets map and the redactor are shared by reference deliberately: both are
-// immutable once built, and rebuilding a redactor per build would recompile every
-// pattern for nothing.
+// secrets map and the redactor are shared by reference here because this call
+// changes neither; WithSecrets is the one that has to replace both.
 //
 // Empty arguments keep the server default, which is what a project that expresses
 // no preference gets.
@@ -75,6 +74,58 @@ func (b *Builder) WithDriver(driver, image string) *Builder {
 	if image != "" {
 		copied.defaults.Image = image
 	}
+	return &copied
+}
+
+// WithSecrets returns a copy of the builder with extra environment variables
+// injected, and a redactor rebuilt to cover their values.
+//
+// This is how a project gets credentials that are its own. A documentation build
+// that assembles several repositories needs a token per private source — see
+// authUrl-style dispatch in a build script — and those tokens must not be visible to
+// every other project on the daemon. So they are scoped to the project, resolved at
+// the start of a build, and applied here.
+//
+// # The redactor must be rebuilt, not reused
+//
+// It is compiled from the *values*, which is what makes a build that prints its own
+// environment produce asterisks. Copying the builder with the base redactor and a
+// larger secrets map would inject a credential the scrubber had never been told
+// about, and the first `set -x` or npm failure would put it in a pull request
+// comment. That is the single worst outcome available in this program, so the
+// recompile — a few patterns, against a build measured in minutes — is not a cost
+// worth optimizing.
+//
+// extra wins on a name collision. A project naming the same variable as the server
+// config means the project's answer, which is the same precedence every other field
+// on a project row follows.
+func (b *Builder) WithSecrets(extra map[string]string) *Builder {
+	if len(extra) == 0 {
+		return b
+	}
+
+	merged := make(map[string]string, len(b.secrets)+len(extra))
+	for k, v := range b.secrets {
+		merged[k] = v
+	}
+	for k, v := range extra {
+		merged[k] = v
+	}
+
+	values := make([]string, 0, len(merged))
+	for _, v := range merged {
+		values = append(values, v)
+	}
+	r, tooShort := redact.New(values)
+	if len(tooShort) > 0 {
+		// The count, never the name: a name is the lookup key into the vault.
+		b.log.Warn("some build secrets are too short to redact and will appear in logs verbatim",
+			"count", len(tooShort))
+	}
+
+	copied := *b
+	copied.secrets = merged
+	copied.redactor = r
 	return &copied
 }
 

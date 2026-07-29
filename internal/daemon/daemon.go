@@ -60,6 +60,11 @@ type Daemon struct {
 	// secrets are injected into every build, from the server config.
 	secrets map[string]string
 
+	// projectSecretsFn resolves the environment variables belonging to one project,
+	// which are not the same for two projects and are not in the server config at
+	// all. Guarded by mu; see SetProjectSecrets for why it is a function.
+	projectSecretsFn func(platform, owner, repo string) map[string]string
+
 	// events is a window onto what just happened, for the dashboard.
 	events *eventLog
 
@@ -635,6 +640,41 @@ func (d *Daemon) projectDriver(ctx context.Context, pr model.PullRequest) (drive
 	return driver, image
 }
 
+// SetProjectSecrets installs the resolver for a project's own environment
+// variables.
+//
+// A function rather than a map, and consulted at the start of each build rather than
+// cached, for the same reason expose.TokenFunc is a function: the values live in a
+// vault that may be locked when the daemon starts, and the page that unlocks it is
+// served by this daemon. It also means a token added from that page applies to the
+// next build without a rearm callback or a restart — which matters because the
+// operator adding it is usually looking at the build that just failed without it.
+//
+// A daemon with no resolver installed behaves exactly as before: global build
+// secrets only.
+func (d *Daemon) SetProjectSecrets(fn func(platform, owner, repo string) map[string]string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.projectSecretsFn = fn
+}
+
+// projectSecrets resolves one project's environment variables, empty for a project
+// that has none or a vault that is locked.
+//
+// Read once, at the start of a build, and handed to Builder.WithSecrets — which
+// rebuilds the redactor from the values. Those two steps must stay together: a
+// secret injected without being added to the redactor is a credential one `set -x`
+// away from a public pull request comment.
+func (d *Daemon) projectSecrets(pr model.PullRequest) map[string]string {
+	d.mu.Lock()
+	fn := d.projectSecretsFn
+	d.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(string(pr.Repo.Platform), pr.Repo.Owner, pr.Repo.Name)
+}
+
 // saveBuild records a build attempt, logging rather than propagating a failure.
 //
 // Best-effort on purpose. The history and the build picker are worth having, and
@@ -1199,7 +1239,7 @@ func (d *Daemon) runPipeline(
 	// once and reused below, so a rotation mid-build cannot leave the log scrubbed
 	// by one redactor and the environment set by another.
 	driver, image := d.projectDriver(ctx, pr)
-	builder := d.currentBuilder().WithDriver(driver, image)
+	builder := d.currentBuilder().WithDriver(driver, image).WithSecrets(d.projectSecrets(pr))
 
 	buildID := logBuildID(pr.HeadSHA)
 	logw, logErr := d.logs.Begin(pr.PreviewID(), buildID, builder.Redactor())

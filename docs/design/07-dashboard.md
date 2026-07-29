@@ -6,7 +6,7 @@ no CDN — the binary stays the only artifact that has to be deployed, which is 
 `/v2` was the second layout while both existed side by side. It won and replaced the original; the path now
 returns 301 to `/`, because it was linked from the old footer and is in browser histories.
 
-## Two pages, one document
+## Three pages, one document
 
 Credentials live at `/secrets`, not on the operations dashboard. They started as a collapsible panel at the top
 of `/`, and two things were wrong with that. A credential form permanently occupying the top of an operations
@@ -62,6 +62,42 @@ the panel outright reads as a missing feature rather than a deliberate boundary
 The locked case is the one that matters. A passphrase prompt served to a remote browser asks someone to type the
 one secret that opens everything into a form whose POST the server will refuse — worse than no panel at all
 (`internal/daemon/dashboard.html:1377`). The boundary itself is in [05-secrets.md](05-secrets.md).
+
+### `/projects`, and the two bugs that made it unreadable
+
+The third page manages projects and each project's own environment variables. It was reported as noisy and hard to
+follow, and neither cause was in its rendering logic.
+
+**`el.hidden = true` did nothing to `.wrap`.** `[hidden]` supplies `display: none` at the user-agent level, which
+loses to any author rule that sets `display` — and `.wrap` sets `grid`. So `hideOperationsChrome` marked the
+previews and activity sections hidden and they rendered anyway, empty, under both admin pages. Half a screen of
+operations chrome below a form, on a page with no operations on it. The fix is one rule,
+`[hidden] { display: none !important }`, **last in the stylesheet**: `!important` alone suffices in a browser, and
+last as well so the jsdom harness — which resolves the cascade by document order — agrees with one.
+
+**Errors were reported into a hidden element.** `run()` had the secrets renderer and `#setup-body` hardcoded, so a
+failed project save rendered *project* state through the *credential* renderer and prepended the resulting exception
+to a panel that is `hidden` on `/projects`. From the operator's side: a button that does nothing and says nothing.
+Both are now arguments (`runProject`).
+
+The rest was arrangement rather than defect, but the arrangement was the complaint:
+
+| Before | Now | Why |
+|---|---|---|
+| Fields as one `·`-joined line in an 18rem column | Label-over-value pairs in a wrapping grid | The line wrapped mid-value — `output:` ending one line and `build` starting the next, which reads as a field called build |
+| The add form permanently open, eleven inputs | Behind **New project** | It outweighed the single project it existed to add |
+| Edit filled that same form, far below the row | Expands the row in place | Nothing connected the row to the form that was editing it |
+| `github` as bare monospace under the title | A platform chip beside the name | Indistinguishable from a stray word |
+| Nothing about credentials | A **Secrets** control with a count | The page is where a missing token is diagnosed |
+
+One panel open at a time, because a dozen expanded cards is the wall of fields this replaced. Which one is open
+survives the refresh after a save, so adding three variables is three clicks rather than a hunt each time.
+
+Inherited server-wide variables are shown greyed rather than omitted: "this project has no variables" and "this
+project has none of its own" look identical otherwise, and only one of them means a build is about to fail.
+
+Covered by `tools/dashboardtest/projects.mjs`, which needs no daemon — including the two bugs above, because both
+will come back the moment somebody adds a fourth page.
 
 ## Layout
 

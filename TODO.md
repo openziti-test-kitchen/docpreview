@@ -6,6 +6,32 @@ Related: `www/docs/future/ziti-native-previews.md` holds the design research tha
 
 ## In flight
 
+**Secrets have a scope now, and the projects page is where they live.** `build.secrets` was one map for the whole
+daemon, which is the wrong shape for the case it exists for: a documentation site assembling several private
+repositories needs a token per source, and those are not the same for every project. A single global map also means
+every project's build can read every other project's tokens.
+
+- [x] **Project-scoped environment variables.** `project/<platform>/<owner>/<repo>/<ENV>` in the same vault,
+      `PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}`, resolved per build through
+      `Daemon.SetProjectSecrets` and merged by `Builder.WithSecrets` — which rebuilds the redactor in the same call,
+      because the two must never be separable. Written up in
+      [docs/design/05-secrets.md](docs/design/05-secrets.md) and [www/docs/reference/projects.md](www/docs/reference/projects.md).
+- [x] **The projects page is usable.** Cards with label-over-value facts, the add form behind a button, edit in
+      place, and a secrets panel per project. Two real bugs fell out of it: `[hidden]` loses to `.wrap`'s
+      `display: grid`, so the previews and activity sections rendered empty under both admin pages; and `run()`
+      reported failures into `#setup-body`, hidden on `/projects`, so a failed save did nothing and said nothing.
+      Covered by `tools/dashboardtest/projects.mjs`.
+- [ ] **Non-secret project env.** A project can hold credentials but not plain values like `BB_USERNAME`. Today
+      those go in the repository's `.docpreview.yml`, which is right for anything not secret — but the split will
+      confuse somebody, and the same panel could hold both if the secret ones stayed write-only.
+- [ ] **Report which variables a build actually used.** The build log is redacted, so a token that was set but never
+      read looks identical to one that was missing. The build script's own "🔑 Using X" lines are the only signal,
+      and they are the script's, not ours.
+- [ ] **A project's secrets survive its deletion.** `DELETE /api/projects/...` removes the row and leaves
+      `project/<platform>/<owner>/<repo>/*` in the vault. Deliberate for now — deleting credentials as a side effect
+      of removing a build config is not obviously right, and re-adding the project gets them back — but nothing says
+      so on the page, and a vault that accumulates unreachable entries is the audit gap widened again.
+
 **A share that exists before the build does.** Today a share is created after a successful build, so the first
 push to a branch gives a reviewer `share ... not found!` until it finishes, and a restart briefly 404s everything.
 

@@ -174,6 +174,60 @@ input.control::placeholder { color: var(--muted) }
 .notice code { font: 12px/1.5 ui-monospace, Consolas, monospace }
 .notice p { margin: 0.4rem 0 0 }
 
+/* ── Projects ───────────────────────────────────────────────────────────── */
+
+/* One card per project, because a project is a block of related facts and the
+   three-column .sec grid squeezed them into a column narrow enough that a
+   `·`-joined line wrapped mid-value — `output:` ending one line and `build`
+   starting the next, which reads as a field called build. */
+.proj {
+  border: 1px solid var(--ring); border-radius: 8px; background: var(--surface);
+  padding: 0.7rem 0.85rem; margin-bottom: 0.6rem;
+}
+.proj-head { display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap }
+.proj-head .name { font-weight: 600; font-size: 0.9rem }
+.proj-head .grow { flex: 1 }
+.proj-off { opacity: 0.6 }
+
+/* Label above value, in columns that wrap as whole units. This is the fix for the
+   wrapping: a pair can never be split across lines because each pair is a box. */
+.facts {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.5rem 0.9rem; margin-top: 0.55rem;
+}
+.facts dt { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted) }
+.facts dd {
+  margin: 0.1rem 0 0; font: 12px/1.45 ui-monospace, Consolas, monospace;
+  color: var(--ink); overflow-wrap: anywhere;
+}
+.facts dd.inherit { font-family: inherit; font-size: 0.78rem; color: var(--muted) }
+
+/* An environment variable is a name, a state and a way to remove it. Chips,
+   because the set is small and the names are long. */
+.envs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.4rem }
+.env {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font: 11.5px/1.6 ui-monospace, Consolas, monospace;
+  border: 1px solid var(--ring); border-radius: 999px; padding: 0.05rem 0.2rem 0.05rem 0.5rem;
+}
+.env.inherited { color: var(--muted); padding-right: 0.5rem }
+.env button {
+  border: 0; background: none; color: var(--muted); cursor: pointer;
+  font: inherit; padding: 0 0.25rem; border-radius: 999px;
+}
+.env button:hover { color: var(--critical) }
+
+.panel { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--hairline) }
+.panel h3 {
+  margin: 0 0 0.4rem; font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted); font-weight: 600;
+}
+.grid-form {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.5rem;
+}
+.field { display: flex; flex-direction: column; gap: 0.2rem }
+.field label { font-size: 0.7rem; color: var(--muted) }
+
 /* ── Layout ─────────────────────────────────────────────────────────────── */
 .wrap {
   max-width: 96rem; margin: 0 auto; padding: 1.25rem;
@@ -553,6 +607,17 @@ footer {
   color: var(--muted); font-size: 0.75rem;
 }
 .live { color: var(--good) } .stale { color: var(--critical) }
+
+/* Last in the sheet, and !important, because `[hidden]` loses to any author rule
+   that sets display — and .wrap sets grid. So `el.hidden = true` on it did nothing,
+   and the previews and activity sections rendered under both admin pages with
+   nothing in them: half a page of empty operations chrome below a form, which was
+   most of why /projects read as noise.
+
+   !important alone is enough in a browser. Last as well, because the DOM used by
+   tools/dashboardtest/projects.mjs resolves the cascade by document order and would
+   otherwise disagree with every real browser about whether this page is correct. */
+[hidden] { display: none !important }
 </style>
 </head>
 <body>
@@ -2119,21 +2184,33 @@ function save(key, field, btn) {
 
 // run performs an action, renders whatever state comes back, and reports a
 // failure next to the button rather than in a console nobody has open.
-async function run(btn, fn) {
+//
+// The renderer and the place errors land are arguments because two pages share this.
+// They used to be hardcoded to the secrets panel, so a failed project save rendered
+// project state through the credential renderer and then printed the resulting
+// exception into an element that is hidden on /projects — an action that silently did
+// nothing and said nothing.
+async function run(btn, fn, opts) {
+  const render = opts?.render || renderSetup;
+  const bodyID = opts?.body || "setup-body";
   const label = btn.textContent;
   btn.disabled = true;
   btn.textContent = "…";
   try {
-    renderSetup(await fn());
+    render(await fn());
   } catch (e) {
     btn.disabled = false;
     btn.textContent = label;
     const n = document.createElement("div");
     n.className = "notice bad";
     n.textContent = e.message;
-    document.getElementById("setup-body").prepend(n);
+    document.getElementById(bodyID).prepend(n);
   }
 }
+
+// runProject is run, aimed at the projects page.
+const runProject = (btn, fn) =>
+  run(btn, fn, {render: renderProjectsPage, body: "projects-body"});
 
 // The Secrets control is an ordinary link now, so there is no click handler.
 // Which of the two pages this document is depends on the path it was served at.
@@ -2160,6 +2237,12 @@ async function loadProjects() {
   }
 }
 
+/* Which project's detail is open, and which panel of it. One at a time: the page
+   is a list to scan, and a dozen expanded cards is the same wall of fields the
+   permanently-open form used to be. Kept outside render so a refresh after a save
+   comes back to where you were. */
+let projOpen = {key: null, tab: null};
+
 function renderProjectsPage(s) {
   const el = document.getElementById("projects-body");
   const ro = !s.can_write;
@@ -2168,21 +2251,65 @@ function renderProjectsPage(s) {
     ? `<div class="notice warn"><strong>Read-only from here.</strong> ${esc(s.read_only_why || "")}
        <p>A project decides what command runs on the build host, so it can only be changed on
        that machine.</p></div>`
-    : `<div class="notice ok">A project's settings win over the repository's own
-       <code>.docpreview.yml</code>, which arrives in the pull request. Leave a field blank to
-       defer to the repository.</div>`;
+    : "";
 
-  const rows = s.projects.length ? s.projects.map(p => projectRow(p, s, ro)).join("") :
+  const rows = s.projects.length ? s.projects.map(p => projectCard(p, s, ro)).join("") :
     `<div class="notice">No projects yet. Every repository the App is installed on still builds
      using its own <code>.docpreview.yml</code> — adding a project is how you take the build
      command out of the branch.</div>`;
 
-  el.innerHTML = `${banner}${rows}${ro ? "" : projectForm(s)}`;
-  if (!ro) wireProjectHandlers(s);
+  // The add form is a card like any other, and it is closed until asked for. It used
+  // to sit open at the bottom with eleven inputs in it, outweighing the projects it
+  // was there to add — and Edit filled *that* form, far below the row it belonged to,
+  // with nothing connecting the two.
+  const adder = ro ? "" : (projOpen.key === NEW
+    ? `<div class="proj">${projectForm(s, null)}</div>`
+    : `<div class="act"><button class="btn" id="p-new">New project</button></div>`);
+
+  el.innerHTML = `${banner}${rows}${adder}`;
+  // Wired unconditionally: with no write access there are no buttons to wire, and a
+  // read-only page that skipped this would still have to know that.
+  wireProjectHandlers(s);
 }
 
-function projectRow(p, s, ro) {
-  const driver = p.driver || `${s.defaults.driver} (server default)`;
+// NEW is the pseudo-key the add form opens under, so one piece of state covers both
+// "editing this project" and "adding one".
+const NEW = " new";
+
+// A leading space in NEW, so it can never collide with a real `platform/owner/repo`
+// — projectFromRequest rejects a space in any of the three.
+
+function projectCard(p, s, ro) {
+  const key = projectKey(p);
+  const open = projOpen.key === key ? projOpen.tab : null;
+  const dockered = p.driver === "docker" || (!p.driver && s.defaults.driver === "docker");
+
+  return `<div class="proj${p.enabled ? "" : " proj-off"}" data-card="${esc(key)}">
+    <div class="proj-head">
+      <span class="name">${esc(p.owner)}/${esc(p.repo)}</span>
+      <span class="flag opt">${esc(p.platform)}</span>
+      <span class="flag ${p.enabled ? "on" : "off"}">${p.enabled ? "enabled" : "disabled"}</span>
+      <span class="flag ${dockered ? "on" : "opt"}">${esc(p.driver || s.defaults.driver)}${
+        p.driver ? "" : " (default)"}</span>
+      <span class="grow"></span>
+      ${ro ? "" : `<button class="btn" data-tab="build" data-key="${esc(key)}"
+          aria-pressed="${open === "build"}">Build</button>
+        <button class="btn" data-tab="secrets" data-key="${esc(key)}"
+          aria-pressed="${open === "secrets"}">Secrets${
+            p.secrets.length ? ` (${p.secrets.length})` : ""}</button>
+        <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
+    </div>
+    ${projectFacts(p)}
+    ${p.notes ? `<div class="hint">${esc(p.notes)}</div>` : ""}
+    ${open === "build" ? `<div class="panel">${projectForm(s, p)}</div>` : ""}
+    ${open === "secrets" ? `<div class="panel">${secretsPanel(p, s)}</div>` : ""}
+  </div>`;
+}
+
+// projectFacts renders only what the project actually states, as label-over-value
+// pairs. Every field is optional and a blank one means "defer to the repository", so
+// listing the empty ones would fill the card with the word "default".
+function projectFacts(p) {
   const fields = [
     ["directory", p.build_dir],
     ["command", p.build_command],
@@ -2192,130 +2319,245 @@ function projectRow(p, s, ro) {
     ["image", p.image],
   ].filter(([, v]) => v);
 
-  return `<div class="sec">
-    <div>
-      <div class="name">${esc(p.owner)}/${esc(p.repo)}
-        <span class="flag ${p.enabled ? "on" : "off"}">${p.enabled ? "enabled" : "disabled"}</span>
-        <span class="flag ${p.driver === "docker" || (!p.driver && s.defaults.driver === "docker")
-          ? "on" : "opt"}">${esc(driver)}</span>
+  const env = (p.secrets || []).length
+    ? [["env", `${p.secrets.length} variable${p.secrets.length === 1 ? "" : "s"}`]] : [];
+
+  if (!fields.length && !env.length) {
+    return `<dl class="facts"><div><dt>build</dt>
+      <dd class="inherit">entirely from the repository's .docpreview.yml</dd></div></dl>`;
+  }
+  return `<dl class="facts">${fields.concat(env).map(([k, v]) =>
+    `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>`;
+}
+
+// secretsPanel lists this project's environment variables and lets one be added.
+//
+// Names only, never values — the same rule as the credential page, and for the same
+// reason: this payload is readable from anywhere the dashboard is, while writing it
+// is loopback-only.
+function secretsPanel(p, s) {
+  if (!s.secrets_available) {
+    return `<div class="notice">This daemon has no credential store wired, so a project
+      cannot have environment variables of its own.</div>`;
+  }
+  if (s.vault_locked) {
+    return `<div class="notice warn">The vault is locked, so nothing here can be read or
+      written. <a href="/secrets">Unlock it</a> and come back.</div>`;
+  }
+
+  const key = projectKey(p);
+  const mine = (p.secrets || []).map(env =>
+    `<span class="env">${esc(env)}<button title="Remove ${esc(env)}"
+      data-del-secret="${esc(env)}" data-key="${esc(key)}">✕</button></span>`).join("");
+
+  // Inherited names are shown greyed rather than omitted, because "this project has
+  // no variables" and "this project has none of its own" look identical otherwise
+  // and only one of them means a build is about to fail for a missing token.
+  const inherited = (s.global_secrets || []).filter(g => !(p.secrets || []).includes(g)).map(g =>
+    `<span class="env inherited" title="from the server config, every project gets it">${
+      esc(g)}</span>`).join("");
+
+  return `<h3>Environment variables for this project</h3>
+    <div class="hint">Injected into every build of this repository and redacted from every
+      build log. This is how a build clones another private repository — the value is a
+      token, the name is whatever the build script looks for.</div>
+    ${mine || inherited ? `<div class="envs">${mine}${inherited}</div>`
+      : `<div class="hint">None yet.</div>`}
+    <div class="grid-form" style="margin-top:0.6rem">
+      <div class="field">
+        <label for="s-env-${esc(key)}">Name</label>
+        <input class="control" id="s-env-${esc(key)}" placeholder="BB_REPO_TOKEN_ONPREM">
       </div>
-      <div class="key">${esc(p.platform)}</div>
-      ${fields.length
-        ? `<div class="hint">${fields.map(([k, v]) => `${esc(k)}: <code>${esc(v)}</code>`).join(" · ")}</div>`
-        : `<div class="hint">defers entirely to the repository's .docpreview.yml</div>`}
-      ${p.notes ? `<div class="hint">${esc(p.notes)}</div>` : ""}
+      <div class="field">
+        <label for="s-val-${esc(key)}">Value</label>
+        <input class="control" id="s-val-${esc(key)}" type="password" placeholder="the token">
+      </div>
     </div>
-    <div></div>
-    <!-- No cache control here. The cache is per preview, not per project, so it
-         belongs beside the build log where the failure it fixes is visible. -->
-    <div class="act">${ro ? "" :
-      `<button class="btn" data-edit="${esc(projectKey(p))}">Edit</button>
-       <button class="btn" data-del-project="${esc(projectKey(p))}">Delete</button>`}</div>
-  </div>`;
+    <div class="act" style="margin-top:0.5rem">
+      <button class="btn" data-add-secret="${esc(key)}">Add variable</button>
+    </div>`;
 }
 
 function projectKey(p) { return `${p.platform}/${p.owner}/${p.repo}`; }
 
-function projectForm(s) {
-  return `<div class="sec" style="display:block">
-    <div class="name" id="project-form-title">Add a project</div>
-    <div class="hint" style="margin-bottom:0.6rem">Blank fields defer to the repository.</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));gap:0.5rem">
-      <select class="control" id="p-platform" aria-label="Platform">
-        <option value="github">github</option>
-        <option value="bitbucket">bitbucket</option>
-        <option value="local">local</option>
-      </select>
-      <input class="control" id="p-owner" placeholder="owner, e.g. openziti-test-kitchen">
-      <input class="control" id="p-repo" placeholder="repository, e.g. docpreview">
-      <select class="control" id="p-driver" aria-label="Driver">
-        <option value="">driver: ${esc(s.defaults.driver)} (server default)</option>
-        <option value="docker">driver: docker — build in a container</option>
-        <option value="local">driver: local — build on this host</option>
-      </select>
-      <input class="control" id="p-dir" placeholder="build directory, e.g. www">
-      <input class="control" id="p-command" placeholder="build command, e.g. ./gendoc.sh">
-      <input class="control" id="p-output" placeholder="output directory, e.g. build">
-      <input class="control" id="p-baseurl" placeholder="base URL, e.g. /">
-      <input class="control" id="p-detect" placeholder="ignore-build script, e.g. ci/needs-build.sh">
-      <input class="control" id="p-image" placeholder="docker image, blank for the default">
-      <input class="control" id="p-notes" placeholder="notes, for whoever reads this next">
+// projectForm is both "add" and "edit": a PUT is an upsert, so they are one request,
+// and two UIs for one operation drift. When p is given the fields are filled and the
+// identity is fixed — changing owner or repo would silently create a second project
+// rather than rename this one, so those inputs are read-only in edit.
+function projectForm(s, p) {
+  const v = f => esc(p ? (p[f] || "") : "");
+  const sel = (want) => (p && p.driver === want) || (!p && want === "") ? " selected" : "";
+  const id = f => p ? `p-${f}-${projectKey(p)}` : `p-${f}`;
+
+  return `<h3>${p ? `Build settings for ${esc(p.owner)}/${esc(p.repo)}` : "New project"}</h3>
+    <div class="hint" style="margin-bottom:0.5rem">A project's settings win over the
+      repository's own <code>.docpreview.yml</code>, which arrives in the pull request.
+      Leave a field blank to defer to the repository.</div>
+    <div class="grid-form">
+      ${p ? "" : `<div class="field"><label for="p-platform">Platform</label>
+        <select class="control" id="p-platform">
+          <option value="github">github</option>
+          <option value="bitbucket">bitbucket</option>
+          <option value="local">local</option>
+        </select></div>
+        <div class="field"><label for="p-owner">Owner</label>
+          <input class="control" id="p-owner" placeholder="openziti-test-kitchen"></div>
+        <div class="field"><label for="p-repo">Repository</label>
+          <input class="control" id="p-repo" placeholder="docpreview"></div>`}
+      <div class="field"><label for="${id("driver")}">Driver</label>
+        <select class="control" id="${id("driver")}">
+          <option value=""${sel("")}>${esc(s.defaults.driver)} — server default</option>
+          <option value="docker"${sel("docker")}>docker — build in a container</option>
+          <option value="local"${sel("local")}>local — build on this host</option>
+        </select></div>
+      <div class="field"><label for="${id("dir")}">Build directory</label>
+        <input class="control" id="${id("dir")}" value="${v("build_dir")}" placeholder="www"></div>
+      <div class="field"><label for="${id("command")}">Build command</label>
+        <input class="control" id="${id("command")}" value="${v("build_command")}"
+          placeholder="npm run build"></div>
+      <div class="field"><label for="${id("output")}">Output directory</label>
+        <input class="control" id="${id("output")}" value="${v("build_output")}"
+          placeholder="build"></div>
+      <div class="field"><label for="${id("baseurl")}">Base URL</label>
+        <input class="control" id="${id("baseurl")}" value="${v("base_url")}" placeholder="/"></div>
+      <div class="field"><label for="${id("detect")}">Ignore-build script</label>
+        <input class="control" id="${id("detect")}" value="${v("detect_script")}"
+          placeholder="ci/needs-build.sh"></div>
+      <div class="field"><label for="${id("image")}">Docker image</label>
+        <input class="control" id="${id("image")}" value="${v("image")}"
+          placeholder="blank for the default"></div>
+      <div class="field"><label for="${id("notes")}">Notes</label>
+        <input class="control" id="${id("notes")}" value="${v("notes")}"
+          placeholder="for whoever reads this next"></div>
     </div>
     <div class="act" style="margin-top:0.6rem">
-      <button class="btn" id="p-save">Save project</button>
-      <button class="btn" id="p-clear">Clear</button>
-    </div>
-  </div>`;
+      <button class="btn" data-save="${p ? esc(projectKey(p)) : NEW}">${
+        p ? "Save changes" : "Create project"}</button>
+      <button class="btn" data-close-panel="1">Cancel</button>
+      ${p ? `<span class="grow"></span>
+        <button class="btn" data-toggle-enabled="${esc(projectKey(p))}">${
+          p.enabled ? "Disable" : "Enable"}</button>` : ""}
+    </div>`;
 }
 
-const projectFields = {
-  platform: "p-platform", owner: "p-owner", repo: "p-repo", driver: "p-driver",
-  build_dir: "p-dir", build_command: "p-command", build_output: "p-output",
-  base_url: "p-baseurl", detect_script: "p-detect", image: "p-image", notes: "p-notes",
-};
+// projectPath builds the API path for a project key, encoding each segment. The key
+// is `platform/owner/repo` and every segment is validated server-side too, because a
+// stray slash there produces a row no webhook delivery can ever match.
+function projectPath(key) {
+  const [platform, owner, repo] = key.split("/");
+  return `/api/projects/${encodeURIComponent(platform)}` +
+    `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
 
 function wireProjectHandlers(s) {
-  const val = id => document.getElementById(id).value.trim();
+  const el = document.getElementById("projects-body");
+  const val = id => (document.getElementById(id)?.value || "").trim();
 
-  document.getElementById("p-save").onclick = async e => {
-    const platform = val("p-platform"), owner = val("p-owner"), repo = val("p-repo");
-    if (!platform || !owner || !repo) {
-      alert("platform, owner and repository are all required");
-      return;
-    }
-    const path = `/api/projects/${encodeURIComponent(platform)}` +
-      `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-    await run(e.target, async () => {
-      const out = await api("PUT", path, {
-        enabled: true,
-        driver: val("p-driver"),
-        build_dir: val("p-dir"),
-        build_command: val("p-command"),
-        build_output: val("p-output"),
-        base_url: val("p-baseurl"),
-        detect_script: val("p-detect"),
-        image: val("p-image"),
-        notes: val("p-notes"),
-      });
-      renderProjectsPage(out);
-      return out;
-    });
-  };
+  const newBtn = document.getElementById("p-new");
+  if (newBtn) newBtn.onclick = () => { projOpen = {key: NEW, tab: "build"}; renderProjectsPage(s); };
 
-  document.getElementById("p-clear").onclick = () => {
-    for (const id of Object.values(projectFields)) document.getElementById(id).value = "";
-  };
+  for (const b of el.querySelectorAll("[data-close-panel]")) {
+    b.onclick = () => { projOpen = {key: null, tab: null}; renderProjectsPage(s); };
+  }
 
-  // Edit fills the form rather than opening a second one. The form is already the
-  // full set of fields, and a PUT is an upsert, so "edit" and "add" are the same
-  // request — two different UIs for one operation would drift.
-  for (const b of document.querySelectorAll("[data-edit]")) {
+  // One expanded panel at a time, and clicking the open one closes it. A page of
+  // expanded cards is the wall of fields this replaced.
+  for (const b of el.querySelectorAll("[data-tab]")) {
     b.onclick = () => {
-      const p = s.projects.find(x => projectKey(x) === b.dataset.edit);
-      if (!p) return;
-      for (const [field, id] of Object.entries(projectFields)) {
-        document.getElementById(id).value = p[field] || "";
-      }
-      document.getElementById("project-form-title").textContent =
-        `Editing ${p.owner}/${p.repo}`;
-      document.getElementById("p-owner").scrollIntoView({block: "center"});
+      const same = projOpen.key === b.dataset.key && projOpen.tab === b.dataset.tab;
+      projOpen = same ? {key: null, tab: null} : {key: b.dataset.key, tab: b.dataset.tab};
+      renderProjectsPage(s);
     };
   }
 
-  for (const b of document.querySelectorAll("[data-del-project]")) {
+  for (const b of el.querySelectorAll("[data-save]")) {
+    b.onclick = async () => {
+      const key = b.dataset.save;
+      const editing = key !== NEW;
+      const p = editing ? s.projects.find(x => projectKey(x) === key) : null;
+      if (editing && !p) return;
+
+      const id = f => editing ? `p-${f}-${key}` : `p-${f}`;
+      const target = editing ? key :
+        `${val("p-platform")}/${val("p-owner")}/${val("p-repo")}`;
+      if (!editing && (!val("p-platform") || !val("p-owner") || !val("p-repo"))) {
+        alert("platform, owner and repository are all required");
+        return;
+      }
+
+      await runProject(b, async () => {
+        const out = await api("PUT", projectPath(target), {
+          // Preserved rather than defaulted. This form is also the edit form, and a
+          // save that silently re-enabled a project somebody deliberately disabled
+          // would be a build nobody asked for.
+          enabled: editing ? p.enabled : true,
+          driver: val(id("driver")),
+          build_dir: val(id("dir")),
+          build_command: val(id("command")),
+          build_output: val(id("output")),
+          base_url: val(id("baseurl")),
+          detect_script: val(id("detect")),
+          image: val(id("image")),
+          notes: val(id("notes")),
+        });
+        // Stay where you were on an edit; close the add form, since its project now
+        // has a card of its own.
+        if (!editing) projOpen = {key: null, tab: null};
+        return out;
+      });
+    };
+  }
+
+  for (const b of el.querySelectorAll("[data-toggle-enabled]")) {
+    b.onclick = async () => {
+      const p = s.projects.find(x => projectKey(x) === b.dataset.toggleEnabled);
+      if (!p) return;
+      await runProject(b, async () =>
+        // Every other field is sent as it stands, because PUT is a whole-row upsert
+        // and omitting one would clear it.
+        api("PUT", projectPath(projectKey(p)), {
+          enabled: !p.enabled,
+          driver: p.driver, build_dir: p.build_dir, build_command: p.build_command,
+          build_output: p.build_output, base_url: p.base_url,
+          detect_script: p.detect_script, image: p.image, notes: p.notes,
+        }));
+    };
+  }
+
+  for (const b of el.querySelectorAll("[data-del-project]")) {
     b.onclick = async () => {
       const key = b.dataset.delProject;
       if (!confirm(`Delete the project ${key}? Its existing previews are left alone.`)) return;
-      const [platform, owner, repo] = key.split("/");
-      const path = `/api/projects/${encodeURIComponent(platform)}` +
-        `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-      await run(b, async () => {
-        renderProjectsPage(await api("DELETE", path));
-        return {};
+      await runProject(b, async () => {
+        projOpen = {key: null, tab: null};
+        return api("DELETE", projectPath(key));
       });
     };
   }
 
+  for (const b of el.querySelectorAll("[data-add-secret]")) {
+    b.onclick = async () => {
+      const key = b.dataset.addSecret;
+      const env = val(`s-env-${key}`), value = val(`s-val-${key}`);
+      if (!env || !value) {
+        alert("a name and a value are both required");
+        return;
+      }
+      await runProject(b, async () =>
+        api("PUT", `${projectPath(key)}/secrets/${encodeURIComponent(env)}`, {value}));
+    };
+  }
+
+  for (const b of el.querySelectorAll("[data-del-secret]")) {
+    b.onclick = async () => {
+      const env = b.dataset.delSecret, key = b.dataset.key;
+      // Confirmed because the value is not recoverable: nothing can read it back, so
+      // removing it means finding the token again wherever it came from.
+      if (!confirm(`Remove ${env} from ${key}? The value cannot be recovered.`)) return;
+      await runProject(b, async () =>
+        api("DELETE", `${projectPath(key)}/secrets/${encodeURIComponent(env)}`));
+    };
+  }
 }
 
 /* ── Wiring ───────────────────────────────────────────────────────────── */
