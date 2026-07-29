@@ -49,11 +49,19 @@ The requirement was "update, don't duplicate". A twelve-commit pull request must
 | **Updated** | 2026-07-28 14:22 UTC · revision 6 |
 ```
 
-`scm.Marker(previewID)` is an HTML comment — invisible in rendered Markdown, exact to match against. Upsert is:
-list the pull request's comments, find the one containing the marker, `PATCH` it if found, `POST` if not.
+`scm.Marker(previewID)` is an HTML comment — invisible in rendered Markdown on GitHub, exact to match against.
+Upsert is: list the pull request's comments, find the one whose body `scm.HasMarker` recognises, `PATCH` it if found,
+`POST` if not.
 
 The marker carries the preview ID rather than a fixed string, so two docpreview instances watching the same
 repository do not fight over one comment.
+
+**Invisible is a property of the renderer, not of the syntax.** Bitbucket Cloud escapes raw HTML, so the same
+construction renders there as a visible line of literal text — observed on Vercel's own comments. `MarkerFor` takes a
+`MarkerStyle` for that reason, with `MarkerLinkRef` (`[docpreview]: #<id>`, a CommonMark link reference definition)
+as the form that renders to nothing on either host. `HasMarker` matches every style there has ever been and always
+must: forgetting one would post a duplicate comment on every open pull request at once. See
+[15-bitbucket.md](15-bitbucket.md).
 
 The revision counter exists so a reviewer can tell "still says building" from "stuck". Demonstrated climbing
 3 → 6 on one comment.

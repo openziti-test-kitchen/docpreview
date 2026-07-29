@@ -102,7 +102,13 @@ func (s Spec) Key() string {
 // hostname — none of them has anything left over to release, and giving them all a
 // method that returns nil would suggest they do.
 //
-// Called from teardown only. See Zrok.ReleaseName for why a rebuild must not.
+// Called from teardown only, and once per name the preview ever published — its own
+// and one per build share. See Zrok.ReleaseName for why a rebuild must not, and why
+// releasing before withdrawing the share is the order that survives a crash.
+//
+// An error here does not fail a teardown. The pull request is gone either way; what
+// is left is one name against a quota, which is worth a log and not worth keeping a
+// dead preview's artifacts on disk for.
 type NameReleaser interface {
 	ReleaseName(ctx context.Context, name string) error
 }

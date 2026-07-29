@@ -792,7 +792,7 @@ would read the interface, believe it, and be wrong.
 |---|---|---|---|
 | `scm.go:5-7` (package doc) | "basic auth with an API token … PATCH versus PUT" | names the credential this document now recommends *against*, and asserts a `PUT` nobody has verified | say "an access token as a bearer" and drop the method claim until confirmed |
 | `scm.go:109` `CloneURL` | "including any short-lived credential" | a reader concludes leakage is time-bounded. On Bitbucket it is not: the credential in that URL is as long-lived as the vault entry | "including a credential, which on some platforms does not expire" — and point at the redactor |
-| `scm.go:161` `Marker` | returns an HTML comment, documented as "hidden" | **false on Bitbucket**, which escapes it into a visible line. It is a package-level function, so a platform cannot override it | `MarkerStyle`, above |
+| ~~`scm.go:161` `Marker`~~ | ~~returns an HTML comment, documented as "hidden"~~ | ~~**false on Bitbucket**, which escapes it into a visible line~~ | **Fixed.** `MarkerStyle`, `MarkerFor`, `HasMarker`; `Marker` now says it is the GitHub style rather than claiming to be universally hidden |
 | `scm.go:76` `Report.Commit` / `model.go:61` `HeadSHA` | no statement of width | GitHub supplies 40 characters, Bitbucket 12; nothing says which the field holds, so both are "correct" | document it as **always the full 40-character SHA**, and make the client normalize |
 | `comment.go:13` `maxLogExcerpt` | "GitHub's comment limit is 65536 characters" | a per-platform limit stated as the reason for a shared constant | keep the constant, note that Bitbucket's limit is unconfirmed and the value is a safety margin, not a computed bound |
 | `model.go:38` `Repo.Name` | one field for what Bitbucket splits into `name` and `slug` | see below — this one has a security consequence | store the **slug** and say so |
@@ -822,9 +822,13 @@ they hurt:
 1. ~~**`ErrBadSignature`** → `scm.ErrBadSignature`.~~ **Done.** The sentinel is at `internal/scm/scm.go:94`, the
    ingress compares against it at `internal/daemon/ingress.go:230`, and `github.ErrBadSignature` is an alias.
 2. **`verifySignature`** → `scm.VerifyHMACSHA256`, as above. Two identical copies today, three tomorrow.
-3. **`Marker` → `MarkerFor` + `HasMarker`**, because Bitbucket escapes the HTML comment form. This is new to this
-   list and it outranks everything below it: the upsert protocol is worthless if the marker is not found, and the
-   marker being *visible* is the most public possible defect. See the comment section.
+3. ~~**`Marker` → `MarkerFor` + `HasMarker`**~~ **Done**, before Bitbucket exists, because the upgrade half is what
+   has to be in place first. `scm.MarkerStyle` with `MarkerHTMLComment` and `MarkerLinkRef`, `MarkerFor`, and
+   `HasMarker` matching both — `findComment` now takes a preview id and calls `HasMarker` rather than comparing
+   against one rendered string. `Marker(previewID)` still means the HTML comment style, so no GitHub caller moved.
+   Covered by `TestHasMarkerMatchesEveryStyleEverWritten` (`internal/scm/marker_test.go`), which enumerates the
+   styles and exists to fail if one is ever deleted, and `TestFindCommentMatchesEitherMarkerStyle`
+   (`internal/scm/github/findcomment_test.go`), which finds a link-ref comment through the real paging path.
 4. **The comment upsert loop.** `upsertComment` and `findComment` (`internal/scm/github/github.go:212`, `:251`)
    are pure protocol — render, page through comments, match the marker, create or edit — with four
    platform-specific holes in them. Extract into `scm`:
@@ -937,10 +941,11 @@ hand-written fixture tests the parser against the author's belief about the payl
 `TODO.md:76` already records for Frontdoor's wire format. **Until a real payload is in `testdata/`, the client is
 unverified no matter how green the tests are.**
 
-**Stage 1 — the marker, on GitHub, before Bitbucket exists.** `MarkerFor`, `HasMarker` matching both styles, and a
-test that a body carrying the *old* HTML-comment marker is still found. Doing this first means the migration path is
-proved by the platform that already has comments in the wild, and it is the only stage that can corrupt existing
-GitHub pull requests if it is wrong.
+**Stage 1 — the marker, on GitHub, before Bitbucket exists. Done.** `MarkerStyle`, `MarkerFor`, and `HasMarker`
+matching both styles, with tests that a body carrying either marker is found through the real paging path. Doing it
+first meant the migration path was proved by the platform that already has comments in the wild, and it was the only
+stage that could corrupt existing GitHub pull requests if it were wrong. Nothing writes `MarkerLinkRef` yet — the
+Bitbucket client is what will — and `HasMarker` recognising it already is the whole point of the ordering.
 
 **Stage 2 — `scm.VerifyHMACSHA256` and the `CommentStore` extraction, with the GitHub fake-server tests written
 first** so the extraction is provably behaviour-preserving. `internal/scm/github/api_test.go` already stands an

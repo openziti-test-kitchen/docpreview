@@ -25,9 +25,9 @@ that `commitLock` exists for gets narrower. A restart republishes once per previ
 - [ ] `switchable` handler, and `Publish` called at enqueue rather than at commit.
 - [ ] `/_docpreview/status` on the placeholder, and the poll-and-reload page. Reserved prefix so it cannot
       collide with a documentation route.
-- [ ] **Decide what a failed first build should hold.** Publishing at enqueue means a name is taken by a branch
-      that may never build, which matters because the zrok name is the quota-bearing object and is never released
-      (below). Serving the failure is the useful answer; leaking a name per abandoned branch is the cost.
+- [ ] **Decide what a failed first build should hold.** Publishing at enqueue means a name is taken by a branch that
+      may never build, and the name is the quota-bearing object. Teardown releases it now, so the cost is bounded by
+      how long an abandoned branch stays open rather than being permanent. Serving the failure is the useful answer.
 - [ ] Keep the artifact check. `errArtifactsUnusable` drops a preview whose stored `base_url` no longer matches
       the exposer, and a swap must not skip it — serving a site whose every asset 404s is worse than a placeholder.
 
@@ -54,23 +54,24 @@ share following the newest, plus five that stay pinned to their commit.
       keep-set lists every build with a recorded URL.
 - [x] **Record the per-build URL.** `builds.name` and `builds.url`, with the project's first schema migration —
       `CREATE TABLE IF NOT EXISTS` does nothing to an existing table, so the columns had to be added by `ALTER`.
-- [ ] **Reclaim the zrok name on teardown.** Answered and half-built — read
-      [docs/design/20-handoff-zrok-names.md](docs/design/20-handoff-zrok-names.md) first. `Zrok.ReleaseName` and
-      `expose.NameReleaser` exist, compile, and are called by nothing; the research says de-reserving via
-      `PATCH /share/name` and letting `unshare` reap the name is the better mechanism, and that `close(entry)` has
-      to be split by caller before either is safe to wire.
-- [ ] **`isNameAlreadyExists` treats a quota rejection as success.** `"names limit reached"` and `"name already
-      exists"` are both `*share.CreateShareNameConflict`, so an account at its name limit reports a registered
-      name and the following `CreateShare` fails for an unrelated-sounding reason. Payload presence is the only
-      discriminator. One name per commit reaches that limit far sooner than one per branch did.
-      Background: the name is the quota-bearing object, not the share, so this leaks one per branch today and one
-      per commit under per-build shares. Confirmed by merging pull request #1 — the share 404s and the name remains.
-      Both original unknowns are now answered in
-      [docs/design/19-zrok-namespacing.md](docs/design/19-zrok-namespacing.md): a name **can** be deleted, and no
-      account limit is enforced by default, so no quota blocks per-build shares.
-- [ ] **Recover the names already leaked.** Every teardown so far left one behind. Wants a one-shot sweep that
-      lists reserved names in the namespace, keeps the ones matching a live preview or a recorded build, and
-      releases the rest — the same keep-set logic `Reap` uses for shares, applied to names.
+- [x] **Reclaim the zrok name on teardown.** `Daemon.releaseNames` releases every name the preview took — its own
+      and one per build share, from the live publications *and* the recorded rows, since a preview whose republish
+      failed has a name and no publication. `Zrok.ReleaseName` de-reserves via `PATCH /share/name` and then deletes,
+      which is self-healing: `unshare` collects a non-reserved name on its own, so a crash mid-teardown is cleaned
+      up by the next startup's `Reap`. `close` must never touch a name, because two of its three callers are
+      rebuilds whose URL has to survive — `TestRebuildMustNotReleaseTheName`. Written up in
+      [docs/design/16-exposer-zrok.md](docs/design/16-exposer-zrok.md), "Releasing a name". **Not yet run against a
+      live account**: both calls were read from the controller source, not exercised.
+- [x] **`isNameAlreadyExists` treated a quota rejection as success.** Four situations answer 409 from
+      `POST /share/name` and only the empty-payload one means the name exists. Matching the type alone reported a
+      registered name to an account at its name limit, and the following `CreateShare` failed for a reason that
+      never mentioned quotas. Payload presence is the discriminator; the controller's own strings are the test
+      fixtures. One name per commit reaches that limit far sooner than one per branch did.
+- [ ] **Recover the names already leaked.** Every teardown before the item above left one behind. Wants a one-shot
+      sweep that lists reserved names in the namespace, keeps the ones matching a live preview or a recorded build,
+      and releases the rest — the same keep-set logic `Reap` uses for shares, applied to names. `ReleaseName` is the
+      call; `ListNamesForNamespace` is the list. Filed as `docpreview names prune` in
+      [docs/design/16-exposer-zrok.md](docs/design/16-exposer-zrok.md).
 - [ ] **Decide what happens to `builds` rows on teardown.** `DeletePreview` removes only the `previews` row, so a
       torn-down preview's build rows survive and `backfill` puts them back in the feed after a restart. They render
       inert, because `markOpenable` finds no log and no artifacts, and `PruneBuilds` ages them out at `keep_logs`
@@ -275,11 +276,10 @@ a DNS suffix — but it is a **bare hostname**, not a URL, so anything putting i
 - [ ] **A zrok name race.** The collision check drops the lock before `CreateShare`, and the daemon's commit
       lock is per preview, so two previews rendering to one name both pass and the loser's `reapName` deletes
       the winner's fresh share. See [16-exposer-zrok.md](docs/design/16-exposer-zrok.md).
-- [ ] **Registered zrok names are never released.** `ensureName` creates one per preview name ever published and
-      nothing calls `DeleteShareName`, so the account accumulates them and they survive the deletion of the
-      database — the audit gap below, widened. Harmless today because registration is idempotent; it becomes an
-      outage if an account has a name limit, which nobody has established. Needs the limit checked first, then
-      either a release on teardown or `docpreview names prune`.
+- [x] **Registered zrok names were never released.** One per preview name ever published, surviving the deletion of
+      the database. Teardown releases them now; the names leaked before it did are still there, and recovering them
+      is the `docpreview names prune` in the in-flight section. A name still survives a database wiped by hand,
+      which is the audit gap below rather than this item.
 - [ ] **`ensureName` cannot tell a name this account owns from a stranger's.** The 409 has an empty body, so both
       read as success and the failure surfaces one call later from `CreateShare` with a message that does not say
       which it was. `ListNamesForNamespace` would tell them apart and is the same call `docpreview shares list`
@@ -324,11 +324,23 @@ NetFoundry-hosted is a decision nobody has made.
 
 ## Bitbucket
 
-Nothing exists beyond the interface. `POST /webhook/bitbucket` returns 501.
+Nothing exists beyond the interface. `POST /webhook/bitbucket` returns 501. The research is done —
+[docs/design/15-bitbucket.md](docs/design/15-bitbucket.md), read against a live Vercel integration on
+`bitbucket.org/netfoundry/customer-connect-docs` — and stage 1 of its build order has landed.
 
-- [ ] `internal/scm/bitbucket` implementing `scm.Client`
-- [ ] Webhook verification, comment upsert via `PUT`, diffstat for changed files
-- [ ] App passwords are dead as of June 2026 — Atlassian account email plus API token only
+- [x] **The marker is portable.** `scm.MarkerStyle`, `MarkerFor` and `HasMarker`; `findComment` matches with
+      `HasMarker` rather than against one rendered string. Bitbucket escapes raw HTML, so `<!-- docpreview:… -->`
+      would render as a visible paragraph there — Vercel ships exactly that defect on a public pull request. The
+      working form is a CommonMark link reference definition. Done first and on GitHub alone, because a matcher that
+      forgets a style posts a duplicate comment on every open pull request, and only GitHub has comments in the wild.
+- [ ] `internal/scm/bitbucket` implementing `scm.Client`, writing `MarkerLinkRef`
+- [ ] Webhook verification, comment upsert, diffstat for changed files
+- [ ] **A repository access token, not app passwords** — those were removed 28 July 2026. Not an Atlassian account
+      email plus API token either: that credential is a whole-account one.
+- [ ] **`Repo.Name` must hold the slug, not the display name.** Bitbucket distinguishes them, and fork detection
+      comparing the wrong one refuses every pull request.
+- [ ] **`source.commit.hash` is 12 characters, not 40.** The client has to normalize, or `Report.Commit` silently
+      holds two widths depending on the platform.
 - [ ] Vault keys already reserved: `bitbucket.email`, `bitbucket.api_token`, `bitbucket.webhook_secret`
 
 ## Identity management

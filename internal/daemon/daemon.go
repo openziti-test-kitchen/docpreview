@@ -869,6 +869,10 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	d.mu.Unlock()
 
 	var errs []error
+	// Before the shares go, not after: on an exposer whose names are objects with a
+	// quota, releasing first is what makes a crash mid-teardown recoverable. See
+	// releaseNames.
+	d.releaseNames(ctx, previewID, pub, buildPubs)
 	if pub != nil {
 		if err := pub.Close(); err != nil {
 			errs = append(errs, err)
@@ -909,6 +913,74 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	d.log.Info("tore down preview", "pr", pr.String(), "preview", previewID)
 	d.recordf(pr, "torn-down", "preview withdrawn and artifacts removed")
 	return errors.Join(errs...)
+}
+
+// releaseNames gives up every exposer-side name this preview ever took.
+//
+// Only zrok has anything to release — a reserved name is an object with its own
+// lifetime, counted against the account's quota, and it survives the share bound to
+// it on purpose. Nothing released them, so docpreview leaked one name per branch and,
+// once builds got their own shares, one per commit. An exposer that does not
+// implement NameReleaser has no such object and this is a no-op.
+//
+// # Where the names come from
+//
+// The live publications are not the whole set. A preview restored after a restart
+// whose republish failed has a recorded name and no publication, and so does a build
+// whose artifacts were pruned; those are exactly the names most likely to be leaked
+// already. So the database is read as well — and read here, because teardown deletes
+// the row a few lines later.
+//
+// # Why this cannot fail a teardown
+//
+// The pull request is gone. What an error leaves behind is one name against a quota,
+// which is worth a warning naming the name so it can be deleted by hand — and not
+// worth aborting the teardown for, which would strand the artifacts, the workspace,
+// the cache and the comment as well.
+func (d *Daemon) releaseNames(ctx context.Context, previewID string,
+	pub *expose.Publication, buildPubs []*expose.Publication,
+) {
+	releaser, ok := d.exposer.(expose.NameReleaser)
+	if !ok {
+		return
+	}
+
+	names := map[string]bool{}
+	if pub != nil {
+		names[pub.Name] = true
+	}
+	for _, bp := range buildPubs {
+		names[bp.Name] = true
+	}
+	if previews, err := d.store.ListPreviews(ctx); err != nil {
+		d.log.Warn("could not read previews while releasing names; "+
+			"a name with no live share may be left against the account's quota",
+			"preview", previewID, "error", err)
+	} else {
+		for _, p := range previews {
+			if p.PreviewID == previewID {
+				names[p.Name] = true
+			}
+		}
+	}
+	if builds, err := d.store.BuildsFor(ctx, previewID); err != nil {
+		d.log.Warn("could not read builds while releasing names; "+
+			"a build's name may be left against the account's quota",
+			"preview", previewID, "error", err)
+	} else {
+		for _, b := range builds {
+			names[b.Name] = true
+		}
+	}
+	delete(names, "")
+
+	for name := range names {
+		if err := releaser.ReleaseName(ctx, name); err != nil {
+			d.log.Warn("could not release an exposer name; it stays counted against "+
+				"the account's limit until it is deleted by hand",
+				"preview", previewID, "name", name, "error", err)
+		}
+	}
 }
 
 func (d *Daemon) nudge() {

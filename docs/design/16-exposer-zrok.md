@@ -88,15 +88,12 @@ implicitly. `CreateShare` with a `NameSelection` naming an unregistered name fai
 so no named share could be created at all. The name has to exist first, and creating it is a separate call:
 `CreateShareName` (`zrok.go:372`).
 
-So docpreview now owns names it does not delete, and the cost the original argument was avoiding is real. A name
-outlives every share bound to it, which is what keeps a preview's URL stable across rebuilds and restarts, and it
-means the account accumulates one name per preview name ever published (`zrok.go:368-371`). Nothing releases them:
-`DeleteShareName` exists on the client and docpreview never calls it.
+So docpreview owns names, and the cost the original argument was avoiding is real. A name outlives every share
+bound to it, which is what keeps a preview's URL stable across rebuilds and restarts, and it means the account
+accumulates one name per preview name ever published (`zrok.go:368-371`).
 
-That is a leak, and it is the audit gap in `TODO.md` widened rather than avoided — a name survives the deletion of
-the daemon's database with nothing claiming it and nothing looking. It is not urgent, because the name is
-idempotent: the next daemon publishing the same preview registers the same name, gets the 409, treats it as
-success, and reuses it. It becomes urgent the moment name limits on an account are known, which they are not.
+**For a long time nothing released them.** That leak is now closed, and the shape of the fix is the interesting
+part — see "Releasing a name" below.
 
 **Invariant, restated:** a name docpreview registers must be reusable by the next process without coordination.
 `ensureName` treating "already exists" as success is what makes that hold.
@@ -121,17 +118,76 @@ one call: `ensureName` registers the name before `CreateShare` (`zrok.go:173-180
 and then creating it is a race against another publish, and the create is the cheaper of the two calls anyway. So
 "already exists" is the success case and is matched on rather than returned.
 
-**Matched on the generated type, not the message.** The 409 arrives with an **empty body** — the whole of it is
-`[POST /share/name][409] createShareNameConflict ""` — so there is no text to match. `CreateShareNameConflict` is
-documented in the swagger definition as "name already exists", which makes the type the only signal there is
-(`isNameAlreadyExists`, `zrok.go:403`).
+**Matched on the generated type *and an empty payload*, not on the message.** The 409 that means "already exists"
+arrives with an empty body — the whole of it is `[POST /share/name][409] createShareNameConflict ""` — so there is
+no text to match. But the type alone is not enough, and reading `controller/createShareName.go` is what showed it:
+**four situations answer 409 and only one of them is this one.**
 
-**It cannot tell a name this account owns from one another account holds.** Nothing can, given the empty body.
-Treating both as success is safe because the `CreateShare` that follows binds the name and fails on its own if it
-is not ours — one call later, with its own error, which is the error an operator can act on.
+| Payload | Situation |
+|---|---|
+| empty | the name already exists — the success case |
+| `names limit reached; cannot reserve additional names` | the account is at its reserved-name limit |
+| `'…' is not a valid share name; failed profanity or DNS check` | the name will never be registrable |
+| a stale-frontend-mapping message | the controller could not heal the mapping |
 
-`CreateShareNameBody` carries only `Name` and `NamespaceToken`. There is no reserved flag to set, so whatever
-`rest_model_zrok.Name.Reserved` ends up as is the server's default, and docpreview does not choose it.
+All four are `*share.CreateShareNameConflict`, so payload presence is the only discriminator available. Matching
+the type alone — which this did — reported a *registered name* to an account that had hit its name limit, and the
+`CreateShare` a few lines later then failed for a reason that never mentioned quotas. That went from theoretical to
+likely the moment builds got their own shares: one name per commit reaches a limit far sooner than one per branch.
+Covered by `TestQuotaConflictIsNotAnExistingName` (`zrok_test.go`), with the controller's own strings as fixtures.
+
+**It still cannot tell a name this account owns from one another account holds.** Nothing can, given the empty
+body. Treating both as success is safe because the `CreateShare` that follows binds the name and fails on its own
+if it is not ours — one call later, with its own error, which is the error an operator can act on.
+
+`CreateShareNameBody` carries only `Name` and `NamespaceToken`. There is no reserved flag to set, and the
+controller hardcodes `Reserved: true` (`controller/createShareName.go`) — which turns out to be the whole leak, for
+the reason the next section gives.
+
+## Releasing a name
+
+Teardown deletes a share. The name is a separate object that survives it — deliberately — and it is also the object
+an account's quota counts. So something has to release it when the pull request is gone for good.
+
+**The obvious fix is the wrong one.** `close` (`zrok.go`) serves three callers and only one of them is a teardown:
+Publish's own withdraw on a rebuild, the `Publication.Close` the daemon uses when it supersedes a build, and
+shutdown. Releasing there would rehost every rebuilt preview at a new address on every push, silently, while the
+pull request comment went on advertising the old one — worse than the leak and much harder to notice. So releasing
+is the daemon's decision, made once, in `Daemon.releaseNames`, and `close` must never touch a name.
+`TestRebuildMustNotReleaseTheName` (`internal/daemon/releasename_test.go`) is what keeps that true.
+
+**`ReleaseName` de-reserves before it deletes, and the order is the point.** The controller's `unshare` already
+deletes any name bound to the share it is deleting whose `reserved` flag is false
+(`controller/unshare.go`, `cleanupShareNameMappings`). `PATCH /share/name` flips that flag, has no live-share
+conflict check, and works on a name a share is still bound to. So:
+
+1. `UpdateShareName` with `reserved` false. A 404 means the name is already gone, which is success.
+2. `DeleteShareName`. A 409 — "still attached to share" — is the *expected* path when a share is still bound, and
+   also a success: unshare will finish the job. A name with no share to reap it, which is the case for a preview
+   whose republish failed after a restart, is deleted outright here.
+
+That is what makes it self-healing. A crash between de-reserving and withdrawing leaves a non-reserved name whose
+share the next startup's `Reap` deletes, and the name goes with it. An explicit delete that never runs leaks
+silently and forever. Both orders work, so the daemon releases *before* withdrawing, leaving the flag already clear
+if the withdraw is the thing that fails.
+
+One trap in the generated client: `UpdateShareNameBody.Reserved` is tagged `omitempty`, so `false` is not
+serialized at all — and the controller reads an absent flag as false. Setting it explicitly produces the same
+request. Do not "fix" it with a pointer field.
+
+**Which names.** Every name the preview ever took: its own and one per build share. The live publications are not
+the whole set, so `releaseNames` reads the `previews` and `builds` rows too — a preview restored after a restart
+whose republish failed, or a build whose artifacts were pruned, has a recorded name and no publication, and those
+are exactly the names most likely to be leaked already. It reads them before `DeletePreview` runs, which is a few
+lines later in the same function.
+
+**A release failure cannot fail a teardown.** The pull request is gone either way; what is left is one name against
+a quota, which is worth a warning naming the name. Aborting would strand the artifacts, the workspace, the cache
+and the comment as well (`TestTeardownSurvivesAReleaseFailure`).
+
+**Names leaked before this existed are still there** — one per branch from every teardown so far, and the account
+has no way to read its own limit. Recovering them means `ListNamesForNamespace` plus the same release path, which
+is the `docpreview names prune` in the build order below.
 
 ## Names and collisions
 
@@ -520,8 +576,8 @@ What is left:
    (`main.go:293-320`), plus the instance token in `Target`. Two daemons must not reap each other.
 5. **Restart the daemon with previews live** and confirm the URLs and the comments do not move. Then kill it hard
    and confirm the next start reaps and republishes cleanly. Now cheap to do, since publishing works.
-6. **Decide whether registered names need releasing**, and if so where — `DeleteShareName` on teardown, or a
-   `docpreview names prune`. Blocked on knowing whether an account has a name limit.
+6. **`docpreview names prune`**, over `ListNamesForNamespace` and `ReleaseName`, to recover the names leaked before
+   teardown released them. Teardown itself is done; this is the backlog of names it cannot reach.
 7. **Surface `Limited`, and improve the version-mismatch error** — both are things a longer run will have taught
    you the shape of.
 8. **Make recovery concurrent**, bounded by `workers`.
@@ -542,19 +598,22 @@ Everything above cited to a file and line was read. These were not:
 - **What `permissionMode: closed` and `accessGrants` enforce on a public share**, and against what identity. The
   fields are sent (`sdk/share.go:88-91`) and `init` describes them as zrok accounts (`init.go:150`); the
   server-side behaviour is not in the vendored client.
-- **Whether deleting a share releases its name.** This one moved: a name is *not* implicitly created with a share,
-  so it is not implicitly share-scoped either, and docpreview now registers names explicitly and never deletes
-  them. What is still unknown is whether the registered name is durable indefinitely, and whether
-  `rest_model_zrok.Name.Reserved` is set for a name created this way — `CreateShareNameBody` has no field for it.
-  Item 6 of the build order depends on the answer.
+- ~~**Whether deleting a share releases its name.**~~ Answered from the controller source, not the field names:
+  `createShareName` hardcodes `Reserved: true`, and `unshare` deletes a bound name only when that flag is false. So
+  a share deletion releases nothing unless the name is de-reserved first, which is what `ReleaseName` now does.
+  What remains unknown is whether the *release* actually lands against a live account — the two calls have been
+  read, not run.
 - **Whether `CreateShare` fails, or silently succeeds with a different name, when the requested name is registered
   but bound to somebody else's share.** `Publish`'s retry-once logic (`zrok.go:182-194`) assumes it fails. The
   unregistered case is now known to fail with 409. If the taken case instead succeeds under an assigned name, the
   returned endpoint would not match the requested name and the comment would carry a URL the database did not
   predict — the `pub.URL != p.URL` path (`daemon.go:436`) would cover it, but noisily.
-- **Name limits on an account.** Names now accumulate one per preview name ever published and nothing releases
-  them, so a limit here is a slow-motion outage rather than a single failed build. Neither the limit nor the error
-  it produces is known.
+- **Name limits on an account.** The error is now known — `names limit reached; cannot reserve additional names`,
+  as a 409 payload from `POST /share/name`, which is what `isNameAlreadyExists` had to learn to tell apart. **The
+  number is not**, and nothing can read it: all six countable dimensions default to `Unlimited` with
+  `Enforcing: false` in the source, and `adminListAppliedLimitClasses` is admin-only. The hosted free tier
+  publishes 5 GB/day, 25 environments, 50 share backends and 50 private frontends, and no reserved-name figure
+  anywhere. It has to be measured — see [19-zrok-namespacing.md](19-zrok-namespacing.md).
 - **Share and name limits on a zrok account**: that they exist is asserted in `zrok.go:290-293` and
   `02-exposers.md`; the numbers, and what the controller returns when one is hit, are not known.
 - **What `ListShares` returns for a large account.** The parameters expose filters but no limit or offset
