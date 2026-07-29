@@ -1535,6 +1535,23 @@ function renderEvents() {
   el.innerHTML = shown.map(e => {
     const s = state(e.kind);
     const go = reachable(e.preview_id);
+
+    // The commit, because it is what distinguishes one entry from the next.
+    // Without it a branch built eight times produced eight rows reading
+    // "docpreview#3 / next-fixes-3 — ready", identical apart from the clock, and
+    // the one thing a reader wants — which push was this — was the one thing the
+    // feed had and did not show.
+    //
+    // And the message is dropped when it only repeats the label: the daemon sends
+    // "ready" for a ready event, so the row said Ready twice and spent its second
+    // line saying nothing. A message that carries more than that — "ready in 24s",
+    // a skip reason, a failure — is kept.
+    const echo = e.message && e.message.toLowerCase() !== s.label.toLowerCase();
+    const detail = [
+      e.branch ? `<code>${esc(e.branch)}</code>` : "",
+      e.commit ? `<code>${esc(e.commit)}</code>` : "",
+    ].filter(Boolean).join(" · ") + (echo ? ` — ${esc(e.message)}` : "");
+
     const inner = `
       <div class="t">${clock(e.at)}</div>
       <div>
@@ -1543,7 +1560,7 @@ function renderEvents() {
           <span class="k">${esc(s.label)}</span>
           <span class="l2">${esc(project(e))}#${e.number}</span>
         </div>
-        <div class="l2"><code>${esc(e.branch)}</code> — ${esc(e.message)}</div>
+        <div class="l2">${detail}</div>
       </div>`;
 
     const sel = ui.evPick === e.at ? " sel" : "";

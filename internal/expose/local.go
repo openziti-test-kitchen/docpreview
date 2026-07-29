@@ -165,7 +165,7 @@ func (l *Local) Validate(context.Context) error { return nil }
 func (l *Local) Publish(_ context.Context, spec Spec, h http.Handler) (*Publication, error) {
 	l.mu.Lock()
 	for id, m := range l.mounted {
-		if m.name == spec.Name && id != spec.PreviewID {
+		if m.name == spec.Name && id != spec.Key() {
 			l.mu.Unlock()
 			return nil, fmt.Errorf("the name %q is already serving a different preview (%s); "+
 				"two previews render to the same path under this name_template — "+
@@ -176,14 +176,15 @@ func (l *Local) Publish(_ context.Context, spec Spec, h http.Handler) (*Publicat
 	// Replacing this preview's own mount is the common path: a second push to
 	// the same branch. Nothing to tear down — no listener, no remote object.
 	entry := &mount{name: spec.Name, handler: h}
-	l.mounted[spec.PreviewID] = entry
+	l.mounted[spec.Key()] = entry
 	l.mu.Unlock()
 
 	url := l.origin + l.MountPath(spec.Name)
-	l.log.Info("published preview", "preview", spec.PreviewID, "name", spec.Name, "url", url)
+	l.log.Info("published preview",
+		"preview", spec.PreviewID, "build", spec.BuildID, "name", spec.Name, "url", url)
 
 	return NewPublication(url, spec.Name, func() error {
-		l.unmount(spec.PreviewID, entry)
+		l.unmount(spec.Key(), entry)
 		return nil
 	}), nil
 }
@@ -201,6 +202,14 @@ func (l *Local) Publish(_ context.Context, spec Spec, h http.Handler) (*Publicat
 // The same shape guards d.running in the daemon and z.live in the ziti exposer,
 // for the same reason: an object that outlives its successor must not be able
 // to clean up on its behalf.
+// count reports how many publications are mounted. For tests: whether closing one
+// publication left its siblings alone is not observable from a Publication.
+func (l *Local) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.mounted)
+}
+
 func (l *Local) unmount(previewID string, entry *mount) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -139,11 +139,11 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	// The name collision itself is refused below, which is the correct answer
 	// for zrok: names are unique per namespace, so the second preview cannot
 	// have it and should be told so rather than quietly taking it.
-	z.withdraw(spec.PreviewID)
+	z.withdraw(spec.Key())
 
 	z.mu.Lock()
 	for id, entry := range z.live {
-		if entry.name == spec.Name && id != spec.PreviewID {
+		if entry.name == spec.Name && id != spec.Key() {
 			z.mu.Unlock()
 			return nil, fmt.Errorf("the name %q is already serving a different preview (%s); "+
 				"two previews render to the same name under this name_template — "+
@@ -156,7 +156,7 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	req := &sdk.ShareRequest{
 		ShareMode:      sdk.PublicShareMode,
 		BackendMode:    sdk.ProxyBackendMode,
-		Target:         targetPrefix + spec.PreviewID,
+		Target:         targetPrefix + spec.Key(),
 		NameSelections: []sdk.NameSelection{{NamespaceToken: z.namespace, Name: spec.Name}},
 		PermissionMode: sdk.ClosedPermissionMode,
 		AccessGrants:   z.cfg.AccessGrants,
@@ -221,7 +221,7 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 		server:    srv,
 	}
 	z.mu.Lock()
-	z.live[spec.PreviewID] = entry
+	z.live[spec.Key()] = entry
 	z.mu.Unlock()
 
 	origin := ""
@@ -240,23 +240,24 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 			z.log.Error("cleanup after missing frontend endpoint failed", "error", err)
 		}
 		z.mu.Lock()
-		delete(z.live, spec.PreviewID)
+		delete(z.live, spec.Key())
 		z.mu.Unlock()
 		return nil, fmt.Errorf("zrok share %s returned no frontend endpoints", shr.Token)
 	}
 
 	url := JoinURL(origin, spec.BaseURL)
 	z.log.Info("published preview",
-		"preview", spec.PreviewID, "name", spec.Name, "url", url, "token", shr.Token)
+		"preview", spec.PreviewID, "build", spec.BuildID,
+		"name", spec.Name, "url", url, "token", shr.Token)
 
 	return NewPublication(url, spec.Name, func() error {
-		z.withdrawEntry(spec.PreviewID, entry)
+		z.withdrawEntry(spec.Key(), entry)
 		return nil
 	}), nil
 }
 
-// withdraw tears down whatever publication this preview currently has.
-func (z *Zrok) withdraw(previewID string) { z.withdrawEntry(previewID, nil) }
+// withdraw tears down whatever publication currently holds this key.
+func (z *Zrok) withdraw(key string) { z.withdrawEntry(key, nil) }
 
 // withdrawEntry tears down a publication. If want is non-nil it must still be
 // the live one, or nothing happens.
@@ -265,11 +266,11 @@ func (z *Zrok) withdraw(previewID string) { z.withdrawEntry(previewID, nil) }
 // old Publication, in that order. A close that deleted by key alone would tear
 // down its own replacement — and here that means deleting the share on the
 // zrok controller, so the preview would not merely 404, it would stop existing.
-func (z *Zrok) withdrawEntry(previewID string, want *zrokShare) {
+func (z *Zrok) withdrawEntry(key string, want *zrokShare) {
 	z.mu.Lock()
-	entry, ok := z.live[previewID]
+	entry, ok := z.live[key]
 	if ok && (want == nil || entry == want) {
-		delete(z.live, previewID)
+		delete(z.live, key)
 	} else {
 		ok = false
 	}
@@ -278,7 +279,7 @@ func (z *Zrok) withdrawEntry(previewID string, want *zrokShare) {
 		return
 	}
 	if err := z.close(entry); err != nil {
-		z.log.Error("withdrawing preview", "preview", previewID, "error", err)
+		z.log.Error("withdrawing preview", "publication", key, "error", err)
 	}
 }
 
