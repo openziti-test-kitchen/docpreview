@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -86,6 +87,11 @@ CREATE TABLE IF NOT EXISTS builds (
     reason      TEXT NOT NULL DEFAULT '',
     started_at  INTEGER NOT NULL DEFAULT 0,
     finished_at INTEGER NOT NULL DEFAULT 0,
+    -- This build's own share, when per-build publishing is on. Also declared in
+    -- migrate(), because a database created before these existed gets them there
+    -- and one created after gets them here.
+    name        TEXT NOT NULL DEFAULT '',
+    url         TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (preview_id, build_id)
 );
 
@@ -166,8 +172,44 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("applying schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return &Store{db: db}, nil
+}
+
+// migrate adds columns that were introduced after their table shipped.
+//
+// `CREATE TABLE IF NOT EXISTS` does nothing at all to a table that already exists,
+// so a column added to the schema above appears only in databases created after the
+// change — every existing one silently lacks it and every query naming it fails.
+// This is the whole of the migration story: one list, applied every start.
+//
+// Each statement must be idempotent, because there is no version table deciding
+// what has run. `ADD COLUMN` is not, so "duplicate column name" is treated as the
+// success it is. That is the trade for having no schema versioning: the check is on
+// the error text, and a future sqlite that rewords it would make these look failed.
+// The alternative — a schema_version table — is worth adding at the second
+// migration that cannot be expressed this way, not the first that can.
+//
+// Additive only. A column that has to change type or go away needs a real
+// migration, and doing that here would run it again on every restart.
+func migrate(db *sql.DB) error {
+	stmts := []string{
+		// A build's own share. Per-build publishing gives each build a URL of its
+		// own, and without these a restart cannot tell the exposer which build
+		// shares to keep — so Reap deletes every one of them on the first sweep.
+		`ALTER TABLE builds ADD COLUMN name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE builds ADD COLUMN url TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("migrating: %s: %w", s, err)
+		}
+	}
+	return nil
 }
 
 // Close releases the database.
@@ -421,6 +463,15 @@ type Build struct {
 	Reason     string            `json:"reason,omitempty"`
 	StartedAt  time.Time         `json:"started_at"`
 	FinishedAt time.Time         `json:"finished_at,omitempty"`
+
+	// Name and URL are this build's own share, empty when it has none — a failed
+	// or skipped build, or a daemon with per-build publishing off.
+	//
+	// Recorded rather than derived, for the same reason a preview's URL is: after a
+	// restart the exposer has to be told which shares to keep, and a share whose
+	// key nothing remembers is indistinguishable from an orphan and gets reaped.
+	Name string `json:"name,omitempty"`
+	URL  string `json:"url,omitempty"`
 }
 
 // SaveBuild records or updates one build attempt.
@@ -431,15 +482,21 @@ type Build struct {
 func (s *Store) SaveBuild(ctx context.Context, b Build) error {
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO builds (preview_id, build_id, platform, owner, repo, number, branch,
-            commit_sha, state, reason, started_at, finished_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            commit_sha, state, reason, started_at, finished_at, name, url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(preview_id, build_id) DO UPDATE SET
             state       = excluded.state,
             reason      = excluded.reason,
-            finished_at = excluded.finished_at`,
+            finished_at = excluded.finished_at,
+            -- Only when the new row carries one. The row is written twice, and the
+            -- first write — at build start — has no share yet; taking its empty
+            -- value on the second would erase the URL the publish just produced if
+            -- the writes ever arrive out of order.
+            name        = CASE WHEN excluded.name <> '' THEN excluded.name ELSE builds.name END,
+            url         = CASE WHEN excluded.url  <> '' THEN excluded.url  ELSE builds.url  END`,
 		b.PreviewID, b.BuildID, string(b.PR.Repo.Platform), b.PR.Repo.Owner, b.PR.Repo.Name,
 		b.PR.Number, b.PR.Branch, b.Commit, b.State, b.Reason,
-		b.StartedAt.UnixMilli(), b.FinishedAt.UnixMilli())
+		b.StartedAt.UnixMilli(), b.FinishedAt.UnixMilli(), b.Name, b.URL)
 	if err != nil {
 		return fmt.Errorf("saving build %s/%s: %w", b.PreviewID, b.BuildID, err)
 	}
@@ -450,7 +507,7 @@ func (s *Store) SaveBuild(ctx context.Context, b Build) error {
 func (s *Store) BuildsFor(ctx context.Context, previewID string) ([]Build, error) {
 	return s.queryBuilds(ctx,
 		`SELECT preview_id, build_id, platform, owner, repo, number, branch,
-                commit_sha, state, reason, started_at, finished_at
+                commit_sha, state, reason, started_at, finished_at, name, url
          FROM builds WHERE preview_id = ? ORDER BY started_at DESC`, previewID)
 }
 
@@ -465,7 +522,7 @@ func (s *Store) RecentBuilds(ctx context.Context, limit int) ([]Build, error) {
 	}
 	return s.queryBuilds(ctx,
 		`SELECT preview_id, build_id, platform, owner, repo, number, branch,
-                commit_sha, state, reason, started_at, finished_at
+                commit_sha, state, reason, started_at, finished_at, name, url
          FROM builds ORDER BY started_at DESC LIMIT ?`, limit)
 }
 
@@ -483,7 +540,7 @@ func (s *Store) queryBuilds(ctx context.Context, query string, args ...any) ([]B
 		var started, finished int64
 		if err := rows.Scan(&b.PreviewID, &b.BuildID, &platform, &b.PR.Repo.Owner,
 			&b.PR.Repo.Name, &b.PR.Number, &b.PR.Branch, &b.Commit, &b.State, &b.Reason,
-			&started, &finished); err != nil {
+			&started, &finished, &b.Name, &b.URL); err != nil {
 			return nil, err
 		}
 		b.PR.Repo.Platform = model.Platform(platform)
