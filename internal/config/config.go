@@ -427,6 +427,20 @@ type PreviewConfig struct {
 	// TeardownOnClose removes the preview when its pull request is closed or
 	// merged.
 	TeardownOnClose bool `yaml:"teardown_on_close"`
+
+	// KeepBuilds is how many builds of one pull request keep their artifacts, and
+	// therefore how many remain openable.
+	//
+	// Artifacts are per build so an older commit is still there to serve. That
+	// makes disk use grow with every push instead of staying at one built site per
+	// pull request, so something has to bound it, and a count is the cheapest bound
+	// that an operator can reason about.
+	//
+	// Not zero, and not unlimited: zero would delete the build that just
+	// published, and unlimited fills a disk on the one repository somebody pushes
+	// to fifty times in an afternoon. The full story — byte caps, a total ceiling,
+	// eviction order, exempting the paid exposers — is in TODO.md.
+	KeepBuilds int `yaml:"keep_builds"`
 }
 
 // DefaultNameTemplate builds the public label for a preview.
@@ -503,6 +517,7 @@ func DefaultServer() Server {
 		Preview: PreviewConfig{
 			TTL:             72 * time.Hour,
 			TeardownOnClose: true,
+			KeepBuilds:      10,
 		},
 	}
 }
@@ -575,6 +590,12 @@ func (s *Server) validate() error {
 	if s.Preview.TTL <= 0 {
 		return fmt.Errorf("preview.ttl must be positive, got %s "+
 			"(every preview would be reaped on the next sweep)", s.Preview.TTL)
+	}
+	// An explicit zero would delete the build that just published, taking the
+	// preview's artifacts with it. A missing key still takes the default.
+	if s.Preview.KeepBuilds < 1 {
+		return fmt.Errorf("preview.keep_builds must be at least 1, got %d "+
+			"(the build that just finished would be pruned)", s.Preview.KeepBuilds)
 	}
 	if s.Build.KeepLogs <= 0 {
 		return fmt.Errorf("build.keep_logs must be positive, got %s "+

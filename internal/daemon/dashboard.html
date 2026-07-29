@@ -273,8 +273,8 @@ input.control::placeholder { color: var(--muted) }
 
   /* Selects take the row; the buttons share the next one. */
   .logbar select.control.sm { flex: 1 1 100%; max-width: none }
-  .logbar .grow { display: none }
-  .logbar .btn { flex: 1 1 auto; text-align: center }
+  .logbar .grow, .logfoot .grow { display: none }
+  .logbar .btn, .logfoot .btn { flex: 1 1 auto; text-align: center }
 
   /* The go-to-preview link stops being a narrow column beside the row title and
      becomes a full-width tap target under it. */
@@ -355,6 +355,15 @@ input.control::placeholder { color: var(--muted) }
   padding: 0 0 0.5rem;
 }
 .logbar .grow { flex: 1 }
+
+/* The view controls, under the pane they act on. Separated from the row's Open
+   button, which is the control anybody reaches for most and used to sit a few
+   pixels away — see the markup for why that mattered. */
+.logfoot {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0.5rem 0 0;
+}
+.logfoot .grow { flex: 1 }
 select.control.sm {
   font-size: 0.75rem; padding: 0.2rem 0.4rem; max-width: 24rem;
 }
@@ -479,19 +488,33 @@ pre.term .mask { color: var(--warning); font-weight: 700 }
   .item.flash { animation: flash 0.6s steps(2, jump-none) }
 }
 
-/* An entry whose preview still exists is a button that opens it. The reset is
-   what keeps it looking identical to the inert entries beside it — the affordance
-   is the hover, not a different shape, because a rail of twenty buttons reads as
-   a menu rather than a history. */
-button.ev {
-  width: 100%; text-align: left; font: inherit; font-size: 0.79rem;
-  background: none; border: 0; border-bottom: 1px solid var(--hairline);
-  color: inherit; cursor: pointer;
+/* An entry with something left to open. The affordance is the hover rather than a
+   different shape, because a rail of twenty buttons reads as a menu rather than as
+   a history. */
+.ev.linked {
+  cursor: pointer;
   margin: 0 -0.3rem; padding: 0.4rem 0.3rem; width: calc(100% + 0.6rem);
 }
-button.ev:hover { background: var(--raised) }
-button.ev:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
-button.ev:hover .k { text-decoration: underline }
+.ev.linked:hover { background: var(--raised) }
+.ev.linked:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
+.ev.linked:hover .k { text-decoration: underline }
+
+/* Copy the commit. Hidden until the row is hovered or the button itself is
+   focused: one of these per row, always visible, turns the rail into a column of
+   icons and buries the history it exists to show. Kept reachable by keyboard —
+   :focus-within covers tabbing to it. */
+.evcopy {
+  border: 0; background: none; padding: 0 0.15rem; margin-left: 0.1rem;
+  color: var(--muted); cursor: pointer; vertical-align: -0.15em;
+  opacity: 0; transition: opacity 0.1s;
+}
+.ev:hover .evcopy, .ev:focus-within .evcopy { opacity: 1 }
+.evcopy:hover { color: var(--ink) }
+.evcopy svg { width: 12px; height: 12px; display: block }
+@media (hover: none) {
+  /* No hover to reveal it on a touch screen. */
+  .evcopy { opacity: 1 }
+}
 
 /* The entry whose build is on screen. Some clicks change nothing else — an entry
    naming the build already showing leaves the page identical — so this is the only
@@ -504,6 +527,14 @@ button.ev:hover .k { text-decoration: underline }
 .ev.sel { box-shadow: inset 3px 0 0 var(--edge, var(--ink)) }
 .ev.sel .k { color: var(--ink) }
 button.ev.sel { background: var(--raised) }
+
+/* An entry with nothing left to open. Dimmed rather than removed: the history is
+   the point of the rail, and a build that ran is worth knowing about after its
+   artifacts have been pruned. Dimmed rather than merely non-clickable, because a
+   row that looks identical to its clickable neighbours and does nothing is the
+   thing this whole rail was reported for twice. */
+div.ev { opacity: 0.55 }
+div.ev .k { font-weight: 500 }
 .ev .t {
   color: var(--muted); font: 11px/1.5 ui-monospace, Consolas, monospace;
   font-variant-numeric: tabular-nums;
@@ -994,22 +1025,35 @@ function updateBody(item, g) {
     body = document.createElement("div");
     body.className = "body";
     body.innerHTML = `
+      <!-- Above the log: what you are looking at. Below it: how you are looking at
+           it. They used to share one bar, which put Following, Expand and Download
+           a few pixels from the row's Open button — the one control here anybody
+           reaches for often — so the cost of a misclick was landing on a different
+           preview or losing your place in a live log.
+
+           The selects stay on top because they are navigation and belong with the
+           row's own controls. The view toggles move under the pane they act on,
+           where nothing destructive is adjacent to them.
+
+           No cache control in either: it was per row, which put the same button on
+           every open row and made a rare repair look like part of reading a log. It
+           lives once, in the top bar. -->
       <div class="logbar">
         <select class="control sm" data-role="pick" aria-label="Preview"></select>
         <select class="control sm" data-role="build" aria-label="Build"></select>
         <span class="grow"></span>
-        <button class="btn" data-role="follow" aria-pressed="true">Following</button>
-        <button class="btn" data-role="tall" aria-pressed="false">Expand</button>
-        <a class="btn" data-role="download" download>Download</a>
-        <!-- No cache control here. It was per row, which put the same button on
-             every open row and made a rare action look like part of reading a log.
-             It lives once, in the top bar. -->
       </div>
       <div class="logstate"></div>
       <div class="termwrap">
         <button class="copy" data-role="copy" type="button"
                 title="Copy the whole log" aria-label="Copy the whole log"></button>
         <pre class="term"></pre>
+      </div>
+      <div class="logfoot">
+        <button class="btn" data-role="follow" aria-pressed="true">Following</button>
+        <button class="btn" data-role="tall" aria-pressed="false">Expand</button>
+        <span class="grow"></span>
+        <a class="btn" data-role="download" download>Download</a>
       </div>`;
     item.appendChild(body);
 
@@ -1525,16 +1569,24 @@ function renderEvents() {
     return;
   }
 
-  // An entry is a button when the preview it names still exists, and inert
-  // text when it does not. An event log outlives the previews in it — a
-  // torn-down preview leaves its history behind — and a link that looks live
-  // and goes nowhere is worse than one that never offered.
-  const reachable = id => id && ui.previews.some(p => p.preview_id === id);
+  // An entry is a button only while there is something left to show, and inert
+  // text once there is not. A link that looks live and goes nowhere is worse than
+  // one that never offered.
+  //
+  // The server decides. It used to be "does the preview still exist", checked here,
+  // which was the right question only while a preview had exactly one build: now
+  // retention prunes older builds, so an entry can name a live preview and a build
+  // that is gone. Only the daemon knows what is still on disk — see markOpenable.
+  //
+  // The preview check stays as well, because an entry whose preview has been torn
+  // down cannot be revealed no matter what the server says about its build.
+  const reachable = e =>
+    e.openable && e.preview_id && ui.previews.some(p => p.preview_id === e.preview_id);
 
 
   el.innerHTML = shown.map(e => {
     const s = state(e.kind);
-    const go = reachable(e.preview_id);
+    const go = reachable(e);
 
     // The commit, because it is what distinguishes one entry from the next.
     // Without it a branch built eight times produced eight rows reading
@@ -1549,7 +1601,15 @@ function renderEvents() {
     const echo = e.message && e.message.toLowerCase() !== s.label.toLowerCase();
     const detail = [
       e.branch ? `<code>${esc(e.branch)}</code>` : "",
-      e.commit ? `<code>${esc(e.commit)}</code>` : "",
+      // The copy control sits on the commit rather than the row, because the commit
+      // is what anybody wants out of here — a sha to paste into a terminal or a
+      // message. Copying the whole row would give them the clock and the branch too
+      // and make them edit it back down.
+      e.commit
+        ? `<code>${esc(e.commit)}</code><button class="evcopy" data-copy="${esc(e.commit)}"
+             type="button" title="Copy ${esc(e.commit)}"
+             aria-label="Copy commit ${esc(e.commit)}">${ICON_COPY}</button>`
+        : "",
     ].filter(Boolean).join(" · ") + (echo ? ` — ${esc(e.message)}` : "");
 
     const inner = `
@@ -1564,16 +1624,64 @@ function renderEvents() {
       </div>`;
 
     const sel = ui.evPick === e.at ? " sel" : "";
-    return go
-      ? `<button class="ev linked${sel}" style="--edge:${s.color}" data-id="${esc(e.preview_id)}"
+
+    // A div with role=button, not a <button>.
+    //
+    // Two things a real button made impossible. Text inside one cannot be selected,
+    // so the commit on screen could be read and not copied — and the commit is the
+    // one string anybody wants out of this rail, to paste into a terminal or a
+    // message. And a button cannot contain a button, so there was nowhere to put a
+    // copy control.
+    //
+    // The cost is doing by hand what the element gave for free: role, tabindex, and
+    // Enter/Space in the keydown handler below. Worth it for a rail whose whole
+    // purpose is telling you which commit did what.
+    if (!go) {
+      return `<div class="ev${sel}" style="--edge:${s.color}"
+                   title="nothing left to open — this build has been cleaned up">${inner}</div>`;
+    }
+    return `<div class="ev linked${sel}" role="button" tabindex="0"
+                 style="--edge:${s.color}" data-id="${esc(e.preview_id)}"
                  data-commit="${esc(e.commit || "")}" data-at="${esc(e.at)}"
                  data-kind="${esc(e.kind)}" ${sel ? 'aria-current="true"' : ""}
-                 title="Show this build's log">${inner}</button>`
-      : `<div class="ev${sel}" style="--edge:${s.color}">${inner}</div>`;
+                 title="Show this build's log">${inner}</div>`;
   }).join("");
 
   for (const b of el.querySelectorAll(".ev.linked")) {
-    b.onclick = () => reveal(b.dataset.id, b.dataset.commit, b.dataset.at, b.dataset.kind);
+    const open = () => reveal(b.dataset.id, b.dataset.commit, b.dataset.at, b.dataset.kind);
+    b.onclick = ev => {
+      // A click that landed on the copy button, or on a selection the reader is
+      // making, is not a request to open anything.
+      if (ev.target.closest(".evcopy")) return;
+      if (!window.getSelection().isCollapsed) return;
+      open();
+    };
+    // What role=button costs: the keyboard behaviour a real button had for free.
+    b.onkeydown = ev => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      open();
+    };
+  }
+
+  for (const c of el.querySelectorAll(".evcopy")) {
+    c.innerHTML = ICON_COPY;
+    c.onclick = async ev => {
+      // Or the row underneath opens as well, which is not what reaching for a copy
+      // button means.
+      ev.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(c.dataset.copy);
+        c.innerHTML = ICON_CHECK;
+        c.title = "Copied";
+      } catch {
+        // clipboard needs a secure context; http://127.0.0.1 qualifies but a
+        // tunnelled http:// origin does not. Selecting the text still works, which
+        // is why the row is no longer a button.
+        c.title = "could not copy — select the text instead";
+      }
+      setTimeout(() => { c.innerHTML = ICON_COPY; c.title = `Copy ${c.dataset.copy}`; }, 1500);
+    };
   }
 }
 

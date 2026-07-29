@@ -78,7 +78,12 @@ async function loadStatus() {
       // clicking it silently substituted the newest build's log, so the picker moved
       // and the pane did not. buildsFor deliberately has no entry for it.
       {...base, at: "2098-01-01T00:00:00.000-00:00", kind: "skipped",
-       commit: "skipped", message: "no documentation changes"});
+       commit: "skipped", message: "no documentation changes", openable: true},
+      // And a build that retention has cleaned up. The daemon reports openable
+      // false for it, and the page must render it inert — a click that lands on an
+      // empty pane is the failure this replaces.
+      {...base, at: "2097-01-01T00:00:00.000-00:00", kind: "ready",
+       commit: "pruned0", message: "ready in 20s", openable: false});
   }
   return status;
 }
@@ -153,6 +158,15 @@ const dom = new JSDOM(readFileSync(dashboard, "utf8"), {
     win.HTMLElement.prototype.scrollIntoView = function () {};
     win.CSS = {escape: s => String(s).replace(/[^\w-]/g, ch => "\\" + ch)};
     win.requestAnimationFrame = fn => setTimeout(fn, 0);
+    // The rows ignore a click that happens while text is selected, so a click can
+    // land on a selection the reader is making rather than opening something. jsdom
+    // has getSelection but not always a collapsed one; pin it.
+    win.getSelection = () => ({isCollapsed: true});
+    if (!win.navigator.clipboard) {
+      Object.defineProperty(win.navigator, "clipboard", {
+        value: {writeText: async () => {}}, configurable: true,
+      });
+    }
   },
 });
 
@@ -192,8 +206,23 @@ win.eval("render()");
 await new Promise(r => setTimeout(r, 250));
 
 const rows = [...win.document.querySelectorAll("#events .ev")];
-const clickable = rows.filter(r => r.tagName === "BUTTON");
+// By class, not by tag. The rows are divs with role=button rather than real buttons:
+// text inside a button cannot be selected and a button cannot contain a button, so
+// the commit could neither be copied by hand nor given a copy control.
+const clickable = rows.filter(r => r.classList.contains("linked"));
 console.log(`feed: ${rows.length} rows, ${clickable.length} clickable\n`);
+
+// An entry the daemon reports as not openable must be inert. Retention prunes old
+// builds, so the feed outlives what it can show, and a row that looks identical to
+// its clickable neighbours and does nothing is what this rail was reported for.
+{
+  const pruned = (status.events || []).filter(e => e.openable === false).length;
+  const inert = rows.length - clickable.length;
+  if (pruned && inert < pruned) {
+    fail(`${pruned} entries are not openable but only ${inert} rendered inert`);
+  }
+  if (pruned) console.log(`(${inert} inert, for ${pruned} cleaned-up entries)\n`);
+}
 
 if (!clickable.length) {
   console.log("FATAL: no clickable entries; either the feed is empty or every " +

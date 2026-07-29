@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1110,7 +1111,15 @@ func (d *Daemon) runPipeline(
 	}
 
 	// Move the output out of the workspace before the workspace is deleted.
-	artifactDir := filepath.Join(d.cfg.ArtifactsDir(), pr.PreviewID())
+	//
+	// One directory per build, not per preview. A single directory per preview was
+	// overwritten by every build, so an older commit had nothing left to serve —
+	// which is why the log pane could offer a build the Open button beside it could
+	// not reach. Retention is what bounds this; see TODO.md.
+	//
+	// buildID is safe as a path component: buildlog.Begin refuses one containing a
+	// separator, and this is the same value.
+	artifactDir := filepath.Join(d.cfg.ArtifactsDir(), pr.PreviewID(), buildID)
 	if err := replaceDir(result.OutputDir, artifactDir); err != nil {
 		return out, decision, err
 	}
@@ -1168,7 +1177,131 @@ func (d *Daemon) runPipeline(
 		return out, decision, fmt.Errorf("recording the preview failed, so it was withdrawn: %w", err)
 	}
 
+	// Artifacts are per build now, so this is where the growth is bounded. After
+	// the row is saved, never before: a prune that ran first could delete the
+	// directory this build is about to publish from.
+	d.pruneArtifacts(pr.PreviewID(), buildID)
+
 	return buildOutcome{URL: pub.URL, Name: pub.Name, Duration: result.Duration}, decision, nil
+}
+
+// markOpenable sets Openable on each event that still has something to show.
+//
+// Retention prunes old builds, so "this entry names a preview that exists" — which
+// is all the page could check for itself — stopped being the right question. An
+// entry whose build has been pruned must go inert rather than offer a click that
+// lands on an empty pane.
+//
+// A build log is enough on its own. The log outlives the artifacts under a shorter
+// keep_builds than keep_logs, and reading why a build failed is worth a click even
+// when the site it produced is gone.
+//
+// Matched on the build id's suffix, because an event carries a short sha and a build
+// id is `<date>-<time>-<sha>`. An event with no commit — a teardown, anything
+// recorded against the preview rather than a build — is openable when the preview
+// still exists, which is what the page used to assume for everything.
+//
+// One listing per preview, cached across the batch: sixty events over three previews
+// is three directory reads, not sixty.
+func (d *Daemon) markOpenable(events []Event) []Event {
+	logs := map[string][]string{}
+	buildsFor := func(previewID string) []string {
+		if got, ok := logs[previewID]; ok {
+			return got
+		}
+		var ids []string
+		// A listing error means no logs to offer, which is the same answer as an
+		// empty listing for this purpose.
+		metas, _ := d.logs.List(previewID)
+		for _, m := range metas {
+			ids = append(ids, m.BuildID)
+		}
+		// Artifacts too: a build whose log has aged out past keep_logs may still be
+		// serving, and that is even more worth opening than the log was.
+		if entries, err := os.ReadDir(filepath.Join(d.cfg.ArtifactsDir(), previewID)); err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					ids = append(ids, e.Name())
+				}
+			}
+		}
+		logs[previewID] = ids
+		return ids
+	}
+
+	out := make([]Event, 0, len(events))
+	for _, e := range events {
+		if e.PreviewID == "" {
+			out = append(out, e)
+			continue
+		}
+		if e.Commit == "" {
+			// Nothing build-specific to look for. The preview's own existence is the
+			// only thing that could make this openable, and the page already knows it.
+			e.Openable = true
+			out = append(out, e)
+			continue
+		}
+		for _, id := range buildsFor(e.PreviewID) {
+			if strings.HasSuffix(id, "-"+e.Commit) {
+				e.Openable = true
+				break
+			}
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// pruneArtifacts keeps the newest preview.keep_builds build directories.
+//
+// Build ids are `<date>-<time>-<sha>`, so sorting the directory names in reverse
+// puts the newest first and no timestamps need parsing. That is a real dependency
+// on the id's shape rather than a convenience, which is why it is stated here: a
+// build id that stopped starting with a sortable timestamp would silently prune the
+// wrong builds.
+//
+// keep is the build that just published and is never removed, whatever the sort
+// says. A clock that went backwards — an NTP correction, or a daemon restarted in a
+// different timezone — would otherwise make the newest build sort last and delete
+// the artifacts it is serving from.
+//
+// Best effort throughout. A directory that will not delete is usually one a request
+// is reading, and failing the build over it would turn a disk-space concern into a
+// failed pull request comment.
+func (d *Daemon) pruneArtifacts(previewID, keep string) {
+	limit := d.cfg.Preview.KeepBuilds
+	if limit < 1 {
+		return
+	}
+
+	dir := filepath.Join(d.cfg.ArtifactsDir(), previewID)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() && e.Name() != keep {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+
+	// limit-1, because the build being kept counts against the limit.
+	for i, name := range names {
+		if i < limit-1 {
+			continue
+		}
+		victim := filepath.Join(dir, name)
+		if err := os.RemoveAll(victim); err != nil {
+			d.log.Debug("leaving old artifacts in place", "dir", victim, "error", err)
+			continue
+		}
+		d.log.Info("pruned old build artifacts",
+			"preview", previewID, "build", name, "keep_builds", limit)
+	}
 }
 
 // unpublish withdraws the live publication for a preview and forgets it.
@@ -1402,7 +1535,7 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 		Exposer: d.exposer.Kind(),
 		Pending: pending,
 		Running: len(running),
-		Events:  d.events.recent(60),
+		Events:  d.markOpenable(d.events.recent(60)),
 	}
 
 	// The stored rows are the committed history: a preview is written when a

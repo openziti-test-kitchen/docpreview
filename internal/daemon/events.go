@@ -33,6 +33,19 @@ type Event struct {
 	Commit  string `json:"commit"`
 	Message string `json:"message"`
 	URL     string `json:"url,omitempty"`
+
+	// Openable reports whether anything is left to show for this entry — a build
+	// log, artifacts, or both.
+	//
+	// Decided by the server at assembly, never stored, because it is a fact about
+	// right now rather than about the moment the event happened. Retention prunes
+	// old builds, so an entry that was openable an hour ago may not be, and the
+	// feed outlives what it describes: a torn-down preview leaves its history
+	// behind on purpose.
+	//
+	// The page turns an entry into a button only when this is set. A link that
+	// looks live and goes nowhere is worse than one that never offered.
+	Openable bool `json:"openable"`
 }
 
 // eventLog is a fixed-size ring of recent events.
