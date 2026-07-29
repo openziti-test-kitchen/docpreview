@@ -194,7 +194,7 @@ The private key and webhook secret are **not here**. They live in the vault — 
 | `driver` | `local` | `local` runs npm on this host. `docker` runs it in a throwaway container. |
 | `image` | `node:24-bookworm-slim` | Docker driver only. |
 | `timeout` | `15m` | Per build. |
-| `cache_dir` | `<data_dir>/cache` | Package downloads, one directory per repository, under the docker driver. |
+| `cache_dir` | `<data_dir>/cache` | Package downloads, one directory per pull request, under the docker driver. |
 
 ### Choosing a driver
 
@@ -211,18 +211,22 @@ A workspace is created per commit and deleted with its siblings, so nothing a bu
 `cache_dir` is where the downloads go instead. Without it every push refetches the whole dependency tree, which for
 a Docusaurus site is about two minutes before the build starts.
 
-One cache per repository, at `<cache_dir>/<platform>-<owner>-<repo>/`, holding `npm/`, `yarn/` and `pnpm/` and
-mounted into the container at `/cache/`. Not shared: a shared cache is warmer on a repository's first build, but it
-puts every project's builds behind a directory every other project writes to, so one bad entry breaks everything at
-once and clearing it costs everything too.
+One cache per pull request, at `<cache_dir>/<preview-id>/`, holding `npm/`, `yarn/` and `pnpm/` and mounted into the
+container at `/cache/`. **It is deleted when the preview is** — the same teardown that removes the workspace, the
+artifacts and the pull request comment. That is the reason for the key: a cache shared by every branch has no moment
+at which anything knows it is safe to remove, and grows until somebody notices the disk.
+
+The cost is that the first build of each pull request is cold. Every build after it is warm, which is where the
+pushes actually repeat. The branch name is not part of the key, so a force-push or a rename keeps the cache the pull
+request already filled.
 
 `node_modules` is **not** cached. `npm ci` deletes it before installing, which a bind mount cannot survive, and an
-installed tree is the thing that would actually be unsafe to reuse between repositories. The download is what the
-cache saves; the link step still costs.
+installed tree is the thing that would actually be unsafe to reuse. The download is what the cache saves; the link
+step still costs.
 
 This is the largest and most frequently rewritten directory docpreview owns, so it is worth pointing at a disk with
-room. Clear one project's from **Projects → Clear cache** when its builds start failing on a package that has not
-changed. Only that project refetches; every other project stays warm.
+room. To clear one pull request's by hand, use **Clear cache** beside its build log — reach for it when a build
+fails on a package that has not changed. Only that pull request refetches.
 
 Fork pull requests are refused at the webhook under either driver, so the exposure is limited to people with
 push access to a branch. Whether that is a meaningful limit depends on your repository.

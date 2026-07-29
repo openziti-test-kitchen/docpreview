@@ -52,17 +52,22 @@ func hostMountPath(dir string) (string, error) {
 // survives a push. Measured on this project's own www/: two minutes for `npm ci`
 // cold, against a few seconds warm.
 //
-// # One cache per repository
+// # One cache per pull request
 //
-// Keyed by platform/owner/repo, not shared. A shared cache would be faster on a
-// repository's first build and is defensible on integrity grounds — entries are
-// content-addressed and checked against the lockfile's hashes — but it makes every
-// repository's builds depend on a directory every other repository writes to. One
-// corrupt entry then breaks every project at once, and the blast radius of the
-// clear-cache button is everything rather than the thing that is broken.
+// Keyed by preview, which is the same lifetime as everything else a pull request
+// owns — its workspace, its artifacts, its logs. The cache is therefore deleted by
+// the same teardown that removes those, which is the property a shared cache cannot
+// have: a directory outliving every branch that wrote to it has no moment at which
+// anyone knows it is safe to remove.
 //
-// The cost is bounded: the miss is per repository and happens once, and the same
-// tarball existing twice on disk is cheap next to a build that has to refetch it.
+// The cost is the first build of each pull request, which is cold. That is accepted
+// deliberately. A cache shared more widely is warmer, and it makes every build
+// depend on a directory every other build writes to — one corrupt entry then fails
+// everything at once, and clearing it costs everything too. Within a pull request,
+// which is where the pushes actually repeat, this is warm from the second build on.
+//
+// Not keyed on the branch name: PreviewID excludes it, so a force-push or a rename
+// keeps the cache the pull request already filled.
 //
 // What is deliberately *not* cached is node_modules. `npm ci` deletes it before
 // installing, which a bind mount cannot survive, and an installed tree is the thing
@@ -76,7 +81,7 @@ func (b *Builder) cacheMounts(pr model.PullRequest) ([]string, error) {
 	if root == "" {
 		return nil, nil
 	}
-	root = filepath.Join(root, CacheKey(pr.Repo.Platform, pr.Repo.Owner, pr.Repo.Name))
+	root = filepath.Join(root, pr.PreviewID())
 
 	// One directory per manager. They have no common format and pnpm in
 	// particular hard-links out of its store, which requires the store to be on
@@ -103,39 +108,6 @@ func (b *Builder) cacheMounts(pr model.PullRequest) ([]string, error) {
 		)
 	}
 	return args, nil
-}
-
-// CacheKey is a repository's directory name under the cache root.
-//
-// One flat component rather than nested directories, so the path stays short —
-// node_modules paths are already the deepest thing this program creates and Windows
-// has a limit.
-//
-// Every character outside a small set becomes an underscore. The owner and
-// repository names arrive from a webhook, and the failure being prevented is not
-// cosmetic: an owner of ".." would place a cache directory outside the cache root,
-// and a clear would then delete something else. Exported because the daemon builds
-// the same path to clear it, and two spellings of one path is how they drift.
-func CacheKey(platform model.Platform, owner, repo string) string {
-	return sanitizeCacheComponent(string(platform)) + "-" +
-		sanitizeCacheComponent(owner) + "-" +
-		sanitizeCacheComponent(repo)
-}
-
-func sanitizeCacheComponent(s string) string {
-	if s == "" {
-		return "_"
-	}
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	return b.String()
 }
 
 // rejectSymlinks fails a build whose output directory contains a symlink.

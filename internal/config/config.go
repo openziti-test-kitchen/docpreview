@@ -550,12 +550,10 @@ func (s *Server) validate() error {
 	if s.DataDir == "" {
 		return fmt.Errorf("data_dir must be set")
 	}
-	// Defaulted here rather than exposed as another DataDir-derived accessor,
-	// because unlike those it is meant to be overridable: the caches are the
-	// largest thing docpreview writes and belong on whichever disk has room.
-	if s.Build.CacheDir == "" {
-		s.Build.CacheDir = filepath.Join(s.DataDir, "cache")
-	}
+	// Written into the field, not merely derivable, because the build package is
+	// handed BuildDefaults and never sees DataDir. CacheRoot is the definition; this
+	// is where it becomes the value everything downstream reads.
+	s.Build.CacheDir = s.CacheRoot()
 
 	if err := s.validateKeySource(); err != nil {
 		return err
@@ -640,6 +638,37 @@ func (s Server) DatabasePath() string  { return filepath.Join(s.DataDir, "docpre
 func (s Server) WorkspacesDir() string { return filepath.Join(s.DataDir, "workspaces") }
 func (s Server) ArtifactsDir() string  { return filepath.Join(s.DataDir, "artifacts") }
 func (s Server) LogsDir() string       { return filepath.Join(s.DataDir, "logs") }
+
+// CacheRoot is where the package manager caches live.
+//
+// The one definition of the default. `validate` writes it into Build.CacheDir so the
+// build package — which is handed BuildDefaults and never sees DataDir — can read it
+// from there, and this derives the same answer for anything holding a Server that
+// did not come through the loader. Two independent spellings of one default is how
+// the daemon ends up clearing a directory the builder is not using.
+func (s Server) CacheRoot() string {
+	if s.Build.CacheDir != "" {
+		return s.Build.CacheDir
+	}
+	if s.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(s.DataDir, "cache")
+}
+
+// PreviewCacheDir is one preview's package manager caches.
+//
+// Under CacheRoot rather than DataDir, because that one is meant to be moved to a
+// disk with room. A preview ID is a hex digest, so it needs no sanitizing to be a
+// safe path component — which is most of why the cache is keyed on it rather than on
+// names that arrive from a webhook.
+func (s Server) PreviewCacheDir(previewID string) string {
+	root := s.CacheRoot()
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, previewID)
+}
 
 // RepoConfigName is the file docpreview looks for in the root of a previewed
 // repository.

@@ -944,6 +944,13 @@ function updateBody(item, g) {
         <button class="btn" data-role="follow" aria-pressed="true">Following</button>
         <button class="btn" data-role="tall" aria-pressed="false">Expand</button>
         <a class="btn" data-role="download" download>Download</a>
+        <!-- Beside the log because that is where somebody looking at a build that
+             failed on a package download already is. Hidden unless the daemon says
+             this request may write — see showAdminLinks. Teardown deletes the cache
+             with the rest of the preview, so this is for the pull request that is
+             still open and whose next build has to work. -->
+        <button class="btn" data-role="clear-cache" hidden
+                title="Delete this preview's cached package downloads">Clear cache</button>
       </div>
       <div class="logstate"></div>
       <div class="termwrap">
@@ -1036,6 +1043,11 @@ function updateBody(item, g) {
   const p = g.current;
   body.querySelector('[data-role="download"]').href =
     `/logs/${encodeURIComponent(p.preview_id)}/download`;
+
+  // Re-pointed on every render rather than wired once, because a row's selected
+  // preview changes under it — a button still holding the previous preview's id
+  // would clear a cache nobody asked about.
+  wireClearCache(body.querySelector('[data-role="clear-cache"]'), p.preview_id);
 
   // The preview link lives on the row, not here. See updateGoLink.
 
@@ -1849,14 +1861,10 @@ function projectRow(p, s, ro) {
       ${p.notes ? `<div class="hint">${esc(p.notes)}</div>` : ""}
     </div>
     <div></div>
-    <!-- Clear cache sits beside Edit rather than in a panel of its own because the
-         cache is this project's: package downloads are kept outside the workspace,
-         which is created per commit and pruned with its siblings, so without one
-         every push refetches the whole dependency tree. Reach for it when builds
-         start failing on a package that has not changed. -->
+    <!-- No cache control here. The cache is per preview, not per project, so it
+         belongs beside the build log where the failure it fixes is visible. -->
     <div class="act">${ro ? "" :
       `<button class="btn" data-edit="${esc(projectKey(p))}">Edit</button>
-       <button class="btn" data-clear-cache="${esc(projectKey(p))}">Clear cache</button>
        <button class="btn" data-del-project="${esc(projectKey(p))}">Delete</button>`}</div>
   </div>`;
 }
@@ -1963,44 +1971,6 @@ function wireProjectHandlers(s) {
     };
   }
 
-  for (const b of document.querySelectorAll("[data-clear-cache]")) {
-    // Not run(), which renders its result into the secrets panel and puts its
-    // errors in an element that is hidden on this page. A destructive button whose
-    // failure is invisible is worse than no button.
-    b.onclick = async () => {
-      const key = b.dataset.clearCache;
-      // No confirmation. It costs one project one download and cannot lose
-      // anything — a prompt here would be the reflex that trains people to dismiss
-      // the prompt on Delete beside it.
-      const [platform, owner, repo] = key.split("/");
-      const path = `/api/projects/${encodeURIComponent(platform)}` +
-        `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/cache`;
-
-      const label = b.textContent;
-      b.disabled = true;
-      b.textContent = "…";
-      try {
-        const out = await api("DELETE", path);
-        const what = (out.cleared || []).join(", ");
-        projectsNotice("ok", what
-          ? `Cleared ${key}: ${what}. Its next build re-downloads; every other project stays warm.`
-          : `${key} had nothing cached.`);
-      } catch (e) {
-        projectsNotice("bad", e.message);
-      }
-      b.disabled = false;
-      b.textContent = label;
-    };
-  }
-}
-
-// projectsNotice puts a message at the top of the projects page, where the reader
-// is not necessarily looking — hence prepend rather than beside the button.
-function projectsNotice(kind, text) {
-  const n = document.createElement("div");
-  n.className = `notice ${kind}`;
-  n.textContent = text;
-  document.getElementById("projects-body").prepend(n);
 }
 
 /* ── Wiring ───────────────────────────────────────────────────────────── */
@@ -2102,20 +2072,63 @@ if (isSetupPage) {
 // dashboard-only proxy this endpoint is not in the allowlist and the fetch 404s,
 // which lands here as a failure and hides them.
 async function showAdminLinks() {
-  let state;
   try {
-    state = await api("GET", "/api/admin");
+    admin = await api("GET", "/api/admin");
   } catch {
     return;
   }
   const links = [];
-  if (state.projects) links.push(`<a class="control" href="/projects">Projects</a>`);
-  if (state.secrets) links.push(`<a class="control" href="/secrets">Secrets</a>`);
+  if (admin.projects) links.push(`<a class="control" href="/projects">Projects</a>`);
+  if (admin.secrets) links.push(`<a class="control" href="/secrets">Secrets</a>`);
+
+  // Rows already drawn were built before the answer arrived, so this reveals
+  // theirs; wireClearCache handles every row rendered after.
+  for (const b of document.querySelectorAll('[data-role="clear-cache"]')) {
+    b.hidden = !admin.projects;
+  }
   if (!links.length) return;
 
   const nav = document.getElementById("admin-nav");
   nav.innerHTML = links.join("");
   nav.hidden = false;
+}
+
+// admin is what /api/admin last said. Absent until it answers, which is why every
+// consumer treats a missing answer as "no".
+let admin = {};
+
+// wireClearCache points one row's button at one preview and reveals it if the
+// daemon accepts writes from here.
+//
+// The whole cache, not one manager: a build that fails on a package download does
+// not say which manager's cache is at fault, and clearing two extra directories
+// costs a download that was going to happen anyway.
+function wireClearCache(btn, previewID) {
+  if (!btn) return;
+  btn.hidden = !admin.projects;
+
+  btn.onclick = async () => {
+    // No confirmation. It costs this preview one download and cannot lose anything
+    // — and a prompt here is what trains somebody to dismiss prompts.
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "…";
+    try {
+      const out = await api("DELETE", `/api/cache/${encodeURIComponent(previewID)}`);
+      const what = (out.cleared || []).join(", ");
+      btn.textContent = what ? "Cleared" : "Nothing cached";
+    } catch (e) {
+      btn.textContent = "Failed";
+      btn.title = e.message;
+    }
+    // Back to a usable button. Long enough to read, short enough that the row does
+    // not sit lying about its state.
+    setTimeout(() => {
+      btn.textContent = label;
+      btn.disabled = false;
+      btn.title = "Delete this preview's cached package downloads";
+    }, 2500);
+  };
 }
 </script>
 </body>

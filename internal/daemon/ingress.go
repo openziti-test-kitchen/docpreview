@@ -166,6 +166,10 @@ func (i *Ingress) Handler() http.Handler {
 		mux.Handle("/api/projects", i.projects.Handler())
 		mux.Handle("/api/projects/", i.projects.Handler())
 
+		// The build cache clear, which is keyed on a preview rather than a project
+		// but is served by the same admin so there is one gate rather than two.
+		mux.Handle("/api/cache/", i.projects.Handler())
+
 		// Its own address, for the same reasons /secrets has one: it can be linked
 		// from a runbook, and a proxy or a future authentication layer can gate one
 		// path where it cannot gate a panel inside "/".

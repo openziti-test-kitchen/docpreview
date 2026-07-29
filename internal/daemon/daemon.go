@@ -789,6 +789,15 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	if err := os.RemoveAll(filepath.Join(d.cfg.WorkspacesDir(), previewID)); err != nil {
 		errs = append(errs, fmt.Errorf("removing workspace: %w", err))
 	}
+	// The package cache is keyed on the preview for exactly this: it has the same
+	// lifetime as the workspace and artifacts above, so it goes the same way. A
+	// cache with a longer life than the branch that filled it has no moment at which
+	// anything knows it is safe to delete, and grows until somebody notices the disk.
+	if dir := d.cfg.PreviewCacheDir(previewID); dir != "" {
+		if err := os.RemoveAll(dir); err != nil {
+			errs = append(errs, fmt.Errorf("removing the build cache: %w", err))
+		}
+	}
 	if err := d.logs.Remove(previewID); err != nil {
 		errs = append(errs, fmt.Errorf("removing build logs: %w", err))
 	}
