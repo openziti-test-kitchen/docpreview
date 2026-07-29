@@ -1476,15 +1476,28 @@ function renderFeedFilters(events) {
 //
 // The kind filter bypasses this. Picking "queued" is asking for exactly what was
 // hidden, and answering with nothing would be a filter that lies.
+//
+// One pass, newest first, which is the order the daemon sends. A non-terminal entry
+// is dropped only when a *newer* terminal entry for the same attempt has already
+// been seen. Collecting every terminal key up front instead — the first version of
+// this — dropped a queued entry whose terminal entry was older, so re-running a
+// commit that had already finished lost the row saying the new attempt was waiting.
+// That row is the one thing somebody watching a rebuild is looking for.
 function collapse(events) {
   const terminal = new Set(["ready", "failed", "skipped", "torn-down"]);
 
   const settled = new Set();
+  const out = [];
   for (const e of events) {
-    if (terminal.has(e.kind)) settled.add(`${e.preview_id}|${e.commit}`);
+    const key = `${e.preview_id}|${e.commit}`;
+    if (terminal.has(e.kind)) {
+      settled.add(key);
+      out.push(e);
+      continue;
+    }
+    if (!settled.has(key)) out.push(e);
   }
-  return events.filter(e =>
-    terminal.has(e.kind) || !settled.has(`${e.preview_id}|${e.commit}`));
+  return out;
 }
 
 function renderEvents() {
