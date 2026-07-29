@@ -324,15 +324,26 @@ func exists(path string) bool {
 
 // buildDocker runs the build inside a throwaway container.
 //
-// The container gets the workspace bind-mounted and nothing else: no network
-// namespace sharing, no host environment, a read-only root filesystem would be
-// nice but npm needs to write, so instead the mount is the only writable path
-// that outlives the container. This is the driver to use for repositories whose
-// contributors are not fully trusted.
+// The container gets one directory and nothing else: the workspace, bind-mounted
+// at /workspace, plus the environment variables named in the config and capped
+// memory and CPU. Nothing else on the host is reachable. A read-only root would be
+// nice but npm needs to write, so the containment is the mount rather than the
+// filesystem. This is the driver to use for repositories whose contributors are not
+// fully trusted.
+//
+// Mounting, rather than copying the tree in and the built site back out, means the
+// build's output is on the host the moment it is written and the exposer can serve
+// it from where it landed. What makes it work on Windows is spelling the host path
+// the way the daemon sees it — see hostMountPath.
 func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir string, cfg config.RepoConfig, sink io.Writer) (string, error) {
 	image := b.defaults.Image
 	if image == "" {
 		image = "node:24-bookworm-slim"
+	}
+
+	source, err := hostMountPath(ws.Dir)
+	if err != nil {
+		return "", err
 	}
 
 	// The workspace-relative path of the build directory, as the container will
@@ -344,21 +355,15 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	containerDir := "/workspace/" + filepath.ToSlash(rel)
 	containerDir = strings.TrimSuffix(containerDir, "/.")
 
-	hostPath, err := filepath.Abs(ws.Dir)
-	if err != nil {
-		return "", fmt.Errorf("resolving workspace path: %w", err)
-	}
-	if runtime.GOOS == "windows" {
-		// Docker Desktop accepts forward-slashed Windows paths; backslashes are
-		// parsed as part of the mount option string and produce a baffling
-		// "invalid reference format".
-		hostPath = filepath.ToSlash(hostPath)
-	}
+	var log bytes.Buffer
+	out := tee(&log, sink)
 
 	args := []string{
-		"run", "--rm",
+		"create",
+		// --mount, not --volume: --volume's fields are colon-separated, so a
+		// Windows source path collides with its own separator.
+		"--mount", "type=bind,source=" + source + ",target=/workspace",
 		"--workdir", containerDir,
-		"--volume", hostPath + ":/workspace",
 		// Containers that outlive their build are the usual way a small build
 		// host runs out of memory.
 		"--memory", "4g",
@@ -370,17 +375,50 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	args = append(args, image, "sh", "-lc",
 		installCommand(buildDir)+" && "+cfg.Build.Command)
 
-	var log bytes.Buffer
-	out := tee(&log, sink)
-	fmt.Fprintf(out, "$ docker run %s ...\n", image)
-
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdout = out
-	cmd.Stderr = out
-
-	if err := cmd.Run(); err != nil {
-		return log.String(), fmt.Errorf("docker build failed: %w", err)
+	created, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		fmt.Fprintf(out, "docker create failed: %v\n", err)
+		return log.String(), fmt.Errorf("docker create failed: %w", err)
 	}
+	container := strings.TrimSpace(string(created))
+	if container == "" {
+		return log.String(), fmt.Errorf("docker create returned no container id")
+	}
+
+	// Removed on every path out, including a cancelled build. Its own context,
+	// because the build's is already cancelled in exactly the case where a
+	// container is most likely to be left running.
+	defer func() {
+		rmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := exec.CommandContext(rmCtx, "docker", "rm", "-f", container).Run(); err != nil {
+			b.log.Warn("removing the build container", "container", container, "error", err)
+		}
+	}()
+
+	fmt.Fprintf(out, "$ docker create %s → %s\n", image, container[:min(12, len(container))])
+	fmt.Fprintf(out, "$ mount %s → /workspace\n", source)
+	fmt.Fprintf(out, "$ %s\n$ %s\n", installCommand(buildDir), cfg.Build.Command)
+
+	if err := b.runContainer(ctx, container, out); err != nil {
+		return log.String(), err
+	}
+
+	// The mount means the site is already on the host. What is worth checking is
+	// that it is where the caller is about to look — a build that exits 0 having
+	// written nothing is otherwise reported as a success and published as a 404.
+	outputDir := filepath.Join(buildDir, filepath.FromSlash(cfg.Build.Output))
+	if !exists(outputDir) {
+		err := fmt.Errorf("the build exited cleanly but produced no %s directory", cfg.Build.Output)
+		fmt.Fprintf(out, "%v\n", err)
+		return log.String(), err
+	}
+
+	if err := rejectSymlinks(outputDir); err != nil {
+		fmt.Fprintf(out, "%v\n", err)
+		return log.String(), err
+	}
+
 	return log.String(), nil
 }
 

@@ -90,6 +90,29 @@ because it would be arbitrary shell on the host chosen by whoever opened the pul
 under `local`, put it behind `npm run build` in `package.json` — which puts the decision in the hands of
 whoever can merge rather than whoever can open a pull request.
 
+#### Spelling the host path (Windows)
+
+The mount source has to be a path the *daemon* can resolve, and on Windows that is never the path the host uses.
+The daemon is Linux and has no drive letters: `--volume` splits its fields on a colon and reports
+`invalid mode: /workspace`, `--mount` reports the path is not absolute. `hostMountPath`
+(`internal/pipeline/dockermount.go`) rewrites `D:\ws` as `/mnt/d/ws`, which is where a dockerd running inside
+WSL2 sees the Windows disks, and the driver passes `--mount` rather than `--volume` so the remaining colon in
+`type=bind,source=…` is the only one.
+
+Two daemons this does not handle, both deliberately an error rather than a guess: Docker Desktop's own engine
+exposes the host at `/run/desktop/mnt/host/<letter>`, and a daemon on another machine cannot see the host's disk
+at all. A wrong path that the daemon *accepts* mounts an empty directory, and the build then fails on a missing
+`package.json` — which sends whoever is debugging it into the repository instead of at the mount. Refusing up
+front costs an hour less.
+
+#### Symlinks in the output are refused
+
+A mount is the one place the docker driver's containment leaks in the wrong direction. The preview server hands
+the output directory to `http.Dir`, which refuses a URL that climbs out of the root but follows a symlink that
+leaves it — so a build could publish a host file by writing `build/leak -> /etc/passwd`. The container cannot
+read the host, but the server serving its output can. `rejectSymlinks` walks the output directory and fails the
+build, naming the file. A static site has no use for a symlink, so one appearing is either an attempt or a bug.
+
 ### The package manager comes from the lockfile
 
 | Committed | Runs |

@@ -1175,10 +1175,15 @@ function updateBuildPicker(previewID) {
   // select that is open closes it with no visible cause.
   if (document.activeElement === sel) return;
 
-  // Hidden rather than disabled with one entry. A greyed-out control invites
-  // clicking; nothing at all reads as "there is only one build", which is true.
-  sel.hidden = builds.length < 2;
-  if (builds.length < 2) return;
+  // Shown from the first build, not the second.
+  //
+  // It was hidden below two entries on the reasoning that a one-item picker is
+  // useless. That was wrong: the entry carries the outcome and the age, so with
+  // one build it is not a picker at all, it is the only place the dashboard says
+  // whether that build succeeded. Hiding it left a failed build with no visible
+  // result beside the row.
+  sel.hidden = builds.length === 0;
+  if (builds.length === 0) return;
 
   // No separate "latest" row. The newest build *is* the latest, so a synthetic
   // entry above it said the same thing twice and made the list one longer than
