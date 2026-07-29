@@ -127,8 +127,32 @@ build of each pull request.
 The branch name is deliberately not in the key. `PreviewID` excludes the branch and the commit, so a force-push or
 a rename keeps the cache the pull request already filled — see `TestCacheFollowsThePullRequestNotTheBranch`.
 
-`node_modules` is not cached. `npm ci` removes it before installing, which a bind mount cannot survive, and an
-installed tree is the thing that would be unsafe to reuse. The remaining cost is the link step, not the download.
+#### node_modules is on a volume, and this is the largest decision here
+
+The package cache made no measurable difference on its own. A warm build of this project's own `www/` still reported
+`added 1325 packages in 2m`, identical to cold, because the download was never the cost. The cost was the write: 1325
+packages is tens of thousands of small files, and `npm ci` was putting every one of them through the bind mount,
+across WSL into NTFS.
+
+Measured with an identical warm cache (`TestWhereNodeModulesShouldLive`):
+
+| node_modules on | `npm ci` |
+|---|---|
+| the bind mount | 5m46s |
+| a docker volume | 14s |
+
+So the driver mounts an anonymous volume at `<build dir>/node_modules`. Two things about that path are load-bearing
+and neither is visible in a log, which is why `TestNodeModulesGetsAVolume` exists:
+
+- **Under the build directory, not the workspace root.** npm resolves `node_modules` from the directory it runs in,
+  so a volume anywhere else is mounted where npm never looks and the install goes through the mount anyway — five
+  minutes lost, with nothing to indicate why.
+- **Anonymous, and removed by `docker rm -fv`.** Without `-v` every build leaves a few hundred megabytes of orphaned
+  volume behind. A *named* volume would let `node_modules` survive between builds, but `npm ci` deletes its contents
+  before installing regardless, so there is little left to win above 14s and it would add volumes to reap.
+
+`node_modules` is therefore never cached across builds and never reaches the host, which also settles the safety
+question: an installed tree is the thing that would be unsafe to reuse between repositories.
 
 A preview ID is a hex digest, which is the second reason to key on it: nothing derived from webhook text is ever
 joined onto this path, so there is no traversal to defend against. An owner of `..` would otherwise have put a

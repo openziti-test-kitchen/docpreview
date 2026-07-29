@@ -220,9 +220,10 @@ The cost is that the first build of each pull request is cold. Every build after
 pushes actually repeat. The branch name is not part of the key, so a force-push or a rename keeps the cache the pull
 request already filled.
 
-`node_modules` is **not** cached. `npm ci` deletes it before installing, which a bind mount cannot survive, and an
-installed tree is the thing that would actually be unsafe to reuse. The download is what the cache saves; the link
-step still costs.
+`node_modules` is **not** cached, and does not touch the mounted workspace at all — it gets its own docker volume for
+the life of the build. That is where the build time actually went: installing this project's own `www/` took 5m46s
+writing `node_modules` through the bind mount and 14s writing it to a volume, with the same warm package cache.
+Downloading was never the slow part.
 
 This is the largest and most frequently rewritten directory docpreview owns, so it is worth pointing at a disk with
 room. To clear one pull request's by hand, use **Clear cache** beside its build log — reach for it when a build

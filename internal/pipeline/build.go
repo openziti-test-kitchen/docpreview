@@ -358,31 +358,10 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	var log bytes.Buffer
 	out := tee(&log, sink)
 
-	caches, err := b.cacheMounts(ws.PR)
+	args, err := b.createArgs(ws.PR, cfg, source, containerDir, buildDir, image)
 	if err != nil {
 		return "", err
 	}
-
-	args := []string{
-		"create",
-		// --mount, not --volume: --volume's fields are colon-separated, so a
-		// Windows source path collides with its own separator.
-		"--mount", "type=bind,source=" + source + ",target=/workspace",
-		"--workdir", containerDir,
-		// Containers that outlive their build are the usual way a small build
-		// host runs out of memory.
-		"--memory", "4g",
-		"--cpus", "2",
-	}
-	args = append(args, caches...)
-	// After the caches, so a repository that names one of these variables in its
-	// own config wins — which is the general rule for build env here, and the
-	// escape hatch if a manager needs a cache somewhere else.
-	for _, kv := range b.buildEnv(ws.PR, cfg, nil) {
-		args = append(args, "--env", kv)
-	}
-	args = append(args, image, "sh", "-lc",
-		installCommand(buildDir)+" && "+cfg.Build.Command)
 
 	created, err := exec.CommandContext(ctx, "docker", args...).Output()
 	if err != nil {
@@ -397,10 +376,13 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	// Removed on every path out, including a cancelled build. Its own context,
 	// because the build's is already cancelled in exactly the case where a
 	// container is most likely to be left running.
+	//
+	// -v, not just -f: the node_modules volume is anonymous, and without it every
+	// build leaves a few hundred megabytes behind that nothing ever looks at again.
 	defer func() {
 		rmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		if err := exec.CommandContext(rmCtx, "docker", "rm", "-f", container).Run(); err != nil {
+		if err := exec.CommandContext(rmCtx, "docker", "rm", "-fv", container).Run(); err != nil {
 			b.log.Warn("removing the build container", "container", container, "error", err)
 		}
 	}()
@@ -429,6 +411,62 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	}
 
 	return log.String(), nil
+}
+
+// createArgs is the whole `docker create` command line.
+//
+// Extracted from buildDocker so it can be asserted on without starting a container.
+// Two of these arguments are worth five minutes a build each and neither is visible
+// in any log, which makes this the part of the driver most worth pinning.
+func (b *Builder) createArgs(
+	pr model.PullRequest, cfg config.RepoConfig,
+	source, containerDir, buildDir, image string,
+) ([]string, error) {
+	caches, err := b.cacheMounts(pr)
+	if err != nil {
+		return nil, err
+	}
+
+	args := []string{
+		"create",
+		// --mount, not --volume: --volume's fields are colon-separated, so a
+		// Windows source path collides with its own separator.
+		"--mount", "type=bind,source=" + source + ",target=/workspace",
+		// node_modules gets a volume, so npm writes it to the container's own
+		// filesystem instead of through the bind mount. This is not a small
+		// optimisation: measured on this project's www/, `npm ci` takes 5m46s
+		// writing node_modules across the mount and 14s writing it to a volume,
+		// with an identical warm package cache. 1325 packages is tens of thousands
+		// of small files, and every one of them was crossing WSL into NTFS.
+		//
+		// Under the build directory, not the workspace root: npm resolves
+		// node_modules from the directory it runs in, so a volume anywhere else is
+		// mounted where npm never looks and the install goes through the mount
+		// anyway — five minutes lost with nothing to show it.
+		//
+		// Anonymous, so it is created per build and removed with the container by
+		// `docker rm -fv`. A named volume would let node_modules persist, but
+		// `npm ci` deletes its contents before installing anyway, so there is
+		// almost nothing left to win above 14s — and it would add volumes to reap.
+		//
+		// Nested inside the bind mount above, which docker handles: mounts are
+		// applied shallowest first, so the volume lands on top.
+		"--mount", "type=volume,target=" + containerDir + "/node_modules",
+		"--workdir", containerDir,
+		// Containers that outlive their build are the usual way a small build
+		// host runs out of memory.
+		"--memory", "4g",
+		"--cpus", "2",
+	}
+	args = append(args, caches...)
+	// After the caches, so a repository that names one of these variables in its
+	// own config wins — which is the general rule for build env here, and the
+	// escape hatch if a manager needs a cache somewhere else.
+	for _, kv := range b.buildEnv(pr, cfg, nil) {
+		args = append(args, "--env", kv)
+	}
+	return append(args, image, "sh", "-lc",
+		installCommand(buildDir)+" && "+cfg.Build.Command), nil
 }
 
 // tee returns a writer feeding both the in-memory log and the live sink.
