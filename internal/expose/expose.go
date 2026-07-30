@@ -179,12 +179,59 @@ type Exposer interface {
 	Publish(ctx context.Context, spec Spec, h http.Handler) (*Publication, error)
 
 	// Reap removes any published resources this exposer owns that are not in
-	// keep. It runs at startup — where everything is by definition an orphan
-	// from a previous process — and periodically thereafter.
+	// keep. It runs at startup and periodically thereafter.
+	//
+	// It used to run at startup with a nil keep-set, on the reasoning that
+	// everything it found was an orphan from a previous process. That is true of
+	// the *listener* and false of the published resource: a zrok share survives the
+	// process that made it, so deleting them all meant paying to delete thirteen
+	// shares and then paying again to create thirteen identical ones. Startup now
+	// passes what the database claims — see Adopter.
 	Reap(ctx context.Context, keep map[string]bool) error
 
 	// Close shuts down every live publication.
 	Close() error
+}
+
+// Adoptable is a publication a previous process created that this one can take over.
+//
+// Handle is exposer-private — a zrok share token — and is passed back to Adopt
+// unchanged rather than interpreted by the caller.
+type Adoptable struct {
+	Handle string
+
+	// Origin is the scheme and host the publication is already reachable at, as the
+	// exposer reported it. Empty means the exposer cannot say, and the candidate is
+	// then not adoptable: a publication whose URL has to be guessed is worse than one
+	// that is recreated, because the guess ends up in a pull request comment.
+	Origin string
+}
+
+// Adopter is an exposer that can serve a publication a previous process created,
+// instead of deleting it and making an identical one.
+//
+// This exists because delete-then-recreate was measured: thirteen shares for two pull
+// requests took 85 seconds to delete and 183 seconds to recreate, and for that four and
+// a half minutes every preview URL 404s and no queued build can start. What actually
+// dies with the process is the overlay listener, and a listener can be bound to an
+// existing share by its token — so the controller work is avoidable in the common case,
+// which is a restart with an unchanged database.
+//
+// Optional. An exposer that does not implement it keeps the old behaviour, which is
+// correct for `local` (its URLs are paths on a listener that no longer exists) and
+// unimplemented for the others.
+type Adopter interface {
+	// Adoptable lists what could be taken over, keyed by publication key — the same
+	// Spec.Key() the daemon uses. One call rather than one per candidate, because the
+	// round trip being avoided is the whole point.
+	Adoptable(ctx context.Context) (map[string]Adoptable, error)
+
+	// Adopt serves h on the existing publication described by a.
+	//
+	// A failure here is not fatal to the caller: the publication can still be created
+	// from scratch. It is fatal to *this* publication, so anything half-bound must be
+	// cleaned up before returning.
+	Adopt(ctx context.Context, spec Spec, a Adoptable, h http.Handler) (*Publication, error)
 }
 
 // nameData is the template context for a name template.

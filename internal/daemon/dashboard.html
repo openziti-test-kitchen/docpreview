@@ -174,6 +174,164 @@ input.control::placeholder { color: var(--muted) }
 .notice code { font: 12px/1.5 ui-monospace, Consolas, monospace }
 .notice p { margin: 0.4rem 0 0 }
 
+/* ── Startup report ─────────────────────────────────────────────────────────
+   A dialog rather than another banner. It is read once and dismissed, and a banner
+   that has to be dismissed competes with the one that reports a build. */
+.modal {
+  position: fixed; inset: 0; z-index: 70;
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.25rem; background: rgb(0 0 0 / 0.45);
+}
+.modal-card {
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 12px;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.35);
+  padding: 1.1rem 1.2rem; width: min(34rem, 100%);
+  max-height: 84vh; overflow-y: auto;
+}
+/* The dialog's own title is the quiet part: "Ready" is not news. The number is. */
+.modal-card h3 {
+  margin: 0; font-size: 0.72rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted);
+}
+/* The headline, labelled. A bare "3s" above a sentence was read as decoration and the
+   one number the report exists to give went unseen — so the label sits above the value
+   and the value is the largest thing in the dialog. */
+.boot-hero { padding: 0.7rem 0 0.9rem }
+.boot-hero-k {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); font-weight: 600;
+}
+.boot-hero-v {
+  font-size: 2.4rem; line-height: 1.05; font-weight: 680; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.boot-hero-n { font-size: 0.8rem; color: var(--ink-2); margin-top: 0.2rem }
+/* Label-and-value rows rather than a grid of tiles. The values are sentences —
+   "11 — bound to shares that already existed" — and a tile is a box for a number. */
+.boot-rows { margin: 0; border-top: 1px solid var(--hairline) }
+.boot-row {
+  display: flex; gap: 0.75rem; align-items: baseline;
+  padding: 0.4rem 0; border-bottom: 1px solid var(--hairline);
+}
+.boot-row dt {
+  flex: none; width: 9.5rem; font-size: 0.75rem; color: var(--muted);
+}
+.boot-row dd {
+  margin: 0; font-size: 0.82rem; font-variant-numeric: tabular-nums;
+}
+.boot-row dd.good { color: var(--good) }
+.boot-row dd.warn { color: var(--warning) }
+/* Collapsed by default. Thirteen monospace lines is the bulk of the dialog and the
+   least-read part of it: the counts above answer the question, and this is for when
+   they do not. */
+.boot-details { margin-top: 0.85rem }
+.boot-details summary {
+  cursor: pointer; font-size: 0.75rem; color: var(--ink-2);
+  padding: 0.2rem 0;
+}
+.boot-details summary:hover { color: var(--ink) }
+.boot-list {
+  font: 11.5px/1.75 ui-monospace, Consolas, monospace; color: var(--ink-2);
+  margin-top: 0.4rem; padding-left: 0.9rem;
+  border-left: 2px solid var(--hairline);
+  max-height: 14rem; overflow-y: auto;
+}
+
+/* ── Startup banner ─────────────────────────────────────────────────────────
+   A sibling of .wrap rather than a child, so it must reproduce .wrap's own box:
+   same max width, same 1.25rem gutter, or its left edge does not line up with the
+   list it sits above. Sized by subtracting the gutter rather than by padding,
+   because the padding here belongs to the notice's border. */
+#starting {
+  width: calc(100% - 2.5rem); max-width: calc(96rem - 2.5rem);
+  margin: 1.25rem auto 0;
+}
+.starting-steps {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.55rem;
+  margin: 0.55rem 0 0; font-size: 0.72rem;
+}
+/* Stages are text with a leading mark, not bordered pills.
+   Pills were the first attempt and they were read as buttons — a rounded box with a
+   border and a label is a button everywhere else on this page, so three of them in a
+   row invited clicks that do nothing. Nothing here is interactive: it is a sentence
+   about what the daemon is doing, so it is styled as one. The mark carries the state,
+   which also survives being read without colour. */
+.step { color: var(--muted); display: inline-flex; align-items: center; gap: 0.35rem }
+.step::before { content: "○"; font-size: 0.85em }
+.step.done { color: var(--ink-2) }
+.step.done::before { content: "✓"; color: var(--good) }
+/* The stage in progress spins, and that is the only moving thing in the banner.
+   A checkmark and an empty circle say which stages are behind and ahead, but between
+   them "the one in bold" was not obvious enough to find at a glance — and on a page
+   where the complaint is that nothing appears to be happening, motion is the signal
+   that answers it. */
+.step.now {
+  color: var(--ink); font-weight: 650;
+  /* Its own line, so the stage being worked on is not one item in a row of three. */
+  flex-basis: 100%;
+}
+/* No ::before for the current stage — it carries a real element instead, so the ring is
+   not competing with the mark the other two states use. */
+.step.now::before { content: none }
+/* The ring is an element, not a pseudo-element, and its border avoids color-mix().
+   Both were bugs in the first version: as a ::before it inherited the pending mark's
+   font sizing, and `border: 2px solid color-mix(…)` is one declaration — an engine that
+   cannot parse the colour drops the whole thing, leaving a 0.72em box with no border and
+   nothing visible. Two flat colours cannot fail that way. */
+.spinner {
+  width: 0.8em; height: 0.8em; flex: none; border-radius: 50%;
+  border: 2px solid var(--hairline);
+  border-top-color: var(--warning);
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg) } }
+/* With motion suppressed a still ring reads as the empty circle that means "not started",
+   so the current stage becomes a filled dot instead. If you have reduced motion enabled
+   at the OS level, this is what you get, and it is deliberate. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    width: auto; height: auto; border: 0; animation: none;
+    color: var(--warning);
+  }
+  .spinner::after { content: "●" }
+}
+/* The count belongs to the stage it is counting, so it sits inside that step rather
+   than after the row: "1 of 2" at the end of three stage names was read as counting
+   the stages, of which there are three. */
+.step .step-count { color: var(--ink-2); font-variant-numeric: tabular-nums; font-weight: 400 }
+.starting-bar {
+  height: 3px; margin-top: 0.55rem; border-radius: 999px;
+  background: var(--hairline); overflow: hidden;
+}
+/* What it is actually doing, newest first. Monospace because these are share names, and
+   a column of names in a proportional font is harder to scan for the one that changed. */
+.starting-items {
+  margin-top: 0.5rem; font: 11.5px/1.7 ui-monospace, Consolas, monospace;
+  color: var(--muted);
+}
+/* The newest line is the one being read; the rest are there for context and fade back. */
+.starting-item:first-child { color: var(--ink-2) }
+.starting-bar span {
+  display: block; height: 100%; background: var(--warning);
+  transition: width 0.3s ease;
+}
+/* An uncounted stage gets a sliding sliver, not a full bar and not a 0%-wide one:
+   the first says finished and the second says stuck, and the reap is neither. */
+.starting-bar[data-indeterminate] span {
+  width: 30% !important; animation: slide 1.4s ease-in-out infinite;
+}
+@keyframes slide {
+  0% { transform: translateX(-100%) } 100% { transform: translateX(333%) }
+}
+@media (prefers-reduced-motion: reduce) {
+  .starting-bar span { transition: none }
+  /* With motion suppressed the sliver would sit still at the left and read as 30%
+     complete, so the whole track is filled and dimmed instead: clearly "working",
+     clearly not a measurement. */
+  .starting-bar[data-indeterminate] span { animation: none; width: 100% !important; opacity: 0.35 }
+}
+
 /* ── Project switcher ───────────────────────────────────────────────────────
    A trigger and a panel, rather than a <select>: a select shows one line, cannot be
    typed into, and cannot carry a badge, so a dozen near-identical repository names
@@ -365,6 +523,13 @@ input.control::placeholder { color: var(--muted) }
 @keyframes toastin { from { opacity: 0; transform: translateY(-0.4rem) } to { opacity: 1 } }
 @keyframes fadeout { 0%, 82% { opacity: 1 } 100% { opacity: 0 } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none } }
+/* A failure toast reads as one, and its fade matches its own lifetime — the default
+   animation is timed to the 5s removal, so a 9s toast styled with it would go
+   invisible four seconds before it left the DOM and take clicks nowhere near it. */
+.toast.bad {
+  background: var(--critical); color: #fff;
+  animation: toastin 140ms ease-out, fadeout 9s ease-in forwards;
+}
 /* Column 2, like .why. Without this it was a third child of a two-column grid, so it
    wrapped into the *label* column of the next row — docker's error rendered where a
    field name belongs, in 0.74rem, which is how "errors:" ended up looking like a
@@ -442,8 +607,12 @@ input.control::placeholder { color: var(--muted) }
      beyond that it grows rather than truncating, because a wrong number is worse than a
      misaligned one. */
   min-width: 5.6rem;
-  justify-content: center;
-  gap: 0.3rem;
+  /* Mark hard left, number hard right, rather than the pair centred together. Centring
+     put the icon at a different x on every row, because it moved with the width of the
+     number beside it — so a column of previews had a wandering column of logos. Pinned
+     to the two edges of a fixed-width cell, both line up down the whole list. */
+  justify-content: space-between;
+  gap: 0.45rem;
   font-variant-numeric: tabular-nums;
 }
 .row .go.pr svg { flex: none; opacity: 0.75 }
@@ -544,6 +713,10 @@ input.control::placeholder { color: var(--muted) }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .when { color: var(--muted); font-size: 0.75rem; font-variant-numeric: tabular-nums }
+/* A running stopwatch is darker than a settled age. Same size and same tabular
+   figures — it must not change width as it counts — just not the grey the page uses
+   for things that have stopped mattering. */
+.when.ticking { color: var(--ink-2) }
 
 .pill {
   display: inline-flex; align-items: center; gap: 0.35rem;
@@ -918,6 +1091,20 @@ footer {
   </aside>
 </div>
 
+<!-- The startup report, shown once when the daemon finishes recovering.
+     Startup is the one event nobody can watch the middle of: it takes minutes, and
+     anybody who arrives during it sees a banner and no detail. So the report is shown
+     immediately after, once per process, and dismissed for good. -->
+<div class="modal" id="boot" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="boot-title">
+    <h3 id="boot-title">Startup report</h3>
+    <div id="boot-body"></div>
+    <div class="act">
+      <button class="btn primary" id="boot-close">Close</button>
+    </div>
+  </div>
+</div>
+
 <footer>
   <span id="conn" class="live">connecting…</span> ·
   <a href="/status">/status</a> · <a href="/pr">/pr</a>
@@ -957,6 +1144,38 @@ const ago = iso => {
 };
 const clock = iso => new Date(iso).toLocaleTimeString([], {hour12: false});
 
+/* LIVE_STATES are the ones where the timestamp is a stopwatch rather than an age.
+   A finished build's "6m" is a fact that does not change; a running build's is the
+   thing being watched. */
+const LIVE_STATES = new Set(["building", "queued"]);
+const isLive = s => LIVE_STATES.has(s);
+
+/* elapsed renders a running duration in one fixed shape, zero-padded.
+   `ago` is wrong for a build in flight, for two reasons that both showed up on the
+   same screen. It coarsens: at 61 seconds it prints "1m" and then does not change
+   for a minute, so the one number telling you the build is alive sits still while
+   you watch it. And it changes width — "9s" to "10s" to "1m" — which makes a column
+   of them jitter. Fixed-width minutes and seconds always move, once a second, and
+   never reflow. */
+const elapsed = iso => {
+  const n = Math.max(0, Math.floor((Date.now() - new Date(iso)) / 1000));
+  const pad = v => String(v).padStart(2, "0");
+  const h = Math.floor(n / 3600);
+  const out = `${pad(Math.floor(n / 60) % 60)}m ${pad(n % 60)}s`;
+  // Hours are prepended rather than folded into the minutes, because a configurable
+  // timeout can exceed an hour and "72m 04s" is a number nobody reads at a glance.
+  return h ? `${h}h ${out}` : out;
+};
+
+/* rowWhen picks between the two: a stopwatch while it runs, an age once it is over.
+   No "ago" suffix, because the row is a column of these and the word is the same on
+   every line. The pickers spell it out, since there the value sits mid-sentence. */
+const rowWhen = p => isLive(p.state) ? elapsed(p.updated_at) : ago(p.updated_at);
+
+/* pickerWhen is the same choice inside a sentence: "Building · 04m 12s" for one in
+   flight, "Ready · 9h ago" for one that finished. */
+const pickerWhen = p => isLive(p.state) ? elapsed(p.updated_at) : `${ago(p.updated_at)} ago`;
+
 /* secs renders a duration. Minutes and seconds rather than a bare count, because the
    numbers that matter here are a warm install at 40s and a cold one at 6m20s, and "380s"
    makes the reader do the division. */
@@ -965,7 +1184,9 @@ const secs = n => {
   if (n < 60) return `${n}s`;
   const m = Math.floor(n / 60);
   const s = n % 60;
-  return s ? `${m}m${s}s` : `${m}m`;
+  // Spaced, to match the stopwatch on the row. Two durations on one screen written
+  // "10m14s" and "10m 14s" look like two different units.
+  return s ? `${m}m ${s}s` : `${m}m`;
 };
 
 const project = p => String(p.repo || "").split("/").pop() || "unknown";
@@ -1372,7 +1593,10 @@ function updateHead(item, g) {
   // p.url is in the signature because the row now carries the link: a republish
   // that moves the URL without changing the state would otherwise leave the
   // anchor pointing at the old one.
-  const sig = [p.preview_id, p.state, p.url, p.branch, p.number, ago(p.updated_at),
+  // The elapsed clock is deliberately part of the signature. It changes every second
+  // for a running build, which is the point — and for every other row it is the same
+  // coarse `ago` it always was, so a page of finished previews still rebuilds nothing.
+  const sig = [p.preview_id, p.state, p.url, p.branch, p.number, rowWhen(p),
                ui.open === g.name, JSON.stringify(g.counts)].join("|");
 
   const head = item.querySelector(".head");
@@ -1396,7 +1620,7 @@ function updateHead(item, g) {
     <span class="pill${s.work ? " work" : s.spin ? " spin" : ""}" style="--edge:${s.color}">
       <span class="dot"></span>${esc(s.label)}
     </span>
-    <span class="when">${ago(p.updated_at)}</span>`;
+    <span class="when${isLive(p.state) ? " ticking" : ""}">${rowWhen(p)}</span>`;
 
   updateRowPR(item.querySelector('[data-role="row-pr"]'), p);
   // The Open link is the *last* .go, since the pull request link shares the class to
@@ -1430,12 +1654,16 @@ function updateRowPR(a, p) {
 /* Inline SVG, one path each, currentColor.
 
    Not an icon font and not an image: this page fetches nothing from the internet, and a
-   remote logo would announce every open dashboard to whoever hosts it. Both marks are the
-   official simple-icons paths, which are the shapes people recognise at 14px — a generic
-   "link" glyph would carry none of the information this is for. */
-const ICON_GITHUB = `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"
-  fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7 0-.7 0-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a12.4 12.4 0 0 1 6 0C16.4 3 17.4 3.3 17.4 3.3c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>`;
-const ICON_BITBUCKET = `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"
+   remote logo would announce every open dashboard to whoever hosts it.
+
+   GitHub's mark is the Octicon `mark-github` path, taken from github.com itself. The
+   simple-icons version was here first and it does not survive being scaled up — its
+   silhouette is drawn for 14px, and at 20 the ear and the tail read as artefacts.
+   `overflow: visible` comes with the Octicon and matters: the path is drawn slightly
+   outside the 24-unit box, so clipping it shaves the outline. */
+const ICON_GITHUB = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
+  focusable="false" fill="currentColor" overflow="visible"><path d="M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188.5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943"/></svg>`;
+const ICON_BITBUCKET = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
   fill="currentColor"><path d="M.8 1.1A.8.8 0 0 0 0 2l3.3 19.8c.1.5.5.8 1 .8h15.7c.4 0 .7-.3.8-.7l3.2-19.9a.8.8 0 0 0-.8-.9zm13.6 14.3H9.7L8.4 8.6h7.2z"/></svg>`;
 
 function platformIcon(platform) {
@@ -1750,7 +1978,7 @@ function updateBody(item, g) {
 }
 
 function updatePicker(sel, g) {
-  const sig = g.list.map(p => `${p.preview_id}:${p.state}:${ago(p.updated_at)}`).join("|");
+  const sig = g.list.map(p => `${p.preview_id}:${p.state}:${pickerWhen(p)}`).join("|");
 
   // A <select> being rewritten while its dropdown is open closes it, with no
   // visible cause — you reach for an older preview, a build finishes somewhere
@@ -1767,7 +1995,7 @@ function updatePicker(sel, g) {
     sel.dataset.sig = sig;
     sel.innerHTML = g.list.map(p =>
       `<option value="${esc(p.preview_id)}">` +
-      `${esc(p.branch)} · #${p.number} · ${esc(state(p.state).label)} · ${ago(p.updated_at)} ago` +
+      `${esc(p.branch)} · #${p.number} · ${esc(state(p.state).label)} · ${esc(pickerWhen(p))}` +
       `</option>`).join("");
   }
   sel.value = g.current.preview_id;
@@ -1945,8 +2173,17 @@ function updateBuildPicker(previewID) {
   // install for four minutes — and it is the number that shows a cache going cold.
   sel.innerHTML = builds.map((b, i) =>
     `<option value="${i === 0 ? "" : esc(b.build_id)}">` +
-    `${buildIcon(b)} ${esc(buildLabel(b))} · ${esc(b.build_id)} · ${ago(b.mod_time)} ago` +
-    `${b.seconds ? ` · took ${esc(secs(b.seconds))}` : ""}` +
+    // A running build has no duration to report yet, so its age becomes the
+    // stopwatch — "running · 04m 12s" — and the `took` clause appears once it has
+    // actually taken something.
+    `${buildIcon(b)} ${esc(buildLabel(b))} · ${esc(b.build_id)} · ` +
+    // started_at, not mod_time: mod_time is the log file's, which advances with every
+    // line the build writes, so a stopwatch driven from it would read a few seconds
+    // old for the whole build.
+    // No duration here. It was a third fact on every option — outcome, id, age, took —
+    // and a picker of five builds became five unreadable lines. The banner under the
+    // picker says how long the selected build took, where it costs no width.
+    `${esc(isLive(b.state) ? elapsed(b.started_at || b.mod_time) : `${ago(b.mod_time)} ago`)}` +
     `</option>`).join("");
   sel.value = current;
 
@@ -2033,10 +2270,27 @@ function openLog(previewID) {
   src.addEventListener("start", e => {
     let d = {};
     try { d = JSON.parse(e.data) || {}; } catch {}
+
+    // Clear the pane on every start, not only the first.
+    //
+    // One connection can announce twice. Press Rebuild and the stream opens while the build
+    // is still queued: the server replays the *previous* build, says done, then waits and
+    // sends a second start when the new build begins. Without this, the new output appended
+    // below the old log and its "— end of log —" line, so the pane showed two builds
+    // spliced together under a banner that flipped halfway down. Which is what "not tailing
+    // properly" looked like.
+    //
+    // Safe on the first start too: it arrives before any line, so there is nothing to lose.
+    resetPane();
+    ui.buffer = "";
+
     if (d.live) {
       banner("live", "streaming this build");
     } else {
-      banner("past", `previous build${d.build_id ? " · " + d.build_id : ""} — nothing is running`);
+      // The duration goes here rather than in the build picker's options, where it was
+      // a third fact on every line and made the dropdown unreadable.
+      banner("past", `previous build${d.build_id ? " · " + d.build_id : ""} — ` +
+        `nothing is running${d.seconds ? ` · took ${secs(d.seconds)}` : ""}`);
     }
   });
 
@@ -2790,10 +3044,14 @@ async function run(btn, fn, opts) {
   } catch (e) {
     btn.disabled = false;
     btn.textContent = label;
-    const n = document.createElement("div");
-    n.className = "notice bad";
-    n.textContent = e.message;
-    document.getElementById(bodyID).prepend(n);
+    // A toast, not a notice prepended into the panel.
+    //
+    // Prepending was the original, and every rejected save added another one: ten
+    // attempts at a base URL left ten identical red boxes stacked above the form,
+    // pushing the fields somebody was correcting off the screen. A failure is an
+    // event, and an event that accumulates in the document is a leak. This one
+    // expires on its own and never moves the form.
+    toast(e.message, "bad");
   }
 }
 
@@ -2863,7 +3121,7 @@ let projFlash = "";
 
    Detached from any render. The element removes itself on a timer, because clearing it by
    re-rendering would throw away whatever somebody had started typing in another panel. */
-function toast(text) {
+function toast(text, kind) {
   let host = document.getElementById("toasts");
   if (!host) {
     host = document.createElement("div");
@@ -2871,11 +3129,13 @@ function toast(text) {
     document.body.appendChild(host);
   }
   const t = document.createElement("div");
-  t.className = "toast";
+  t.className = kind ? `toast ${kind}` : "toast";
   t.textContent = text;
   host.appendChild(t);
   // Long enough to read a sentence, and it does not block anything while it is there.
-  setTimeout(() => t.remove(), 5000);
+  // A failure is left up longer: it is usually a sentence about what to type instead,
+  // and it appears at the moment somebody's attention is on the form they just broke.
+  setTimeout(() => t.remove(), kind === "bad" ? 9000 : 5000);
 }
 
 // confirmDiscard asks before throwing away unsaved edits, and returns whether to go on.
@@ -3095,6 +3355,9 @@ function projectFacts(p) {
     ["base URL", p.base_url],
     ["ignore script", p.detect_script],
     ["image", p.image],
+    // Listed because a project with a raised timeout is the one whose builds look
+    // hung, and the card is where somebody checks what it was set to.
+    ["timeout", p.timeout],
   ].filter(([, v]) => v);
 
   const env = (p.secrets || []).length
@@ -3313,6 +3576,12 @@ function projectForm(s, p) {
       ${field("detect", "Ignore-build script", text("detect", "ci/needs-build.sh"),
         "Executed directly, so its shebang decides the interpreter. Gets the changed " +
         "paths on stdin; exit 0 to build, 78 to skip. Blank uses path matching.")}
+      ${field("timeout", "Build timeout", text("timeout", esc(s.defaults.timeout || "15m0s")),
+        "How long one build of this project may run before it is killed. Blank uses the " +
+        "server's <code>build.timeout</code>, shown above as the placeholder. A duration " +
+        "with a unit — <code>45m</code>, <code>2h</code> — because a repository that " +
+        "clones seven others is not a two-minute build and every other project should " +
+        "not have to wait that long to be told it hung.")}
 
       <div class="field-head">Notes</div>
       ${field("notes", "Notes", `<textarea class="control" id="${id("notes")}"
@@ -3656,6 +3925,7 @@ function wireProjectHandlers(s) {
           build_output: val(id("output")),
           base_url: val(id("baseurl")),
           detect_script: val(id("detect")),
+          timeout: val(id("timeout")),
           image: val(id("image")),
           notes: val(id("notes")),
           display_name: val(id("name")),
@@ -3789,7 +4059,10 @@ function applyStatus(d) {
   // Said out loud, because "Queued" with nothing happening is indistinguishable from a
   // stuck queue — which is exactly how it was reported, twice, both times a minute after a
   // restart.
-  showStarting(d.starting);
+  showStarting(d.starting, d.startup);
+  // Only once the daemon says it has finished, so the report does not appear over the
+  // banner that is still counting.
+  if (!d.starting) showBootReport(d);
 
 
   // A project whose last preview was torn down must not keep a stream open
@@ -3810,22 +4083,167 @@ function applyStatus(d) {
 // Not a spinner on the row: the row is correct — the build *is* queued. What is missing is
 // that nothing can claim it yet, which is a property of the daemon and belongs where the
 // daemon's own state is reported.
-function showStarting(starting) {
+/* showBootReport shows what the last recovery did, once per daemon process.
+
+   Gated on the instance stamp, in sessionStorage: the daemon reports its startup for as
+   long as it runs, so without a marker every reload would re-announce a restart from an
+   hour ago. sessionStorage rather than localStorage because it is scoped to the tab,
+   which is the right lifetime for "I have seen this" — and rather than a variable,
+   because reloading the page is the commonest way to arrive here. */
+function showBootReport(s) {
+  const r = s && s.last_startup;
+  if (!r || !r.instance) return;
+
+  const seen = `docpreview.boot.${r.instance}`;
+  try {
+    if (sessionStorage.getItem(seen)) return;
+    sessionStorage.setItem(seen, "1");
+  } catch {
+    // Private browsing, or storage disabled. Showing it every reload is worse than not
+    // showing it, because it appears over whatever the reader came back to look at.
+    return;
+  }
+
+  // Adopted versus created is the number worth reporting: adoption binds a listener to a
+  // share that already exists, creating one is a controller round trip that answers in
+  // ten to fifteen seconds. The difference between the two is the difference between a
+  // restart nobody notices and four minutes of 404s.
+  const adopted = (r.adopted_previews || 0) + (r.adopted_builds || 0);
+  const created = (r.created_previews || 0) + (r.created_builds || 0);
+
+  const shares = adopted + created;
+  // One row per fact, and only for facts that happened. A tile reading "0 created" is a
+  // reader's problem to dismiss; its absence says the same thing and takes no space.
+  const row = (k, v, cls) => v === "" ? "" :
+    `<div class="boot-row"><dt>${esc(k)}</dt><dd${cls ? ` class="${cls}"` : ""}>${esc(v)}</dd></div>`;
+
+  const rows = [
+    row("Previews restored", String(r.previews || 0)),
+    row("Build shares", String(r.adopted_builds + r.created_builds || 0)),
+    row("Adopted", adopted ? `${adopted} — bound to shares that already existed` : "", "good"),
+    row("Created", created ? `${created} — a controller round trip each` : "", "warn"),
+    row("Cleared", r.orphans ? `${r.orphans} the database no longer claimed` : ""),
+    row("Queued builds", r.pending ? String(r.pending) : "", "warn"),
+  ].join("");
+
+  // The headline is labelled. It was a bare "3s" above a sentence, and the one number
+  // the report exists to give was read as decoration — "I didn't see a total time".
+  document.getElementById("boot-body").innerHTML = `
+    <div class="boot-hero">
+      <div class="boot-hero-k">Startup took</div>
+      <div class="boot-hero-v" id="boot-hero-v">${esc(secs(r.seconds))}</div>
+      <div class="boot-hero-n">${
+        shares === 0 ? "nothing to restore"
+          : adopted && !created ? `all ${shares} shares adopted, none recreated`
+          : created && !adopted ? `all ${shares} shares recreated — the slow path`
+          : `${adopted} of ${shares} shares adopted`
+      }</div>
+    </div>
+    <dl class="boot-rows">${rows}</dl>
+    ${(r.items || []).length ? `<details class="boot-details">
+      <summary>What it did · ${r.items.length} step${r.items.length === 1 ? "" : "s"}</summary>
+      <div class="boot-list">${r.items.map(t => `<div>${esc(t)}</div>`).join("")}</div>
+    </details>` : ""}`;
+
+  const modal = document.getElementById("boot");
+  modal.hidden = false;
+
+  const close = () => { modal.hidden = true; };
+  document.getElementById("boot-close").onclick = close;
+  // Click-away and Escape, because a dialog with one button and no way out is a dialog
+  // somebody has to aim at.
+  modal.onclick = e => { if (e.target === modal) close(); };
+  document.addEventListener("keydown", function esc(e) {
+    if (e.key !== "Escape") return;
+    close();
+    document.removeEventListener("keydown", esc);
+  });
+}
+
+// STAGES is every stage the daemon reports, in the order it runs them, so the banner
+// can show what is finished and what is still to come. A stage the page does not know
+// still renders — its note carries the text — it just gets no step of its own.
+const STAGES = [
+  ["reaping",   "Clear old shares"],
+  ["restoring", "Restore previews"],
+  ["history",   "Load history"],
+];
+
+function showStarting(starting, startup) {
+  const wrap = document.querySelector(".wrap");
   let el = document.getElementById("starting");
+
   if (!starting) {
     if (el) el.remove();
     return;
   }
+
+  // The page's own content stays on screen.
+  //
+  // Hiding it was tried, on the reasoning that during recovery the Open links point at
+  // shares that do not exist yet and the feed is empty until backfill — so the content
+  // contradicts the banner. What it actually produced was a dashboard whose entire
+  // visible contents were one notice, which reads as a broken page rather than as a
+  // careful one. The rows are true: they come from the database, and their state is
+  // what it says. The dead-link window is a real problem and is a separate fix, listed
+  // in TODO.md — it is not solved by showing nothing at all.
   if (!el) {
     el = document.createElement("div");
     el.id = "starting";
     el.className = "notice warn";
-    el.style.margin = "0 0 0.75rem";
-    el.innerHTML = `<strong>Starting up.</strong> Restoring previews and clearing shares
-      left by the previous run. Builds queue but do not start until this finishes —
-      each share is a round trip to the exposer.`;
-    document.querySelector(".wrap").prepend(el);
+    // A sibling of .wrap, never a child of it.
+    //
+    // This banner used to be prepended into .wrap — which is a two-column grid, so the
+    // banner became its first cell, the previews list was pushed into the 21rem rail
+    // column, and the activity rail took the wide one. Every row in the list then
+    // overlapped itself in a third of the width it was designed for, which read as
+    // broken row CSS and is not: prepending into a grid shifts every sibling by one.
+    wrap.parentNode.insertBefore(el, wrap);
   }
+
+  const stage = startup && startup.stage ? startup.stage : "";
+  const note = startup && startup.note ? startup.note : "Restoring previews.";
+  const total = startup ? startup.total || 0 : 0;
+  const done = startup ? startup.done || 0 : 0;
+
+  // Counted stages get a determinate bar and "3 of 11"; uncounted ones get a bar with
+  // no width, because a reap reports nothing until it returns and a bar creeping on a
+  // timer would be inventing progress.
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  // The unit is named, because "7 of 13" against two previews invites the question of
+  // what the thirteen are: one share per preview plus one per retained build.
+  const count = total > 0
+    ? `${done} of ${total}${stage === "restoring" ? " shares" : ""}`
+    : "";
+
+  // -1 for a stage this page has never heard of, which leaves every step pending
+  // rather than marking them all complete.
+  // Newest first, capped. The daemon sends up to forty and the interesting ones are the
+  // last few — a banner that grows a forty-line list pushes the page it is describing off
+  // the screen, which is the failure the hidden-content version had.
+  const items = (startup && startup.items ? startup.items : [])
+    .slice(-6).reverse()
+    .map(t => `<div class="starting-item">${esc(t)}</div>`).join("");
+
+  const at = STAGES.findIndex(s => s[0] === stage);
+  const steps = STAGES.map(([key, label], i) => {
+    const cls = at > i ? "step done" : at === i ? "step now" : "step";
+    // The count goes inside the current step, not after the list.
+    const n = at === i && count ? ` <span class="step-count">${esc(count)}</span>` : "";
+    // The spinner is markup rather than a ::before, so it cannot inherit the pending
+    // mark's sizing and cannot be lost to one unparseable colour function.
+    const spin = at === i ? `<span class="spinner" aria-hidden="true"></span>` : "";
+    return `<span class="${cls}">${spin}${esc(label)}${n}</span>`;
+  }).join("");
+
+  el.innerHTML = `<div class="starting-head">
+      <strong>Starting up.</strong> ${esc(note)} Builds queue but do not start yet.
+    </div>
+    <div class="starting-steps">${steps}</div>
+    ${items.length ? `<div class="starting-items">${items}</div>` : ""}
+    <div class="starting-bar"${total > 0 ? "" : ` data-indeterminate="1"`}>
+      <span style="width:${pct}%"></span>
+    </div>`;
 }
 
 // openFromFragment honours `#preview=<id>`, which is where a failed build's comment
@@ -3936,9 +4354,23 @@ if (isSetupPage) {
   connect();
   render();
   showAdminLinks();
-  // Relative timestamps drift without a redraw, and the status stream is silent
-  // when nothing changes — which is exactly when "2s ago" has become a lie.
-  setInterval(() => { if (ui.previews.length) renderList(); }, 5000);
+  // Every second, not every five.
+  //
+  // Timestamps drift without a redraw and the status stream is silent when nothing
+  // changes — which is exactly when "2s ago" has become a lie. Five seconds was
+  // enough for an age that coarsens; it is not enough for a stopwatch, which is
+  // read to answer "is this still moving" and answered it four times out of five
+  // with a number that had not changed.
+  //
+  // Affordable because the row already repaints only on a changed signature: a
+  // finished preview's coarse age is the same string on all five ticks, so this is
+  // one string comparison per row per second and no DOM work at all. The running
+  // row's signature does change every second, which is the entire point.
+  //
+  // The log pane is untouched by any of this. It is a live EventSource written to
+  // as lines arrive — never on a poll — which is worth stating because a ticking
+  // clock beside a log makes it look like the log is what is being polled.
+  setInterval(() => { if (ui.previews.length) renderList(); }, 1000);
 }
 
 // showAdminLinks draws the Secrets and Projects links, and only for a request the

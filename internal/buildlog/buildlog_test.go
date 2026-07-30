@@ -15,6 +15,32 @@ import (
 
 const secret = "dpfake_9f2a1c4b7e01d3f5a8c6b2e4"
 
+// unstamp removes a line's timestamp prefix.
+//
+// Every emitted line begins with `15:04:05.000 ` — see stamp. Tests about ordering, replay
+// and redaction are about the *rest* of the line, so they strip it rather than embedding a
+// clock in every expectation. The prefix's own shape is asserted once, in
+// TestEveryLineCarriesATimestamp, which is where a change to it should fail.
+func unstamp(line string) string {
+	if len(line) < stampWidth {
+		return line
+	}
+	// Only when it looks like one: a line shorter than the prefix, or one from a test that
+	// bypassed emit, must come back unchanged rather than losing its first thirteen bytes.
+	if line[2] != ':' || line[5] != ':' || line[8] != '.' || line[stampWidth-1] != ' ' {
+		return line
+	}
+	return line[stampWidth:]
+}
+
+func unstampAll(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = unstamp(l)
+	}
+	return out
+}
+
 func newTestWriter(t *testing.T, secrets ...string) (*Writer, string) {
 	t.Helper()
 
@@ -146,10 +172,10 @@ func TestOverlongLineStaysReadable(t *testing.T) {
 		if len(lines) == 0 {
 			t.Fatalf("a %d-byte unterminated line produced no readable lines", size)
 		}
-		if lines[0] != "before" {
+		if unstamp(lines[0]) != "before" {
 			t.Errorf("size %d: first line = %q, want \"before\"", size, lines[0])
 		}
-		if last := lines[len(lines)-1]; last != "after" {
+		if last := unstamp(lines[len(lines)-1]); last != "after" {
 			t.Errorf("size %d: last line = %q, want \"after\"", size, last)
 		}
 		// No emitted line may exceed the cap, or the next reader hits the same
@@ -245,7 +271,7 @@ func TestSubscriberReceivesLinesLive(t *testing.T) {
 		}
 	}
 
-	if got[0] != "first" || got[2] != "third" {
+	if unstamp(got[0]) != "first" || unstamp(got[2]) != "third" {
 		t.Errorf("lines arrived wrong: %v", got)
 	}
 	if strings.Contains(got[1], secret) {
@@ -303,10 +329,10 @@ func TestSubscribeMidBuildLosesNoLines(t *testing.T) {
 		// every line after it must follow with no gap. A dropped line in the
 		// handoff window shows up here as a jump.
 		var first int
-		if _, err := fmt.Sscanf(got[0], "line %d", &first); err != nil {
+		if _, err := fmt.Sscanf(unstamp(got[0]), "line %d", &first); err != nil {
 			t.Fatalf("unexpected first line %q", got[0])
 		}
-		for i, l := range got {
+		for i, l := range unstampAll(got) {
 			want := fmt.Sprintf("line %d", first+i)
 			if l != want {
 				t.Fatalf("attempt %d: gap in the stream at index %d: got %q, want %q "+
@@ -316,7 +342,7 @@ func TestSubscribeMidBuildLosesNoLines(t *testing.T) {
 		}
 
 		// And it must reach the end, or lines were lost at the close.
-		if last := got[len(got)-1]; last != fmt.Sprintf("line %d", total-1) {
+		if last := unstamp(got[len(got)-1]); last != fmt.Sprintf("line %d", total-1) {
 			t.Fatalf("attempt %d: stream ended at %q, want the final line", attempt, last)
 		}
 	}
@@ -338,7 +364,7 @@ func TestSubscribeToAFinishedWriterReplaysAndCloses(t *testing.T) {
 		got = append(got, l)
 	}
 
-	if len(got) != 2 || got[0] != "one" || got[1] != "two" {
+	if plain := unstampAll(got); len(plain) != 2 || plain[0] != "one" || plain[1] != "two" {
 		t.Errorf("replay of a finished log = %v, want [one two]", got)
 	}
 }
@@ -424,8 +450,45 @@ func TestTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 5 || got[0] != "line 95" || got[4] != "line 99" {
+	if plain := unstampAll(got); len(plain) != 5 || plain[0] != "line 95" || plain[4] != "line 99" {
 		t.Errorf("Tail = %v", got)
+	}
+}
+
+// TestEveryLineCarriesATimestamp is where the prefix's shape is pinned, so the other tests
+// can strip it without each embedding a clock.
+//
+// The stamp is when this process *read* the line, not when the build printed it — the two
+// differ whenever the writing process block-buffers, which everything inside the container
+// does because its stdout is a pipe. That is stated on `stamp` and is the reason this
+// asserts a format rather than a value.
+func TestEveryLineCarriesATimestamp(t *testing.T) {
+	w, path := newTestWriter(t, secret)
+	w.clockFn = func() time.Time {
+		return time.Date(2026, 7, 30, 21, 56, 7, 762_000_000, time.UTC)
+	}
+
+	fmt.Fprintln(w, "hello")
+	fmt.Fprintln(w, secret)
+	w.Close()
+
+	lines, err := Tail(path, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("%d lines, want 2: %v", len(lines), lines)
+	}
+	if want := "21:56:07.762 hello"; lines[0] != want {
+		t.Errorf("line = %q, want %q", lines[0], want)
+	}
+	// Stamped *and* redacted: the prefix is added after scrubbing, so neither can displace
+	// the other.
+	if !strings.HasPrefix(lines[1], "21:56:07.762 ") {
+		t.Errorf("the second line lost its stamp: %q", lines[1])
+	}
+	if strings.Contains(lines[1], secret) {
+		t.Errorf("stamping a line skipped its redaction: %q", lines[1])
 	}
 }
 

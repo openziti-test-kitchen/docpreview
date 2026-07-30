@@ -47,6 +47,23 @@ type Server struct {
 	// built preview artifacts.
 	DataDir string `yaml:"data_dir"`
 
+	// LogFile is where the daemon's own log is written, in addition to stderr.
+	//
+	// Empty means stderr only, which is the default and is fine for a foreground run.
+	// It is not fine for anything else: the process is normally started in a terminal
+	// that is later closed, and the log then exists nowhere. Every question of the form
+	// "why did that build fail" starts with the log nobody can read.
+	//
+	// Appended to, never rotated. Rotation is a real gap and belongs to whatever
+	// supervises the process; truncating on boot would delete the evidence from before
+	// the restart being investigated, which is the worst possible moment for it.
+	//
+	// Deliberately not inside DataDir by default. Nothing here is a secret — a build log
+	// is redacted and this is quieter still — but DataDir also holds the vault, and a
+	// path somebody is invited to tail should not be a directory somebody is invited to
+	// tar up.
+	LogFile string `yaml:"log_file"`
+
 	// Workers is the number of builds that may run concurrently.
 	Workers int `yaml:"workers"`
 
@@ -404,6 +421,23 @@ type BuildDefaults struct {
 	// Timeout caps a single build.
 	Timeout time.Duration `yaml:"timeout"`
 
+	// CPUs and Memory cap one build container, passed to docker as --cpus and --memory.
+	//
+	// Configurable because the right values are a property of the machine and of what is
+	// being built, and the defaults were neither: 2 CPUs and 4 GB were hardcoded, and a
+	// Docusaurus site prerenders every route in parallel across cores. On a host with
+	// twenty of them that left eighteen idle through the longest phase of the build.
+	//
+	// Capped rather than unlimited, still. A build is somebody else's code — a container
+	// that can take every core and all the memory can stall the daemon that is supposed to
+	// be reporting on it, and a runaway one takes the machine with it.
+	//
+	// On Windows the ceiling is not the host's: Docker Desktop runs a WSL2 VM with its own
+	// allocation, and a container cannot exceed what that VM was given. `docker info`
+	// reports what is actually available, and raising it means .wslconfig, not this.
+	CPUs   float64 `yaml:"cpus"`
+	Memory string  `yaml:"memory"`
+
 	// Secrets maps an environment variable name to a vault key whose value is
 	// injected into every build.
 	//
@@ -561,6 +595,11 @@ func DefaultServer() Server {
 			Image:    DefaultImage,
 			Timeout:  15 * time.Minute,
 			KeepLogs: 7 * 24 * time.Hour,
+			// Four cores and six gigabytes. The old hardcoded pair was two and four,
+			// which on any modern machine leaves the prerender phase of a Docusaurus
+			// build — the longest one — running on a fraction of what is there.
+			CPUs:   4,
+			Memory: "6g",
 		},
 		Preview: PreviewConfig{
 			TTL:             72 * time.Hour,
@@ -783,6 +822,17 @@ type RepoBuild struct {
 	// Env is extra environment handed to the build. Values are literal; no
 	// vault lookups, because a PR author must not be able to name a secret.
 	Env map[string]string `yaml:"env"`
+
+	// Timeout caps this build, overriding the server-wide build.timeout. Zero means
+	// the server value.
+	//
+	// `yaml:"-"` is the whole point of it living here: this struct is otherwise read
+	// from the pull request's own working tree, and how long a branch may occupy a
+	// build worker is not the branch's decision. Only the operator's project row
+	// writes this, in applyProject — a repository that sets `build.timeout` in its
+	// .docpreview.yml is silently ignored, which is the correct outcome and not an
+	// oversight.
+	Timeout time.Duration `yaml:"-"`
 }
 
 // RepoDetect describes how to decide whether a change is documentation-related.

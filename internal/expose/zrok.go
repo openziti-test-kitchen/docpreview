@@ -179,7 +179,24 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 		return nil, err
 	}
 
-	shr, err := sdk.CreateShare(z.root, req)
+	// Retried on a controller timeout, and this one is not free.
+	//
+	// The deadline is the SDK client's, so a timed-out create may well have succeeded on
+	// the controller — in which case the retry creates a second share and the first is an
+	// orphan holding nothing. That is recoverable: it carries the `docpreview:` target
+	// prefix, so the next startup's Reap collects it, and the newer share is the one
+	// bound to the name. The alternative is what this replaced — a preview that built
+	// successfully, has its artifacts on disk, and is not served because one HTTP request
+	// was slow. A leaked share until the next restart is the cheaper failure.
+	shr, err := func() (*sdk.Share, error) {
+		var out *sdk.Share
+		err := z.retryTransient(ctx, "create share "+spec.Name, func() error {
+			var attempt error
+			out, attempt = sdk.CreateShare(z.root, req)
+			return attempt
+		})
+		return out, err
+	}()
 	if err != nil {
 		// A name held by a share we do not know about — left behind by a
 		// previous process that died without cleaning up — is the one failure
@@ -249,6 +266,115 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	z.log.Info("published preview",
 		"preview", spec.PreviewID, "build", spec.BuildID,
 		"name", spec.Name, "url", url, "token", shr.Token)
+
+	return NewPublication(url, spec.Name, func() error {
+		z.withdrawEntry(spec.Key(), entry)
+		return nil
+	}), nil
+}
+
+// Adoptable lists the shares this environment already owns, keyed by publication key.
+//
+// One ListShares call, which is the same call Reap makes — so a startup that reaps and
+// then adopts pays for two listings rather than one per candidate. Worth keeping them
+// separate anyway: Reap decides what to delete and this decides what to keep, and
+// merging them into one pass that does both is how a keep-set bug deletes live shares.
+func (z *Zrok) Adoptable(ctx context.Context) (map[string]Adoptable, error) {
+	client, err := z.root.Client()
+	if err != nil {
+		return nil, fmt.Errorf("building zrok client: %w", err)
+	}
+
+	envZID := z.root.Environment().ZitiIdentity
+	prefix := targetPrefix
+
+	params := metadata.NewListSharesParamsWithContext(ctx)
+	params.EnvZID = &envZID
+	params.Target = &prefix
+
+	resp, err := client.Metadata.ListShares(params, z.auth())
+	if err != nil {
+		return nil, fmt.Errorf("listing zrok shares: %w", err)
+	}
+	if resp.Payload == nil {
+		return map[string]Adoptable{}, nil
+	}
+
+	out := make(map[string]Adoptable, len(resp.Payload.Shares))
+	for _, shr := range resp.Payload.Shares {
+		if shr == nil || !strings.HasPrefix(shr.Target, prefix) {
+			continue
+		}
+		// No endpoint, no adoption. The URL goes into a pull request comment, so a
+		// reconstructed one — guessing the frontend's DNS suffix — is a link that
+		// works until the day it does not.
+		if len(shr.FrontendEndpoints) == 0 {
+			continue
+		}
+		origin := shr.FrontendEndpoints[0]
+		if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
+			origin = "https://" + origin
+		}
+		out[strings.TrimPrefix(shr.Target, prefix)] = Adoptable{Handle: shr.ShareToken, Origin: origin}
+	}
+	return out, nil
+}
+
+// Adopt binds an overlay listener to a share that already exists and serves h on it.
+//
+// Everything Publish does except the two controller calls: no name to register — the
+// share already holds it — and no share to create. What is left is the listener and the
+// HTTP server, which are the parts that genuinely died with the previous process.
+func (z *Zrok) Adopt(ctx context.Context, spec Spec, a Adoptable, h http.Handler) (*Publication, error) {
+	if a.Handle == "" || a.Origin == "" {
+		return nil, fmt.Errorf("adopting %s: incomplete candidate", spec.Key())
+	}
+
+	// Same guard as Publish, for the same reason: two previews rendering to one name
+	// must be refused rather than resolved, and adoption is not an exception — the
+	// share being adopted holds the name either way.
+	z.mu.Lock()
+	for id, entry := range z.live {
+		if entry.name == spec.Name && id != spec.Key() {
+			z.mu.Unlock()
+			return nil, fmt.Errorf("the name %q is already serving a different preview (%s)", spec.Name, id)
+		}
+	}
+	z.mu.Unlock()
+
+	listener, err := sdk.NewListener(a.Handle, z.root)
+	if err != nil {
+		// Deliberately not deleted. Publish deletes a share it cannot serve because it
+		// had just created it; this one predates the process and something else may yet
+		// serve it. The caller falls back to Publish, which replaces it by name.
+		return nil, fmt.Errorf("opening zrok listener for existing share %s: %w", a.Handle, err)
+	}
+
+	srv := &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: 15 * time.Second,
+	}
+	go func() {
+		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			z.log.Error("preview server stopped", "name", spec.Name, "error", err)
+		}
+	}()
+
+	entry := &zrokShare{
+		token:     a.Handle,
+		previewID: spec.PreviewID,
+		name:      spec.Name,
+		listener:  listener,
+		server:    srv,
+	}
+	z.mu.Lock()
+	z.live[spec.Key()] = entry
+	z.mu.Unlock()
+
+	url := JoinURL(a.Origin, spec.BaseURL)
+	z.log.Info("adopted preview",
+		"preview", spec.PreviewID, "build", spec.BuildID,
+		"name", spec.Name, "url", url, "token", a.Handle)
 
 	return NewPublication(url, spec.Name, func() error {
 		z.withdrawEntry(spec.Key(), entry)
@@ -398,7 +524,29 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if err := sdk.DeleteShare(z.root, &sdk.Share{Token: token}); err != nil {
+			// Retried, because a share this fails to delete is an orphan that survives
+			// into the next run: its name stays bound, so the next publish under that
+			// name has to reclaim it, and it counts against the account either way.
+			// Deleting an already-deleted share is harmless, which is what makes the
+			// retry safe here and delicate on the create path.
+			var attempts int
+			err := z.retryTransient(ctx, "unshare "+token, func() error {
+				attempts++
+				err := sdk.DeleteShare(z.root, &sdk.Share{Token: token})
+				// A 404 on a retry means the attempt that timed out actually worked.
+				//
+				// The deadline is the client's, not the controller's, so a timed-out
+				// delete has usually already happened — measured live: every retried
+				// unshare came back "unshareNotFound", and reporting those as failures
+				// turned four successful deletions into four startup errors. Only on a
+				// retry: a 404 on the *first* attempt means the share was already gone
+				// when the reap listed it, which is worth knowing about.
+				if attempts > 1 && isNotFound(err) {
+					return nil
+				}
+				return err
+			})
+			if err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("deleting orphaned share %s: %w", token, err))
 				mu.Unlock()
@@ -407,6 +555,75 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// transient reports whether a zrok controller error is worth trying again.
+//
+// The hosted controller times a request out under load — `Post
+// "https://api-v2.zrok.io/api/v2/share": context deadline exceeded` — and the SDK's
+// CreateShare takes no context, so the deadline is its own HTTP client's and cannot be
+// lengthened from here. Retrying is the only lever available.
+//
+// Matched on the message because that is what the SDK returns: these arrive as a
+// url.Error wrapping the client's deadline, not as a typed controller error, and the
+// 4xx answers that must *not* be retried are typed. So an unrecognised error is not
+// retried, which is the safe default — a permission failure or a quota refusal retried
+// three times is three times the same refusal.
+func transient(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, s := range []string{
+		"context deadline exceeded",
+		"Client.Timeout",
+		"connection reset",
+		"unexpected EOF",
+		"TLS handshake timeout",
+		"i/o timeout",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// isNotFound recognises the controller's answer for a share that is not there.
+//
+// Matched on the rendered error for the same reason `transient` is: the SDK's
+// DeleteShare returns the runtime's formatted "[DELETE /unshare][404] unshareNotFound"
+// rather than a typed value that can be asserted on.
+func isNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "[404]")
+}
+
+// zrokBackoff is the wait before each retry. Three attempts, and the gaps are seconds
+// rather than milliseconds: the failure being retried is a controller that did not
+// answer in time, so retrying immediately asks the same overloaded thing the same
+// question.
+var zrokBackoff = []time.Duration{2 * time.Second, 6 * time.Second}
+
+// retryTransient runs fn, trying again while it fails in a way that looks like the
+// controller rather than the request.
+//
+// ctx is honoured between attempts, so a shutdown does not sit through the backoff.
+func (z *Zrok) retryTransient(ctx context.Context, what string, fn func() error) error {
+	err := fn()
+	for i, wait := range zrokBackoff {
+		if !transient(err) {
+			return err
+		}
+		z.log.Warn("zrok call timed out, retrying", "call", what,
+			"attempt", i+1, "in", wait, "error", err)
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(wait):
+		}
+		err = fn()
+	}
+	return err
 }
 
 // ensureName registers a name in the namespace, tolerating one that is already

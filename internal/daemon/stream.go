@@ -229,6 +229,31 @@ func (i *Ingress) streamStatus(w http.ResponseWriter, r *http.Request) {
 // without waiting. And a build that finishes *while* being tailed must end the
 // stream rather than hang, which is what closing the subscriber channel
 // signals.
+// buildSeconds is how long one recorded build took, or zero when that is unknown —
+// a build still running, one that never finished, or a log whose row has been pruned.
+//
+// Derived from the row's own timestamps rather than stored, the same way the build
+// picker does it: both timestamps are already there, and a third field recording their
+// difference is a third thing to keep in step.
+func (i *Ingress) buildSeconds(ctx context.Context, previewID, buildID string) int {
+	builds, err := i.daemon.Builds(ctx, previewID)
+	if err != nil {
+		// Not worth failing the stream over: the log is the point and the duration is a
+		// caption on it.
+		i.log.Warn("reading a build duration", "preview", previewID, "error", err)
+		return 0
+	}
+	for _, b := range builds {
+		if b.BuildID != buildID || b.StartedAt.IsZero() || b.FinishedAt.IsZero() {
+			continue
+		}
+		if d := b.FinishedAt.Sub(b.StartedAt); d > 0 {
+			return int(d.Seconds())
+		}
+	}
+	return 0
+}
+
 func (i *Ingress) streamLog(w http.ResponseWriter, r *http.Request) {
 	previewID := r.PathValue("preview")
 	logs := i.daemon.Logs()
@@ -262,7 +287,17 @@ func (i *Ingress) streamLog(w http.ResponseWriter, r *http.Request) {
 		// marked Queued with nothing distinguishing the two. It reads as the
 		// queued build having already produced all of that, which is the
 		// opposite of what the row is saying.
-		sse.event("start", map[string]any{"build_id": meta.BuildID, "live": false})
+		// How long it took travels with the announcement.
+		//
+		// It used to be a clause on every entry of the build picker, which made a
+		// dropdown of five builds five lines of three facts each. The banner above the
+		// pane already names this build and says nothing is running; the duration is the
+		// other thing worth knowing about a finished build, and there it costs no width.
+		start := map[string]any{"build_id": meta.BuildID, "live": false}
+		if secs := i.buildSeconds(ctx, previewID, meta.BuildID); secs > 0 {
+			start["seconds"] = secs
+		}
+		sse.event("start", start)
 
 		for _, l := range lines {
 			if sse.line(l) != nil {
@@ -472,6 +507,12 @@ func (i *Ingress) listLogs(w http.ResponseWriter, r *http.Request) {
 		// in step. Seconds because the picker renders "2m14s" from it and nothing here
 		// cares about milliseconds.
 		Seconds int `json:"seconds,omitempty"`
+
+		// StartedAt is when this build began, for the one case Seconds cannot cover:
+		// a build still running has no duration yet, and the picker's other timestamp
+		// is the log file's mtime — which advances with every line written, so a
+		// stopwatch driven from it reads a few seconds old forever.
+		StartedAt time.Time `json:"started_at,omitzero"`
 	}
 	out := make([]logView, 0, len(metas))
 	for _, m := range metas {
@@ -480,7 +521,7 @@ func (i *Ingress) listLogs(w http.ResponseWriter, r *http.Request) {
 		// build starts and updated when it ends, so no separate live check is
 		// needed here.
 		if b, ok := outcomes[m.BuildID]; ok {
-			v.State, v.Reason, v.URL = b.State, b.Reason, b.URL
+			v.State, v.Reason, v.URL, v.StartedAt = b.State, b.Reason, b.URL, b.StartedAt
 			if !b.FinishedAt.IsZero() && !b.StartedAt.IsZero() {
 				if d := b.FinishedAt.Sub(b.StartedAt); d > 0 {
 					v.Seconds = int(d.Seconds())

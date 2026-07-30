@@ -564,16 +564,34 @@ console.log("\na failure is reported where it can be seen");
   doc.getElementById(`s-val-${key}`).value = "a-token-value";
   await click(btn("Add variable"));
 
-  const notice = $("#projects-body .notice.bad");
-  if (!notice) {
+  // A toast, not a notice in the panel. Ten rejected saves used to leave ten stacked
+  // red boxes above the form, pushing the fields being corrected off the screen — so
+  // this asserts both halves: the message is shown, and the document did not grow a
+  // permanent notice to show it.
+  const t = $("#toasts .toast.bad");
+  if (!t) {
     fail("a failed call reported nothing on the page it happened on");
-  } else if (!notice.textContent.includes("vault is locked")) {
-    fail(`the notice says ${JSON.stringify(notice.textContent)}`);
+  } else if (!t.textContent.includes("vault is locked")) {
+    fail(`the toast says ${JSON.stringify(t.textContent)}`);
   } else {
-    ok("the error lands in #projects-body");
+    ok("the error is toasted");
+  }
+  if ($("#projects-body .notice.bad")) {
+    fail("the error was also left in the page, which is what stacked up");
   }
   if ($("#setup-body .notice.bad")) {
     fail("the error was also written into the hidden secrets panel");
+  }
+
+  // Two failures in a row leave two toasts and no residue in the form.
+  nextFails = "the vault is locked; unlock it at /secrets first";
+  doc.getElementById(`s-env-${key}`).value = "BB_REPO_TOKEN_ONPREM";
+  doc.getElementById(`s-val-${key}`).value = "a-token-value";
+  await click(btn("Add variable"));
+  if ($$("#projects-body .notice.bad").length) {
+    fail("a second failure accumulated in the form");
+  } else {
+    ok(`${$$("#toasts .toast.bad").length} toasts, nothing added to the form`);
   }
 }
 

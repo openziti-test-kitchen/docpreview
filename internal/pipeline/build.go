@@ -199,7 +199,14 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 			cfg.Build.Dir, config.RepoConfigName, err)
 	}
 
-	timeout := b.defaults.Timeout
+	// The project's own cap wins over the server's. It is set only by applyProject
+	// from the operator's project row — never by the repository, see RepoBuild.Timeout
+	// — so this is the operator saying "this one takes longer" rather than a branch
+	// deciding how long it may hold a worker.
+	timeout := cfg.Build.Timeout
+	if timeout <= 0 {
+		timeout = b.defaults.Timeout
+	}
 	if timeout <= 0 {
 		timeout = 15 * time.Minute
 	}
@@ -543,10 +550,23 @@ func (b *Builder) createArgs(
 		// applied shallowest first, so the volume lands on top.
 		"--mount", "type=volume,target=" + containerDir + "/node_modules",
 		"--workdir", containerDir,
-		// Containers that outlive their build are the usual way a small build
-		// host runs out of memory.
-		"--memory", "4g",
-		"--cpus", "2",
+	}
+
+	// Capped, but not at the hardcoded 2 CPUs and 4 GB this used to be.
+	//
+	// A Docusaurus build prerenders every route and parallelises across cores, so the cap is
+	// the ceiling on the longest phase of the build — measured at fifty seconds of silence
+	// on a machine with twenty cores, two of which it was allowed to use. Configurable now;
+	// see config.BuildDefaults.
+	//
+	// Still capped, because a build is somebody else's code: a container able to take every
+	// core can stall the daemon that is supposed to be reporting on it. Zero means no flag
+	// at all, for an operator who wants the container to have the machine.
+	if b.defaults.CPUs > 0 {
+		args = append(args, "--cpus", strconv.FormatFloat(b.defaults.CPUs, 'f', -1, 64))
+	}
+	if b.defaults.Memory != "" {
+		args = append(args, "--memory", b.defaults.Memory)
 	}
 	args = append(args, caches...)
 	// After the caches, so a repository that names one of these variables in its

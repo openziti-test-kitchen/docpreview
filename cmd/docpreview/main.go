@@ -12,6 +12,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -150,6 +151,22 @@ func defaultConfigPath() string {
 }
 
 func newLogger(level string) *slog.Logger {
+	return newLoggerTo(level, "")
+}
+
+// newLoggerTo builds the logger, optionally teeing it to a file.
+//
+// stderr alone means the daemon's own log is readable by whoever started the process and
+// by nobody else — which is most of the time, since it is normally started in a terminal
+// somebody has since closed. "Are there logs for this?" had no good answer.
+//
+// Both, not either. A file only would take the output away from the terminal it is being
+// watched in, and this is the one process where somebody is often watching both.
+//
+// A failure to open the file is a warning on the logger that does work, not a refusal to
+// start: a daemon that will not boot because it cannot write a log is worse than a daemon
+// with no log.
+func newLoggerTo(level, path string) *slog.Logger {
 	lvl := slog.LevelInfo
 	switch strings.ToLower(level) {
 	case "debug":
@@ -159,7 +176,29 @@ func newLogger(level string) *slog.Logger {
 	case "error":
 		lvl = slog.LevelError
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
+
+	var w io.Writer = os.Stderr
+	var openErr error
+	if path != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			openErr = err
+		} else if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err != nil {
+			openErr = err
+		} else {
+			// Never closed, deliberately: it lives as long as the process, and closing it
+			// on any path short of exit would leave the logger writing to a closed file.
+			// Appended to rather than truncated, because the interesting content is
+			// usually from before the restart that is being investigated.
+			w = io.MultiWriter(os.Stderr, f)
+		}
+	}
+
+	log := slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: lvl}))
+	if openErr != nil {
+		log.Warn("log_file could not be opened; logging to stderr only",
+			"path", path, "error", openErr)
+	}
+	return log
 }
 
 // wiring is everything a command needs after configuration is resolved.
@@ -244,7 +283,9 @@ func setup(configPath, logLevel string) (*wiring, error) {
 	if err != nil {
 		return nil, err
 	}
-	log := newLogger(logLevel)
+	// Teed to a file when the config names one. After LoadServer, because the path comes
+	// from the config — so a failure to parse the config still logs, to stderr.
+	log := newLoggerTo(logLevel, cfg.LogFile)
 
 	for _, dir := range []string{cfg.DataDir, cfg.WorkspacesDir(), cfg.ArtifactsDir()} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {

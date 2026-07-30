@@ -476,11 +476,10 @@ implementations is a morning's work while changing one with eight is a project.
 
 ### 1. Startup reaping deletes the other instance's live previews — interface, decide first
 
-`recover` calls `exposer.Reap(ctx, nil)` on the documented reasoning that nothing is serving yet, so
-everything the exposer owns is an orphan from a previous process (`internal/daemon/daemon.go:375`). It is in
-the interface contract, not in one implementation: "It runs at startup — where everything is by definition an
-orphan from a previous process" (`internal/expose/expose.go:114`–`:117`), restated as invariant 6 of
-`docs/design/02-exposers.md`.
+`recover` now calls `exposer.Reap(ctx, keep)` with what this instance's database claims, rather than the `nil` it
+used to pass — see **Adoption** in `docs/design/02-exposers.md`. That was done for startup latency, not for HA,
+and it narrows this blocker without closing it: instance B no longer deletes everything, but it still deletes
+whatever *its own* database does not claim, which includes every preview belonging to instance A.
 
 **A second instance starting reaps the first instance's live shares.** How badly depends on the exposer, and
 the differences are instructive:

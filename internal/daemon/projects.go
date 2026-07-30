@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/netfoundry/docpreview/internal/config"
 	"github.com/netfoundry/docpreview/internal/model"
@@ -219,9 +220,9 @@ func (a *ProjectsAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
 
 // projectsState is what the page renders.
 type projectsState struct {
-	CanWrite    bool           `json:"can_write"`
-	ReadOnlyWhy string         `json:"read_only_why,omitempty"`
-	Projects    []projectView  `json:"projects"`
+	CanWrite    bool          `json:"can_write"`
+	ReadOnlyWhy string        `json:"read_only_why,omitempty"`
+	Projects    []projectView `json:"projects"`
 
 	// Defaults are the server-wide values a project inherits when it states none,
 	// so the form can show what an empty field will actually do rather than
@@ -259,6 +260,11 @@ type projectView struct {
 type projectDefaults struct {
 	Driver string `json:"driver"`
 	Image  string `json:"image"`
+
+	// Timeout is the server-wide build.timeout, as the placeholder of the per-project
+	// field — so an empty box says what it will actually do instead of leaving the
+	// operator to find the number in a config file.
+	Timeout string `json:"timeout,omitempty"`
 
 	// DockerAvailable is the startup probe's answer, and DockerDetail is docker's own
 	// message when it is no. The form uses them to disable a choice that would refuse,
@@ -366,9 +372,10 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 
 	v := a.openVault()
 	st := projectsState{
-		Projects:         []projectView{},
+		Projects: []projectView{},
 		Defaults: projectDefaults{
 			Driver: a.cfg.Build.Driver, Image: a.cfg.Build.Image,
+			Timeout:         a.cfg.Build.Timeout.String(),
 			DockerAvailable: a.dockerOK, AllowLocalDriver: a.cfg.Build.AllowLocalDriver,
 			Images: knownImages(),
 		},
@@ -437,6 +444,7 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 		Notes        string `json:"notes"`
 		DisplayName  string `json:"display_name"`
 		Avatar       string `json:"avatar"`
+		Timeout      string `json:"timeout"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -460,6 +468,16 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 	p.Notes = strings.TrimSpace(body.Notes)
 	p.DisplayName = strings.TrimSpace(body.DisplayName)
 	p.Avatar = strings.TrimSpace(body.Avatar)
+	p.Timeout = strings.TrimSpace(body.Timeout)
+
+	// Checked here, once, rather than at the start of every build. A build that
+	// discovers the timeout is unusable has already cloned the repository, and the only
+	// thing it can do about it is pick a different number — so the value is refused
+	// while somebody is looking at the field they typed it into.
+	if why := validTimeout(p.Timeout); why != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
+		return
+	}
 
 	if p.Driver != "" && p.Driver != config.DriverLocal && p.Driver != config.DriverDocker {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
@@ -493,13 +511,22 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("a name is capped at %d characters", maxDisplayName)})
 		return
 	}
-	// A base URL that does not start and end with "/" produces a preview whose
-	// assets 404, and the build verifies it against the built output — so the
-	// error belongs here, where somebody is looking at a form, rather than twenty
-	// seconds into a build.
-	if p.BaseURL != "" && (!strings.HasPrefix(p.BaseURL, "/") || !strings.HasSuffix(p.BaseURL, "/")) {
+	// A base URL that does not start and end with "/" produces a preview whose assets
+	// 404, and the build verifies it against the built output — so this is enforced
+	// before a form is saved rather than twenty seconds into a build.
+	//
+	// Enforced by fixing it, not by refusing it. The slashes are mandatory, this code
+	// knows exactly where they go, and "/docs" is not ambiguous — so rejecting it
+	// makes the operator retype a value the server could have corrected. That is the
+	// whole of the validation that was here, and it produced a page of identical
+	// errors while somebody guessed at the punctuation.
+	p.BaseURL = normalizeBaseURL(p.BaseURL)
+	// What is left is not a punctuation slip and cannot be guessed at: a query or a
+	// fragment is not part of a path prefix, and whitespace inside one is a copy-paste
+	// accident that would produce a URL nobody can type.
+	if strings.ContainsAny(p.BaseURL, " \t?#") {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": `base_url must start and end with "/", e.g. "/" or "/docs/"`})
+			"error": `a base URL is a path like "/docs/" — no spaces, query or fragment`})
 		return
 	}
 
@@ -787,6 +814,83 @@ func validEnvName(env string) string {
 		}
 	}
 	return ""
+}
+
+// maxProjectTimeout is the longest a project may cap one of its builds at.
+//
+// Not a safety limit — the operator writes this value and could raise the server
+// default instead. It is a typo limit: "45" parses as 45 nanoseconds and "45h" is a
+// day and a half of a worker held by one pull request, and both are far more likely
+// to be a slip than an intention.
+const maxProjectTimeout = 6 * time.Hour
+
+// validTimeout checks a project's build timeout, returning why not.
+//
+// Empty is valid and means the server-wide build.timeout, which is the answer for
+// almost every project.
+func validTimeout(s string) string {
+	if s == "" {
+		return ""
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return `a build timeout is a duration like "45m", "90s" or "2h" — ` +
+			"leave it empty to use the server default"
+	}
+	// A bare number parses as nanoseconds, so "45" becomes 45ns and every build of
+	// that project dies before docker is even invoked. Naming the unit in the error is
+	// what tells somebody the number they typed was not the number they meant.
+	if d <= 0 {
+		return "a build timeout must be positive — leave it empty to use the server default"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%q is %s, shorter than any real build — a duration needs "+
+			`a unit, e.g. "45m"`, s, d)
+	}
+	if d > maxProjectTimeout {
+		return fmt.Sprintf("a build timeout is capped at %s", maxProjectTimeout)
+	}
+	return ""
+}
+
+// normalizeBaseURL puts a base URL into the only form that works, rather than
+// refusing the forms that do not.
+//
+// Docusaurus and every check in this codebase want a leading and a trailing slash.
+// "/docs", "docs/" and "docs" all mean one thing, and it is not in doubt — so they
+// are corrected. Empty stays empty: blank means "defer to the repository", which is
+// a different answer from "/".
+//
+// Interior doubled slashes are collapsed because "//docs/" is a protocol-relative
+// URL to a host named "docs" in every browser, which is a very confusing way for a
+// preview to fail.
+func normalizeBaseURL(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+	// A pasted absolute URL keeps its path and loses the rest. Somebody copying
+	// "https://docs.example.com/docs/" out of a browser means the "/docs/" part; the
+	// host is this preview's own and not theirs to set. Before slash collapsing,
+	// which would otherwise eat the "//" in the scheme.
+	if i := strings.Index(base, "://"); i >= 0 {
+		rest := base[i+3:]
+		if slash := strings.Index(rest, "/"); slash >= 0 {
+			base = rest[slash:]
+		} else {
+			base = "/"
+		}
+	}
+	for strings.Contains(base, "//") {
+		base = strings.ReplaceAll(base, "//", "/")
+	}
+	if !strings.HasPrefix(base, "/") {
+		base = "/" + base
+	}
+	if !strings.HasSuffix(base, "/") {
+		base += "/"
+	}
+	return base
 }
 
 // projectFromRequest reads the identity out of the path, returning a reason when

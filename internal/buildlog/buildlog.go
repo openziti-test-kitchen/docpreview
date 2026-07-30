@@ -39,6 +39,17 @@ import (
 // that boundary.
 const maxLineLength = 64 * 1024
 
+// stampWidth is what a timestamp prefix costs, in bytes: "15:04:05.000 ".
+//
+// Subtracted from the split length rather than ignored. The cap is on the line a reader
+// gets, and the stamp is added after the split — so splitting at maxLineLength produced
+// lines thirteen bytes over it, which is exactly the writer-and-reader mismatch the
+// readBufferSize comment below was written about the first time.
+const stampWidth = len("15:04:05.000 ")
+
+// splitLength is where an unterminated line is broken, leaving room for its stamp.
+const splitLength = maxLineLength - stampWidth
+
 // readBufferSize is the cap the reader allows, and it is deliberately larger
 // than maxLineLength.
 //
@@ -77,6 +88,17 @@ type Writer struct {
 
 	subs map[int]chan string
 	next int
+
+	// clock supplies each line's timestamp. A field so a test can assert the format and the
+	// prefix without racing a real clock; nil means time.Now, which is every real caller.
+	clockFn func() time.Time
+}
+
+func (w *Writer) clock() time.Time {
+	if w.clockFn != nil {
+		return w.clockFn()
+	}
+	return time.Now()
 }
 
 // Create opens a log file and returns a writer for it.
@@ -138,9 +160,9 @@ func (w *Writer) Write(p []byte) (int, error) {
 			// Exact chunks, not "whatever has accumulated": one Write can
 			// deliver far more than the cap at once, and emitting all of it as
 			// a single line would produce a line no reader can scan back.
-			for len(w.partial) >= maxLineLength {
-				w.emit(string(w.partial[:maxLineLength]))
-				w.partial = w.partial[maxLineLength:]
+			for len(w.partial) >= splitLength {
+				w.emit(string(w.partial[:splitLength]))
+				w.partial = w.partial[splitLength:]
 			}
 			break
 		}
@@ -153,12 +175,35 @@ func (w *Writer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// stamp renders a line's timestamp: hours, minutes, seconds, milliseconds.
+//
+// # What it means, precisely
+//
+// The moment *this process read the line*, not the moment the build printed it. Those are
+// the same thing when the writing process line-buffers, and they are not when it does not:
+// stdout inside the container is a pipe rather than a terminal, so node, yarn and docusaurus
+// switch to block buffering and flush four to eight kilobytes at once. Every line in such a
+// flush gets a near-identical stamp.
+//
+// Which makes the stamps honest about arrival and only approximate about origin. That is
+// still the useful half — the fifty-second gap before "Generated static files" is visible
+// either way — and the alternative, a TTY on the container, brings ANSI escapes and
+// carriage-return progress bars into a log meant to be read as text.
+//
+// Wall clock rather than an offset from the build's start. An operator correlating a build
+// against a deploy, a webhook delivery, or another service's log needs the same clock those
+// use; "+1m14s" is only comparable to itself.
+func stamp(t time.Time) string {
+	return t.Format("15:04:05.000") + " "
+}
+
 // emit scrubs one line and sends it onwards. The caller holds the mutex.
 //
 // This is the only path from build output to anywhere persistent or visible, so
 // it is the only place redaction has to be correct.
 func (w *Writer) emit(line string) {
 	line = w.redactor.Scrub(line)
+	line = stamp(w.clock()) + line
 
 	if w.file != nil {
 		if _, err := w.file.WriteString(line + "\n"); err != nil {

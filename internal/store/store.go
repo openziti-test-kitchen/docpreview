@@ -208,6 +208,10 @@ func migrate(db *sql.DB) error {
 		// platform/owner/repo.
 		`ALTER TABLE projects ADD COLUMN display_name TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE projects ADD COLUMN avatar TEXT NOT NULL DEFAULT ''`,
+		// A per-project build timeout. Stored as the text a human typed ("45m"), not
+		// as a number of seconds: it is displayed in the form it was entered, and a
+		// column of 2700s is a unit somebody has to work out.
+		`ALTER TABLE projects ADD COLUMN timeout TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -371,6 +375,20 @@ type Project struct {
 	Driver string `json:"driver,omitempty"`
 	Image  string `json:"image,omitempty"`
 
+	// Timeout caps one build of this project, as a Go duration string — "45m", "2h".
+	// Empty means the server-wide build.timeout.
+	//
+	// Per project because the right value is a property of what is being built, not of
+	// the host: a single Docusaurus site is done in two minutes and a repository that
+	// clones seven others and builds each one is not. Raising the server default to
+	// suit the slowest project is what this replaces, and it left every other project
+	// able to hang for the same 45 minutes before anybody was told.
+	//
+	// A string rather than a duration, because it is stored and redisplayed exactly as
+	// it was typed. Parsed at the point of use; an unparseable value is refused when
+	// the form is saved, so a build never has to decide what to do with one.
+	Timeout string `json:"timeout,omitempty"`
+
 	// Notes is free text for whoever added the project. It appears in the UI and
 	// nowhere else; the build never reads it.
 	Notes string `json:"notes,omitempty"`
@@ -410,8 +428,8 @@ func (s *Store) SaveProject(ctx context.Context, p Project) error {
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO projects (platform, owner, repo, enabled, build_dir, build_command,
             build_output, base_url, detect_script, driver, image, notes,
-            display_name, avatar, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            display_name, avatar, timeout, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(platform, owner, repo) DO UPDATE SET
             enabled       = excluded.enabled,
             build_dir     = excluded.build_dir,
@@ -424,10 +442,11 @@ func (s *Store) SaveProject(ctx context.Context, p Project) error {
             notes         = excluded.notes,
             display_name  = excluded.display_name,
             avatar        = excluded.avatar,
+            timeout       = excluded.timeout,
             updated_at    = excluded.updated_at`,
 		p.Platform, p.Owner, p.Repo, p.Enabled, p.BuildDir, p.BuildCommand,
 		p.BuildOutput, p.BaseURL, p.DetectScript, p.Driver, p.Image, p.Notes,
-		p.DisplayName, p.Avatar, created, now)
+		p.DisplayName, p.Avatar, p.Timeout, created, now)
 	if err != nil {
 		return fmt.Errorf("saving project %s: %w", p.Key(), err)
 	}
@@ -445,7 +464,7 @@ func (s *Store) ProjectFor(ctx context.Context, platform, owner, repo string) (P
 	rows, err := s.queryProjects(ctx,
 		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
                 base_url, detect_script, driver, image, notes, display_name, avatar,
-                created_at, updated_at
+                timeout, created_at, updated_at
          FROM projects WHERE platform = ? AND owner = ? AND repo = ?`,
 		platform, owner, repo)
 	if err != nil {
@@ -462,7 +481,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	return s.queryProjects(ctx,
 		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
                 base_url, detect_script, driver, image, notes, display_name, avatar,
-                created_at, updated_at
+                timeout, created_at, updated_at
          FROM projects ORDER BY platform, owner, repo`)
 }
 
@@ -492,7 +511,8 @@ func (s *Store) queryProjects(ctx context.Context, query string, args ...any) ([
 		var created, updated int64
 		if err := rows.Scan(&p.Platform, &p.Owner, &p.Repo, &p.Enabled, &p.BuildDir,
 			&p.BuildCommand, &p.BuildOutput, &p.BaseURL, &p.DetectScript, &p.Driver,
-			&p.Image, &p.Notes, &p.DisplayName, &p.Avatar, &created, &updated); err != nil {
+			&p.Image, &p.Notes, &p.DisplayName, &p.Avatar, &p.Timeout,
+			&created, &updated); err != nil {
 			return nil, err
 		}
 		p.CreatedAt = time.UnixMilli(created)
