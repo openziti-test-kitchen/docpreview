@@ -149,6 +149,21 @@ type Event struct {
 	Delivery string
 }
 
+// PullRequestLister is implemented by clients that can be asked what is open on a
+// repository, rather than waiting to be told by a webhook.
+//
+// Optional rather than part of Client, because every other path into a build starts with
+// a delivery and a platform that cannot answer this is still a usable platform. The one
+// caller is adding a project from the dashboard: there is no delivery behind that, so
+// without this a newly added repository does nothing until somebody happens to push, and
+// "I added it and nothing happened" is indistinguishable from a broken install.
+//
+// Implementations must drop pull requests from forks, for the same reason the webhook
+// path does: building a fork's branch runs its author's code on this host.
+type PullRequestLister interface {
+	OpenPullRequests(ctx context.Context, repo model.Repo) ([]model.PullRequest, error)
+}
+
 // MarkerStyle selects how the self-identifying marker is embedded in a comment
 // body.
 //

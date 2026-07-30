@@ -355,11 +355,72 @@ console.log("\nsecrets panel");
 
     // No value may appear anywhere in the panel, because nothing can read one back.
     if ($$(".pcard .env input").length) fail("a value input sits inside the variable list");
+
+    // The value being typed is masked, and the name field carries no placeholder — a
+    // greyed-out example in the name box reads as a value already entered.
+    const val = doc.getElementById("s-val-github/netfoundry/unified-doc");
+    if (val?.type !== "password") fail(`the value field is type=${val?.type}, want password`);
+    const env = doc.getElementById("s-env-github/netfoundry/unified-doc");
+    if (env?.getAttribute("placeholder")) {
+      fail(`the name field has placeholder ${JSON.stringify(env.getAttribute("placeholder"))}`);
+    }
+    ok("the value is masked and the name box is empty");
+  }
+}
+
+console.log("\nunsaved edits are not thrown away silently");
+{
+  // Open a project's settings and type into it.
+  await click($$(".pcard [data-tab=build]")[0]);
+  const dir = doc.getElementById("p-dir-github/netfoundry/unified-doc");
+  dir.value = "somewhere-else";
+  dir.dispatchEvent(new win.Event("input", {bubbles: true}));
+  await settle();
+
+  // Refuse the confirm: the panel stays open with the typing in it.
+  win.confirm = () => false;
+  await click(btn("Cancel"));
+  if (!$(".pcard .panel")) fail("declining the discard prompt closed the form anyway");
+  else if (doc.getElementById("p-dir-github/netfoundry/unified-doc").value !== "somewhere-else") {
+    fail("declining the prompt lost the typing");
+  } else ok("declining keeps the form and its edits");
+
+  // Accept it: the panel closes.
+  win.confirm = () => true;
+  await click(btn("Cancel"));
+  if ($(".pcard .panel")) fail("accepting the discard prompt left the form open");
+  else ok("accepting discards and closes");
+}
+
+console.log("\nadding a project queues its open pull requests");
+{
+  calls.length = 0;
+  await click($("#p-new"));
+  doc.getElementById("p-url").value = "https://github.com/acme/newdocs";
+  doc.getElementById("p-url").dispatchEvent(new win.Event("input", {bubbles: true}));
+  await settle();
+  await click(btn("Create project"));
+
+  const put = calls.find(c => c.method === "PUT");
+  const scan = calls.find(c => c.method === "POST" && c.url.endsWith("/scan"));
+  if (!put) fail("Create sent no PUT");
+  if (!scan) {
+    fail("Create did not scan for open pull requests, so nothing gets built");
+  } else if (scan.url !== "/api/projects/github/acme/newdocs/scan") {
+    fail(`scanned ${scan.url}`);
+  } else ok(`POST ${scan.url}`);
+
+  // And the order matters: the project has to exist before anything is queued against it.
+  if (put && scan && calls.indexOf(put) > calls.indexOf(scan)) {
+    fail("the scan was sent before the project was saved");
   }
 }
 
 console.log("\nadding a variable");
 {
+  // Reopen the panel: the sections above left the page elsewhere, and a harness that
+  // depends on the previous section's leftover state breaks the moment one is inserted.
+  if (!$(".pcard .env")) await click($$(".pcard [data-tab=secrets]")[0]);
   const key = "github/netfoundry/unified-doc";
   doc.getElementById(`s-env-${key}`).value = "BB_REPO_TOKEN_FRONTDOOR";
   doc.getElementById(`s-val-${key}`).value = "a-token-value";

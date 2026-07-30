@@ -499,6 +499,10 @@ func cmdServe(args []string) error {
 		WithSecrets(admin).
 		WithProjects(daemon.NewProjectsAdmin(w.store, w.cfg, w.log).
 			WithVault(admin.Vault).
+			// So adding a project builds what is already open, instead of waiting for
+			// somebody to push to a repository that was added precisely because nobody
+			// had.
+			WithScanner(d.ScanRepo).
 			// So the form can grey out a driver that would fail rather than offering
 			// it and letting the operator discover the refusal from a failed build.
 			WithDocker(dockerOK, dockerWhy))

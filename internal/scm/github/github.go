@@ -144,6 +144,125 @@ func (c *Client) Validate(ctx context.Context) error {
 	return nil
 }
 
+// OpenPullRequests lists the open pull requests of a repository, as pull requests this
+// daemon could build.
+//
+// It exists because a project added from the dashboard has no webhook behind it. Every
+// other path into a build starts with a delivery, which carries the installation id, the
+// branch and the head sha; adding a project carries none of that, so a newly added
+// repository sat there doing nothing until somebody happened to push. Asking GitHub what
+// is already open is the difference between "added" and "working".
+//
+// The installation id is looked up rather than supplied, for the same reason: there is no
+// delivery to take it from. Every returned pull request carries it, so the results are
+// usable by exactly the same pipeline a webhook feeds.
+//
+// Forks are dropped here rather than deep in the build, matching what the webhook path
+// does and for the same reason: building a fork's branch runs its author's code on this
+// host. A fork with a null head repository — a deleted fork — is dropped too, which is
+// the conservative reading of the same gap the webhook path documents.
+func (c *Client) OpenPullRequests(ctx context.Context, repo model.Repo) ([]model.PullRequest, error) {
+	installationID, err := c.installationFor(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+
+	const perPage = 100
+	var out []model.PullRequest
+	for page := 1; ; page++ {
+		path := fmt.Sprintf("/repos/%s/%s/pulls?state=open&per_page=%d&page=%d",
+			repo.Owner, repo.Name, perPage, page)
+
+		var pulls []struct {
+			Number int  `json:"number"`
+			Draft  bool `json:"draft"`
+			Head   struct {
+				Ref  string `json:"ref"`
+				SHA  string `json:"sha"`
+				Repo *struct {
+					FullName string `json:"full_name"`
+				} `json:"repo"`
+			} `json:"head"`
+			Base struct {
+				Ref string `json:"ref"`
+			} `json:"base"`
+		}
+		if err := c.do(ctx, installationID, http.MethodGet, path, nil, &pulls); err != nil {
+			return nil, fmt.Errorf("listing open pull requests on %s/%s: %w", repo.Owner, repo.Name, err)
+		}
+
+		want := repo.Owner + "/" + repo.Name
+		for _, p := range pulls {
+			if p.Head.Repo == nil || !strings.EqualFold(p.Head.Repo.FullName, want) {
+				c.log.Info("skipping a pull request from a fork",
+					"repo", want, "pr", p.Number)
+				continue
+			}
+			out = append(out, model.PullRequest{
+				Repo:           repo,
+				Number:         p.Number,
+				Branch:         p.Head.Ref,
+				BaseBranch:     p.Base.Ref,
+				HeadSHA:        p.Head.SHA,
+				InstallationID: installationID,
+			})
+		}
+		if len(pulls) < perPage {
+			return out, nil
+		}
+	}
+}
+
+// installationFor finds the installation covering a repository.
+//
+// `GET /repos/{owner}/{repo}/installation` is authenticated as the *App*, not as an
+// installation — it is how an App asks "am I installed here, and under which id". A 404
+// is the useful answer rather than an error condition to swallow: it means the App is not
+// installed on that repository, which is the commonest reason a project somebody just
+// added will never build, and the message says so.
+func (c *Client) installationFor(ctx context.Context, repo model.Repo) (int64, error) {
+	appJWT, err := c.auth.appJWT()
+	if err != nil {
+		return 0, err
+	}
+
+	url := fmt.Sprintf("%s/repos/%s/%s/installation", c.cfg.APIBase, repo.Owner, repo.Name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+appJWT)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", apiVersion)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("reaching GitHub: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return 0, fmt.Errorf("the GitHub App is not installed on %s/%s; install it there "+
+			"(GitHub → Settings → GitHub Apps → your app → Configure) and try again",
+			repo.Owner, repo.Name)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("looking up the installation for %s/%s: %w",
+			repo.Owner, repo.Name, errorFromResponse(resp))
+	}
+
+	var body struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0, fmt.Errorf("decoding the installation: %w", err)
+	}
+	if body.ID == 0 {
+		return 0, fmt.Errorf("GitHub reported no installation id for %s/%s", repo.Owner, repo.Name)
+	}
+	return body.ID, nil
+}
+
 // CloneURL returns an HTTPS clone URL carrying a short-lived installation
 // token.
 //

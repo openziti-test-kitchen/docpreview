@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/netfoundry/docpreview/internal/config"
+	"github.com/netfoundry/docpreview/internal/model"
 	"github.com/netfoundry/docpreview/internal/pipeline"
 	"github.com/netfoundry/docpreview/internal/store"
 	"github.com/netfoundry/docpreview/internal/vault"
@@ -46,6 +47,12 @@ type ProjectsAdmin struct {
 	// what the daemon found.
 	dockerOK  bool
 	dockerWhy string
+
+	// scanner queues a build for every open pull request on a repository, returning how
+	// many. A function rather than the daemon, so this admin keeps depending on nothing
+	// but the store and the config — and so a test can count queued builds without a
+	// GitHub client.
+	scanner func(ctx context.Context, repo model.Repo) (int, error)
 }
 
 func NewProjectsAdmin(st *store.Store, cfg config.Server, log *slog.Logger) *ProjectsAdmin {
@@ -57,6 +64,12 @@ func NewProjectsAdmin(st *store.Store, cfg config.Server, log *slog.Logger) *Pro
 // rather than absent, for the same reason the read-only banner exists.
 func (a *ProjectsAdmin) WithVault(fn func() *vault.Vault) *ProjectsAdmin {
 	a.vault = fn
+	return a
+}
+
+// WithScanner installs the open-pull-request scan.
+func (a *ProjectsAdmin) WithScanner(fn func(context.Context, model.Repo) (int, error)) *ProjectsAdmin {
+	a.scanner = fn
 	return a
 }
 
@@ -92,6 +105,10 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// slash that this namespace is built on.
 	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.setSecret))
 	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.delSecret))
+
+	// Build what is already open. A project added here has no webhook behind it, so
+	// without this the answer to "I added it, now what" is "wait for somebody to push".
+	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/scan", a.gated(a.scan))
 
 	// Checking an image runs a docker command with an operator-supplied argument and
 	// makes a registry round trip, so it is gated like every other write even though it
@@ -471,6 +488,42 @@ func (a *ProjectsAdmin) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// scan asks the platform what is open on a repository and queues a build for each.
+//
+// Reported rather than silent, and counted, because "queued 3 builds" and "queued 0
+// builds — the App is not installed there" are the two answers somebody who just added a
+// project needs to tell apart. A repository with no open pull requests is the third, and
+// is not a failure.
+//
+// It goes through the daemon's ordinary build path, so a scanned pull request is
+// indistinguishable from a pushed one: same supersede rules, same commit lock, same
+// queued comment on the pull request.
+func (a *ProjectsAdmin) scan(w http.ResponseWriter, r *http.Request) {
+	p, bad := projectFromRequest(r)
+	if bad != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad})
+		return
+	}
+	if a.scanner == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot scan for open pull requests"})
+		return
+	}
+
+	queued, err := a.scanner(r.Context(), model.Repo{
+		Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
+	})
+	if err != nil {
+		// The project itself saved. This is a separate action that failed, and its
+		// message is the operator's next step — usually "install the App there".
+		a.log.Warn("scanning for open pull requests", "project", p.Key(), "error", err)
+		writeJSON(w, http.StatusOK, map[string]any{"queued": 0, "error": err.Error()})
+		return
+	}
+	a.log.Info("queued builds for open pull requests", "project", p.Key(), "queued", queued)
+	writeJSON(w, http.StatusOK, map[string]any{"queued": queued})
 }
 
 // inspectImage answers whether a container image can be resolved, so the form can

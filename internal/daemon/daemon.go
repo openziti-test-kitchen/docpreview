@@ -905,6 +905,47 @@ func (d *Daemon) Handle(ctx context.Context, ev scm.Event) error {
 	}
 }
 
+// ScanRepo queues a build for every open pull request on a repository, and reports how
+// many it queued.
+//
+// This is what makes adding a project from the dashboard do something. Every other way
+// into a build begins with a webhook delivery, so a repository added by hand had nothing
+// to build until somebody pushed — and from the operator's side that is
+// indistinguishable from a broken installation.
+//
+// Each pull request goes through handleBuild, exactly as a delivery would: the same
+// queued comment, the same supersede behaviour, the same commit lock. Nothing here is a
+// second build path, which is the point — a parallel one would drift.
+//
+// Errors are collected rather than fatal. One pull request whose enqueue fails must not
+// stop the rest, and the count tells the caller what actually happened.
+func (d *Daemon) ScanRepo(ctx context.Context, repo model.Repo) (int, error) {
+	client, ok := d.client(repo.Platform)
+	if !ok {
+		return 0, fmt.Errorf("no %s client is configured on this daemon", repo.Platform)
+	}
+	lister, ok := client.(scm.PullRequestLister)
+	if !ok {
+		return 0, fmt.Errorf("the %s client cannot list open pull requests", repo.Platform)
+	}
+
+	prs, err := lister.OpenPullRequests(ctx, repo)
+	if err != nil {
+		return 0, err
+	}
+
+	queued := 0
+	var errs []error
+	for _, pr := range prs {
+		if err := d.handleBuild(ctx, scm.Event{Kind: scm.EventBuild, PR: pr}); err != nil {
+			errs = append(errs, fmt.Errorf("pull request %d: %w", pr.Number, err))
+			continue
+		}
+		queued++
+	}
+	return queued, errors.Join(errs...)
+}
+
 func (d *Daemon) handleBuild(ctx context.Context, ev scm.Event) error {
 	pr := ev.PR
 	id := pr.PreviewID()

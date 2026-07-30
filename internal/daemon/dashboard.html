@@ -272,9 +272,32 @@ input.control::placeholder { color: var(--muted) }
   gap: 0.6rem; align-items: center; padding: 0.22rem 0;
 }
 .field-note { text-transform: none; letter-spacing: 0; font-weight: 400 }
-.imgcheck { font-size: 0.74rem; margin-top: 0.22rem; color: var(--muted) }
+.backlink { margin: 0 0 0.5rem; font-size: 0.82rem }
+.avafield { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap }
+
+/* The form's own actions, set apart from the fields above them so the row that commits
+   is not just more controls in a column of controls. */
+.formact {
+  margin-top: 0.8rem; padding-top: 0.7rem; border-top: 1px solid var(--hairline);
+  max-width: 52rem;
+}
+.btn.primary {
+  background: var(--ink); color: var(--plane); border-color: var(--ink); font-weight: 600;
+}
+.btn.primary:hover { opacity: 0.9 }
+/* Column 2, like .why. Without this it was a third child of a two-column grid, so it
+   wrapped into the *label* column of the next row — docker's error rendered where a
+   field name belongs, in 0.74rem, which is how "errors:" ended up looking like a
+   label. */
+.imgcheck { grid-column: 2; font-size: 0.78rem; margin-top: 0.3rem; color: var(--muted) }
 .imgcheck.ok  { color: var(--good) }
-.imgcheck.bad { color: var(--critical) }
+/* A wrong image fails the build minutes later with docker's message buried in a log.
+   It gets a box, because this is the one moment somebody is looking. */
+.imgcheck.bad {
+  color: var(--critical); font-weight: 600;
+  border: 1px solid var(--critical); border-radius: 6px;
+  padding: 0.3rem 0.45rem; background: color-mix(in srgb, var(--critical) 7%, transparent);
+}
 .field > label { font-size: 0.78rem; color: var(--ink-2) }
 .field .why { grid-column: 2; font-size: 0.72rem; color: var(--muted); margin-top: -0.1rem }
 .field textarea {
@@ -721,9 +744,12 @@ footer {
     <!-- The vault's path is a detail of where the daemon keeps its files, not
          something anyone acts on from here. It stays as a tooltip: findable
          when you are debugging, absent when you are not. -->
+    <!-- The way out goes above the content, not below it. Below, it is past a form
+         eleven fields long and past however many project cards exist, so on any real
+         page it is off screen — a page with no visible way back reads as a dead end. -->
+    <p class="backlink"><a href="/">← back to previews</a></p>
     <h2 id="setup-head">Secrets</h2>
     <div id="setup-body"></div>
-    <p style="margin:1rem 0 0"><a href="/">← back to previews</a></p>
   </div>
 </div>
 
@@ -731,9 +757,9 @@ footer {
      switched on pathname, so the styles and the fetch helper exist once. -->
 <div class="setup" id="projects" hidden>
   <div class="setup-inner">
+    <p class="backlink"><a href="/">← back to previews</a></p>
     <h2>Projects</h2>
     <div id="projects-body"></div>
-    <p style="margin:1rem 0 0"><a href="/">← back to previews</a></p>
   </div>
 </div>
 
@@ -2307,6 +2333,36 @@ async function loadProjects() {
    comes back to where you were. */
 let projOpen = {key: null, tab: null};
 
+/* Whether the open form has edits nobody has saved.
+
+   Every way out of this page throws the form away without a word: closing the panel,
+   opening a different project's, the back link, the browser's own navigation. Eleven
+   fields of typing lost to a misplaced click, with no undo, because a project form has
+   no draft state anywhere.
+
+   Set by an input listener rather than by comparing values, which sounds sloppier and is
+   not: a comparison has to know which fields belong to which project and what "unchanged"
+   means for a select whose default moved, and it silently answers "clean" when it gets
+   that wrong. Typing into a form is the signal. */
+let formDirty = false;
+
+// confirmDiscard asks before throwing away unsaved edits, and returns whether to go on.
+function confirmDiscard() {
+  if (!formDirty) return true;
+  if (!confirm("You have unsaved changes to this project. Discard them?")) return false;
+  formDirty = false;
+  return true;
+}
+
+// The browser's own guard, for the back link, a bookmark, or a closed tab. The wording is
+// the browser's — every one of them ignores a custom message — so preventDefault plus
+// returnValue is the whole of the API.
+window.addEventListener("beforeunload", e => {
+  if (!formDirty) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
+
 function renderProjectsPage(s) {
   const el = document.getElementById("projects-body");
   const ro = !s.can_write;
@@ -2359,7 +2415,7 @@ function projectCard(p, s, ro) {
         p.driver ? "" : " (default)"}</span>
       <span class="grow"></span>
       ${ro ? "" : `<button class="btn" data-tab="build" data-key="${esc(key)}"
-          aria-pressed="${open === "build"}">Build</button>
+          aria-pressed="${open === "build"}">Edit</button>
         <button class="btn" data-tab="secrets" data-key="${esc(key)}"
           aria-pressed="${open === "secrets"}">Secrets${
             p.secrets.length ? ` (${p.secrets.length})` : ""}</button>
@@ -2421,12 +2477,19 @@ function avatarHTML(p) {
 // other.
 function avatarField(p, elID) {
   const cur = p ? (p.avatar || "") : "";
-  if (cur.startsWith("data:image/")) {
-    return `<textarea class="control" id="${elID}" style="min-height:3.5rem;
-      font:11px/1.4 ui-monospace,Consolas,monospace">${esc(cur)}</textarea>`;
-  }
-  return `<input class="control" id="${elID}" style="max-width:9rem"
-    value="${esc(cur)}" placeholder="${esc(monogram(p ? projectLabel(p) : "?"))} or data:image/…">`;
+  const isImg = cur.startsWith("data:image/");
+  // The value itself is hidden once it is an image: 1.4 KB of percent-encoded SVG in a
+  // text field is not something anybody reads or edits, and showing it made the field
+  // look broken. What is shown is the image, a picker, and a way to clear it.
+  return `<span class="avafield">
+    <input type="${isImg ? "hidden" : "text"}" class="control" id="${elID}"
+      style="max-width:9rem" value="${esc(cur)}"
+      placeholder="${esc(monogram(p ? projectLabel(p) : "?"))}">
+    ${isImg ? `<span class="ava ava-img"><img src="${esc(cur)}" alt="" width="22" height="22"></span>` : ""}
+    <input type="file" id="${elID}-file" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
+    <button type="button" class="btn" data-pick="${elID}">${isImg ? "Replace" : "Upload"}</button>
+    ${isImg ? `<button type="button" class="btn" data-clearava="${elID}">Clear</button>` : ""}
+  </span>`;
 }
 
 // monogram takes the first character of the first two words, or the first two
@@ -2498,11 +2561,17 @@ function secretsPanel(p, s) {
     <div class="grid-form" style="margin-top:0.6rem">
       <div class="field">
         <label for="s-env-${esc(key)}">Name</label>
-        <input class="control" id="s-env-${esc(key)}" placeholder="BB_REPO_TOKEN_ONPREM">
+        <!-- No placeholder. A greyed-out BB_REPO_TOKEN_ONPREM in the box read as a
+             value already entered, and the field it names is the one where getting it
+             wrong is silent: the build looks for a variable that is not there. -->
+        <input class="control" id="s-env-${esc(key)}" autocomplete="off" spellcheck="false">
       </div>
       <div class="field">
         <label for="s-val-${esc(key)}">Value</label>
-        <input class="control" id="s-val-${esc(key)}" type="password" placeholder="the token">
+        <input class="control" id="s-val-${esc(key)}" type="password" autocomplete="off">
+        <div class="why">Masked here, never returned by the API, and replaced with
+          asterisks in every build log. Nothing can read it back — removing it means
+          finding the token again wherever it came from.</div>
       </div>
     </div>
     <div class="act" style="margin-top:0.5rem">
@@ -2519,13 +2588,24 @@ function projectKey(p) { return `${p.platform}/${p.owner}/${p.repo}`; }
 // is disabled when the startup probe did not find it, local is disabled unless
 // build.allow_local_driver is set, and each says which it is in its own label.
 function driverSelect(s, p, elID) {
-  const d = s.defaults, cur = p ? (p.driver || "") : "";
+  const d = s.defaults;
+  // A blank value means "follow the server default", and the server default is always
+  // one of the two concrete drivers — so offering it as a third option listed the same
+  // driver twice, "docker — server default" above "docker — build in a container",
+  // which is a distinction nobody outside this file can act on.
+  //
+  // So: two options, and saving pins the choice. Pinning is also the better default
+  // semantic. A project's build environment should not change because somebody moved a
+  // server-wide setting, and the one move that matters — flipping the server default to
+  // local — is exactly the one you would not want applied silently to every project.
+  // An existing row with a blank driver arrives at the server default preselected.
+  const cur = (p && p.driver) || d.driver;
   const opt = (value, label, disabled) =>
     `<option value="${value}"${value === cur ? " selected" : ""}${
-      disabled && value !== cur ? " disabled" : ""}>${label}</option>`;
+      disabled && value !== cur ? " disabled" : ""}>${label}${
+      value === d.driver ? " · server default" : ""}</option>`;
 
   return `<select class="control" id="${elID}">
-    ${opt("", `${esc(d.driver)} — server default`, false)}
     ${opt("docker", d.docker_available
       ? "docker — build in a container"
       : `docker — not available: ${esc(d.docker_detail || "no docker")}`, !d.docker_available)}
@@ -2658,10 +2738,14 @@ function projectForm(s, p) {
     </div>
     <datalist id="known-images">${(s.defaults.images || []).map(i =>
       `<option value="${esc(i)}"></option>`).join("")}</datalist>
-    <div class="act" style="margin-top:0.6rem">
-      <button class="btn" data-save="${p ? esc(projectKey(p)) : NEW}">${
+    <div class="act formact">
+      <!-- Primary, so which button commits is not a reading exercise. Cancel is beside
+           it and says what it discards, because "Cancel" alone on a form somebody has
+           been typing into for two minutes is not a promise anyone should have to
+           guess at. -->
+      <button class="btn primary" data-save="${p ? esc(projectKey(p)) : NEW}">${
         p ? "Save changes" : "Create project"}</button>
-      <button class="btn" data-close-panel="1">Cancel</button>
+      <button class="btn" data-close-panel="1">Cancel${p ? " — discard edits" : ""}</button>
       ${p ? `<span class="grow"></span>
         <button class="btn" data-toggle-enabled="${esc(projectKey(p))}">${
           p.enabled ? "Disable" : "Enable"}</button>` : ""}
@@ -2675,6 +2759,114 @@ function projectPath(key) {
   const [platform, owner, repo] = key.split("/");
   return `/api/projects/${encodeURIComponent(platform)}` +
     `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+// AVATAR_MAX is the server's cap on an inlined badge, mirrored here so a file that will
+// not fit is shrunk before it is sent rather than refused after.
+const AVATAR_MAX = 16 * 1024;
+
+// wireAvatarPickers turns the file input into a badge.
+//
+// The image is stored in the project row as a data: URI rather than as a file on disk.
+// One binary in one sqlite row travels with the database, survives a restore, and needs
+// no static route, no MIME sniffing on the way out, and no orphaned file when a project
+// is deleted. The cost is a size cap, which is why anything large is rasterized first.
+//
+// SVG is kept as-is when it fits, because it is already small and stays sharp. Anything
+// else — and any oversized SVG — is drawn onto a 64px canvas and exported as PNG, which
+// takes a 2 MB photo to a few kilobytes. 64 is twice the rendered size, for a retina
+// display, and nothing here is ever shown larger than a favicon.
+function wireAvatarPickers(root) {
+  for (const b of root.querySelectorAll("[data-pick]")) {
+    const target = b.dataset.pick;
+    const file = document.getElementById(`${target}-file`);
+    b.onclick = () => file.click();
+    file.onchange = async () => {
+      const f = file.files?.[0];
+      if (!f) return;
+      try {
+        const value = await readAvatar(f);
+        const input = document.getElementById(target);
+        input.value = value;
+        // The field was a text input until now if the project had no image. Re-render so
+        // it becomes the image-plus-buttons form, with the new value in it.
+        input.type = "hidden";
+        b.textContent = "Replace";
+        let shown = b.parentElement.querySelector(".ava-img img");
+        if (!shown) {
+          const span = document.createElement("span");
+          span.className = "ava ava-img";
+          span.innerHTML = `<img alt="" width="22" height="22">`;
+          b.parentElement.insertBefore(span, b);
+          shown = span.querySelector("img");
+        }
+        shown.src = value;
+      } catch (e) {
+        alert(`That image could not be used: ${e.message}`);
+      }
+    };
+  }
+  for (const b of root.querySelectorAll("[data-clearava]")) {
+    b.onclick = () => {
+      const input = document.getElementById(b.dataset.clearava);
+      input.value = "";
+      input.type = "text";
+      b.parentElement.querySelector(".ava-img")?.remove();
+      b.remove();
+    };
+  }
+}
+
+// readAvatar returns a data: URI small enough for the row.
+function readAvatar(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error("the file could not be read"));
+    fr.onload = async () => {
+      const raw = String(fr.result);
+      if (file.type === "image/svg+xml" && raw.length <= AVATAR_MAX) {
+        resolve(raw);
+        return;
+      }
+      try {
+        resolve(await rasterize(raw));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+// rasterize draws a data URI onto a 64px canvas and returns a PNG data URI.
+//
+// Contain rather than cover, so a wide logo is letterboxed instead of cropped through
+// the middle. Quality is stepped down only if the PNG is still too large, which for a
+// 64px image effectively never happens.
+function rasterize(dataURI) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onerror = () => reject(new Error("that file is not an image this browser can draw"));
+    img.onload = () => {
+      const size = 64;
+      const c = document.createElement("canvas");
+      c.width = c.height = size;
+      const ctx = c.getContext("2d");
+      const scale = Math.min(size / img.width, size / img.height);
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      ctx.drawImage(img, Math.round((size - w) / 2), Math.round((size - h) / 2), w, h);
+
+      let out = c.toDataURL("image/png");
+      if (out.length > AVATAR_MAX) out = c.toDataURL("image/jpeg", 0.8);
+      if (out.length > AVATAR_MAX) {
+        reject(new Error(`still ${Math.round(out.length / 1024)} KB after shrinking`));
+        return;
+      }
+      resolve(out);
+    };
+    img.src = dataURI;
+  });
 }
 
 // imageState is the last answer per image field, so save can refuse what the operator
@@ -2741,10 +2933,23 @@ function wireProjectHandlers(s) {
   const el = document.getElementById("projects-body");
   const val = id => (document.getElementById(id)?.value || "").trim();
 
+  // Any typing in an open panel makes it dirty. One listener on the container rather
+  // than one per field, so a field added later is covered without anybody remembering.
+  el.addEventListener("input", e => {
+    if (e.target.closest(".panel, .pcard [data-save]")) formDirty = true;
+  });
+
   const newBtn = document.getElementById("p-new");
-  if (newBtn) newBtn.onclick = () => { projOpen = {key: NEW, tab: "build"}; renderProjectsPage(s); };
+  if (newBtn) {
+    newBtn.onclick = () => {
+      if (!confirmDiscard()) return;
+      projOpen = {key: NEW, tab: "build"};
+      renderProjectsPage(s);
+    };
+  }
 
   wireImageCheck(el);
+  wireAvatarPickers(el);
 
   // Paste a repository URL and the three identity fields fill themselves. On input
   // rather than on a button, because a paste is the whole gesture — and left alone if
@@ -2761,13 +2966,18 @@ function wireProjectHandlers(s) {
   }
 
   for (const b of el.querySelectorAll("[data-close-panel]")) {
-    b.onclick = () => { projOpen = {key: null, tab: null}; renderProjectsPage(s); };
+    b.onclick = () => {
+      if (!confirmDiscard()) return;
+      projOpen = {key: null, tab: null};
+      renderProjectsPage(s);
+    };
   }
 
   // One expanded panel at a time, and clicking the open one closes it. A page of
   // expanded cards is the wall of fields this replaced.
   for (const b of el.querySelectorAll("[data-tab]")) {
     b.onclick = () => {
+      if (!confirmDiscard()) return;
       const same = projOpen.key === b.dataset.key && projOpen.tab === b.dataset.tab;
       projOpen = same ? {key: null, tab: null} : {key: b.dataset.key, tab: b.dataset.tab};
       renderProjectsPage(s);
@@ -2815,9 +3025,30 @@ function wireProjectHandlers(s) {
           display_name: val(id("name")),
           avatar: val(id("avatar")),
         });
-        // Stay where you were on an edit; close the add form, since its project now
-        // has a card of its own.
-        if (!editing) projOpen = {key: null, tab: null};
+        // Saved, so nothing is unsaved. Cleared before the scan, or the confirm-on-leave
+        // guard fires on a form the server has already accepted.
+        formDirty = false;
+
+        // A new project builds what is already open. Without this, adding a repository
+        // does nothing visible until somebody pushes to it — and the reason for adding it
+        // is usually that nobody has.
+        if (!editing) {
+          projOpen = {key: null, tab: null};
+          try {
+            const scan = await api("POST", `${projectPath(target)}/scan`);
+            if (scan.error) {
+              alert(`The project was saved, but nothing could be queued:\n\n${scan.error}`);
+            } else if (scan.queued) {
+              alert(`Saved. ${scan.queued} open pull request${scan.queued === 1 ? "" : "s"} ` +
+                `queued for building — watch the dashboard.`);
+            } else {
+              alert("Saved. That repository has no open pull requests, so there is " +
+                "nothing to build yet.");
+            }
+          } catch (e) {
+            alert(`The project was saved, but the scan failed: ${e.message}`);
+          }
+        }
         return out;
       });
     };
