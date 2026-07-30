@@ -285,6 +285,11 @@ input.control::placeholder { color: var(--muted) }
   background: var(--ink); color: var(--plane); border-color: var(--ink); font-weight: 600;
 }
 .btn.primary:hover { opacity: 0.9 }
+/* Arrives with the render that follows a save. No animation on the way in: it appears
+   where the form was, which is where the eye already is. */
+.flash-note { animation: fadeout 6s ease-in forwards }
+@keyframes fadeout { 0%, 80% { opacity: 1 } 100% { opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { .flash-note { animation: none } }
 /* Column 2, like .why. Without this it was a third child of a two-column grid, so it
    wrapped into the *label* column of the next row — docker's error rendered where a
    field name belongs, in 0.74rem, which is how "errors:" ended up looking like a
@@ -2346,6 +2351,15 @@ let projOpen = {key: null, tab: null};
    that wrong. Typing into a form is the signal. */
 let formDirty = false;
 
+/* A one-shot message for the render that follows an action.
+
+   Consumed by the next renderProjectsPage and cleared as it is read, so a render five
+   seconds later — a second save, another panel opening — does not replay it. The element
+   removes *itself* on a timer rather than being cleared by a re-render, because a
+   re-render at an arbitrary moment would throw away whatever somebody had started typing
+   in another panel. */
+let projFlash = "";
+
 // confirmDiscard asks before throwing away unsaved edits, and returns whether to go on.
 function confirmDiscard() {
   if (!formDirty) return true;
@@ -2387,6 +2401,19 @@ function renderProjectsPage(s) {
     : `<div class="act"><button class="btn" id="p-new">New project</button></div>`);
 
   el.innerHTML = `${banner}${rows}${adder}`;
+
+  // Read once and cleared, so it cannot reappear on an unrelated render.
+  if (projFlash) {
+    const n = document.createElement("div");
+    n.className = "notice ok flash-note";
+    n.textContent = projFlash;
+    projFlash = "";
+    el.prepend(n);
+    // Long enough to read, short enough not to become furniture. Removed from the DOM
+    // rather than by a re-render, which would discard typing elsewhere on the page.
+    setTimeout(() => n.remove(), 6000);
+  }
+
   // Wired unconditionally: with no write access there are no buttons to wire, and a
   // read-only page that skipped this would still have to know that.
   wireProjectHandlers(s);
@@ -3028,6 +3055,15 @@ function wireProjectHandlers(s) {
         // Saved, so nothing is unsaved. Cleared before the scan, or the confirm-on-leave
         // guard fires on a form the server has already accepted.
         formDirty = false;
+
+        // Close the panel and say so. Leaving it open was meant to keep somebody in
+        // place for a second edit, and instead made a successful save look like nothing
+        // had happened — the form it left on screen is indistinguishable from the form
+        // that was there before the click.
+        if (editing) {
+          projOpen = {key: null, tab: null};
+          projFlash = `Saved ${key.split("/").slice(1).join("/")}.`;
+        }
 
         // A new project builds what is already open. Without this, adding a repository
         // does nothing visible until somebody pushes to it — and the reason for adding it

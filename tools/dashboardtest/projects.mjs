@@ -368,6 +368,28 @@ console.log("\nsecrets panel");
   }
 }
 
+console.log("\nsaving an edit closes the form and says so");
+{
+  await click($$(".pcard [data-tab=build]")[0]);
+  if (!$(".pcard .panel")) fail("Edit did not open the panel");
+  calls.length = 0;
+  await click(btn("Save changes"));
+
+  if ($(".pcard .panel")) {
+    fail("the form is still open after saving, which looks identical to nothing happening");
+  }
+  const note = $("#projects-body .notice.ok");
+  if (!note || !note.textContent.includes("Saved")) {
+    fail(`no confirmation after saving: ${JSON.stringify(note?.textContent || null)}`);
+  } else ok(`closed, and said ${JSON.stringify(note.textContent.trim())}`);
+
+  // An edit must not scan: the pull requests are already known to the daemon, and
+  // re-queueing every one of them on every settings tweak would rebuild the world.
+  if (calls.some(c => c.method === "POST" && c.url.endsWith("/scan"))) {
+    fail("editing a project queued builds for every open pull request");
+  }
+}
+
 console.log("\nunsaved edits are not thrown away silently");
 {
   // Open a project's settings and type into it.
