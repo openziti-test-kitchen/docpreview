@@ -165,13 +165,19 @@ func (l *Local) Validate(context.Context) error { return nil }
 func (l *Local) Publish(_ context.Context, spec Spec, h http.Handler) (*Publication, error) {
 	l.mu.Lock()
 	for id, m := range l.mounted {
-		if m.name == spec.Name && id != spec.Key() {
+		if m.name != spec.Name || id == spec.Key() {
+			continue
+		}
+		if Collides(id, spec) {
 			l.mu.Unlock()
 			return nil, fmt.Errorf("the name %q is already serving a different preview (%s); "+
 				"two previews render to the same path under this name_template — "+
 				"use \"{{.Repo.Owner}}-{{.Repo.Name}}-{{.Name}}\" to separate them",
 				spec.Name, id)
 		}
+		// This preview's earlier build of the same commit. The newer build takes the
+		// mount; the older entry would otherwise keep a path nothing routes to.
+		delete(l.mounted, id)
 	}
 	// Replacing this preview's own mount is the common path: a second push to
 	// the same branch. Nothing to tear down — no listener, no remote object.

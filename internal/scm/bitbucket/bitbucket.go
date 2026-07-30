@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -57,15 +58,22 @@ type Client struct {
 	log  *slog.Logger
 	http *http.Client
 
-	// authz is the Authorization header value, built once at construction from the
-	// configured mode. A secret: it holds the credential verbatim.
-	authz vault.Secret
+	// creds is the credential this client falls back to: the global vault keys, read
+	// once at construction. Empty when none are stored, which is valid — every project
+	// may carry its own.
+	creds credential
 
-	// user and pass are the two halves of the clone URL's userinfo. For
-	// access_token mode user is the literal "x-token-auth"; for api_token it is the
-	// account email.
-	user string
-	pass vault.Secret
+	// perRepo resolves one repository's own credential, or the zero value when it has
+	// none. A function rather than a map, and consulted per call rather than captured,
+	// for the same reasons Daemon.SetProjectSecrets is a resolver: the vault may be
+	// locked when this client is built, a token added from the projects page has to
+	// apply without a restart, and the answer differs per repository.
+	//
+	// Bitbucket is the reason this exists at all. An access token there is scoped to a
+	// repository, a project or a workspace, and an administrator can refuse the wider
+	// two — so on a real workspace there is no single token that reaches every
+	// repository, and one global credential cannot be the whole story.
+	perRepo func(owner, repo string) ProjectCredential
 
 	webhookSecret vault.Secret
 
@@ -76,6 +84,89 @@ type Client struct {
 	// outlives the comment it names and turns every later update into a 404.
 	commentsMu sync.Mutex
 	comments   map[string]int64
+}
+
+// ProjectCredential is one project's own Bitbucket credential, as the resolver reports
+// it. All fields empty means "this project has none, use the global one".
+//
+// Both modes are carried rather than a mode being chosen per project, because which one
+// an operator filled in is the answer: a repository access token needs no email, and an
+// account API token is useless without one.
+type ProjectCredential struct {
+	AccessToken string
+	Email       string
+	APIToken    string
+}
+
+// credential is a resolved Authorization header plus the two halves of a clone URL's
+// userinfo. Built from either a ProjectCredential or the global vault keys.
+type credential struct {
+	// authz is the Authorization header value. A secret: it holds the token verbatim.
+	authz vault.Secret
+
+	// user and pass are the clone URL's userinfo. For a bearer token the user is the
+	// literal "x-token-auth"; for basic auth it is the account email.
+	user string
+	pass vault.Secret
+}
+
+func (c credential) empty() bool { return len(c.authz.Reveal()) == 0 }
+
+// bearer builds a credential from an access token: a repository, project or workspace
+// token, which is the recommended shape.
+func bearer(token string) credential {
+	return credential{
+		authz: vault.NewSecretString("Bearer " + token),
+		// The literal string, not the token and not the workspace. Bitbucket's
+		// convention, and getting it wrong is a 403 on clone with nothing to say why.
+		user: "x-token-auth",
+		pass: vault.NewSecretString(token),
+	}
+}
+
+// basic builds a credential from an account email and API token — the fallback mode,
+// whose blast radius is everything that account can see.
+func basic(email, token string) credential {
+	return credential{
+		authz: vault.NewSecretString("Basic " +
+			base64.StdEncoding.EncodeToString([]byte(email+":"+token))),
+		user: email,
+		pass: vault.NewSecretString(token),
+	}
+}
+
+// WithProjectCredentials installs the per-project credential resolver.
+func (c *Client) WithProjectCredentials(fn func(owner, repo string) ProjectCredential) *Client {
+	c.perRepo = fn
+	return c
+}
+
+// credentialFor picks the credential to use for one repository.
+//
+// A project's own wins outright rather than being merged with the global one. Merging
+// would mean an operator who stored a repository token for one project could still be
+// authenticating as the workspace-wide account for half of the calls, which is the kind
+// of thing that works until the day the wider credential is revoked.
+//
+// An access token wins over an email-and-API-token pair when a project somehow has both,
+// because it is the narrower of the two.
+func (c *Client) credentialFor(owner, repo string) (credential, error) {
+	if c.perRepo != nil {
+		p := c.perRepo(owner, repo)
+		switch {
+		case p.AccessToken != "":
+			return bearer(p.AccessToken), nil
+		case p.Email != "" && p.APIToken != "":
+			return basic(p.Email, p.APIToken), nil
+		}
+	}
+	if c.creds.empty() {
+		return credential{}, fmt.Errorf(
+			"no Bitbucket credential for %s/%s: add an access token to that project on "+
+				"/projects, or store a workspace-wide one with "+
+				"'docpreview vault set %s'", owner, repo, vault.KeyBitbucketAccessToken)
+	}
+	return c.creds, nil
 }
 
 // New builds a Bitbucket client from configuration and vault contents.
@@ -105,36 +196,34 @@ func New(cfg config.BitbucketConfig, v *vault.Vault, log *slog.Logger) (*Client,
 	c := &Client{
 		cfg:           cfg,
 		log:           log.With("scm", "bitbucket"),
-		http:          &http.Client{Timeout: 30 * time.Second},
+		http:          &http.Client{Timeout: 30 * time.Second, Transport: ipv4First()},
 		webhookSecret: secret,
 	}
 
+	// The global credential is optional, and that is a change from how this started.
+	//
+	// It was required, on the reasoning that a client with no credential cannot do
+	// anything. True of a *repository*, not of the client: Bitbucket access tokens are
+	// scoped to a repository unless an administrator permits the wider kinds, and one who
+	// does not leaves an operator with a token per project and nothing global to store.
+	// Requiring one here meant the daemon refused to build a Bitbucket client at all in
+	// exactly that case, so the projects page could not be used to supply the tokens that
+	// would have made it work.
+	//
+	// So: absent is fine, and a repository with neither its own credential nor a global
+	// one fails at the point of use, naming both places it could come from.
 	switch cfg.Auth {
 	case config.BitbucketAuthAccessToken:
-		token, err := v.MustGet(vault.KeyBitbucketAccessToken)
-		if err != nil {
-			return nil, err
+		if token, err := v.Get(vault.KeyBitbucketAccessToken); err == nil {
+			c.creds = bearer(string(token.Reveal()))
 		}
-		c.authz = vault.NewSecretString("Bearer " + string(token.Reveal()))
-		// The literal string, not the token and not the workspace. Bitbucket's
-		// convention, and getting it wrong is a 403 on clone with nothing to say why.
-		c.user = "x-token-auth"
-		c.pass = token
 
 	case config.BitbucketAuthAPIToken:
-		email, err := v.MustGet(vault.KeyBitbucketEmail)
-		if err != nil {
-			return nil, err
+		email, emailErr := v.Get(vault.KeyBitbucketEmail)
+		token, tokenErr := v.Get(vault.KeyBitbucketAPIToken)
+		if emailErr == nil && tokenErr == nil {
+			c.creds = basic(string(email.Reveal()), string(token.Reveal()))
 		}
-		token, err := v.MustGet(vault.KeyBitbucketAPIToken)
-		if err != nil {
-			return nil, err
-		}
-		basic := base64.StdEncoding.EncodeToString(
-			[]byte(string(email.Reveal()) + ":" + string(token.Reveal())))
-		c.authz = vault.NewSecretString("Basic " + basic)
-		c.user = string(email.Reveal())
-		c.pass = token
 
 	default:
 		return nil, fmt.Errorf("bitbucket.auth is %q; use %q (a repository access token, recommended) "+
@@ -143,6 +232,38 @@ func New(cfg config.BitbucketConfig, v *vault.Vault, log *slog.Logger) (*Client,
 	}
 
 	return c, nil
+}
+
+// ipv4First is a transport that dials IPv4 before IPv6.
+//
+// Observed on this machine, and the reason the operator's own curl needed `--ipv4`: a
+// connection to api.bitbucket.org over IPv6 is accepted, gets through the TLS handshake,
+// and is then reset mid-response —
+//
+//	read tcp [2603:…]:65086->[2401:1d80:…]:443: wsarecv: An existing connection was
+//	forcibly closed by the remote host
+//
+// Go's dialer prefers IPv6 where an address exists, and its Happy Eyeballs fallback only
+// covers a connection that fails to *establish* — this one establishes and then dies, so
+// nothing retries it and every call fails with a transport error that looks like the token
+// being wrong.
+//
+// IPv4 first, not IPv4 only: the fallback keeps an IPv6-only network working, which a hard
+// "tcp4" would break with an error that names the wrong problem.
+func ipv4First() http.RoundTripper {
+	d := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "tcp" {
+			if conn, err := d.DialContext(ctx, "tcp4", addr); err == nil {
+				return conn, nil
+			}
+			// No IPv4 route, or none that answered. Fall through to whatever the resolver
+			// offers rather than reporting a network failure that is really a preference.
+		}
+		return d.DialContext(ctx, network, addr)
+	}
+	return t
 }
 
 // checkAPIBase refuses the base URL that used to work.
@@ -176,7 +297,14 @@ func (c *Client) Validate(ctx context.Context) error {
 		DisplayName string `json:"display_name"`
 		AccountID   string `json:"account_id"`
 	}
-	err := c.do(ctx, http.MethodGet, "/2.0/user", nil, &who)
+	// No repository, so this checks the *global* credential. A daemon whose tokens are
+	// all per-project has none, and that is not a failure — reported below.
+	if c.creds.empty() {
+		c.log.Info("no workspace-wide bitbucket credential stored; "+
+			"each project supplies its own", "auth", c.cfg.Auth)
+		return nil
+	}
+	err := c.do(ctx, "", "", http.MethodGet, "/2.0/user", nil, &who)
 	if err == nil {
 		c.log.Info("bitbucket credential validated",
 			"auth", c.cfg.Auth, "account", who.DisplayName, "username", who.Username)
@@ -218,12 +346,87 @@ func (c *Client) tokenKey() string {
 // way; unlike GitHub there is no short-lived form to reach for, so this string is as
 // long-lived as what is in the vault.
 func (c *Client) CloneURL(_ context.Context, pr model.PullRequest) (string, error) {
+	cred, err := c.credentialFor(pr.Repo.Owner, pr.Repo.Name)
+	if err != nil {
+		return "", err
+	}
 	// Both halves escaped. An unescaped email contains an `@`, which used to defeat
 	// the log scrubber outright; that is fixed in pipeline.scrubLine, and escaping
 	// here is the difference between a defence and a convention.
 	return fmt.Sprintf("https://%s:%s@bitbucket.org/%s/%s.git",
-		url.QueryEscape(c.user), url.QueryEscape(string(c.pass.Reveal())),
+		url.QueryEscape(cred.user), url.QueryEscape(string(cred.pass.Reveal())),
 		pr.Repo.Owner, pr.Repo.Name), nil
+}
+
+// CheckRepo confirms the credential for one repository can actually reach it.
+//
+// Behind the projects page's Test button. A token is pasted once, shown once, and
+// otherwise unverifiable — and the failure without this is a build that clones for twenty
+// seconds and then reports an authentication error, or worse, a comment that never
+// appears because the token has read access and not write.
+//
+// Two calls, because two permissions are needed and only one of them is exercised by
+// reading: the repository read that a clone needs, and the pull request read that
+// ChangedFiles needs. Write cannot be checked without writing something, so the message
+// says which scope is still unproven rather than implying everything is fine.
+func (c *Client) CheckRepo(ctx context.Context, repo model.Repo) (string, error) {
+	var meta struct {
+		FullName  string `json:"full_name"`
+		IsPrivate bool   `json:"is_private"`
+		Project   struct {
+			Key string `json:"key"`
+		} `json:"project"`
+	}
+	if err := c.do(ctx, repo.Owner, repo.Name, http.MethodGet,
+		fmt.Sprintf("/2.0/repositories/%s/%s", repo.Owner, repo.Name), nil, &meta); err != nil {
+		return "", err
+	}
+
+	var prs struct {
+		Size int `json:"size"`
+	}
+	if err := c.do(ctx, repo.Owner, repo.Name, http.MethodGet,
+		fmt.Sprintf("/2.0/repositories/%s/%s/pullrequests?state=OPEN&pagelen=1", repo.Owner, repo.Name),
+		nil, &prs); err != nil {
+		return "", fmt.Errorf("the token can read the repository but not its pull requests "+
+			"(add the pullrequest scope): %w", err)
+	}
+
+	visibility := "public"
+	if meta.IsPrivate {
+		visibility = "private"
+	}
+	// Two lines separated by a newline: a headline and the detail behind it.
+	//
+	// This was one sentence carrying five facts, which is a paragraph to say "it worked".
+	// The caller shows the first line and keeps the rest for a tooltip — the detail is worth
+	// having when a workspace-wide token answers for a project somebody thought they had
+	// overridden, and worth hiding every other time.
+	return fmt.Sprintf("Works — read access confirmed.\n%s is %s with %d open pull "+
+		"request(s), reached with %s. Commenting needs pullrequest:write, which cannot be "+
+		"checked without writing something.",
+		meta.FullName, visibility, prs.Size, c.credentialSource(repo.Owner, repo.Name)), nil
+}
+
+// credentialSource names where the credential for one repository came from, for messages.
+//
+// Its own or the workspace's is the distinction that matters: a project whose token was
+// stored but not resolved authenticates as the wider account, which works right up until
+// that account is revoked or its access is narrowed.
+func (c *Client) credentialSource(owner, repo string) string {
+	if c.perRepo != nil {
+		p := c.perRepo(owner, repo)
+		switch {
+		case p.AccessToken != "":
+			return "this project's own access token"
+		case p.Email != "" && p.APIToken != "":
+			return "this project's own account email and API token"
+		}
+	}
+	if c.cfg.Auth == config.BitbucketAuthAPIToken {
+		return "the workspace-wide account email and API token"
+	}
+	return "the workspace-wide access token"
 }
 
 // maxChangedFilePages bounds the diffstat walk, with the same reasoning as the
@@ -266,7 +469,8 @@ func (c *Client) ChangedFiles(ctx context.Context, pr model.PullRequest) ([]stri
 			Size   int             `json:"size"`
 			Next   string          `json:"next"`
 		}
-		if err := c.do(ctx, http.MethodGet, path, nil, &envelope); err != nil {
+		if err := c.do(ctx, pr.Repo.Owner, pr.Repo.Name,
+			http.MethodGet, path, nil, &envelope); err != nil {
 			return nil, fmt.Errorf("listing changed files on %s: %w", pr, err)
 		}
 		if page == 0 {
@@ -365,7 +569,8 @@ func (c *Client) upsertComment(ctx context.Context, r scm.Report) error {
 		var created struct {
 			ID int64 `json:"id"`
 		}
-		if err := c.do(ctx, http.MethodPost, path, payload, &created); err != nil {
+		if err := c.do(ctx, r.PR.Repo.Owner, r.PR.Repo.Name,
+			http.MethodPost, path, payload, &created); err != nil {
 			return fmt.Errorf("creating preview comment on %s: %w", r.PR, err)
 		}
 		c.rememberComment(r.PreviewID, created.ID)
@@ -376,7 +581,7 @@ func (c *Client) upsertComment(ctx context.Context, r scm.Report) error {
 	// PUT, not PATCH. Bitbucket replaces the comment body outright.
 	path := fmt.Sprintf("/2.0/repositories/%s/%s/pullrequests/%d/comments/%d",
 		r.PR.Repo.Owner, r.PR.Repo.Name, r.PR.Number, existing)
-	err := c.do(ctx, http.MethodPut, path, payload, nil)
+	err := c.do(ctx, r.PR.Repo.Owner, r.PR.Repo.Name, http.MethodPut, path, payload, nil)
 	if IsNotFound(err) {
 		// Somebody deleted it. Post a new one rather than 404ing on this and every
 		// later report for the rest of the process.
@@ -416,7 +621,8 @@ func (c *Client) findComment(ctx context.Context, pr model.PullRequest, previewI
 			} `json:"values"`
 			Next string `json:"next"`
 		}
-		if err := c.do(ctx, http.MethodGet, path, nil, &envelope); err != nil {
+		if err := c.do(ctx, pr.Repo.Owner, pr.Repo.Name,
+			http.MethodGet, path, nil, &envelope); err != nil {
 			return 0, fmt.Errorf("listing comments on %s: %w", pr, err)
 		}
 		for _, cm := range envelope.Values {
@@ -469,7 +675,7 @@ func (c *Client) postBuildStatus(ctx context.Context, r scm.Report) error {
 	// POST creates or replaces: Bitbucket keys a build status on (commit, key), so
 	// re-posting the same key is the update. No find-then-patch, which is one fewer
 	// request than the GitHub check run needs.
-	return c.do(ctx, http.MethodPost, path, map[string]string{
+	return c.do(ctx, r.PR.Repo.Owner, r.PR.Repo.Name, http.MethodPost, path, map[string]string{
 		"key":         statusKey,
 		"state":       state,
 		"name":        "Documentation preview",
@@ -513,7 +719,8 @@ func (c *Client) Retract(ctx context.Context, pr model.PullRequest) error {
 
 	path := fmt.Sprintf("/2.0/repositories/%s/%s/pullrequests/%d/comments/%d",
 		pr.Repo.Owner, pr.Repo.Name, pr.Number, id)
-	if err := c.do(ctx, http.MethodDelete, path, nil, nil); err != nil && !IsNotFound(err) {
+	if err := c.do(ctx, pr.Repo.Owner, pr.Repo.Name,
+		http.MethodDelete, path, nil, nil); err != nil && !IsNotFound(err) {
 		return fmt.Errorf("deleting preview comment on %s: %w", pr, err)
 	}
 	c.forgetComment(previewID)
@@ -534,7 +741,8 @@ func (c *Client) OpenPullRequests(ctx context.Context, repo model.Repo) ([]model
 			Values []pullRequestObject `json:"values"`
 			Next   string              `json:"next"`
 		}
-		if err := c.do(ctx, http.MethodGet, path, nil, &envelope); err != nil {
+		if err := c.do(ctx, repo.Owner, repo.Name,
+			http.MethodGet, path, nil, &envelope); err != nil {
 			return nil, fmt.Errorf("listing open pull requests on %s: %w", repo.String(), err)
 		}
 		for _, p := range envelope.Values {
@@ -612,7 +820,7 @@ func (c *Client) resolveCommit(ctx context.Context, repo model.Repo, hash string
 		Hash string `json:"hash"`
 	}
 	path := fmt.Sprintf("/2.0/repositories/%s/%s/commit/%s", repo.Owner, repo.Name, hash)
-	if err := c.do(ctx, http.MethodGet, path, nil, &commit); err != nil {
+	if err := c.do(ctx, repo.Owner, repo.Name, http.MethodGet, path, nil, &commit); err != nil {
 		return "", err
 	}
 	if len(commit.Hash) != 40 {
@@ -649,12 +857,31 @@ func (c *Client) forgetComment(previewID string) {
 // Written fresh rather than shared with the GitHub client: the error envelope and the
 // rate-limit signalling are different enough that a shared implementation would be a
 // switch on platform wearing a trenchcoat.
-func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
+// do issues a request as the credential belonging to one repository.
+//
+// owner and repo are parameters rather than being parsed back out of the path because the
+// credential depends on them and a path is not a reliable place to find them — /2.0/user
+// has none at all, and a mis-parse would silently authenticate as the wrong identity.
+// Empty owner means "no repository", which uses the global credential.
+func (c *Client) do(ctx context.Context, owner, repo, method, path string, in, out any) error {
 	const attempts = 3
+
+	cred := c.creds
+	if owner != "" {
+		var err error
+		cred, err = c.credentialFor(owner, repo)
+		if err != nil {
+			return err
+		}
+	}
+	if cred.empty() {
+		return fmt.Errorf("no Bitbucket credential is stored; " +
+			"add one to the project on /projects, or store a workspace-wide one on /secrets")
+	}
 
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		err := c.doOnce(ctx, method, path, in, out)
+		err := c.doOnce(ctx, cred, method, path, in, out)
 		if err == nil {
 			return nil
 		}
@@ -689,7 +916,7 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (c *Client) doOnce(ctx context.Context, method, path string, in, out any) error {
+func (c *Client) doOnce(ctx context.Context, cred credential, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
 		buf, err := json.Marshal(in)
@@ -703,7 +930,7 @@ func (c *Client) doOnce(ctx context.Context, method, path string, in, out any) e
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", string(c.authz.Reveal()))
+	req.Header.Set("Authorization", string(cred.authz.Reveal()))
 	req.Header.Set("Accept", "application/json")
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")

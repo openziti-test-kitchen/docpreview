@@ -241,6 +241,42 @@ console.log("\nit says what it is doing, not only how far along");
   }
 }
 
+console.log("\na quick, uneventful startup reports nothing");
+{
+  // The dialog explains a wait. Adoption made the ordinary restart three seconds, and a
+  // modal that must be dismissed to say so is a toll on every restart.
+  await apply({...starting, starting: false, startup: undefined, pending: 0,
+    last_startup: {
+      seconds: 3, instance: "20260730-100000.000",
+      previews: 2, adopted_previews: 2, created_previews: 0,
+      adopted_builds: 11, created_builds: 0, orphans: 0, pending: 0,
+    }});
+  if (!$("#boot").hidden) {
+    fail("a 3-second all-adopted startup opened a dialog");
+  } else {
+    ok("silent");
+  }
+}
+
+console.log("\na quick startup that created something still reports");
+{
+  // Anything created means the fast path failed for something, which is what predicts the
+  // next restart being slow — worth knowing even when this one was quick.
+  await apply({...starting, starting: false, startup: undefined, pending: 0,
+    last_startup: {
+      seconds: 4, instance: "20260730-100001.000",
+      previews: 2, adopted_previews: 1, created_previews: 1,
+      adopted_builds: 10, created_builds: 1, orphans: 0, pending: 0,
+    }});
+  if ($("#boot").hidden) {
+    fail("a startup that had to create shares said nothing");
+  } else {
+    ok("reports what it had to create");
+  }
+  $("#boot-close").dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
+  await settle();
+}
+
 console.log("\nstarted: the banner goes, the page comes back, the report appears");
 {
   const report = {

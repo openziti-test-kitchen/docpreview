@@ -64,6 +64,11 @@ type ProjectsAdmin struct {
 	// was found.
 	rebuilder func(ctx context.Context, previewID string) (bool, error)
 
+	// scmChecker verifies that a project's source-control credential reaches its
+	// repository, returning what it found. Nil for a daemon with no platform that can be
+	// checked, in which case the route answers 501 rather than pretending.
+	scmChecker func(ctx context.Context, repo model.Repo) (string, error)
+
 	// The docker volume operations behind the cache controls, injectable because they are
 	// destructive and reach the real docker daemon.
 	//
@@ -118,6 +123,12 @@ func (a *ProjectsAdmin) WithRebuilder(fn func(context.Context, string) (bool, er
 	return a
 }
 
+// WithSCMChecker installs the credential test behind the projects page's Test button.
+func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (string, error)) *ProjectsAdmin {
+	a.scmChecker = fn
+	return a
+}
+
 // WithDocker records what the startup probe found.
 func (a *ProjectsAdmin) WithDocker(ok bool, why string) *ProjectsAdmin {
 	a.dockerOK, a.dockerWhy = ok, why
@@ -150,6 +161,12 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// slash that this namespace is built on.
 	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.setSecret))
 	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.delSecret))
+
+	// A project's own source-control credential, which is not one of its variables and is
+	// deliberately not routed under /secrets/. Bitbucket needs this because an access
+	// token there is scoped to a repository unless an administrator allows wider ones.
+	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}/scm/{name}", a.gated(a.setSCM))
+	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/scm-test", a.gated(a.testSCM))
 
 	// Build what is already open. A project added here has no webhook behind it, so
 	// without this the answer to "I added it, now what" is "wait for somebody to push".
@@ -255,6 +272,14 @@ type projectView struct {
 
 	// Secrets are the environment variable names this project injects, sorted.
 	Secrets []string `json:"secrets"`
+
+	// SCM names which of this project's own source-control credentials are stored —
+	// "scm.access_token", "scm.email", "scm.api_token". Names only, like every other
+	// credential surface here: nothing reads a value back.
+	//
+	// Present so the form can say "set" rather than showing an empty box that gives no
+	// way to tell a stored token from a missing one.
+	SCM []string `json:"scm,omitempty"`
 }
 
 type projectDefaults struct {
@@ -277,6 +302,24 @@ type projectDefaults struct {
 	// request's own build scripts on the host, so it is off unless the operator wrote
 	// it down — and the form must not offer what the build will refuse.
 	AllowLocalDriver bool `json:"allow_local_driver"`
+
+	// SCMGlobal names the workspace-wide source-control credentials that are stored —
+	// "bitbucket.access_token", "bitbucket.email", "bitbucket.api_token". Names only.
+	//
+	// The form needs it to say which credential a project will actually use: with one
+	// stored, a blank per-project field means "inherit this", and with none it means "this
+	// repository cannot be cloned". Those are opposite meanings for the same empty box,
+	// and the page cannot tell them apart without being told.
+	SCMGlobal []string `json:"scm_global,omitempty"`
+
+	// Frameworks is the preset table, so the dropdown and the placeholders under it come
+	// from the same source the build uses. A copy in the page would drift, and the way it
+	// would drift is a form promising one build command and the build running another.
+	Frameworks []config.Framework `json:"frameworks,omitempty"`
+
+	// Framework is the preset a *new* project's form starts on. Not applied to a stored
+	// blank, which would change what every existing project builds.
+	Framework string `json:"framework,omitempty"`
 
 	// Images are the container images this project knows work, offered as suggestions
 	// beside a free-text field rather than as a closed list: the set of images that
@@ -377,7 +420,9 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 			Driver: a.cfg.Build.Driver, Image: a.cfg.Build.Image,
 			Timeout:         a.cfg.Build.Timeout.String(),
 			DockerAvailable: a.dockerOK, AllowLocalDriver: a.cfg.Build.AllowLocalDriver,
-			Images: knownImages(),
+			Frameworks: config.Frameworks(),
+			Framework:  config.FrameworkDefault,
+			Images:     knownImages(),
 		},
 		SecretsAvailable: a.vault != nil,
 		VaultLocked:      v == nil,
@@ -385,12 +430,31 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 	if !a.dockerOK {
 		st.Defaults.DockerDetail = a.dockerWhy
 	}
+	// Which workspace-wide credentials exist, so an empty per-project box can say whether
+	// it means "inherit" or "nothing will work". Names only — nothing reads a value back.
+	if v != nil {
+		for _, k := range []string{vault.KeyBitbucketAccessToken, vault.KeyBitbucketEmail,
+			vault.KeyBitbucketAPIToken} {
+			if _, err := v.Get(k); err == nil {
+				st.Defaults.SCMGlobal = append(st.Defaults.SCMGlobal, k)
+			}
+		}
+	}
 	for _, p := range projects {
 		view := projectView{Project: p, Secrets: []string{}}
 		if v != nil {
 			prefix := vault.ProjectSecretPrefix(p.Platform, p.Owner, p.Repo)
 			for _, k := range v.KeysWithPrefix(prefix) {
-				view.Secrets = append(view.Secrets, strings.TrimPrefix(k, prefix))
+				name := strings.TrimPrefix(k, prefix)
+				// The two kinds share a prefix and are listed separately, because one is
+				// injected into every build and the other is what the daemon clones with.
+				// Before this split, a project's access token appeared in the page's list
+				// of build variables — which is both wrong and alarming.
+				if vault.IsProjectSCMKey(name) {
+					view.SCM = append(view.SCM, name)
+					continue
+				}
+				view.Secrets = append(view.Secrets, name)
 			}
 		}
 		st.Projects = append(st.Projects, view)
@@ -445,6 +509,8 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 		DisplayName  string `json:"display_name"`
 		Avatar       string `json:"avatar"`
 		Timeout      string `json:"timeout"`
+		Private      *bool  `json:"private"`
+		Framework    string `json:"framework"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -469,6 +535,24 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 	p.DisplayName = strings.TrimSpace(body.DisplayName)
 	p.Avatar = strings.TrimSpace(body.Avatar)
 	p.Timeout = strings.TrimSpace(body.Timeout)
+
+	// The framework preset. Validated against the table rather than stored as typed: an id
+	// this binary does not know silently falls back to the repository's own configuration
+	// at build time, which is a project that looks configured and is not.
+	p.Framework = strings.TrimSpace(body.Framework)
+	if p.Framework != config.FrameworkNone {
+		if _, ok := config.FrameworkByID(p.Framework); !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("unknown framework preset %q", p.Framework)})
+			return
+		}
+	}
+	// A pointer, like Enabled: PUT is a whole-row upsert, and a plain bool would read a
+	// field the caller omitted as "false" — silently unmarking a private repository on
+	// any save from something that does not know about this field.
+	if body.Private != nil {
+		p.Private = *body.Private
+	}
 
 	// Checked here, once, rather than at the start of every build. A build that
 	// discovers the timeout is unusable has already cloned the repository, and the only
@@ -737,6 +821,105 @@ func (a *ProjectsAdmin) setSecret(w http.ResponseWriter, r *http.Request) {
 	a.respond(w, r)
 }
 
+// setSCM stores a project's own source-control credential.
+//
+// Separate from setSecret, and separate in the vault, because these two things look alike
+// and are not: a project *variable* is handed to every build of that repository, and this
+// is the credential the daemon clones and comments with. Sharing the handler would mean one
+// validation rule for both, and the rule that keeps the credential out of a build's
+// environment is the shape of its name.
+//
+// PUT with an empty value deletes, so one route covers "set", "rotate" and "clear". A
+// credential is a single field on a form and a DELETE route for it would be a second
+// button whose only difference is that it needs no value.
+func (a *ProjectsAdmin) setSCM(w http.ResponseWriter, r *http.Request) {
+	p, bad := projectFromRequest(r)
+	if bad != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad})
+		return
+	}
+
+	name := r.PathValue("name")
+	if !vault.IsProjectSCMKey(name) {
+		// A closed list, so a typo cannot become a credential the daemon looks for and
+		// nothing sets — which fails as a build that cannot clone, with nothing to say
+		// the name was wrong.
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("unknown credential %q; expected one of %s, %s, %s",
+				name, vault.SCMAccessToken, vault.SCMEmail, vault.SCMAPIToken)})
+		return
+	}
+
+	v := a.openVault()
+	if v == nil {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "the vault is locked; unlock it at /secrets first"})
+		return
+	}
+
+	var body struct {
+		Value string `json:"value"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	// Trailing whitespace from a paste is the commonest way a token is wrong in a way
+	// nothing reports.
+	body.Value = strings.TrimSpace(body.Value)
+
+	key := vault.ProjectSCMKey(p.Platform, p.Owner, p.Repo, name)
+	if body.Value == "" {
+		if err := v.Delete(key); err != nil {
+			a.log.Error("clearing a project credential", "project", p.Key(), "name", name, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		a.log.Info("project credential cleared", "project", p.Key(), "name", name)
+		a.respond(w, r)
+		return
+	}
+
+	if err := v.Set(key, vault.NewSecretString(body.Value)); err != nil {
+		a.log.Error("storing a project credential", "project", p.Key(), "name", name, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	// The name and the length, never the value. No rearm: the client resolves this per
+	// call, so it applies to the next delivery without a restart.
+	a.log.Info("project credential stored", "project", p.Key(), "name", name, "bytes", len(body.Value))
+	a.respond(w, r)
+}
+
+// testSCM checks that a project's credential can actually reach its repository.
+//
+// A token is pasted once and otherwise unverifiable, and both ways of getting it wrong are
+// quiet: too few scopes fails twenty seconds into a clone, and read-without-write fails at
+// the comment, after a successful build. So the answer is available before either.
+func (a *ProjectsAdmin) testSCM(w http.ResponseWriter, r *http.Request) {
+	p, bad := projectFromRequest(r)
+	if bad != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad})
+		return
+	}
+	if a.scmChecker == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot test credentials for " + p.Platform})
+		return
+	}
+
+	detail, err := a.scmChecker(r.Context(), model.Repo{
+		Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
+	})
+	if err != nil {
+		// The platform's own message, which is the useful half: "credentials lack one or
+		// more required privilege scopes" names the fix in a way this code cannot.
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": detail})
+}
+
 func (a *ProjectsAdmin) delSecret(w http.ResponseWriter, r *http.Request) {
 	p, env, v, bad, code := a.secretRequest(r)
 	if bad != "" {
@@ -803,6 +986,16 @@ func validEnvName(env string) string {
 	}
 	if len(env) > 128 {
 		return "that environment variable name is too long"
+	}
+	// A dotted name is almost always somebody putting a platform credential where the build
+	// variables are, and the generic message sent them back to the same box to try again.
+	// `bitbucket.access_token` is not a build variable and must not become one: it is what
+	// the daemon clones with, and a build that could read it is a build that could print it.
+	if strings.Contains(env, ".") {
+		return fmt.Sprintf("%q is not a build variable — a dotted name is a platform "+
+			"credential. A Bitbucket token goes under Edit → Bitbucket credential on this "+
+			"project, where it is stored for cloning and never given to a build. Build "+
+			"variables are named like BB_REPO_TOKEN_ONPREM.", env)
 	}
 	for i, r := range env {
 		switch {

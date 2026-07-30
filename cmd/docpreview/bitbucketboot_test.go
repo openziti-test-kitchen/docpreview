@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -51,26 +52,70 @@ func TestBitbucketWithNoCredentialsMustNotStopTheDaemon(t *testing.T) {
 		t.Errorf("the error does not name the missing key: %v", err)
 	}
 
-	// The webhook secret alone is still not enough, and this is the ordinary middle of
-	// setup: it is generated first, pasted into Bitbucket's form, and the access token
-	// arrives afterwards.
+	// The webhook secret alone is enough to build a client, and that is deliberate.
+	//
+	// A Bitbucket access token is scoped to one repository unless a workspace
+	// administrator permits the wider kinds, and plenty do not — so an operator may have
+	// no workspace-wide token to store at all, only one per project. Requiring a global
+	// credential here meant those workspaces got no Bitbucket client, which meant
+	// /webhook/bitbucket answered 501, which meant the projects page could not be used to
+	// supply the per-project tokens that would have made it work.
 	if err := v.Set(vault.KeyBitbucketHookSec, vault.NewSecretString("generated")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := bitbucket.New(cfg, v, slog.New(slog.DiscardHandler)); err == nil {
-		t.Fatal("a client was built with a webhook secret and no access token")
-	}
-
-	// Both present: the client appears, which is what rewireBitbucket installs.
-	if err := v.Set(vault.KeyBitbucketAccessToken, vault.NewSecretString("a-token")); err != nil {
 		t.Fatal(err)
 	}
 	bb, err := bitbucket.New(cfg, v, slog.New(slog.DiscardHandler))
 	if err != nil {
-		t.Fatalf("both credentials stored and still no client: %v", err)
+		t.Fatalf("a client with per-project credentials only was refused: %v", err)
 	}
 	if bb.Platform() != model.PlatformBitbucket {
 		t.Errorf("platform = %q", bb.Platform())
+	}
+
+	// A global token is still honoured, as the fallback for repositories with none of
+	// their own — which is what a workspace token is for.
+	if err := v.Set(vault.KeyBitbucketAccessToken, vault.NewSecretString("a-token")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bitbucket.New(cfg, v, slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatalf("a client with a global token was refused: %v", err)
+	}
+}
+
+// TestBothConstructionPathsResolvePerProjectCredentials.
+//
+// There are two places a Bitbucket client is built — setup(), for a daemon whose vault is
+// already unlocked, and rewireBitbucket, for one unlocked afterwards from the dashboard —
+// and only the second attached the per-project credential resolver. The consequence was
+// invisible until somebody restarted: with vault.key_source set, the client came from
+// setup(), so every project's own token was unreachable and Test credential answered "no
+// Bitbucket credential for owner/repo" about a token sitting in the vault. It worked after
+// a vault write and stopped working after a restart, which is the hardest shape of bug to
+// believe a report of.
+//
+// Asserted against the *source*, because the resolver is a function field with no exported
+// reader: a wiring bug in a path nobody tests is exactly what this is.
+func TestBothConstructionPathsResolvePerProjectCredentials(t *testing.T) {
+	body, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(body)
+
+	// Every place the client is handed to something must attach the resolver first.
+	for _, want := range []string{
+		"w.clients[model.PlatformBitbucket] = bb.WithProjectCredentials(",
+		"bb = bb.WithProjectCredentials(projectBitbucketCredentials(w))",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("a Bitbucket client is installed without the per-project resolver; "+
+				"expected to find %q in main.go", want)
+		}
+	}
+
+	// And the plain assignment, without it, must not come back.
+	if strings.Contains(src, "w.clients[model.PlatformBitbucket] = bb\n") {
+		t.Error("setup() installs the Bitbucket client without WithProjectCredentials, " +
+			"so a per-project token is invisible until the vault is written to")
 	}
 }
 

@@ -48,8 +48,15 @@ func RenderComment(r Report) string {
 	b.WriteString("| | |\n|---|---|\n")
 	b.WriteString(fmt.Sprintf("| **Status** | %s %s |\n", stateIcon(r.State), stateText(r)))
 
+	// An explicit link, not a bare URL.
+	//
+	// GitHub autolinks a bare URL in a table cell, so this read as a link there and the
+	// bare form survived review. Bitbucket does not autolink inside a table, and rendered
+	// the preview URL as plain text that nobody could click — the one thing the whole
+	// comment exists to deliver. `[url](url)` is CommonMark, so both hosts now produce a
+	// link and the visible text is unchanged.
 	if r.URL != "" {
-		b.WriteString(fmt.Sprintf("| **Preview** | %s |\n", r.URL))
+		b.WriteString(fmt.Sprintf("| **Preview** | [%s](%s) |\n", r.URL, r.URL))
 	}
 	if r.Name != "" {
 		b.WriteString(fmt.Sprintf("| **Name** | `%s` |\n", r.Name))
@@ -81,7 +88,7 @@ func RenderComment(r Report) string {
 	if r.State == StateFailed {
 		b.WriteString("\nThe build failed. See the build log for details")
 		if r.DetailURL != "" {
-			b.WriteString(": " + r.DetailURL)
+			b.WriteString(fmt.Sprintf(": [%s](%s)", r.DetailURL, r.DetailURL))
 		} else {
 			b.WriteString(" on the docpreview dashboard")
 		}

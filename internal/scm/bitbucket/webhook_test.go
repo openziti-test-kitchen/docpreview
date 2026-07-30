@@ -642,7 +642,7 @@ func TestErrorEnvelopeIsRead(t *testing.T) {
 		fmt.Fprint(w, `{"type":"error","error":{"message":"Your credentials lack one or more required privilege scopes.","detail":"pullrequest:write"}}`)
 	}))
 
-	err := c.do(t.Context(), http.MethodGet, "/2.0/user", nil, nil)
+	err := c.do(t.Context(), "netfoundry", "docs", http.MethodGet, "/2.0/user", nil, nil)
 	if err == nil {
 		t.Fatal("a 403 was not an error")
 	}

@@ -169,6 +169,54 @@ func TestVerifyBaseURLCatchesTheClassicMismatch(t *testing.T) {
 	}
 }
 
+// TestVerifyBaseURLAcceptsARootSiteWhoseRefsAreMostlyAssets.
+//
+// The false refusal this exists for, seen on a real Bitbucket build of
+// netfoundry/customer-connect-docs on 2026-07-30. The site is built at "/", its index.html
+// is mostly asset references under /assets/, and the check reported:
+//
+//	preview base URL:    /
+//	built-in base URL:   /assets/
+//	asset in index.html: /assets/css/styles.68c3c27c.css
+//
+// "/assets/" is not a base URL any site has been built for. `assets` dominated the first
+// path segment, and the corroborating question — are the assets under /assets/ — cannot
+// answer no, so dominance and corroboration were the same evidence counted twice.
+//
+// The fix is `routeUnder`: a real base prefix contains a route as well as the assets.
+func TestVerifyBaseURLAcceptsARootSiteWhoseRefsAreMostlyAssets(t *testing.T) {
+	dir := writeIndex(t, `<html><head>
+<link rel="stylesheet" href="/assets/css/styles.68c3c27c.css">
+<link rel="stylesheet" href="/assets/css/theme.11ab22cd.css">
+<script src="/assets/js/runtime.9f8e7d.js"></script>
+<script src="/assets/js/main.1a2b3c.js"></script>
+</head><body>
+<a href="/docs/customer-connect/intro">Intro</a>
+</body></html>`)
+
+	if err := verifyBaseURL(dir, "/"); err != nil {
+		t.Fatalf("a site built at the root was refused:\n%v", err)
+	}
+}
+
+// TestVerifyBaseURLStillCatchesAPrefixWhoseRoutesAgree is the other side of that fix: with
+// a route *and* the assets under the prefix, the two signals are independent and the
+// mismatch is real. Without this, the fix above could be "stop checking".
+func TestVerifyBaseURLStillCatchesAPrefixWhoseRoutesAgree(t *testing.T) {
+	dir := writeIndex(t, `<html><head>
+<link rel="stylesheet" href="/zrok/assets/css/a.css">
+<script src="/zrok/assets/js/b.js"></script>
+</head><body><a href="/zrok/docs/intro">Intro</a></body></html>`)
+
+	err := verifyBaseURL(dir, "/")
+	if err == nil {
+		t.Fatal("a site built for /zrok/ was accepted at /")
+	}
+	if !strings.Contains(err.Error(), "/zrok/") {
+		t.Errorf("the error does not name the prefix it found:\n%v", err)
+	}
+}
+
 func TestVerifyBaseURLToleratesAStrayAbsoluteLink(t *testing.T) {
 	// A hand-written "/" in a footer must not fail the build.
 	dir := writeIndex(t, `<html><head>

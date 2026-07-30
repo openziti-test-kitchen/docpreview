@@ -92,6 +92,44 @@ func ProjectSecretPrefix(platform, owner, repo string) string {
 	return ProjectPrefix + platform + "/" + owner + "/" + repo + "/"
 }
 
+// Per-project source-control credentials, for a platform that cannot issue one token
+// covering several repositories.
+//
+// Bitbucket is the reason these exist. An access token there is scoped to a repository, a
+// project or a workspace, and an administrator can refuse the wider two — at which point
+// one `bitbucket.access_token` in the global namespace cannot reach a second repository,
+// and the only place a per-repository credential can live is beside the project row.
+//
+// Deliberately **dotted**, which is what keeps them out of a build. They share the project
+// prefix with that project's environment variables, and the resolver that builds a build's
+// environment takes only shell-shaped names — the same rule that keeps
+// `github.private_key` out of every build, applied one scope down. A credential that can
+// clone and comment on a repository is not something a pull request's own build script
+// should be handed.
+const (
+	SCMAccessToken = "scm.access_token"
+	SCMEmail       = "scm.email"
+	SCMAPIToken    = "scm.api_token"
+)
+
+// ProjectSCMKey is where one project's own source-control credential lives.
+func ProjectSCMKey(platform, owner, repo, name string) string {
+	return ProjectSecretPrefix(platform, owner, repo) + name
+}
+
+// IsProjectSCMKey reports whether a name under a project prefix is one of the
+// source-control credentials rather than a build variable.
+//
+// A closed list rather than "anything dotted", so a typo does not silently become a
+// credential the daemon looks for and nothing sets.
+func IsProjectSCMKey(name string) bool {
+	switch name {
+	case SCMAccessToken, SCMEmail, SCMAPIToken:
+		return true
+	}
+	return false
+}
+
 // IsBuildEnvKey reports whether a vault key is a build environment variable rather than
 // an infrastructure credential.
 //
@@ -325,6 +363,18 @@ func (v *Vault) RevealPrefix(prefix string) map[string]string {
 		// slash in it came from somewhere this does not know about, and guessing
 		// would inject an environment variable with a slash in its name.
 		if name == "" || strings.Contains(name, "/") {
+			continue
+		}
+		// Only shell-shaped names, which is the same rule that keeps
+		// `github.private_key` out of every build, applied to the project scope.
+		//
+		// This is the one bulk read of values in this package and its only caller builds
+		// a build's environment, so anything returned here is handed to a pull request's
+		// own build script. A project's source-control credential lives under this same
+		// prefix as `scm.access_token` — dotted, deliberately — and without this filter it
+		// would be injected into every build of the repository it can clone and comment
+		// on. `TestProjectSCMCredentialsNeverReachABuild`.
+		if !IsBuildEnvKey(name) {
 			continue
 		}
 		out[name] = s.RevealString()

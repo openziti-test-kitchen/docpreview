@@ -243,7 +243,10 @@ func (z *Ziti) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	entry := &zitiPreview{previewID: spec.Key(), handler: h}
 
 	z.mu.Lock()
-	if existing, ok := z.live[name]; ok && existing.previewID != spec.Key() {
+	// A different publication of the *same* preview under this hostname is this
+	// preview's earlier build of the same commit; the newer build replaces it in the
+	// map below, which is all this exposer's takeover amounts to.
+	if existing, ok := z.live[name]; ok && Collides(existing.previewID, spec) {
 		z.mu.Unlock()
 		return nil, fmt.Errorf("the name %q is already serving a different preview (%s); "+
 			"two previews render to the same hostname under this name_template — "+

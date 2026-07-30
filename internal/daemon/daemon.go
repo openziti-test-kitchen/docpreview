@@ -935,6 +935,30 @@ func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg con
 		return cfg
 	}
 
+	// The framework preset, before the project's own fields overlay it.
+	//
+	// Precedence, top down: the project's explicit field, then its preset, then the
+	// repository's .docpreview.yml. The middle one beating the last is the surprising half
+	// and is deliberate — the repository's file says what it says, and an operator who
+	// chose "Docusaurus" in the dashboard has said something more recent and more specific.
+	// Deferring to the repository is what the blank preset is for, and it is the default,
+	// so a project nobody has touched behaves exactly as before.
+	//
+	// An unknown id is ignored rather than refused: it means this binary does not have a
+	// preset the row names — a downgrade, or an entry since removed — and falling back to
+	// the repository's own configuration is better than failing the build.
+	if f, ok := config.FrameworkByID(p.Framework); ok {
+		if f.Dir != "" {
+			cfg.Build.Dir = f.Dir
+		}
+		if f.BuildCommand != "" {
+			cfg.Build.Command = f.BuildCommand
+		}
+		if f.Output != "" {
+			cfg.Build.Output = f.Output
+		}
+	}
+
 	if p.BuildDir != "" {
 		cfg.Build.Dir = p.BuildDir
 	}
@@ -1424,6 +1448,27 @@ func (d *Daemon) RebuildPreview(ctx context.Context, previewID string) (bool, er
 //
 // Errors are collected rather than fatal. One pull request whose enqueue fails must not
 // stop the rest, and the count tells the caller what actually happened.
+// CheckRepoCredential asks the platform's client whether its credential reaches one
+// repository. Behind the projects page's Test button.
+//
+// Here rather than in the projects admin because the client map lives here, and behind an
+// optional interface because only one platform needs it — a GitHub App's installation is
+// the check, while a Bitbucket access token is pasted in and unverified until something
+// uses it.
+func (d *Daemon) CheckRepoCredential(ctx context.Context, repo model.Repo) (string, error) {
+	client, ok := d.client(repo.Platform)
+	if !ok {
+		return "", fmt.Errorf("no %s client is configured on this daemon "+
+			"(store its credentials on /secrets)", repo.Platform)
+	}
+	checker, ok := client.(scm.RepoChecker)
+	if !ok {
+		return "", fmt.Errorf("the %s client has nothing to test: its credential is "+
+			"scoped by the platform rather than pasted in here", repo.Platform)
+	}
+	return checker.CheckRepo(ctx, repo)
+}
+
 func (d *Daemon) ScanRepo(ctx context.Context, repo model.Repo) (int, error) {
 	client, ok := d.client(repo.Platform)
 	if !ok {
@@ -1913,11 +1958,26 @@ func (d *Daemon) runPipeline(
 
 	if logw != nil {
 		if err != nil {
-			// The summary line only. The builder wraps the whole build output
-			// into its error so that a pull request comment can quote it, so
-			// writing err.Error() here would append a second copy of the log to
-			// the log — which is what the first version did.
-			fmt.Fprintf(logw, "\n%s\n", d.scrub(firstLine(err.Error())))
+			// The summary line for a *build* failure, the whole error for one of ours.
+			//
+			// The builder wraps the whole build output into its error so a pull request
+			// comment can quote it, so writing err.Error() for those appends a second copy
+			// of the log to the log — which is what the first version did.
+			//
+			// But errArtifactsUnusable is docpreview's own, carries no build output, and is
+			// four lines of diagnosis: the base URL the preview will serve at, the one the
+			// site was built for, the asset that proves it, and the two ways to fix it.
+			// Truncating that to its first line left "the site was built for a different
+			// base URL than the preview will serve" with none of the numbers — an error
+			// stating a mismatch and hiding both sides of it.
+			text := firstLine(err.Error())
+			var baseURL *pipeline.BaseURLError
+			if errors.As(err, &baseURL) {
+				// Its diagnosis, not its Error(): the latter has the whole build log
+				// appended, which is already in this file.
+				text = baseURL.Diagnosis
+			}
+			fmt.Fprintf(logw, "\n%s\n", d.scrub(text))
 		}
 		if ferr := d.logs.Finish(pr.PreviewID(), logw); ferr != nil {
 			log.Warn("closing the build log", "error", ferr)

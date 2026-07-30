@@ -142,16 +142,28 @@ func (f *Frontdoor) Publish(ctx context.Context, spec Spec, h http.Handler) (*Pu
 	// point somebody else's URL at these artifacts. Refuse rather than
 	// overwrite: a name_template that collides is a configuration mistake, and
 	// silently serving the wrong site is the worst way to report one.
+	// Two builds of one preview under one name is this preview's earlier build of the
+	// same commit, and the newer one takes the name — collected here and withdrawn
+	// below, because withdraw takes the lock itself.
+	var superseded []string
 	f.mu.Lock()
 	for id, entry := range f.live {
-		if entry.name == spec.Name && id != spec.Key() {
+		if entry.name != spec.Name || id == spec.Key() {
+			continue
+		}
+		if Collides(id, spec) {
 			f.mu.Unlock()
 			return nil, fmt.Errorf("the name %q is already serving a different preview (%s); "+
 				"two previews render to the same name under this name_template — "+
 				"use \"{{.Repo.Name}}-{{.Name}}\" to separate them", spec.Name, id)
 		}
+		superseded = append(superseded, id)
 	}
 	f.mu.Unlock()
+
+	for _, id := range superseded {
+		f.withdraw(ctx, id)
+	}
 
 	local, err := f.ports.serve(h)
 	if err != nil {

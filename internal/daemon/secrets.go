@@ -205,6 +205,11 @@ type secretView struct {
 	Label    string `json:"label"`
 	Hint     string `json:"hint"`
 	Required bool   `json:"required"`
+
+	// Optional is set for a key that applies here and is not needed — as opposed to one
+	// that does not apply at all. The page renders three states, because "missing",
+	// "optional" and "not needed" are three different instructions to the reader.
+	Optional bool `json:"optional,omitempty"`
 	// EnvVar is set for build secrets: the variable this value is injected as.
 	EnvVar string `json:"env_var,omitempty"`
 
@@ -257,10 +262,14 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 	// rather than a dump. A setup screen that lists what you have is less
 	// useful than one that lists what you still need.
 	for _, k := range knownKeys() {
-		st.Entries = append(st.Entries, secretView{
+		view := secretView{
 			Key: k.key, Set: have[k.key], Label: k.label, Hint: k.hint,
 			Required: k.required(a.cfg), Group: GroupDaemon,
-		})
+		}
+		if !view.Required && k.optional != nil {
+			view.Optional = k.optional(a.cfg)
+		}
+		st.Entries = append(st.Entries, view)
 		delete(have, k.key)
 	}
 
@@ -318,18 +327,31 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 type knownKey struct {
 	key, label, hint string
 	required         func(config.Server) bool
+
+	// optional distinguishes "usable here but not needed" from "not needed at all", for
+	// keys that are neither required nor irrelevant.
+	//
+	// Two states were not enough once a Bitbucket token could live on a project instead.
+	// A workspace-wide token is genuinely useful and genuinely optional: an operator whose
+	// administrator refuses wide tokens will never store one, and flagging it `missing` in
+	// red sent them looking for a credential they cannot create. Flagging it `not needed`
+	// is the opposite lie — it is the thing that saves setting a token per project.
+	//
+	// Nil means "never optional", which is every key that predates this.
+	optional func(config.Server) bool
 }
 
 func knownKeys() []knownKey {
 	usingGitHub := func(c config.Server) bool { return c.GitHub.AppID != 0 }
 	return []knownKey{
 		{vault.KeyGitHubPrivateKey, "GitHub App private key",
-			"the .pem GitHub generated — paste the whole file, BEGIN line included", usingGitHub},
+			"the .pem GitHub generated — paste the whole file, BEGIN line included",
+			usingGitHub, nil},
 		{vault.KeyGitHubWebhookSec, "GitHub webhook secret",
-			"the value in the App's Webhook secret field", usingGitHub},
+			"the value in the App's Webhook secret field", usingGitHub, nil},
 		{vault.KeyFrontdoorToken, "Frontdoor API token",
 			"only for exposer.kind: frontdoor",
-			func(c config.Server) bool { return c.Exposer.Kind == "frontdoor" }},
+			func(c config.Server) bool { return c.Exposer.Kind == "frontdoor" }, nil},
 
 		// Bitbucket. Listed even when it is not enabled, so the Generate button for
 		// the webhook secret exists before the operator has committed to the config —
@@ -337,24 +359,38 @@ func knownKeys() []knownKey {
 		// and a key that is not listed has no button.
 		{vault.KeyBitbucketHookSec, "Bitbucket webhook secret",
 			"generate it here, then paste the same value into Repository settings → Webhooks",
-			usingBitbucket},
+			usingBitbucket, nil},
+		// The three Bitbucket credentials are optional, never required, and that is a
+		// consequence of where a Bitbucket token can live. It is scoped to a repository
+		// unless a workspace administrator permits the wider kinds, so an operator may
+		// legitimately have nothing to put here and a token on each project instead.
+		// Marking these `missing` in red sent people looking for a credential their admin
+		// will not issue.
 		{vault.KeyBitbucketAccessToken, "Bitbucket access token",
-			"a repository, project or workspace access token — scopes: repository, pullrequest:write",
+			"a workspace or project access token, used by every Bitbucket project that has " +
+				"none of its own. Scopes: repository, pullrequest:write. Optional — a " +
+				"project can carry its own on /projects.",
+			never,
 			func(c config.Server) bool {
 				return usingBitbucket(c) && c.Bitbucket.Auth != config.BitbucketAuthAPIToken
 			}},
 		{vault.KeyBitbucketEmail, "Bitbucket account email",
 			"only for bitbucket.auth: api_token — the account the API token belongs to",
+			never,
 			func(c config.Server) bool {
 				return usingBitbucket(c) && c.Bitbucket.Auth == config.BitbucketAuthAPIToken
 			}},
 		{vault.KeyBitbucketAPIToken, "Bitbucket API token",
-			"only for bitbucket.auth: api_token",
+			"only for bitbucket.auth: api_token. Optional, like the access token above.",
+			never,
 			func(c config.Server) bool {
 				return usingBitbucket(c) && c.Bitbucket.Auth == config.BitbucketAuthAPIToken
 			}},
 	}
 }
+
+// never is the required-predicate for a key nothing insists on.
+func never(config.Server) bool { return false }
 
 func usingBitbucket(c config.Server) bool { return c.Bitbucket.Enabled }
 

@@ -212,6 +212,13 @@ func migrate(db *sql.DB) error {
 		// as a number of seconds: it is displayed in the form it was entered, and a
 		// column of 2700s is a unit somebody has to work out.
 		`ALTER TABLE projects ADD COLUMN timeout TEXT NOT NULL DEFAULT ''`,
+		// Whether the repository needs a credential to clone. Advisory, and the reason the
+		// form can warn about a missing token without nagging every public repository.
+		`ALTER TABLE projects ADD COLUMN private INTEGER NOT NULL DEFAULT 0`,
+		// A framework preset id, supplying the build command and output for the fields
+		// left blank. Empty means the repository's own configuration decides, which is
+		// what every existing row gets.
+		`ALTER TABLE projects ADD COLUMN framework TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -364,6 +371,15 @@ type Project struct {
 	Repo     string `json:"repo"`
 	Enabled  bool   `json:"enabled"`
 
+	// Framework is a preset id — "docusaurus", "mkdocs" — supplying the build command and
+	// output directory for the fields left blank below. Empty means no preset, and the
+	// repository's own .docpreview.yml decides.
+	//
+	// Stored rather than resolved at save time, so the preset's values are not frozen into
+	// the row: a corrected default in a later version applies to every project that named
+	// the framework instead of only to new ones. See config.Frameworks.
+	Framework string `json:"framework,omitempty"`
+
 	BuildDir     string `json:"build_dir,omitempty"`
 	BuildCommand string `json:"build_command,omitempty"`
 	BuildOutput  string `json:"build_output,omitempty"`
@@ -374,6 +390,19 @@ type Project struct {
 	// this project. Empty means the server default.
 	Driver string `json:"driver,omitempty"`
 	Image  string `json:"image,omitempty"`
+
+	// Private records that this repository cannot be cloned without a credential.
+	//
+	// Not derived from the platform, and not looked up: a public repository needs no token
+	// at all, so without this the form has to either nag every project about a credential
+	// it may not need, or say nothing and let a private repository be added with no way to
+	// clone it. Asking once is the difference between a warning that means something and
+	// one that is always on.
+	//
+	// Advisory. Nothing refuses to build because of it — the clone's own failure is the
+	// authority — but the form warns when a private repository has no credential it can
+	// reach, which is the moment the answer is cheap to fix.
+	Private bool `json:"private,omitempty"`
 
 	// Timeout caps one build of this project, as a Go duration string — "45m", "2h".
 	// Empty means the server-wide build.timeout.
@@ -428,8 +457,8 @@ func (s *Store) SaveProject(ctx context.Context, p Project) error {
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO projects (platform, owner, repo, enabled, build_dir, build_command,
             build_output, base_url, detect_script, driver, image, notes,
-            display_name, avatar, timeout, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            display_name, avatar, timeout, private, framework, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(platform, owner, repo) DO UPDATE SET
             enabled       = excluded.enabled,
             build_dir     = excluded.build_dir,
@@ -443,10 +472,12 @@ func (s *Store) SaveProject(ctx context.Context, p Project) error {
             display_name  = excluded.display_name,
             avatar        = excluded.avatar,
             timeout       = excluded.timeout,
+            private       = excluded.private,
+            framework     = excluded.framework,
             updated_at    = excluded.updated_at`,
 		p.Platform, p.Owner, p.Repo, p.Enabled, p.BuildDir, p.BuildCommand,
 		p.BuildOutput, p.BaseURL, p.DetectScript, p.Driver, p.Image, p.Notes,
-		p.DisplayName, p.Avatar, p.Timeout, created, now)
+		p.DisplayName, p.Avatar, p.Timeout, p.Private, p.Framework, created, now)
 	if err != nil {
 		return fmt.Errorf("saving project %s: %w", p.Key(), err)
 	}
@@ -464,7 +495,7 @@ func (s *Store) ProjectFor(ctx context.Context, platform, owner, repo string) (P
 	rows, err := s.queryProjects(ctx,
 		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
                 base_url, detect_script, driver, image, notes, display_name, avatar,
-                timeout, created_at, updated_at
+                timeout, private, framework, created_at, updated_at
          FROM projects WHERE platform = ? AND owner = ? AND repo = ?`,
 		platform, owner, repo)
 	if err != nil {
@@ -481,7 +512,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	return s.queryProjects(ctx,
 		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
                 base_url, detect_script, driver, image, notes, display_name, avatar,
-                timeout, created_at, updated_at
+                timeout, private, framework, created_at, updated_at
          FROM projects ORDER BY platform, owner, repo`)
 }
 
@@ -511,8 +542,8 @@ func (s *Store) queryProjects(ctx context.Context, query string, args ...any) ([
 		var created, updated int64
 		if err := rows.Scan(&p.Platform, &p.Owner, &p.Repo, &p.Enabled, &p.BuildDir,
 			&p.BuildCommand, &p.BuildOutput, &p.BaseURL, &p.DetectScript, &p.Driver,
-			&p.Image, &p.Notes, &p.DisplayName, &p.Avatar, &p.Timeout,
-			&created, &updated); err != nil {
+			&p.Image, &p.Notes, &p.DisplayName, &p.Avatar, &p.Timeout, &p.Private,
+			&p.Framework, &created, &updated); err != nil {
 			return nil, err
 		}
 		p.CreatedAt = time.UnixMilli(created)

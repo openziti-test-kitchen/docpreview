@@ -141,17 +141,32 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	// have it and should be told so rather than quietly taking it.
 	z.withdraw(spec.Key())
 
+	// A publication of this same preview under this same name is this preview's
+	// earlier build, and the newer build takes the name from it — see
+	// expose.Collides. Collected under the lock and withdrawn after it, because
+	// withdraw takes the lock itself.
+	var superseded []string
 	z.mu.Lock()
 	for id, entry := range z.live {
-		if entry.name == spec.Name && id != spec.Key() {
+		if entry.name != spec.Name || id == spec.Key() {
+			continue
+		}
+		if Collides(id, spec) {
 			z.mu.Unlock()
 			return nil, fmt.Errorf("the name %q is already serving a different preview (%s); "+
 				"two previews render to the same name under this name_template — "+
 				"use \"{{.Repo.Owner}}-{{.Repo.Name}}-{{.Name}}\" to separate them",
 				spec.Name, id)
 		}
+		superseded = append(superseded, id)
 	}
 	z.mu.Unlock()
+
+	for _, id := range superseded {
+		z.log.Info("replacing an earlier build's share of this name",
+			"exposer", "zrok2", "name", spec.Name, "superseded", id, "publication", spec.Key())
+		z.withdraw(id)
+	}
 
 	req := &sdk.ShareRequest{
 		ShareMode:      sdk.PublicShareMode,
@@ -332,15 +347,25 @@ func (z *Zrok) Adopt(ctx context.Context, spec Spec, a Adoptable, h http.Handler
 
 	// Same guard as Publish, for the same reason: two previews rendering to one name
 	// must be refused rather than resolved, and adoption is not an exception — the
-	// share being adopted holds the name either way.
+	// share being adopted holds the name either way. Two builds of one preview under
+	// one name is not that case, and the newer one takes it.
+	var superseded []string
 	z.mu.Lock()
 	for id, entry := range z.live {
-		if entry.name == spec.Name && id != spec.Key() {
+		if entry.name != spec.Name || id == spec.Key() {
+			continue
+		}
+		if Collides(id, spec) {
 			z.mu.Unlock()
 			return nil, fmt.Errorf("the name %q is already serving a different preview (%s)", spec.Name, id)
 		}
+		superseded = append(superseded, id)
 	}
 	z.mu.Unlock()
+
+	for _, id := range superseded {
+		z.withdraw(id)
+	}
 
 	listener, err := sdk.NewListener(a.Handle, z.root)
 	if err != nil {

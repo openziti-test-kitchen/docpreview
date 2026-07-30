@@ -234,6 +234,33 @@ input.control::placeholder { color: var(--muted) }
 /* The same control inside a project card. The card already provides the surrounding
    border and padding, so this one drops the outer margin and sits flush at the bottom of
    the card rather than floating in the middle of it. */
+/* The credential block on the project form.
+   A bordered, tinted panel rather than three more rows in the column, because what is in it
+   goes to the vault and the fields around it go to a database row — and they were
+   indistinguishable. Same green stripe as the credential page's build-variable group, for
+   the same reason: a reader who has seen that page knows what this is. */
+.credbox {
+  border: 1px solid var(--ring); border-left: 3px solid var(--good);
+  border-radius: 8px; padding: 0.5rem 0.8rem;
+  background: var(--raised);
+  background: color-mix(in srgb, var(--good) 5%, var(--surface));
+  margin-bottom: 0.4rem;
+}
+/* Its rows line up with the form's fields rather than with /secrets': the label column
+   there is 18rem, the form's is 10.5rem, and two label columns a few rows apart is what
+   made these read as something bolted on. */
+.credbox .sec {
+  grid-template-columns: 10.5rem minmax(0, 1fr) auto;
+  padding: 0.45rem 0; gap: 0.6rem;
+}
+.credbox .sec:first-of-type { border-top: 1px solid var(--hairline) }
+.credbox .field { padding: 0.35rem 0 }
+/* The masked boxes keep the monospace, raised look they have on the credential page: a
+   token is not prose, and the shape is what says so at a glance. */
+.credbox input[type=password], .credbox input[type=text], .credbox textarea {
+  font: 12.5px/1.5 ui-monospace, Consolas, monospace;
+}
+
 .pcard-secrets { margin: 0.7rem 0 0 }
 .pcard-secrets-body { padding: 0 0.9rem 0.8rem 2.75rem }
 /* The chips and the add-form inside it are their own layout, so the .sec grid does not
@@ -245,6 +272,10 @@ input.control::placeholder { color: var(--muted) }
 .sec .name { font-weight: 600; font-size: 0.85rem }
 .sec .key { font: 11.5px/1.5 ui-monospace, Consolas, monospace; color: var(--muted) }
 .sec .hint { font-size: 0.76rem; color: var(--muted); margin-top: 0.15rem }
+/* A hint that runs under the whole row rather than inside the label column.
+   In that column it wrapped to three lines inside 18rem while the width under the input
+   sat empty, making every entry as tall as its longest sentence. */
+.sec .hint.wide { grid-column: 1 / -1; margin-top: 0.3rem; max-width: 64rem }
 /* The new-entry row: two labelled boxes on one line.
    Stacked, with a label over each, one entry was four lines tall and the Save button in
    the next grid cell lined up with the first label instead of with anything it acts on.
@@ -304,13 +335,46 @@ input.control::placeholder { color: var(--muted) }
   display: flex; align-items: center; justify-content: center;
   padding: 1.25rem; background: rgb(0 0 0 / 0.45);
 }
+/* The card clips; an inner element scrolls.
+   With the scroll on the card itself the scrollbar is drawn at the card's edge, outside the
+   rounded corners — a straight bar across a curve. Moving the overflow inside and clipping
+   at the border radius puts the bar within the shape. */
 .modal-card {
   background: var(--surface); color: var(--ink);
   border: 1px solid var(--ring); border-radius: 12px;
   box-shadow: 0 24px 64px rgb(0 0 0 / 0.35);
-  padding: 1.1rem 1.2rem; width: min(34rem, 100%);
-  max-height: 84vh; overflow-y: auto;
+  width: min(34rem, 100%);
+  overflow: hidden;
 }
+.modal-body {
+  padding: 1.1rem 1.2rem;
+  max-height: 84vh; overflow-y: auto;
+  /* Reserves the gutter so content does not shift sideways when the bar appears. */
+  scrollbar-gutter: stable;
+}
+/* The project form needs the width its fields were designed for — a build command is a
+   shell line and a container image is a registry path. 34rem turned both into boxes you
+   have to scroll sideways to read. */
+.modal-card.wide { width: min(64rem, 100%) }
+/* A close control that stays put while the card scrolls.
+   The row is sticky and carries the card's own background, so the button does not have
+   form fields sliding under it. Negative margins pull it into the card's padding, which is
+   where a close button belongs — the corner, not a row of its own. */
+.modal-x-row {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; justify-content: flex-end;
+  margin: -1.1rem -1.2rem 0.2rem; padding: 0.35rem 0.5rem 0;
+  background: var(--surface);
+}
+.modal-x {
+  border: 0; background: transparent; cursor: pointer;
+  color: var(--muted); font-size: 1rem; line-height: 1;
+  padding: 0.25rem 0.4rem; border-radius: 6px;
+}
+.modal-x:hover { color: var(--ink); background: var(--raised) }
+.modal-x:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
+/* The button that opens it, above the list rather than after it. */
+.projadd { margin: 0 0 0.8rem }
 /* The dialog's own title is the quiet part: "Ready" is not news. The number is. */
 .modal-card h3 {
   margin: 0; font-size: 0.72rem; font-weight: 600;
@@ -613,6 +677,31 @@ input.control::placeholder { color: var(--muted) }
 .field-note { text-transform: none; letter-spacing: 0; font-weight: 400 }
 .backlink { margin: 0 0 0.5rem; font-size: 0.82rem }
 .avafield { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap }
+/* A checkbox and its wording on one line, so the box belongs to the sentence rather than
+   sitting in the label column with the words in the control column. */
+.inline { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.82rem }
+.inline input[type=checkbox] { margin: 0 }
+
+/* Two mutually exclusive choices, as segmented buttons.
+   A <select> with two options hides one behind a click and shows the other as a line of
+   truncated text — and here both labels are worth reading, because they choose between two
+   different identities. Radios underneath, so the keyboard and the form semantics are the
+   browser's rather than reimplemented. */
+.segchoice { display: inline-flex; border: 1px solid var(--ring); border-radius: 8px; overflow: hidden }
+.segchoice label {
+  display: inline-flex; align-items: center; cursor: pointer;
+  font-size: 0.8rem; padding: 0.35rem 0.7rem; color: var(--ink-2);
+  border-left: 1px solid var(--hairline);
+}
+.segchoice label:first-child { border-left: 0 }
+.segchoice input { position: absolute; opacity: 0; pointer-events: none }
+.segchoice label:hover { background: var(--raised) }
+.segchoice input:checked + span { color: var(--ink); font-weight: 600 }
+.segchoice label:has(input:checked) { background: var(--raised) }
+/* :has is recent enough to be worth a fallback that still distinguishes the two: the
+   checked label's text goes bold and dark above regardless of whether the background
+   applies. */
+.segchoice input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 2px }
 
 /* The form's own actions, set apart from the fields above them so the row that commits
    is not just more controls in a column of controls. */
@@ -632,7 +721,11 @@ input.control::placeholder { color: var(--muted) }
    a list down is its own small confusion, and the list is what somebody is reading. */
 #toasts {
   position: fixed; z-index: 60; top: 0.9rem; right: 0.9rem;
-  display: flex; flex-direction: column; gap: 0.4rem; pointer-events: none;
+  display: flex; flex-direction: column; gap: 0.4rem;
+  /* The host ignores the pointer so it never blocks the page behind it; each toast takes
+     it back, because a message you cannot select is a message you have to retype into a
+     search box. */
+  pointer-events: none;
 }
 .toast {
   background: var(--ink); color: var(--plane);
@@ -640,6 +733,13 @@ input.control::placeholder { color: var(--muted) }
   padding: 0.5rem 0.75rem; border-radius: 8px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
   max-width: 22rem;
+  pointer-events: auto; user-select: text; cursor: text;
+  /* A platform error carries URLs and bracketed IPv6 addresses, which have no spaces to
+     break at — so they were drawn straight through the rounded corner. `anywhere` breaks
+     mid-token, which is the only option that keeps a 90-character address inside the box. */
+  overflow-wrap: anywhere;
+  /* And a cap, so one enormous error cannot fill the screen. */
+  max-height: 40vh; overflow-y: auto;
   animation: toastin 140ms ease-out, fadeout 5s ease-in forwards;
 }
 @keyframes toastin { from { opacity: 0; transform: translateY(-0.4rem) } to { opacity: 1 } }
@@ -651,6 +751,16 @@ input.control::placeholder { color: var(--muted) }
 .toast.bad {
   background: var(--critical); color: #fff;
   animation: toastin 140ms ease-out, fadeout 9s ease-in forwards;
+}
+/* Green for a confirmed success, because the one thing a test result has to convey before
+   it is read is which of the two answers it is. */
+.toast.good { background: var(--good); color: #fff }
+/* A failure is the one worth copying — an error naming a scope or an address is going into
+   a search or a ticket — so it says so and takes a click. */
+.toast.bad { cursor: copy }
+.toast .copied {
+  display: block; margin-top: 0.3rem; font-size: 0.7rem; opacity: 0.85;
+  text-transform: uppercase; letter-spacing: 0.06em;
 }
 /* Column 2, like .why. Without this it was a third child of a two-column grid, so it
    wrapped into the *label* column of the next row — docker's error rendered where a
@@ -1221,10 +1331,12 @@ footer {
      immediately after, once per process, and dismissed for good. -->
 <div class="modal" id="boot" hidden>
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="boot-title">
-    <h3 id="boot-title">Startup report</h3>
-    <div id="boot-body"></div>
-    <div class="act">
-      <button class="btn primary" id="boot-close">Close</button>
+    <div class="modal-body">
+      <h3 id="boot-title">Startup report</h3>
+      <div id="boot-body"></div>
+      <div class="act">
+        <button class="btn primary" id="boot-close">Close</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2976,9 +3088,15 @@ function renderSetup(s) {
   const ro = !s.can_write;
 
   const oneRow = e => {
+    // Three states, because they are three different instructions. `missing` means the
+    // daemon will not work until this is filled in. `optional` means it would be used if
+    // it were there and nothing is broken without it — a Bitbucket token that a project
+    // may carry instead. `not needed` means this key does nothing on this daemon at all,
+    // like a Frontdoor token under the zrok exposer.
     const flag = e.set
       ? `<span class="flag on">set</span>`
       : e.required ? `<span class="flag off">missing</span>`
+      : e.optional ? `<span class="flag opt">optional</span>`
                    : `<span class="flag opt">not needed</span>`;
     // A private key is multi-line; everything else is one line and masked.
     const multi = e.key.includes("private_key");
@@ -3011,14 +3129,19 @@ function renderSetup(s) {
 
     // data-key regardless, so the harness can assert which group a key landed in without
     // depending on whether that key is currently displayed.
+    // The hint is a row of its own spanning every column, not the tail of the first cell.
+    //
+    // In the label column it wrapped to three lines inside 18rem while the space under the
+    // input — most of the width — sat empty, so each entry was as tall as its longest
+    // sentence. Spanning the grid puts it on one or two lines under everything.
     return `<div class="sec" data-key="${esc(e.key)}">
       <div>
         <div class="name">${esc(e.label)} ${flag} ${injected}</div>
         ${key}
-        ${e.hint ? `<div class="hint">${esc(e.hint)}</div>` : ""}
       </div>
       <div>${field}</div>
       <div class="act">${acts}</div>
+      ${e.hint ? `<div class="hint wide">${esc(e.hint)}</div>` : ""}
     </div>`;
   };
 
@@ -3414,7 +3537,7 @@ let projFlash = "";
 
    Detached from any render. The element removes itself on a timer, because clearing it by
    re-rendering would throw away whatever somebody had started typing in another panel. */
-function toast(text, kind) {
+function toast(text, kind, detail) {
   let host = document.getElementById("toasts");
   if (!host) {
     host = document.createElement("div");
@@ -3424,6 +3547,36 @@ function toast(text, kind) {
   const t = document.createElement("div");
   t.className = kind ? `toast ${kind}` : "toast";
   t.textContent = text;
+  // The long form, on hover. A success needs one line; the five facts behind it are worth
+  // keeping and not worth reading every time.
+  if (detail) t.title = detail;
+
+  // Click to copy, for a failure. A platform error names a missing scope or an address that
+  // is about to be pasted into a search or a ticket, and selecting text inside something
+  // that disappears on a timer is a race nobody should have to win.
+  if (kind === "bad") {
+    t.title = "Click to copy";
+    t.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // No clipboard permission, or an insecure context. Selecting the text is the
+        // fallback that always works, so say so rather than failing silently.
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(t);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return;
+      }
+      if (t.querySelector(".copied")) return;
+      const note = document.createElement("span");
+      note.className = "copied";
+      note.textContent = "copied";
+      t.appendChild(note);
+    };
+  }
+
   host.appendChild(t);
   // Long enough to read a sentence, and it does not block anything while it is there.
   // A failure is left up longer: it is usually a sentence about what to type instead,
@@ -3463,15 +3616,39 @@ function renderProjectsPage(s) {
      using its own <code>.docpreview.yml</code> — adding a project is how you take the build
      command out of the branch.</div>`;
 
-  // The add form is a card like any other, and it is closed until asked for. It used
-  // to sit open at the bottom with eleven inputs in it, outweighing the projects it
-  // was there to add — and Edit filled *that* form, far below the row it belonged to,
-  // with nothing connecting the two.
-  const adder = ro ? "" : (projOpen.key === NEW
-    ? `<div class="proj">${projectForm(s, null)}</div>`
-    : `<div class="act"><button class="btn" id="p-new">New project</button></div>`);
+  /* The button goes above the list and the form it opens is a dialog.
 
-  el.innerHTML = `${banner}${rows}${adder}`;
+     Both were below everything, which is fine for three projects and wrong for thirty:
+     adding one meant scrolling past every project that already existed, and the form then
+     appeared where the button had been — the bottom of a long page — so the fields to fill
+     in were somewhere the eye had never been. A dialog has no position to get wrong.
+
+     Edit stays inline, in the card, because that form belongs to a row and being beside it
+     is the thing that says which. */
+  const adder = ro ? ""
+    : `<div class="act projadd"><button class="btn primary" id="p-new">New project</button></div>`;
+
+  const dialog = (!ro && projOpen.key === NEW)
+    ? `<div class="modal" id="p-new-modal">
+         <div class="modal-card wide" role="dialog" aria-modal="true" aria-label="New project">
+           <div class="modal-body">
+             <!-- Pinned, not merely at the top: the body scrolls, and a close control that
+                  scrolled away with the first field left the only way out at the bottom of
+                  nineteen of them. Sticky keeps it where it was found.
+
+                  Same handler as the Cancel button below, so it goes through the same
+                  discard guard — a form with this many fields must not vanish on one
+                  click. -->
+             <div class="modal-x-row">
+               <button class="modal-x" data-close-panel="1" title="Close" aria-label="Close">✕</button>
+             </div>
+             ${projectForm(s, null)}
+           </div>
+         </div>
+       </div>`
+    : "";
+
+  el.innerHTML = `${banner}${adder}${rows}${dialog}`;
 
   // Read once and cleared, so it cannot reappear on an unrelated render.
   if (projFlash) {
@@ -3511,11 +3688,15 @@ function projectCard(p, s, ro) {
         <!-- Queues a build for every open pull request on this repository, which is the
              same thing adding a project does. It exists because the answer to "I changed
              the image, now what" was to wait for somebody to push. -->
+        <!-- Named for what it does. "Build now" reads as "build this thing", and this
+             queues one build per *open pull request* on the repository — which on a repo
+             with two of them looks like it picked one at random. -->
         <button class="btn" data-build="${esc(key)}"
-          title="Queue a build for every open pull request">Build now</button>
+          title="Queue a build for each open pull request on this repository">Build open PRs</button>
         <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
     </div>
     ${projectFacts(p)}
+    ${credentialWanted(p, s)}
     ${p.notes ? `<div class="hint pcard-notes">${esc(p.notes)}</div>` : ""}
     ${open === "build" ? `<div class="panel">${projectForm(s, p)}</div>` : ""}
     ${secretsSection(p, s)}
@@ -3704,7 +3885,11 @@ function secretsSection(p, s) {
       </summary>
       <div class="secgroup-why">Injected into every build of this repository and redacted
         from every build log. This is how a build clones another private repository — the
-        value is a token, the name is whatever the build script looks for.</div>
+        value is a token, the name is whatever the build script looks for.${
+          p.platform === "bitbucket" ? `
+        <br>This repository's <em>own</em> clone credential does not go here: it is under
+        <strong>Edit → Bitbucket credential</strong>, where the daemon can use it and a
+        build cannot read it.` : ""}</div>
       <div class="pcard-secrets-body">${secretsPanel(p, s)}</div>
     </details>
   </div>`;
@@ -3744,8 +3929,6 @@ function secretsPanel(p, s) {
     return `<div class="sec" data-secret="${esc(env)}"${own ? "" : ` data-inherited="1"`}>
       <div>
         <div class="name">${esc(env)} ${chips}</div>
-        ${own ? "" : `<div class="hint">From the server config, so every project gets it.
-          Saving a value here overrides it for this project only.</div>`}
       </div>
       <div class="valwrap">
         <input type="password" id="${esc(id)}" autocomplete="off"
@@ -3759,6 +3942,8 @@ function secretsPanel(p, s) {
         ${own ? `<button class="btn" data-del-secret="${esc(env)}"
           data-key="${esc(key)}">Delete</button>` : ""}
       </div>
+      ${own ? "" : `<div class="hint wide">From the server config, so every project gets it.
+        Saving a value here overrides it for this project only.</div>`}
     </div>`;
   };
 
@@ -3795,7 +3980,346 @@ function secretsPanel(p, s) {
     </div>`;
 }
 
+/* scmCredentialFields is the project's own source-control credential, on the project form.
+
+   Only for Bitbucket, and that is not a platform check for its own sake. A GitHub App is
+   *installed on* repositories, so the installation is the grant and there is nothing per
+   project to paste. A Bitbucket access token is scoped at creation to one repository —
+   unless a workspace administrator permits the wider kinds, which many do not — so on a
+   real workspace there is no single token that reaches every repository and the credential
+   has to live beside the project row.
+
+   On the form rather than in the variables accordion, because it is asked for when the
+   project is created: a project added without it cannot clone, and discovering that from a
+   failed build twenty seconds later is the experience this avoids.
+
+   Never rendered with a value. `stored` says whether one is there, which is the only thing
+   that can be shown — a box that displayed a token would be the one place in this system
+   that reads a secret back. */
+function scmCredentialFields(s, p, id) {
+  // An existing project knows its platform, so the block is simply absent for GitHub.
+  // A new one does not yet — the platform is whatever the select or a pasted URL ends up
+  // saying — so the block is rendered hidden and revealed by syncSCMFields below. It
+  // cannot be decided here: this runs while the form is being built, before the select it
+  // would have to read exists.
+  if (p && p.platform !== "bitbucket") return "";
+  const hidden = p ? "" : " hidden";
+
+  const stored = new Set((p && p.scm) || []);
+  const global = new Set((s.defaults && s.defaults.scm_global) || []);
+  // Whether a blank field means "inherit" or "nothing will work". Both branches below need
+  // it, so it is computed before either.
+  const inherits = global.has("bitbucket.access_token") || global.has("bitbucket.api_token");
+
+  /* A new project gets the question and not the boxes.
+
+     Pasting a token into a form for a project that does not exist yet means the token has
+     nowhere to be stored until the row is written, so the save became two requests where
+     the second could fail on its own — and did, reporting "failed to fetch" about a project
+     that had been created. It also put three credential fields in front of somebody whose
+     next click is Create.
+
+     So: say whether it is private, create it, and then paste the token into the row that
+     now exists. The card says which credential is missing until one is there. */
+  if (!p) {
+    return `
+      <div id="scm-fields"${hidden}>
+      <div class="field-head">Bitbucket credential</div>
+      <div class="credbox">
+        <div class="field">
+          <label for="${id("private")}">Private repository</label>
+          <div>
+            <label class="inline"><input type="checkbox" id="${id("private")}"
+              data-privtoggle="1"> Needs a credential to clone</label>
+          </div>
+          <div class="why">${inherits
+            ? `A workspace-wide credential is stored on <a href="/secrets">/secrets</a>, so
+               this repository can already be cloned. Give it its own token later only to
+               override that.`
+            : `Create the project first, then open it and paste an access token — the card
+               will say so until you do. Nothing can be stored against a project that does
+               not exist yet.`}</div>
+        </div>
+      </div>
+      </div>`;
+  }
+
+  // What a blank field will actually do, stated once at the top of the section.
+  const inheritLine = stored.size
+    ? `This repository uses its own credential below${
+        inherits ? ", overriding the workspace-wide one" : ""}.`
+    : inherits
+      ? `Blank fields inherit the workspace-wide credential from
+         <a href="/secrets">/secrets</a>. Fill one in to override it for this repository only.`
+      : `No workspace-wide credential is stored, so a private repository needs its own
+         token here. <a href="/secrets">/secrets</a> holds the shared one if you have one.`;
+
+  /* One credential per row, in the same shape /secrets uses for a secret: name and its
+     state on the left, a masked box with an expand control in the middle, its own Save on
+     the right. These *are* secrets — they go to the vault, not to the project row — and
+     rendering them as ordinary form fields said otherwise.
+
+     Saved immediately rather than with the form, for an existing project. A credential is
+     not a setting: it is pasted once, and having to press the form's Save to commit it
+     means an operator who pastes a token and then presses Test is testing the old one.
+     A new project has nothing to save against yet, so there the boxes travel with the
+     form. */
+  const secretRow = (name, label, elID, hint) => `
+    <div class="sec" data-scmrow="${esc(name)}">
+      <div>
+        <div class="name">${esc(label)} ${stored.has(name)
+          ? `<span class="flag on">set</span>`
+          : `<span class="flag opt">not set</span>`}</div>
+      </div>
+      <!-- Masked like the tokens, including the email. An address is not itself a secret,
+           but it is half of an Authorization header and half of a clone URL, it is stored
+           in the same vault as its other half, and a form where one half of a credential
+           looks like a setting and the other looks like a secret invites treating them
+           differently. The expand control reveals it when reading it back matters. -->
+      <div class="valwrap">
+        <input type="password" id="${elID}" autocomplete="off"
+          placeholder="${stored.has(name) ? "paste to replace" : "paste to set"}">
+        <button class="btn icon" data-expand="${elID}"
+          title="Expand for a multi-line value. Note that an expanded box is not masked.">⤢</button>
+      </div>
+      <div class="act">${p ? `
+        <button class="btn" data-set-scm="${esc(name)}" data-key="${esc(projectKey(p))}"
+          data-field="${elID}">Save</button>
+        ${stored.has(name) ? `<button class="btn" data-clear-scm="${esc(name)}"
+          data-key="${esc(projectKey(p))}">Delete</button>` : ""}` : ""}</div>
+      ${hint ? `<div class="hint wide">${hint}</div>` : ""}
+    </div>`;
+
+  return `
+    <div id="scm-fields"${hidden}>
+    <div class="field-head">Bitbucket credential
+      <!-- Empty unless the repository is marked private. A public repository clones with no
+           credential, so a red "missing" beside one is the page inventing a problem — and
+           the chip is recomputed by updateSCMFlag when the checkbox moves. -->
+      <span id="scm-flag">${p && p.private ? scmFlag(s, p) : ""}</span></div>
+    <!-- A bordered block, because these fields belong together and to a question asked
+         above them. Loose in the column they read as three more build settings, and which
+         of them was required depended on a checkbox two rows up. -->
+    <div class="credbox">
+      <div class="field">
+        <label for="${id("private")}">Private repository</label>
+        <div>
+          <!-- Asked, not assumed. A public repository clones with no credential at all, so
+               without this the form must either warn every project about a token it may not
+               need, or stay quiet and let a private repository be added with no way to
+               clone it. One question makes the warning mean something. -->
+          <label class="inline"><input type="checkbox" id="${id("private")}"
+            data-privtoggle="1"${p && p.private ? " checked" : ""}>
+            Needs a credential to clone</label>
+        </div>
+        <div class="why">${inheritLine}</div>
+      </div>
+      <!-- One field, because one is all a Bitbucket access token needs.
+           This offered a choice between an access token and an account email plus API
+           token, which put an email field in front of every operator — and an access token
+           needs no email: the clone username is the literal x-token-auth, and the API call
+           is a bearer header. The account-token mode still exists as a server-wide setting
+           (bitbucket.auth) for anyone who has to use one; it is not a per-project question,
+           and presenting it as one made the simple case look complicated.
+
+           No backticks in this comment. It sits inside a JavaScript template literal, so
+           one would end the string — which is exactly what happened, and the whole page
+           stopped parsing. -->
+      ${secretRow("scm.access_token", "Access token", id("scmtoken"),
+        // A link, not a trail of menu names. Bitbucket's path is predictable from the
+        // repository this project already names, so telling somebody to go and find
+        // Repository settings → Security → Access tokens is making them navigate to a URL
+        // this page could have handed them.
+        `Create or rotate one at <a href="https://bitbucket.org/${esc(p.owner)}/${
+          esc(p.repo)}/admin/access-tokens" target="_blank" rel="noreferrer">bitbucket.org/${
+          esc(p.owner)}/${esc(p.repo)}/admin/access-tokens</a>. Scopes: ` +
+        "<strong>Repositories: Read</strong> to clone and " +
+        "<strong>Pull requests: Write</strong> to comment. Sent as " +
+        "<code>x-token-auth:&lt;token&gt;</code> for the clone and as a bearer header for " +
+        "the API — no email, no username. Nothing reads it back.")}
+
+      <!-- Leftovers from the account-credential form, as one line with one button.
+           They had a row each, which put three "set" credentials in a panel where only one
+           is wanted and left it unclear which mattered. They still have to be *visible*:
+           they are resolved before the access token, so a stale pair silently wins — but
+           seeing them is all that is needed, and the only useful action is removing both. -->
+      ${stored.has("scm.email") || stored.has("scm.api_token") ? `
+        <div class="sec">
+          <div><div class="name">Account credential
+            <span class="flag off">stale</span></div></div>
+          <div class="hint">An email-and-API-token pair is stored and is used
+            <em>instead of</em> the access token above. It authenticates as a person over
+            basic auth — remove it unless that is deliberate.</div>
+          <div class="act">
+            <button class="btn" data-clear-scm="scm.email,scm.api_token"
+              data-key="${esc(projectKey(p))}">Delete both</button>
+          </div>
+        </div>` : ""}
+      ${p ? `<div class="field">
+        <label></label>
+        <div class="act">
+          <!-- Only for a saved project: the check asks the platform about this repository,
+               so there has to be a row for it to ask about. -->
+          <button class="btn" data-test-scm="${esc(projectKey(p))}">Test credential</button>
+          <span class="hint">Confirms the token can read the repository and its pull
+            requests. Write cannot be checked without writing something.</span>
+        </div>
+      </div>` : ""}
+    </div>
+    </div>`;
+}
+
+/* credentialWanted is the line on a project card naming the credential it still needs.
+
+   On the card rather than only in a toast after saving, because a toast is gone in five
+   seconds and this state can last days: a private repository with no token builds nothing,
+   and the only other symptom is a failed clone in a log nobody opened.
+
+   Nothing for a public repository, for a project whose own token is stored, or for one that
+   inherits a workspace-wide credential — all three are working states, and a warning on a
+   working state is one nobody reads twice. */
+function credentialWanted(p, s) {
+  if (p.platform !== "bitbucket" || !p.private) return "";
+  const stored = new Set(p.scm || []);
+  if (stored.has("scm.access_token") || stored.has("scm.api_token")) return "";
+  const global = new Set((s.defaults && s.defaults.scm_global) || []);
+  if (global.has("bitbucket.access_token") || global.has("bitbucket.api_token")) return "";
+
+  return `<div class="notice warn pcard-wants">
+    <strong>Needs a Bitbucket access token.</strong> This repository is private and has no
+    credential — its own or workspace-wide — so a build cannot clone it.
+    <button class="btn" data-tab="build" data-key="${esc(projectKey(p))}">Add one</button>
+    </div>`;
+}
+
+/* scmFlag is the credential's state on one project, as a chip.
+
+   Three states and the middle one is why this is not simply "set or missing": with a
+   workspace-wide token stored, a project with none of its own is not missing anything, it
+   inherits. Calling that missing tells an operator to fix something that already works. */
+function scmFlag(s, p) {
+  const stored = new Set((p && p.scm) || []);
+  if (stored.has("scm.access_token") || stored.has("scm.api_token")) {
+    return `<span class="flag on">set</span>`;
+  }
+  const global = new Set((s.defaults && s.defaults.scm_global) || []);
+  if (global.has("bitbucket.access_token") || global.has("bitbucket.api_token")) {
+    return `<span class="flag opt">inherited</span>`;
+  }
+  return `<span class="flag off">missing</span>`;
+}
+
+/* updateSCMFlag recomputes that chip when the private checkbox moves.
+
+   Empty for a public repository: it clones with no credential at all, so a red "missing"
+   beside one is the page inventing a problem. This is the whole reason the question is
+   asked. */
+function updateSCMFlag(s) {
+  const box = document.getElementById("scm-flag");
+  const priv = document.querySelector("[data-privtoggle]");
+  if (!box || !priv) return;
+  if (!priv.checked) {
+    box.innerHTML = "";
+    return;
+  }
+  // The form's field ids carry the project key, which is how the chip finds the row it
+  // belongs to without the render passing it through a global.
+  const prefix = "p-private-";
+  const key = priv.id.startsWith(prefix) ? priv.id.slice(prefix.length) : "";
+  const p = key ? (s.projects || []).find(x => projectKey(x) === key) : null;
+  box.innerHTML = scmFlag(s, p);
+}
+
+/* scmCredentialAvailable reports whether a clone of this project could authenticate:
+   something stored on the project, something typed into the form right now, or a
+   workspace-wide credential to inherit.
+
+   The typed-but-unsaved case is the one worth spelling out. Somebody filling in the form
+   for the first time has a token in the box and nothing stored yet, and warning them that
+   no credential is available while they are looking at the one they just pasted would be
+   the page arguing with itself. */
+function scmCredentialAvailable(s, p, id) {
+  const typed = (elID) => {
+    const el = document.getElementById(elID);
+    return !!(el && el.value.trim());
+  };
+  if (typed(id("scmtoken"))) return true;
+
+  const stored = new Set((p && p.scm) || []);
+  if (stored.has("scm.access_token") || stored.has("scm.api_token")) return true;
+
+  const global = new Set((s.defaults && s.defaults.scm_global) || []);
+  return global.has("bitbucket.access_token") || global.has("bitbucket.api_token");
+}
+
+/* syncSCMFields shows the Bitbucket credential block when the new-project form is on
+   Bitbucket, and hides it otherwise.
+
+   Two triggers, because the platform can be set two ways: the select directly, and a
+   pasted repository URL, which sets the select's value from script — and a programmatic
+   assignment fires no change event, so the URL handler calls this itself. */
+function syncSCMFields() {
+  const box = document.getElementById("scm-fields");
+  const plat = document.getElementById("p-platform");
+  if (!box || !plat) return;
+  box.hidden = plat.value !== "bitbucket";
+}
+
 function projectKey(p) { return `${p.platform}/${p.owner}/${p.repo}`; }
+
+/* frameworkSelect is the preset dropdown.
+
+   The table comes from the server, which is the same table the build applies — a copy in
+   this file would drift, and the way it would drift is a form promising one build command
+   and the build running another. */
+function frameworkSelect(s, p, elID) {
+  const list = s.defaults.frameworks || [];
+  // A new project starts on the server's default preset; an existing one shows what it
+  // stored, including blank, which means the repository decides.
+  const cur = p ? (p.framework || "") : (s.defaults.framework || "");
+  if (!list.length) {
+    // An older daemon serving a newer page, or the other way round. A select with nothing
+    // in it is worse than none.
+    return `<input class="control" id="${elID}" value="${esc(cur)}" placeholder="none">`;
+  }
+  return `<select class="control" id="${elID}" data-framework="1">${
+    list.map(f => `<option value="${esc(f.id)}"${f.id === cur ? " selected" : ""}
+      data-build="${esc(f.build_command || "")}" data-output="${esc(f.output || "")}"
+      data-tool="${esc(f.needs_tool || "")}">${esc(f.label)}</option>`).join("")}</select>`;
+}
+
+/* syncFramework moves the preset's values into the placeholders of the fields it fills,
+   and warns when the preset needs a tool the chosen image will not have.
+
+   Placeholders rather than values: typing into the box is what overriding means, so the
+   preset must not put text there — a prefilled field is indistinguishable from one
+   somebody set deliberately, and it would then be stored as an explicit value that stops
+   tracking the preset. */
+function syncFramework() {
+  const sel = document.querySelector("[data-framework]");
+  if (!sel) return;
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt) return;
+
+  const put = (attr, key, fallback) => {
+    const box = document.querySelector(`[data-preset="${key}"]`);
+    if (box) box.placeholder = opt.dataset[attr] || fallback;
+  };
+  put("dir", "dir", "www");
+  put("build", "build_command", "npm run build");
+  put("output", "output", "build");
+
+  // MkDocs on a Node image fails with "mkdocs: not found" twenty seconds into a build.
+  // The image field is right there, so the answer can be given before that.
+  const warn = document.getElementById("framework-tool");
+  if (!warn) return;
+  const tool = opt.dataset.tool || "";
+  warn.hidden = !tool;
+  if (tool) {
+    warn.textContent = `${opt.textContent.trim()} needs ${tool} in the container image. ` +
+      `The node images above do not have it — name one that does.`;
+  }
+}
 
 // driverSelect offers only what this daemon will actually accept.
 //
@@ -3894,7 +4418,16 @@ function projectForm(s, p) {
   const text = (f, placeholder) => `<input class="control" id="${id(f)}"
     value="${v(f === "dir" ? "build_dir" : f === "command" ? "build_command"
       : f === "output" ? "build_output" : f === "baseurl" ? "base_url"
-      : f === "detect" ? "detect_script" : f)}" placeholder="${placeholder}">`;
+      : f === "detect" ? "detect_script" : f)}" placeholder="${placeholder}"
+    ${f === "dir" ? `data-preset="dir"` : ""}
+    ${f === "command" ? `data-preset="build_command"` : ""}
+    ${f === "output" ? `data-preset="output"` : ""}>`;
+
+  // The chosen preset's values, as the placeholders of the fields it fills. A blank box
+  // over a greyed `npm run build` says what will happen; a blank box over nothing does
+  // not, which is how somebody ends up typing a default back in by hand.
+  const preset = (s.defaults.frameworks || []).find(
+    f => f.id === (p ? (p.framework || "") : (s.defaults.framework || ""))) || {};
 
   return `<h3>${p ? `Settings for ${esc(projectLabel(p))}` : "New project"}</h3>
     <div class="grid-form">
@@ -3923,22 +4456,29 @@ function projectForm(s, p) {
         "the name. A <code>data:</code> URI renders as an image — inlined, never " +
         "fetched, because this page asks the internet for nothing.")}
 
-      <div class="field-head">Build <span class="field-note">— blank means the
-        repository decides</span></div>
+      <div class="field-head">Build <span class="field-note">— blank means the preset,
+        or the repository, decides</span></div>
+      ${field("framework", "Framework preset", frameworkSelect(s, p, id("framework")),
+        "Fills the two fields below with what that generator uses. Leave them blank to " +
+        "follow the preset, or type to override one. There is no install command: it " +
+        "comes from the lockfile the repository committed, which knows which package " +
+        "manager owns the tree." +
+        `<div class="notice warn" id="framework-tool" hidden></div>`)}
       ${field("driver", "Driver", driverSelect(s, p, id("driver")), driverWhy(s))}
       ${field("image", "Container image", imagePicker(id("image"), v("image"), s),
         "Pick one or type your own — a private mirror is a normal answer. Needs node and " +
         "<code>git</code> if the build clones other repositories, which the " +
         "<code>-slim</code> images do not have; alpine's musl breaks dependencies that " +
         "ship prebuilt binaries.")}
-      ${field("dir", "Build directory", text("dir", "www"),
+      ${field("dir", "Build directory", text("dir", esc(preset.dir || "www")),
         "Where <code>package.json</code> lives, relative to the repository root. Blank " +
-        "means the root.")}
-      ${field("command", "Build command", text("command", esc(s.defaults.build_command || "npm run build")),
+        "means the preset's directory, or the root if it names none.")}
+      ${field("command", "Build command",
+        text("command", esc(preset.build_command || s.defaults.build_command || "npm run build")),
         "Run by <code>sh -lc</code> inside the image, so pipes and <code>&amp;&amp;</code> " +
         "work and <code>bash</code>, <code>node</code> or <code>python</code> work if the " +
         "image has them.")}
-      ${field("output", "Output directory", text("output", "build"),
+      ${field("output", "Output directory", text("output", esc(preset.output || "build")),
         "Relative to the build directory.")}
       ${field("baseurl", "Base URL", text("baseurl", "/"),
         "Must start and end with a slash. Docusaurus bakes it in at build time, so " +
@@ -3952,6 +4492,8 @@ function projectForm(s, p) {
         "with a unit — <code>45m</code>, <code>2h</code> — because a repository that " +
         "clones seven others is not a two-minute build and every other project should " +
         "not have to wait that long to be told it hung.")}
+
+      ${scmCredentialFields(s, p, id)}
 
       <div class="field-head">Notes</div>
       ${field("notes", "Notes", `<textarea class="control" id="${id("notes")}"
@@ -4223,6 +4765,24 @@ function wireProjectHandlers(s) {
     };
   }
 
+  // Escape closes the new-project dialog, through the same discard guard the Cancel button
+  // uses — a form with eleven fields in it must not vanish on a stray keypress.
+  //
+  // Deliberately no click-away. The boot report has one because it holds nothing; this
+  // holds typing, and losing a half-filled form to a misplaced click is worse than having
+  // to aim at Cancel.
+  const modal = document.getElementById("p-new-modal");
+  if (modal) {
+    // Focus the first field, so the dialog is typeable without a click.
+    document.getElementById("p-url")?.focus();
+    modal.onkeydown = e => {
+      if (e.key !== "Escape") return;
+      if (!confirmDiscard()) return;
+      projOpen = {key: null, tab: null};
+      renderProjectsPage(s);
+    };
+  }
+
   wireImageCheck(el);
   wireAvatarPickers(el);
 
@@ -4237,6 +4797,87 @@ function wireProjectHandlers(s) {
       document.getElementById("p-platform").value = got.platform;
       document.getElementById("p-owner").value = got.owner;
       document.getElementById("p-repo").value = got.repo;
+      // Setting .value from script fires no change event, so the credential block would
+      // stay hidden for a Bitbucket URL that had just filled the form in.
+      syncSCMFields();
+    };
+  }
+
+  // And the select on its own, for somebody who picks the platform rather than pasting.
+  const plat = document.getElementById("p-platform");
+  if (plat) {
+    plat.onchange = syncSCMFields;
+    syncSCMFields();
+  }
+
+  // The framework preset drives the placeholders under it.
+  const fw = el.querySelector("[data-framework]");
+  if (fw) {
+    fw.onchange = syncFramework;
+    syncFramework();
+  }
+
+  // The credential block's own three controls.
+  const priv = el.querySelector("[data-privtoggle]");
+  if (priv) priv.onchange = () => updateSCMFlag(s);
+
+  // Saving one credential on its own, without the form.
+  //
+  // Not through runProject, which re-renders on success and would close the form the button
+  // is inside — and this is a field somebody pastes into and then presses Test beside. The
+  // page's own copy of the state is updated so the chip and the placeholder catch up
+  // without a round trip.
+  for (const b of el.querySelectorAll("[data-set-scm]")) {
+    b.onclick = async () => {
+      const name = b.dataset.setScm, key = b.dataset.key;
+      const field = document.getElementById(b.dataset.field);
+      const value = field ? field.value.trim() : "";
+      if (!value) {
+        alert(`Paste a value for ${name} first. Nothing reads the stored one back, so ` +
+          `there is nothing to edit — a save replaces it outright.`);
+        return;
+      }
+      const label = b.textContent;
+      b.disabled = true;
+      b.textContent = "…";
+      try {
+        await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`, {value});
+        field.value = "";
+        const p = (s.projects || []).find(x => projectKey(x) === key);
+        if (p) p.scm = [...new Set([...(p.scm || []), name])];
+        updateSCMFlag(s);
+        toast(`Stored ${name} for ${key.split("/").slice(1).join("/")}.`);
+      } catch (e) {
+        toast(e.message, "bad");
+      } finally {
+        b.disabled = false;
+        b.textContent = label;
+      }
+    };
+  }
+
+  // Clearing one. An empty value is how the endpoint deletes, so this is the same route.
+  // Clearing one credential, or the account pair as a unit. An empty value is how the
+  // endpoint deletes, so this is the same route either way.
+  for (const b of el.querySelectorAll("[data-clear-scm]")) {
+    b.onclick = async () => {
+      const names = b.dataset.clearScm.split(",");
+      const key = b.dataset.key;
+      if (!confirm(`Remove ${names.join(" and ")} from ${key}? The values cannot be ` +
+          `recovered, and this repository falls back to the workspace-wide credential if ` +
+          `there is one.`)) {
+        return;
+      }
+      await runProject(b, async () => {
+        // Sequentially, and the last answer is what the page renders: each write returns
+        // the whole state, so the final one is the only current picture.
+        let out;
+        for (const name of names) {
+          out = await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`,
+            {value: ""});
+        }
+        return out;
+      });
     };
   }
 
@@ -4295,6 +4936,16 @@ function wireProjectHandlers(s) {
         return;
       }
 
+      // A private repository with no credential is noted, not blocked.
+      //
+      // This was a confirm() — a modal asking permission to save something the operator had
+      // just asked to save, whose only useful answer was OK. Marking a repository private
+      // before pasting its token is the *normal order*: the project has to exist before it
+      // has credential rows to fill in. So the save proceeds and the toast afterwards says
+      // what is still needed.
+      const priv = document.getElementById(id("private"));
+      const needsToken = !!(priv && priv.checked) && !scmCredentialAvailable(s, p, id);
+
       await runProject(b, async () => {
         const out = await api("PUT", projectPath(target), {
           // Preserved rather than defaulted. This form is also the edit form, and a
@@ -4308,11 +4959,41 @@ function wireProjectHandlers(s) {
           base_url: val(id("baseurl")),
           detect_script: val(id("detect")),
           timeout: val(id("timeout")),
+          framework: val(id("framework")),
+          private: !!(document.getElementById(id("private")) || {}).checked,
           image: val(id("image")),
           notes: val(id("notes")),
           display_name: val(id("name")),
           avatar: val(id("avatar")),
         });
+        // The source-control credential, after the row and by its own route.
+        //
+        // Not a field on the project row: it is a secret, so it goes to the vault rather
+        // than to sqlite, and it must not travel in a payload that is logged. Only the
+        // boxes that were typed into are sent — an empty box means "leave what is stored
+        // alone", because the alternative is that saving any other field on the form
+        // silently clears the token.
+        //
+        // A failure here does not fail the save. The project row is already written by the
+        // time this runs, so throwing would report "save failed" about a project that has
+        // been saved — and the row is the part worth keeping: a project with no token is a
+        // project that cannot clone yet, which is a fixable state, while a project that was
+        // not created at all has to be typed in again.
+        const credFailures = [];
+        for (const [name, elID] of [["scm.access_token", id("scmtoken")]]) {
+          const value = val(elID);
+          if (!value) continue;
+          try {
+            await api("PUT", `${projectPath(target)}/scm/${encodeURIComponent(name)}`, {value});
+          } catch (e) {
+            credFailures.push(`${name}: ${e.message}`);
+          }
+        }
+        if (credFailures.length) {
+          toast(`Saved the project, but its credential was not stored — ` +
+            credFailures.join("; "), "bad");
+        }
+
         // Saved, so nothing is unsaved. Cleared before the scan, or the confirm-on-leave
         // guard fires on a form the server has already accepted.
         formDirty = false;
@@ -4323,7 +5004,10 @@ function wireProjectHandlers(s) {
         // that was there before the click.
         if (editing) {
           projOpen = {key: null, tab: null};
-          projFlash = `Saved ${key.split("/").slice(1).join("/")}.`;
+          projFlash = needsToken
+            ? `Saved. ${key.split("/").slice(1).join("/")} is private with no credential — ` +
+              `open it and paste an access token, then Test credential.`
+            : `Saved ${key.split("/").slice(1).join("/")}.`;
         }
 
         // A new project builds what is already open. Without this, adding a repository
@@ -4331,19 +5015,41 @@ function wireProjectHandlers(s) {
         // is usually that nobody has.
         if (!editing) {
           projOpen = {key: null, tab: null};
+
+          // A private repository with nothing to clone with: say what to do next, and the
+          // card carries the same sentence until it is done.
+          if (needsToken) {
+            projFlash = `Created. It is private with no credential — press Edit and paste ` +
+              `an access token before it can build.`;
+            return out;
+          }
+
+          /* Toasts, not alerts, and the wording matters as much as the control.
+
+             Every one of these was an alert() — a modal saying "The project was saved,
+             but nothing could be queued", which reads as a refusal and has to be
+             dismissed before the page underneath can be looked at. The project *was*
+             saved; the scan is a convenience that runs afterwards, and the commonest
+             reason it finds nothing is that the credential has not been pasted yet. That
+             is a next step, not an error. */
           try {
             const scan = await api("POST", `${projectPath(target)}/scan`);
             if (scan.error) {
-              alert(`The project was saved, but nothing could be queued:\n\n${scan.error}`);
+              // A missing credential is the ordinary case on a first save, so it gets a
+              // sentence that says what to do rather than the raw platform error.
+              const missing = /no Bitbucket credential|credential/i.test(scan.error);
+              projFlash = missing
+                ? `Saved. No builds queued yet — add an access token to this project, ` +
+                  `then use Build now.`
+                : `Saved, but nothing could be queued: ${scan.error}`;
             } else if (scan.queued) {
-              alert(`Saved. ${scan.queued} open pull request${scan.queued === 1 ? "" : "s"} ` +
-                `queued for building — watch the dashboard.`);
+              projFlash = `Saved. ${scan.queued} open pull request${
+                scan.queued === 1 ? "" : "s"} queued — watch the dashboard.`;
             } else {
-              alert("Saved. That repository has no open pull requests, so there is " +
-                "nothing to build yet.");
+              projFlash = "Saved. That repository has no open pull requests yet.";
             }
           } catch (e) {
-            alert(`The project was saved, but the scan failed: ${e.message}`);
+            projFlash = `Saved, but the scan failed: ${e.message}`;
           }
         }
         return out;
@@ -4405,6 +5111,33 @@ function wireProjectHandlers(s) {
       }
       await runProject(b, async () =>
         api("PUT", `${projectPath(key)}/secrets/${encodeURIComponent(env)}`, {value}));
+    };
+  }
+
+  // Testing a project's source-control credential.
+  //
+  // Not through runProject, which re-renders the whole page on success — that would close
+  // the form the button is inside, which is where somebody is about to fix the token if the
+  // answer is bad. The result is a toast and the form stays put.
+  for (const b of el.querySelectorAll("[data-test-scm]")) {
+    b.onclick = async () => {
+      const key = b.dataset.testScm;
+      const label = b.textContent;
+      b.disabled = true;
+      b.textContent = "…";
+      try {
+        const out = await api("POST", `${projectPath(key)}/scm-test`);
+        // Headline first, detail behind it: the server sends both, separated by a newline.
+        const [headline, ...rest] = String(out.ok || "Works.").split("\n");
+        toast(headline, "good", rest.join(" "));
+      } catch (e) {
+        // The platform's own message, which names the missing scope where this code
+        // cannot. Long, so it gets the failure toast's longer life.
+        toast(e.message, "bad");
+      } finally {
+        b.disabled = false;
+        b.textContent = label;
+      }
     };
   }
 
@@ -4513,6 +5246,19 @@ function showBootReport(s) {
   // restart nobody notices and four minutes of 404s.
   const adopted = (r.adopted_previews || 0) + (r.adopted_builds || 0);
   const created = (r.created_previews || 0) + (r.created_builds || 0);
+
+  /* Nothing to report when a restart was quick and everything was adopted.
+
+     This dialog exists to explain a wait — it was written when a restart took four and a
+     half minutes and nobody could see what it was spending them on. Adoption made the
+     ordinary case three seconds, and a modal that has to be dismissed to tell you a
+     three-second startup took three seconds is a toll on every restart.
+
+     Two things still open it inside ten seconds. Anything *created* means the fast path
+     did not work for something, which is the number that predicts the next restart being
+     slow. Anything queued means a build was waiting through recovery, which is the state
+     somebody wants to know about immediately. */
+  if (r.seconds < 10 && created === 0 && !r.pending) return;
 
   const shares = adopted + created;
   // One row per fact, and only for facts that happened. A tile reading "0 created" is a

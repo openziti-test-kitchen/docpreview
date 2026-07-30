@@ -54,6 +54,19 @@ const state = () => ({
     // rows annotate: a -slim one with no git, and an alpine one whose musl breaks
     // dependencies shipping prebuilt binaries.
     images: ["node:24-bookworm-slim", "node:24-bookworm", "node:24-alpine"],
+    // The preset table, as the server sends it. Three entries are enough: the default,
+    // one Node preset, and one that needs a tool a node image does not have.
+    frameworks: [
+      {id: "", label: "None — the repository decides"},
+      {id: "docusaurus", label: "Docusaurus (v2+)",
+       build_command: "npm run build", output: "build"},
+      {id: "mkdocs", label: "MkDocs",
+       build_command: "mkdocs build", output: "site", needs_tool: "mkdocs"},
+    ],
+    // What a new project's form starts on. Docusaurus, because that is what this daemon
+    // previews in practice — a form defaulting to "the repository decides" makes the
+    // commonest case two clicks and the rarest zero.
+    framework: "docusaurus",
   },
   projects: [
     {
@@ -67,6 +80,13 @@ const state = () => ({
       platform: "bitbucket", owner: "netfoundry", repo: "customer-connect-docs",
       enabled: false, driver: "", build_dir: "", build_command: "", build_output: "",
       base_url: "", detect_script: "", image: "", notes: "", secrets: [],
+      // Its own access token stored, no API token — the recommended shape, and the one
+      // that makes the "set"/"missing" chips distinguishable in the form.
+      scm: ["scm.access_token"],
+      // Private, because the credential state is only reported for a repository that needs
+      // one: a public repo clones with no token, so a red "missing" beside one would be the
+      // page inventing a problem.
+      private: true,
     },
   ],
 });
@@ -259,6 +279,54 @@ console.log("\nidentity: badge, name, platform label");
   ok("display name shown with owner/repo beside it");
 }
 
+console.log("\nadding is reachable without scrolling past every project");
+{
+  // Both the button and the form it opens used to be below the list. Fine for three
+  // projects and wrong for thirty: adding one meant scrolling past every project that
+  // already existed, and the form then appeared where the button had been — the bottom of
+  // a long page — so the fields to fill in were somewhere the eye had never been.
+  const body = $("#projects-body");
+  const btnEl = $("#p-new");
+  const firstCard = $(".pcard");
+  if (!btnEl) {
+    fail("no New project button");
+  } else if (!firstCard) {
+    fail("no project cards to compare against");
+  } else {
+    // compareDocumentPosition: 4 means the argument follows the reference node.
+    const buttonComesFirst = !!(btnEl.compareDocumentPosition(firstCard) &
+      body.ownerDocument.defaultView.Node.DOCUMENT_POSITION_FOLLOWING);
+    if (!buttonComesFirst) {
+      fail("New project sits after the project list");
+    } else {
+      ok("New project is above the list");
+    }
+  }
+}
+
+console.log("\nthe add form is a dialog, not the bottom of the page");
+{
+  await click($("#p-new"));
+  const modal = $("#p-new-modal");
+  if (!modal) {
+    fail("the new-project form is not in a dialog");
+  } else if (!modal.querySelector("#p-url")) {
+    fail("the dialog does not contain the form");
+  } else if (modal.querySelector(".modal-card") === null) {
+    fail("the dialog has no card");
+  } else {
+    ok("opens in a modal dialog");
+  }
+  // Wide, because a build command is a shell line and a container image is a registry
+  // path: the report dialog's 34rem turns both into boxes you scroll sideways to read.
+  if (modal && !modal.querySelector(".modal-card.wide")) {
+    fail("the project dialog uses the narrow card");
+  }
+  await click(btn("Cancel"));
+  if ($("#p-new-modal")) fail("Cancel left the dialog open");
+  else ok("Cancel closes it");
+}
+
 console.log("\nthe add form is closed until asked for");
 {
   if ($("#p-owner")) fail("the add form is open before anything asked for it");
@@ -385,6 +453,223 @@ console.log("\nthe new-project form");
   await click(btn("Cancel"));
 }
 
+console.log("\na framework preset fills the fields it knows");
+{
+  await click($("#p-new"));
+  const sel = $("[data-framework]");
+  if (!sel) {
+    fail("no framework preset dropdown");
+  } else {
+    // A new project starts on the server's default preset, not on "none": this daemon
+    // previews Docusaurus sites, so defaulting to "the repository decides" makes the
+    // commonest case two clicks and the rarest zero. An *existing* project still shows
+    // what it stored, blank included — asserted below.
+    if (sel.value !== "docusaurus") {
+      fail(`a new project starts on ${JSON.stringify(sel.value)}, want the default preset`);
+    } else {
+      ok("a new project starts on Docusaurus");
+    }
+
+    // Placeholders, never values. Typing is what overriding means, so a preset that
+    // prefilled the box would be indistinguishable from a value somebody set — and would
+    // then be stored as an explicit one that stops tracking the preset.
+    const cmd = $('[data-preset="build_command"]');
+    const out = $('[data-preset="output"]');
+    sel.value = "docusaurus";
+    sel.dispatchEvent(new win.Event("change", {bubbles: true}));
+    await settle();
+
+    if (cmd.placeholder !== "npm run build" || out.placeholder !== "build") {
+      fail(`placeholders are ${JSON.stringify([cmd.placeholder, out.placeholder])}`);
+    } else if (cmd.value !== "" || out.value !== "") {
+      fail("the preset filled the boxes instead of their placeholders");
+    } else {
+      ok(`placeholders follow the preset: ${JSON.stringify(cmd.placeholder)}, ${
+        JSON.stringify(out.placeholder)}`);
+    }
+
+    // A preset that needs a tool the node images do not have says so here, rather than
+    // twenty seconds into a build that reports "mkdocs: not found".
+    sel.value = "mkdocs";
+    sel.dispatchEvent(new win.Event("change", {bubbles: true}));
+    await settle();
+    const warn = $("#framework-tool");
+    if (!warn || warn.hidden) {
+      fail("MkDocs does not warn that the image needs mkdocs");
+    } else if (!/mkdocs/.test(warn.textContent)) {
+      fail(`the warning says ${JSON.stringify(warn.textContent)}`);
+    } else {
+      ok("warns when the preset needs a tool the image lacks");
+    }
+    if (cmd.placeholder !== "mkdocs build") {
+      fail(`switching presets left the placeholder at ${JSON.stringify(cmd.placeholder)}`);
+    }
+
+    // And back to none, which is how a project defers to the repository entirely.
+    sel.value = "";
+    sel.dispatchEvent(new win.Event("change", {bubbles: true}));
+    await settle();
+    if (!$("#framework-tool").hidden) fail("the tool warning outlived the preset");
+    else ok("no preset, no warning");
+  }
+  await click(btn("Cancel"));
+}
+
+console.log("\nthe new-project form asks about the credential without collecting it");
+{
+  // A token pasted into a form for a project that does not exist yet has nowhere to be
+  // stored until the row is written, which made the save two requests where the second
+  // could fail on its own — and did, reporting "failed to fetch" about a project that had
+  // been created.
+  await click($("#p-new"));
+  await type($("#p-url"), "https://bitbucket.org/netfoundry/customer-connect-docs");
+  const box = $("#scm-fields");
+  if (!box || box.hidden) {
+    fail("no credential question on a new Bitbucket project");
+  } else {
+    if (!box.querySelector("[data-privtoggle]")) {
+      fail("the new form does not ask whether the repository is private");
+    } else {
+      ok("asks whether it is private");
+    }
+    if (box.querySelector("[data-scmrow]") || box.querySelector("input[type=password]")) {
+      fail("the new form collects a credential it has nowhere to store yet");
+    } else {
+      ok("collects no token before the project exists");
+    }
+    if (!/Create the project first/.test(box.textContent)) {
+      fail("the form does not say when to paste the token");
+    } else {
+      ok("says to paste it after creating");
+    }
+  }
+  await click($("#p-new-modal .modal-x"));
+}
+
+console.log("\na private project with no credential says so on its card");
+{
+  // On the card, not only in a toast: the toast is gone in five seconds and this state can
+  // last days — a private repository with no token builds nothing, and the only other
+  // symptom is a failed clone in a log nobody opened.
+  const wanting = state();
+  wanting.projects[1].scm = [];
+  wanting.projects[1].private = true;
+  win.eval(`projOpen = {key: null, tab: null}`);
+  win.eval(`renderProjectsPage(${JSON.stringify(wanting)})`);
+  await settle();
+
+  const notice = $(".pcard-wants");
+  if (!notice) {
+    fail("a private project with no credential says nothing on its card");
+  } else if (!/access token/i.test(notice.textContent)) {
+    fail(`the notice says ${JSON.stringify(notice.textContent.trim())}`);
+  } else {
+    ok("the card names what it needs");
+  }
+
+  // And the three working states say nothing: token stored, inherits a workspace-wide
+  // one, or public. A warning on a working state is one nobody reads twice.
+  const ok3 = state();
+  ok3.projects[1].private = true;               // its own token is in the fixture
+  win.eval(`renderProjectsPage(${JSON.stringify(ok3)})`);
+  await settle();
+  if ($(".pcard-wants")) fail("a project with its own token is still warned about");
+
+  const inheriting = state();
+  inheriting.projects[1].scm = [];
+  inheriting.projects[1].private = true;
+  inheriting.defaults.scm_global = ["bitbucket.access_token"];
+  win.eval(`renderProjectsPage(${JSON.stringify(inheriting)})`);
+  await settle();
+  if ($(".pcard-wants")) fail("a project inheriting a workspace token is warned about");
+
+  const publicRepo = state();
+  publicRepo.projects[1].scm = [];
+  publicRepo.projects[1].private = false;
+  win.eval(`renderProjectsPage(${JSON.stringify(publicRepo)})`);
+  await settle();
+  if ($(".pcard-wants")) fail("a public repository is warned about");
+  else ok("silent on every working state");
+
+  win.eval(`renderProjectsPage(${JSON.stringify(state())})`);
+  await settle();
+}
+
+console.log("\nan existing project keeps the preset it stored");
+{
+  // The default applies to a *new* form only. Applying it to a stored blank would change
+  // what every project written before presets existed builds.
+  const bb = $$(".pcard [data-tab=build]").find(
+    b => b.dataset.key === "bitbucket/netfoundry/customer-connect-docs");
+  await click(bb);
+  const sel = $("[data-framework]");
+  if (!sel) {
+    fail("no preset control on an existing project");
+  } else if (sel.value !== "") {
+    fail(`a project with no stored preset shows ${JSON.stringify(sel.value)}`);
+  } else {
+    ok("blank stays blank — the repository decides");
+  }
+  await click(btn("Cancel — discard edits"));
+}
+
+console.log("\nthe dialog has a close control that does not scroll away");
+{
+  await click($("#p-new"));
+  const x = $("#p-new-modal .modal-x");
+  if (!x) {
+    fail("no close control in the dialog");
+  } else {
+    // Sticky, so nineteen fields do not have to be scrolled past to find the way out.
+    const pos = win.getComputedStyle(x.parentElement).position;
+    if (pos !== "sticky") {
+      fail(`the close control's row is position:${pos}, so it scrolls away with the form`);
+    } else {
+      ok("pinned to the corner");
+    }
+    await click(x);
+    if ($("#p-new-modal")) fail("the close control did not close the dialog");
+    else ok("closes the dialog");
+  }
+}
+
+console.log("\none credential field, because that is all an access token needs");
+{
+  // This offered a choice between an access token and an account email plus API token,
+  // which put an email field in front of every operator. An access token needs none: the
+  // clone username is the literal x-token-auth and the API call is a bearer header. The
+  // account-token mode is a server-wide setting, not a per-project question.
+  const bb = $$(".pcard [data-tab=build]").find(
+    b => b.dataset.key === "bitbucket/netfoundry/customer-connect-docs");
+  await click(bb);
+
+  const box = $("#scm-fields");
+  const rows = [...box.querySelectorAll("[data-scmrow]")].map(r => r.dataset.scmrow);
+  if (rows.length !== 1 || rows[0] !== "scm.access_token") {
+    fail(`credential rows are ${JSON.stringify(rows)}, want only the access token`);
+  } else {
+    ok("one row: the access token");
+  }
+  if (box.querySelector("[data-scmmode]")) {
+    fail("the credential type picker is back, which is a question with one answer");
+  }
+  // No email *field*. The word still appears, in the sentence explaining that an access
+  // token needs none — asserting on the word flagged the explanation.
+  if (box.querySelector('[id$="scmemail"]') || /Account email/.test(box.textContent)) {
+    fail("the form still collects an email, which an access token does not use");
+  } else {
+    ok("no email field");
+  }
+  // And it says how the token is used, since that is what makes the absence of an email
+  // obvious rather than suspicious.
+  if (!/x-token-auth/.test(box.textContent)) {
+    fail("the form does not say how the token is used");
+  } else {
+    ok("says x-token-auth for clone, bearer for the API");
+  }
+  await click(btn("Cancel — discard edits"));
+}
+
 console.log("\nsecrets panel");
 {
   // An accordion in the card, not a `Secrets` button beside `Edit`. As a button it made
@@ -457,6 +742,225 @@ console.log("\nsecrets panel");
   }
 }
 
+console.log("\nthe Bitbucket credential appears only where it applies");
+{
+  // A GitHub App is installed on repositories, so the installation is the grant and there
+  // is nothing per project to paste. A Bitbucket access token is scoped to one repository
+  // at creation — unless a workspace admin permits wider ones, which many do not — so the
+  // credential has to live beside the project row.
+  await click($("#p-new"));
+  const box = $("#scm-fields");
+  if (!box) {
+    fail("the new-project form has no credential block at all");
+  } else if (!box.hidden) {
+    fail("the credential block is shown before the platform is known");
+  } else {
+    ok("hidden until the platform says Bitbucket");
+  }
+
+  // Pasting a Bitbucket URL fills the form from script, which fires no change event — so
+  // the URL handler has to reveal the block itself.
+  await type($("#p-url"), "https://bitbucket.org/netfoundry/customer-connect-docs");
+  if ($("#scm-fields").hidden) {
+    fail("a pasted Bitbucket URL left the credential block hidden");
+  } else {
+    ok("a pasted Bitbucket URL reveals it");
+  }
+
+  // And back again, so somebody who corrects the URL is not left with a token box for a
+  // platform that has no use for one.
+  await type($("#p-url"), "https://github.com/acme/docs");
+  if (!$("#scm-fields").hidden) {
+    fail("switching back to GitHub left the credential block on screen");
+  } else {
+    ok("hidden again for GitHub");
+  }
+  await click(btn("Cancel"));
+}
+
+console.log("\nediting a Bitbucket project shows what is stored");
+{
+  const bb = $$(".pcard [data-tab=build]").find(
+    b => b.dataset.key === "bitbucket/netfoundry/customer-connect-docs");
+  if (!bb) {
+    fail("no Edit control on the Bitbucket project");
+  } else {
+    await click(bb);
+    const box = $("#scm-fields");
+    if (!box || box.hidden) {
+      fail("the credential block is missing on a Bitbucket project's form");
+    } else {
+      // Names only, never values: "set" is the most that can be shown, because nothing
+      // reads a stored credential back.
+      const head = box.querySelector(".field-head").textContent;
+      if (!/set/.test(head)) fail(`the access token is not marked set: ${JSON.stringify(head)}`);
+      else ok("the stored access token is marked set");
+
+      // Text and password only. A checkbox's value is "on" whether it is ticked or not,
+      // so counting it made the private-repository question look like a leaked secret.
+      const boxes = [...box.querySelectorAll("input[type=password]")];
+      const leaked = boxes.filter(i => i.value !== "");
+      if (leaked.length) {
+        fail(`${leaked.length} credential box(es) are prefilled: ${
+          JSON.stringify(leaked.map(i => i.id))}`);
+      } else {
+        ok(`${boxes.length} credential boxes, all empty`);
+      }
+
+      const test = box.querySelector("[data-test-scm]");
+      if (!test) fail("no Test credential control on a saved project");
+      else ok("Test credential offered");
+
+      // The private-repository question, and what a blank field will do. With a
+      // workspace-wide token stored, blank means "inherit"; with none it means "this
+      // cannot clone" — opposite meanings for the same empty box, so the page has to say
+      // which. This fixture stores no global credential.
+      const priv = box.querySelector('input[type=checkbox]');
+      if (!priv) {
+        fail("nothing asks whether the repository is private");
+      } else {
+        ok("asks whether the repository is private");
+      }
+      // This project has its own token stored, so the line says so. The other two
+      // branches — inherit a workspace-wide one, or nothing anywhere — are asserted below
+      // by rendering with a different state.
+      if (!/uses its own credential/.test(box.textContent)) {
+        fail(`the form does not say which credential applies: ${
+          JSON.stringify(box.querySelector(".why").textContent.trim())}`);
+      } else {
+        ok("says this repository uses its own");
+      }
+
+      // The credential rows use the secrets-page shape, with their own Save — a token is
+      // pasted and then tested, so committing it must not require the form's Save.
+      const row = box.querySelector('[data-scmrow="scm.access_token"]');
+      if (!row || !row.querySelector("[data-set-scm]")) {
+        fail("the access token has no Save of its own");
+      } else if (!row.querySelector("[data-expand]")) {
+        fail("the access token box has no expand control");
+      } else {
+        ok("credential rows have their own Save and expand");
+      }
+
+      // A public repository reports nothing: it clones with no credential at all.
+      const priv2 = box.querySelector("[data-privtoggle]");
+      priv2.checked = false;
+      priv2.dispatchEvent(new win.Event("change", {bubbles: true}));
+      await settle();
+      if ($("#scm-flag").textContent.trim() !== "") {
+        fail(`unchecking private left ${JSON.stringify($("#scm-flag").textContent.trim())}`);
+      } else {
+        ok("no credential state reported for a public repository");
+      }
+      priv2.checked = true;
+      priv2.dispatchEvent(new win.Event("change", {bubbles: true}));
+      await settle();
+    }
+  }
+}
+
+console.log("\na blank field says whether it inherits or fails");
+{
+  // The same empty box means opposite things depending on what is stored workspace-wide,
+  // and the page is the only thing that can tell an operator which. Both branches, by
+  // rendering the page with each state.
+  const withGlobal = state();
+  withGlobal.defaults.scm_global = ["bitbucket.access_token"];
+  withGlobal.projects[1].scm = [];
+  withGlobal.projects[1].private = true;
+  win.eval(`projOpen = {key: "bitbucket/netfoundry/customer-connect-docs", tab: "build"}`);
+  win.eval(`renderProjectsPage(${JSON.stringify(withGlobal)})`);
+  await settle();
+
+  let text = $("#scm-fields").textContent;
+  if (!/inherit the workspace-wide credential/.test(text)) {
+    fail("with a global token stored, a blank field does not say it inherits");
+  } else {
+    ok("blank inherits the workspace-wide credential");
+  }
+  // And it is marked inherited rather than missing: calling it missing tells an operator
+  // to fix something that works.
+  if (!/inherited/.test($("#scm-fields .field-head").textContent)) {
+    fail("an inheriting project's credential is not marked inherited");
+  } else {
+    ok("marked inherited, not missing");
+  }
+
+  const withNothing = state();
+  withNothing.projects[1].scm = [];
+  withNothing.projects[1].private = true;
+  win.eval(`renderProjectsPage(${JSON.stringify(withNothing)})`);
+  await settle();
+
+  text = $("#scm-fields").textContent;
+  if (!/No workspace-wide credential is stored/.test(text)) {
+    fail("with nothing stored anywhere, the form does not say a token is needed");
+  } else {
+    ok("says a private repo needs its own token here");
+  }
+  if (!/missing/.test($("#scm-fields .field-head").textContent)) {
+    fail("with nothing to inherit, the credential is not marked missing");
+  } else {
+    ok("marked missing when there is nothing to fall back to");
+  }
+
+  // Back to the original state for the sections below.
+  win.eval(`renderProjectsPage(${JSON.stringify(state())})`);
+  await settle();
+}
+
+console.log("\ntesting a credential asks the platform");
+{
+  const test = $("[data-test-scm]");
+  calls.length = 0;
+  await click(test);
+
+  const post = calls.find(c => c.method === "POST");
+  const want = "/api/projects/bitbucket/netfoundry/customer-connect-docs/scm-test";
+  if (!post) fail("Test credential sent no request");
+  else if (post.url !== want) fail(`POST ${post.url}, want ${want}`);
+  else ok(`POST ${post.url}`);
+
+  // The form must stay open: if the answer is bad, this is where the token gets fixed.
+  if (!$("#scm-fields")) {
+    fail("the form closed on a credential test, taking the field with it");
+  } else {
+    ok("the form stays open");
+  }
+
+  // A toast lives for five seconds, which outlasts the rest of this file — so the next
+  // section's "was anything toasted" check would read this one's. Cleared rather than
+  // waited out.
+  $$("#toasts .toast").forEach(t => t.remove());
+}
+
+console.log("\nsaving sends only the credential boxes that were typed into");
+{
+  // An empty box means "leave what is stored alone". The alternative is that editing any
+  // other field on the form silently clears the token, which is a build that stops
+  // working for a reason nothing reports.
+  const key = "bitbucket/netfoundry/customer-connect-docs";
+  doc.getElementById(`p-scmtoken-${key}`).value = "a-new-repository-token";
+  calls.length = 0;
+  await click(btn("Save changes"));
+
+  const scm = calls.filter(c => c.url.includes("/scm/"));
+  if (scm.length !== 1) {
+    fail(`${scm.length} credential requests, want 1: ${JSON.stringify(scm.map(c => c.url))}`);
+  } else if (!scm[0].url.endsWith("/scm/scm.access_token")) {
+    fail(`PUT ${scm[0].url}`);
+  } else if (scm[0].body?.value !== "a-new-repository-token") {
+    fail("the token did not travel with the request");
+  } else {
+    ok(`PUT ${scm[0].url}`);
+  }
+  // The row itself still goes to the project endpoint, separately: one is sqlite, the
+  // other is the vault, and the credential must not travel in a payload that is logged.
+  if (!calls.some(c => c.method === "PUT" && c.url === `/api/projects/${key}`)) {
+    fail("the project row was not saved");
+  }
+}
+
 console.log("\nsaving an edit closes the form and says so");
 {
   await click($$(".pcard [data-tab=build]")[0]);
@@ -482,15 +986,22 @@ console.log("\nsaving an edit closes the form and says so");
   }
 }
 
-console.log("\nBuild now");
+console.log("\nBuild open PRs");
 {
+  // Named for what it does. As "Build now" it read as "build this thing", and it queues one
+  // build per *open pull request* — which on a repository with two of them looked like it
+  // picked one at random.
+  const build = btn("Build open PRs");
+  if (!build) {
+    fail("no Build control, or it is still called something that implies one build");
+  }
   calls.length = 0;
-  await click(btn("Build now"));
+  await click(build);
   const scan = calls.find(c => c.method === "POST" && c.url.endsWith("/scan"));
   if (!scan) {
-    fail("Build now sent no scan");
+    fail("Build open PRs sent no scan");
   } else if (scan.url !== "/api/projects/github/netfoundry/unified-doc/scan") {
-    fail(`Build now scanned ${scan.url}`);
+    fail(`it scanned ${scan.url}`);
   } else ok(`POST ${scan.url}`);
 
   // And it says what happened, since queueing is invisible from this page.

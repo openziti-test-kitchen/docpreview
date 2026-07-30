@@ -372,7 +372,17 @@ func setup(configPath, logLevel string) (*wiring, error) {
 					"fix", "generate the webhook secret on /secrets, then store the access token")
 				break
 			}
-			w.clients[model.PlatformBitbucket] = bb
+			// The per-project resolver, here as well as in rewireBitbucket.
+			//
+			// Missing here, the client built at startup could only ever see the
+			// workspace-wide credential — so on a daemon whose vault was already unlocked
+			// (the normal case, with vault.key_source set) every per-project token was
+			// invisible, and Test credential answered "no Bitbucket credential for
+			// owner/repo" about a token that was sitting in the vault. The rewire path had
+			// it and this one did not, which is why it worked after a vault write and not
+			// after a restart.
+			w.clients[model.PlatformBitbucket] = bb.WithProjectCredentials(
+				projectBitbucketCredentials(w))
 		}
 	}
 
@@ -604,6 +614,9 @@ func cmdServe(args []string) error {
 			WithRebuilder(d.RebuildPreview).
 			// So the form can grey out a driver that would fail rather than offering
 			// it and letting the operator discover the refusal from a failed build.
+			// So a pasted token can be checked before it is discovered wrong by a build
+			// that clones for twenty seconds and then fails to authenticate.
+			WithSCMChecker(d.CheckRepoCredential).
 			WithDocker(dockerOK, dockerWhy))
 
 	listeners, err := daemon.Open(w.cfg.Listeners, w.log)
@@ -738,10 +751,42 @@ func rewireBitbucket(w *wiring, d *daemon.Daemon, ingress *daemon.Ingress, v *va
 		w.log.Info("bitbucket client not built yet", "reason", err)
 		return
 	}
+	bb = bb.WithProjectCredentials(projectBitbucketCredentials(w))
 
 	d.SetClient(model.PlatformBitbucket, bb)
 	ingress.SetClient(model.PlatformBitbucket, bb)
 	w.log.Info("bitbucket client installed", "auth", w.cfg.Bitbucket.Auth)
+}
+
+// projectBitbucketCredentials resolves one repository's own Bitbucket credential.
+//
+// A resolver rather than a map captured at construction, for the same three reasons
+// Daemon.SetProjectSecrets is one: the vault may be locked when the client is built, a
+// token added from the projects page has to apply to the next delivery without a restart,
+// and the answer differs per repository.
+//
+// CurrentVault, not the cached Vault: the latter caches its error forever, which is right
+// for a one-shot command and wrong for a daemon whose vault is unlocked from a web page
+// after startup.
+func projectBitbucketCredentials(w *wiring) func(owner, repo string) bitbucket.ProjectCredential {
+	return func(owner, repo string) bitbucket.ProjectCredential {
+		v, err := w.CurrentVault()
+		if err != nil || v == nil {
+			return bitbucket.ProjectCredential{}
+		}
+		get := func(name string) string {
+			s, err := v.Get(vault.ProjectSCMKey(string(model.PlatformBitbucket), owner, repo, name))
+			if err != nil {
+				return ""
+			}
+			return s.RevealString()
+		}
+		return bitbucket.ProjectCredential{
+			AccessToken: get(vault.SCMAccessToken),
+			Email:       get(vault.SCMEmail),
+			APIToken:    get(vault.SCMAPIToken),
+		}
+	}
 }
 
 // revalidateExposer re-runs the exposer's startup check after the vault changes.

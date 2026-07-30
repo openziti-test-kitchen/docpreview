@@ -87,6 +87,38 @@ func (s Spec) Key() string {
 	return s.PreviewID + "/" + s.BuildID
 }
 
+// PreviewOfKey returns the preview a publication key belongs to.
+//
+// The inverse of Spec.Key: a build share's key is "<preview>/<build>", and the part
+// before the slash is the preview both shares belong to.
+func PreviewOfKey(key string) string {
+	if i := strings.IndexByte(key, '/'); i >= 0 {
+		return key[:i]
+	}
+	return key
+}
+
+// Collides reports whether an existing publication under `key` blocks spec from
+// taking spec.Name, and every exposer's name check must ask this rather than
+// comparing keys itself.
+//
+// A key that differs is not by itself a collision. Rebuilding the same commit
+// produces a new build id and therefore a new key, while the build share's name
+// embeds the commit and so is unchanged — which made a preview collide with its own
+// previous build. The build succeeded, the share was refused, and "Open build" stayed
+// greyed out for the one build a reviewer had just asked for.
+//
+// Same preview: the newer build wins, and the caller withdraws the older publication
+// to free the name. It is the same repository at the same commit, so the name still
+// describes what it serves.
+//
+// Different preview: still refused. Two pull requests rendering to one name is a
+// name_template that cannot separate them, and quietly letting the second take it
+// would tear down a live preview somebody is reading.
+func Collides(key string, spec Spec) bool {
+	return key != spec.Key() && PreviewOfKey(key) != spec.PreviewID
+}
+
 // NameReleaser is implemented by exposers whose names are objects with a lifetime
 // of their own, separate from the shares bound to them.
 //

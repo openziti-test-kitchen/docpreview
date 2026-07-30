@@ -183,6 +183,19 @@ type Event struct {
 	Delivery string
 }
 
+// RepoChecker is implemented by clients that can verify their credential reaches one
+// repository, returning a sentence describing what they found.
+//
+// Optional, and needed by exactly one platform for a reason worth stating: a GitHub App is
+// installed on repositories, so the installation *is* the check and a token that cannot
+// reach a repository does not exist. A Bitbucket access token is scoped to a repository at
+// creation and pasted in by hand, so nothing has confirmed it reaches anything until
+// something tries — and both ways of getting it wrong are quiet, one failing twenty seconds
+// into a clone and the other at the comment after a successful build.
+type RepoChecker interface {
+	CheckRepo(ctx context.Context, repo model.Repo) (string, error)
+}
+
 // PullRequestLister is implemented by clients that can be asked what is open on a
 // repository, rather than waiting to be told by a webhook.
 //
