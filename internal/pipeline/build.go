@@ -335,6 +335,7 @@ func (b *Builder) buildLocal(ctx context.Context, ws *Workspace, buildDir string
 
 	var log bytes.Buffer
 	out := tee(&log, sink)
+	b.writeInjectedNames(out)
 
 	for _, step := range []struct {
 		name string
@@ -464,6 +465,7 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 
 	fmt.Fprintf(out, "$ docker create %s → %s\n", image, container[:min(12, len(container))])
 	fmt.Fprintf(out, "$ mount %s → /workspace\n", source)
+	b.writeInjectedNames(out)
 	fmt.Fprintf(out, "$ %s\n$ %s\n", installCommand(buildDir), cfg.Build.Command)
 
 	if err := b.runContainer(ctx, container, out); err != nil {
@@ -618,6 +620,44 @@ func (b *Builder) writeEnvFile(pr model.PullRequest, cfg config.RepoConfig) (
 		return "", nil, func() {}, fmt.Errorf("closing the build environment file: %w", err)
 	}
 	return path, args, cleanup, nil
+}
+
+// injectedNames is the sorted list of variables this build gets, for the log.
+//
+// # Why the names are printed
+//
+// Twice in one evening a build failed because a variable was stored under a name the build
+// script does not read — `GH_ZITI_CI_REPO_ACCESS_PAT_NF` against the script's
+// `GH_ZITI_CI_REPO_ACCESS_PAT`. Both times the visible symptom was several steps removed
+// from the cause: the script fell back to SSH, the container has no key, and the log said
+// "Host key verification failed", which names neither the variable nor the fallback.
+//
+// A build cannot tell anyone which variables it *expected*, but docpreview knows exactly
+// which ones it supplied, and printing them turns that hunt into a glance.
+//
+// Names only. The values are what the redactor exists for, and a name is not a secret —
+// it is a lookup key an operator chose and has to be able to check.
+func (b *Builder) injectedNames() []string {
+	names := make([]string, 0, len(b.secrets))
+	for name := range b.secrets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// writeInjectedNames prints the injected variable names, or says there are none.
+//
+// "none" is stated rather than omitted, because an absent line is indistinguishable from a
+// build whose variables were fine — and no-variables-at-all is the state a misconfigured
+// daemon produces.
+func (b *Builder) writeInjectedNames(out io.Writer) {
+	names := b.injectedNames()
+	if len(names) == 0 {
+		fmt.Fprintf(out, "$ injected variables: none\n")
+		return
+	}
+	fmt.Fprintf(out, "$ injected variables (values redacted): %s\n", strings.Join(names, " "))
 }
 
 // tee returns a writer feeding both the in-memory log and the live sink.

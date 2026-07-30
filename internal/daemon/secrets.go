@@ -271,9 +271,10 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 	for _, k := range rest {
 		view := secretView{Key: k, Set: true, Label: k}
 		if vault.IsBuildEnvKey(k) {
+			// EnvVar alone. The page turns this into a one-word chip and states the rule
+			// once above the list: as a per-row sentence it wrapped to three lines on every
+			// entry, and a list of six tokens became a wall of the same paragraph repeated.
 			view.EnvVar = k
-			view.Hint = "injected into every build as " + k +
-				", and redacted from every log. A project can override it with its own."
 		} else {
 			// Not shell-shaped, not mapped by build.secrets, and not one of the known
 			// keys: nothing reads it. Better said than left looking configured.

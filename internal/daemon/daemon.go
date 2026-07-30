@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/netfoundry/docpreview/internal/buildlog"
@@ -59,6 +60,16 @@ type Daemon struct {
 
 	// secrets are injected into every build, from the server config.
 	secrets map[string]string
+
+	// starting is true from construction until recovery finishes. Atomic rather than under
+	// mu: it is read by every /status while recovery holds no lock, and written once.
+	starting atomic.Bool
+
+	// removeCacheVolumes deletes a preview's docker cache volumes. A field because it
+	// shells out to docker: a test running the real one spends a subprocess per teardown,
+	// and the version of this that deleted volumes by name deleted live ones. Defaulted in
+	// New.
+	removeCacheVolumes func(ctx context.Context, previewID string) error
 
 	// projectSecretsFn resolves the environment variables belonging to one project,
 	// which are not the same for two projects and are not in the server config at
@@ -159,6 +170,8 @@ func New(
 		commit:   map[string]*sync.Mutex{},
 		reported: map[string]reportMark{},
 		events:   newEventLog(),
+
+		removeCacheVolumes: pipeline.RemoveCacheVolumes,
 	}
 	d.publisher = newPublisher(reportDebounce, d.publishReport)
 	return d
@@ -405,13 +418,20 @@ func (d *Daemon) isCurrent(previewID string, b *build) bool {
 
 // Run starts the workers and the reaper and blocks until ctx is cancelled.
 func (d *Daemon) Run(ctx context.Context) error {
+	// Reported until recovery finishes, so a build queued in that window is explained
+	// rather than looking stuck. No worker exists yet: reap-then-republish must complete
+	// before anything may publish, which is the ordering that stops a restart deleting
+	// what it just restored.
+	d.starting.Store(true)
 	if err := d.recover(ctx); err != nil {
+		d.starting.Store(false)
 		return err
 	}
 
 	// Before any worker can add to the feed, so the restored history sits behind
 	// this run's events rather than being interleaved with them.
 	d.backfill(ctx, eventLogSize)
+	d.starting.Store(false)
 
 	var wg sync.WaitGroup
 	for i := 0; i < d.cfg.Workers; i++ {
@@ -464,7 +484,36 @@ func (d *Daemon) recover(ctx context.Context) error {
 		d.log.Warn("reaping orphaned shares at startup", "error", err)
 	}
 
-	restored, builds := 0, 0
+	// Republished concurrently, bounded, and only after the reap above has returned.
+	//
+	// Each publish is a share creation plus an overlay listener — ten to fifteen seconds
+	// against the hosted zrok controller — and no worker starts until every one of them is
+	// done, so serially this was minutes of a daemon that looked started and would not build
+	// anything. A queued build in that window is indistinguishable from a stuck queue, which
+	// is how it was reported twice.
+	//
+	// Safe to parallelise, for reasons specific to this loop rather than in general:
+	//
+	//   - Each preview publishes under its own name, and two previews sharing a name is
+	//     already refused by the exposer rather than resolved.
+	//   - Publishing is destructive to whoever holds the name, and nothing holds any of
+	//     these: the reap has just deleted every share this environment owns. That is why
+	//     the reap-before-republish ordering is preserved rather than merged into this.
+	//   - The stores of live publications are behind d.mu in every exposer, and the daemon's
+	//     own maps are written under it here.
+	//
+	// Bounded by workers, with a floor: a daemon configured for one worker still has no
+	// reason to restore one preview at a time, and unbounded would open a listener per
+	// preview at once against a controller that rate-limits.
+	limit := max(d.cfg.Workers, 4)
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		restored int
+		builds   int
+		sem      = make(chan struct{}, limit)
+	)
 	for _, p := range previews {
 		if p.State != scm.StateReady || p.ArtifactDir == "" {
 			continue
@@ -476,25 +525,38 @@ func (d *Daemon) recover(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := d.republish(ctx, p); err != nil {
-			// Artifacts that cannot be served are the same situation as artifacts
-			// that are not there: drop the row so the next push rebuilds. Keeping
-			// it means this error on every startup forever, and a preview whose
-			// comment advertises a URL that serves a broken page.
-			if errors.Is(err, errArtifactsUnusable) {
-				d.log.Warn("dropping preview whose artifacts cannot be served",
-					"preview", p.PreviewID, "error", err)
-				if err := d.store.DeletePreview(ctx, p.PreviewID); err != nil {
-					d.log.Error("forgetting preview", "preview", p.PreviewID, "error", err)
+
+		wg.Add(1)
+		go func(p store.Preview) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if err := d.republish(ctx, p); err != nil {
+				// Artifacts that cannot be served are the same situation as artifacts
+				// that are not there: drop the row so the next push rebuilds. Keeping
+				// it means this error on every startup forever, and a preview whose
+				// comment advertises a URL that serves a broken page.
+				if errors.Is(err, errArtifactsUnusable) {
+					d.log.Warn("dropping preview whose artifacts cannot be served",
+						"preview", p.PreviewID, "error", err)
+					if err := d.store.DeletePreview(ctx, p.PreviewID); err != nil {
+						d.log.Error("forgetting preview", "preview", p.PreviewID, "error", err)
+					}
+					return
 				}
-				continue
+				d.log.Error("restoring preview", "preview", p.PreviewID, "error", err)
+				return
 			}
-			d.log.Error("restoring preview", "preview", p.PreviewID, "error", err)
-			continue
-		}
-		restored++
-		builds += d.restoreBuildShares(ctx, p)
+
+			n := d.restoreBuildShares(ctx, p)
+			mu.Lock()
+			restored++
+			builds += n
+			mu.Unlock()
+		}(p)
 	}
+	wg.Wait()
 
 	pending, err := d.store.PendingCount(ctx)
 	if err != nil {
@@ -533,7 +595,19 @@ func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
 		return 0
 	}
 
-	n := 0
+	// Concurrent, bounded, for the same reason recover's own loop is: this is where the
+	// count multiplies. One preview can hold keep_builds shares — ten by default — and at
+	// ten to fifteen seconds per publish that is minutes for a single pull request, during
+	// which no build can start.
+	//
+	// Each build publishes under its own name (the branch name plus its short sha), so
+	// nothing here contends with anything else. Both maps written below are behind d.mu.
+	var (
+		wg  sync.WaitGroup
+		mu  sync.Mutex
+		n   int
+		sem = make(chan struct{}, max(d.cfg.Workers, 4))
+	)
 	for _, b := range rows {
 		if b.URL == "" {
 			continue
@@ -543,7 +617,6 @@ func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
 		if _, err := os.Stat(dir); err != nil {
 			// Pruned by keep_builds, or never written. Forget the URL so nothing
 			// offers it; the row itself stays, because the history is still true.
-			b.URL, b.Name = "", ""
 			if err := d.store.ClearBuildShare(ctx, p.PreviewID, b.BuildID); err != nil {
 				d.log.Warn("forgetting a pruned build's URL",
 					"preview", p.PreviewID, "build", b.BuildID, "error", err)
@@ -551,29 +624,40 @@ func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
 			continue
 		}
 
-		site, err := preview.New(dir, p.BaseURL)
-		if err != nil {
-			d.log.Warn("serving a build's artifacts", "build", b.BuildID, "error", err)
-			continue
-		}
+		wg.Add(1)
+		go func(b store.Build) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		pub, err := d.exposer.Publish(ctx, expose.Spec{
-			PreviewID: p.PreviewID,
-			BuildID:   b.BuildID,
-			Name:      b.Name,
-			BaseURL:   p.BaseURL,
-			PR:        p.PR,
-		}, site)
-		if err != nil {
-			d.log.Warn("restoring a build share", "build", b.BuildID, "name", b.Name, "error", err)
-			continue
-		}
+			site, err := preview.New(dir, p.BaseURL)
+			if err != nil {
+				d.log.Warn("serving a build's artifacts", "build", b.BuildID, "error", err)
+				return
+			}
 
-		d.mu.Lock()
-		d.liveBuilds[buildKey(p.PreviewID, b.BuildID)] = pub
-		d.mu.Unlock()
-		n++
+			pub, err := d.exposer.Publish(ctx, expose.Spec{
+				PreviewID: p.PreviewID,
+				BuildID:   b.BuildID,
+				Name:      b.Name,
+				BaseURL:   p.BaseURL,
+				PR:        p.PR,
+			}, site)
+			if err != nil {
+				d.log.Warn("restoring a build share", "build", b.BuildID, "name", b.Name, "error", err)
+				return
+			}
+
+			d.mu.Lock()
+			d.liveBuilds[buildKey(p.PreviewID, b.BuildID)] = pub
+			d.mu.Unlock()
+
+			mu.Lock()
+			n++
+			mu.Unlock()
+		}(b)
 	}
+	wg.Wait()
 	return n
 }
 
@@ -905,6 +989,122 @@ func (d *Daemon) Handle(ctx context.Context, ev scm.Event) error {
 	}
 }
 
+// CancelBuild abandons the build running for a preview, and reports whether there was one.
+//
+// The machinery already existed for supersede — a push abandons the build the previous
+// push started — and nothing exposed it. So a build wedged on a slow registry, or one
+// somebody started against the wrong image, held a worker until the fifteen-minute timeout
+// with the only remedy being to restart the daemon.
+//
+// The entry is cleared, not merely cancelled, exactly as supersede does it: clearing is
+// what makes the abandoned build fail its own isCurrent check and decline to publish. A
+// build cancelled while still registered would go on to take the name.
+//
+// Queued but not started is a different thing and is not this: there is no context to
+// cancel, and the job stays in the queue. The caller is told so rather than being told
+// nothing happened.
+func (d *Daemon) CancelBuild(ctx context.Context, previewID string) bool {
+	d.mu.Lock()
+	b := d.running[previewID]
+	if b != nil {
+		delete(d.running, previewID)
+	}
+	d.mu.Unlock()
+
+	if b == nil {
+		// Nothing running. A queued build has no context to cancel, so stopping it means
+		// taking it out of the queue before a worker claims it.
+		//
+		// Checked second, and that order is the race: a worker can claim the job between
+		// the page being drawn and the click arriving. Looking at `running` first means a
+		// job that has just started is cancelled properly rather than being reported as
+		// "already gone" because the queue row had disappeared.
+		// Read before deleting: the pull request lives in the queue row, and a comment
+		// left reading "Queued" for a build that will never run is the abandoned-comment
+		// failure in another form.
+		var queuedPR model.PullRequest
+		if jobs, err := d.store.PendingJobs(ctx); err == nil {
+			for _, j := range jobs {
+				if j.PR.PreviewID() == previewID {
+					queuedPR = j.PR
+					break
+				}
+			}
+		}
+
+		removed, err := d.store.Dequeue(ctx, previewID)
+		if err != nil {
+			d.log.Warn("dequeueing a build", "preview", previewID, "error", err)
+			return false
+		}
+		if !removed {
+			return false
+		}
+		d.log.Info("removed a queued build on request", "preview", previewID)
+
+		if queuedPR.Repo.Name != "" {
+			d.report(ctx, scm.Report{
+				PR: queuedPR, PreviewID: previewID, State: scm.StateFailed,
+				Commit: queuedPR.HeadSHA, Reason: "cancelled from the dashboard before it started",
+				UpdatedAt: time.Now(),
+			})
+			d.recordf(queuedPR, "failed", "queued build cancelled from the dashboard")
+		}
+		return true
+	}
+	d.log.Info("cancelling a build on request", "pr", b.pr.String(), "sha", b.pr.HeadSHA)
+	b.cancel()
+
+	// Reported as failed rather than left as building. The pull request comment says
+	// "Building" until something says otherwise, and a cancelled build that never reports
+	// leaves it saying that forever.
+	d.report(ctx, scm.Report{
+		PR: b.pr, PreviewID: previewID, State: scm.StateFailed,
+		Commit: b.pr.HeadSHA, Reason: "cancelled from the dashboard", UpdatedAt: time.Now(),
+	})
+	d.recordf(b.pr, "failed", "build cancelled from the dashboard")
+	return true
+}
+
+// RebuildPreview queues a build of a preview's recorded commit again.
+//
+// The commit that is already on the row, not whatever the branch has moved to since. "Build
+// this again" and "build what is on the branch now" are different requests, and the second
+// is what a push already does — so this one is for the case a push cannot fix: a build that
+// failed on a bad cache entry, a timeout, an image that has since been corrected, or a
+// project setting that changed under a preview nobody is pushing to.
+//
+// It goes through handleBuild, so it supersedes anything already running for the preview
+// and reports the same states in the same order as a webhook would. A rebuild is not a
+// second kind of build.
+//
+// Reports false when the preview is unknown, which includes one torn down between the page
+// being drawn and the button being pressed.
+func (d *Daemon) RebuildPreview(ctx context.Context, previewID string) (bool, error) {
+	previews, err := d.store.ListPreviews(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range previews {
+		if p.PreviewID != previewID {
+			continue
+		}
+		pr := p.PR
+		// ListPreviews already copies the stored commit into HeadSHA; stated here because
+		// a build with an empty HeadSHA silently builds the branch tip instead, which is
+		// the thing this function exists not to do.
+		if pr.HeadSHA == "" {
+			pr.HeadSHA = p.Commit
+		}
+		d.log.Info("rebuilding on request", "pr", pr.String(), "sha", pr.HeadSHA)
+		if err := d.handleBuild(ctx, scm.Event{Kind: scm.EventBuild, PR: pr}); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 // ScanRepo queues a build for every open pull request on a repository, and reports how
 // many it queued.
 //
@@ -1052,6 +1252,16 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	// lifetime as the workspace and artifacts above, so it goes the same way. A
 	// cache with a longer life than the branch that filled it has no moment at which
 	// anything knows it is safe to delete, and grows until somebody notices the disk.
+	// The docker driver's caches are volumes, not directories — see
+	// pipeline.CacheVolume for why. Removed here for the same reason the directory is:
+	// the cache has the lifetime of the pull request that filled it, and a volume nothing
+	// records is a volume nobody ever deletes.
+	if d.removeCacheVolumes != nil {
+		if err := d.removeCacheVolumes(ctx, previewID); err != nil {
+			errs = append(errs, fmt.Errorf("removing the build cache volumes: %w", err))
+		}
+	}
+	// The local driver's cache is still a directory on the host.
 	if dir := d.cfg.PreviewCacheDir(previewID); dir != "" {
 		if err := os.RemoveAll(dir); err != nil {
 			errs = append(errs, fmt.Errorf("removing the build cache: %w", err))
@@ -1885,7 +2095,20 @@ func (d *Daemon) publishReport(r scm.Report, client scm.Client) {
 
 	if err := client.Publish(ctx, r); err != nil {
 		d.log.Error("publishing report", "pr", r.PR.String(), "state", r.State, "error", err)
+		return
 	}
+	// Logged on success too, at info.
+	//
+	// Without this a published report left no trace: the failure path logged, the github
+	// client logged its comment *edit* at debug, and a comment stuck on "Building" was
+	// therefore indistinguishable in the log from one updated correctly. Which is exactly
+	// the state a real timeout left — the build row said failed, the comment did not, and
+	// nothing recorded whether the write was attempted, refused, or never reached.
+	//
+	// One line per state change per preview, four-ish per build. Cheap against being able
+	// to answer "did the pull request hear about this".
+	d.log.Info("reported to the platform",
+		"pr", r.PR.String(), "state", r.State, "commit", r.Commit)
 }
 
 // reportMessage is the one-line description of a state change.
@@ -2020,6 +2243,14 @@ type Status struct {
 	Previews []StatusPreview `json:"previews"`
 	Events   []Event         `json:"events"`
 
+	// Starting is true while recovery is still running.
+	//
+	// Workers do not exist until it finishes — reap-then-republish has to complete before
+	// anything may publish — so a build queued during that window sits there, and the page
+	// showed "Queued" with no way to tell it apart from a stuck queue. Which is what it was
+	// reported as, twice.
+	Starting bool `json:"starting"`
+
 	// Projects is every configured project, as a label and a badge.
 	//
 	// Here rather than fetched from /api/projects, for two reasons. The dashboard-only
@@ -2090,6 +2321,7 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 	out := Status{
 		Exposer:  d.exposer.Kind(),
 		Instance: d.instance,
+		Starting: d.starting.Load(),
 		Pending:  pending,
 		Running:  len(running),
 		Events:   d.markOpenable(d.events.recent(60)),

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -269,7 +270,24 @@ func (i *Ingress) streamLog(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		sse.event("done", map[string]any{"build_id": meta.BuildID, "live": false})
-		return
+
+		// Then wait, rather than ending the connection.
+		//
+		// This is what makes Rebuild show its own build. The stream used to return here,
+		// so a build starting a moment later — which is exactly what happens when somebody
+		// presses Rebuild, since the job is queued first and claimed by a worker a second
+		// or two afterwards — had nobody listening. The pane sat on the previous build's log
+		// under a banner saying nothing was running, until the row was collapsed and
+		// reopened.
+		//
+		// Fixed here rather than in the page, because the page cannot win this race: it
+		// connects, learns "not live", and has no way to know when that stops being true
+		// except by reconnecting on a guess. The server knows precisely.
+		var found *buildlog.Writer
+		if found = i.awaitLive(ctx, previewID); found == nil {
+			return // the client went away, or the context ended
+		}
+		live = found
 	}
 
 	lines, cancel := live.Subscribe(1024, 500)
@@ -299,6 +317,36 @@ func (i *Ingress) streamLog(w http.ResponseWriter, r *http.Request) {
 		case <-beat.C:
 			if sse.comment() != nil {
 				return
+			}
+		}
+	}
+}
+
+// awaitLive blocks until a build starts writing for this preview, or the client leaves.
+//
+// Polled rather than signalled, deliberately. A notification would need a subscriber list
+// on the log store, a registration to leak when a request is abandoned, and a wakeup
+// ordered against Begin — for a state change measured in seconds that at most a handful of
+// browser tabs are waiting on. A one-second map lookup under a mutex costs nothing and
+// cannot leak: it lives and dies with the request's context.
+//
+// Deliberately unbounded in time. A tab left open on a preview overnight should show the
+// next build when it happens, which is the behaviour anyone watching a pull request
+// expects; the heartbeat keeps the connection alive and the context ends it when the tab
+// goes away.
+func (i *Ingress) awaitLive(ctx context.Context, previewID string) *buildlog.Writer {
+	logs := i.daemon.Logs()
+
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-tick.C:
+			if w, ok := logs.Live(previewID); ok {
+				return w
 			}
 		}
 	}

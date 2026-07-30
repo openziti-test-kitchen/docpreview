@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -234,16 +233,10 @@ func hostMountPath(dir string) (string, error) {
 // cannot find creates it as root-owned, which on a Linux host leaves a cache
 // directory the operator cannot clear.
 func (b *Builder) cacheMounts(pr model.PullRequest) ([]string, error) {
-	root := b.defaults.CacheDir
-	if root == "" {
-		return nil, nil
-	}
-	root = filepath.Join(root, pr.PreviewID())
-
-	// One directory per manager. They have no common format and pnpm in
-	// particular hard-links out of its store, which requires the store to be on
-	// its own path rather than inside another manager's tree.
-	managers := []struct{ dir, env, target string }{
+	// One volume per manager. They have no common format and pnpm in particular
+	// hard-links out of its store, which requires the store to be on its own path
+	// rather than inside another manager's tree.
+	managers := []struct{ name, env, target string }{
 		{"npm", "npm_config_cache", "/cache/npm"},
 		{"yarn", "YARN_CACHE_FOLDER", "/cache/yarn"},
 		{"pnpm", "npm_config_store_dir", "/cache/pnpm"},
@@ -251,20 +244,62 @@ func (b *Builder) cacheMounts(pr model.PullRequest) ([]string, error) {
 
 	var args []string
 	for _, m := range managers {
-		host := filepath.Join(root, m.dir)
-		if err := os.MkdirAll(host, 0o755); err != nil {
-			return nil, fmt.Errorf("creating the %s cache directory: %w", m.dir, err)
-		}
-		source, err := hostMountPath(host)
-		if err != nil {
-			return nil, err
-		}
 		args = append(args,
-			"--mount", "type=bind,source="+source+",target="+m.target,
+			"--mount", "type=volume,source="+CacheVolume(pr.PreviewID(), m.name)+
+				",target="+m.target,
 			"--env", m.env+"="+m.target,
 		)
 	}
 	return args, nil
+}
+
+// CacheVolume names the docker volume holding one package manager's cache for one
+// preview.
+//
+// # Why a volume and not a directory on the host
+//
+// It was a bind mount, and on Windows that made the cache the slowest part of a build
+// rather than the thing that speeds one up. Measured while watching a real yarn install
+// fetch packages into it: **0.4 MB/s**, against the 100+ MB/s the same disk does natively.
+// A package cache is tens of thousands of small files, and every one of them was crossing
+// the WSL to NTFS boundary — the identical penalty that made `npm ci` take 5m46s writing
+// node_modules through a mount and 14s writing it to a volume.
+//
+// A named volume lives in the docker VM's own filesystem, so the writes are native. It is
+// still per preview, so it still has the lifetime of everything else a pull request owns,
+// and it still survives between pushes to the same branch. What it gives up is being
+// visible on the host — which is why teardown and the cache controls delete volumes rather
+// than directories.
+//
+// `build.cache_dir` therefore applies to the local driver only, and says so in the config.
+//
+// The name is the preview id and the manager, both already safe for docker's
+// `[a-zA-Z0-9][a-zA-Z0-9_.-]` rule: a preview id is hex and a manager name is a word.
+func CacheVolume(previewID, manager string) string {
+	return "docpreview-cache-" + previewID + "-" + manager
+}
+
+// CacheVolumesFor lists every cache volume belonging to a preview, for a caller that has
+// to remove them.
+func CacheVolumesFor(previewID string) []string {
+	return []string{
+		CacheVolume(previewID, "npm"),
+		CacheVolume(previewID, "yarn"),
+		CacheVolume(previewID, "pnpm"),
+	}
+}
+
+// RemoveCacheVolumes deletes a preview's cache volumes.
+//
+// Best effort, and quiet about a volume that does not exist: a preview built under the
+// local driver never had any, and a preview torn down twice would otherwise log a failure
+// for work already done. `docker volume rm -f` is itself idempotent, so the only errors
+// worth reporting are docker being unreachable, which the caller logs.
+func RemoveCacheVolumes(ctx context.Context, previewID string) error {
+	args := append([]string{"volume", "rm", "-f"}, CacheVolumesFor(previewID)...)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "docker", args...).Run()
 }
 
 // rejectSymlinks fails a build whose output directory contains a symlink.

@@ -53,10 +53,42 @@ type ProjectsAdmin struct {
 	// but the store and the config — and so a test can count queued builds without a
 	// GitHub client.
 	scanner func(ctx context.Context, repo model.Repo) (int, error)
+
+	// canceller abandons the build running for a preview, reporting whether there was
+	// one. Same reasoning as scanner: this admin depends on the store and the config, not
+	// on the daemon.
+	canceller func(ctx context.Context, previewID string) bool
+
+	// rebuilder queues a preview's recorded commit again, reporting whether the preview
+	// was found.
+	rebuilder func(ctx context.Context, previewID string) (bool, error)
+
+	// The docker volume operations behind the cache controls, injectable because they are
+	// destructive and reach the real docker daemon.
+	//
+	// A test that called the real ones deleted the cache volumes of every live preview on
+	// the machine it ran on — which is what happened the first time this shipped, and is
+	// why they are fields rather than direct calls. Defaulted in NewProjectsAdmin.
+	listVolumes   func(ctx context.Context) ([]string, error)
+	removeVolumes func(ctx context.Context, previewID string) error
 }
 
 func NewProjectsAdmin(st *store.Store, cfg config.Server, log *slog.Logger) *ProjectsAdmin {
-	return &ProjectsAdmin{store: st, cfg: cfg, log: log.With("component", "projects")}
+	return &ProjectsAdmin{
+		store: st, cfg: cfg, log: log.With("component", "projects"),
+		listVolumes:   listCacheVolumes,
+		removeVolumes: pipeline.RemoveCacheVolumes,
+	}
+}
+
+// WithVolumeOps replaces the docker volume calls. For tests, which must not delete the
+// cache volumes of whatever is running on the machine they happen to run on.
+func (a *ProjectsAdmin) WithVolumeOps(
+	list func(context.Context) ([]string, error),
+	remove func(context.Context, string) error,
+) *ProjectsAdmin {
+	a.listVolumes, a.removeVolumes = list, remove
+	return a
 }
 
 // WithVault gives this admin the ability to manage a project's own environment
@@ -70,6 +102,18 @@ func (a *ProjectsAdmin) WithVault(fn func() *vault.Vault) *ProjectsAdmin {
 // WithScanner installs the open-pull-request scan.
 func (a *ProjectsAdmin) WithScanner(fn func(context.Context, model.Repo) (int, error)) *ProjectsAdmin {
 	a.scanner = fn
+	return a
+}
+
+// WithCanceller installs the build cancellation.
+func (a *ProjectsAdmin) WithCanceller(fn func(context.Context, string) bool) *ProjectsAdmin {
+	a.canceller = fn
+	return a
+}
+
+// WithRebuilder installs the per-preview rebuild.
+func (a *ProjectsAdmin) WithRebuilder(fn func(context.Context, string) (bool, error)) *ProjectsAdmin {
+	a.rebuilder = fn
 	return a
 }
 
@@ -109,6 +153,11 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// Build what is already open. A project added here has no webhook behind it, so
 	// without this the answer to "I added it, now what" is "wait for somebody to push".
 	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/scan", a.gated(a.scan))
+
+	// Cancelling a build. Keyed on a preview rather than a project, like the cache
+	// controls, and here for the same reason: one gate rather than a third copy of it.
+	mux.HandleFunc("POST /api/builds/{preview}/cancel", a.gated(a.cancelBuild))
+	mux.HandleFunc("POST /api/builds/{preview}/rebuild", a.gated(a.rebuild))
 
 	// Checking an image runs a docker command with an operator-supplied argument and
 	// makes a registry round trip, so it is gated like every other write even though it
@@ -529,6 +578,59 @@ func (a *ProjectsAdmin) scan(w http.ResponseWriter, r *http.Request) {
 	}
 	a.log.Info("queued builds for open pull requests", "project", p.Key(), "queued", queued)
 	writeJSON(w, http.StatusOK, map[string]any{"queued": queued})
+}
+
+// cancelBuild abandons the build running for a preview.
+//
+// Gated like a write, because it is one: it stops work and reports the pull request as
+// failed. Answering whether anything was running rather than 404ing on "nothing to
+// cancel" — the button is offered from a page that may be a second out of date, and a
+// build that finished on its own between the render and the click is not an error.
+func (a *ProjectsAdmin) cancelBuild(w http.ResponseWriter, r *http.Request) {
+	preview := r.PathValue("preview")
+	if !previewIDPattern.MatchString(preview) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "not a preview id: expected twelve hex characters, got " + preview,
+		})
+		return
+	}
+	if a.canceller == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot cancel builds"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled": a.canceller(r.Context(), preview)})
+}
+
+// rebuild queues a preview's recorded commit again.
+func (a *ProjectsAdmin) rebuild(w http.ResponseWriter, r *http.Request) {
+	preview := r.PathValue("preview")
+	if !previewIDPattern.MatchString(preview) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "not a preview id: expected twelve hex characters, got " + preview,
+		})
+		return
+	}
+	if a.rebuilder == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot rebuild"})
+		return
+	}
+
+	found, err := a.rebuilder(r.Context(), preview)
+	if err != nil {
+		a.log.Error("rebuilding a preview", "preview", preview, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !found {
+		// Gone rather than broken: a preview torn down between the page being drawn and
+		// the button being pressed is the ordinary way this happens.
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "there is no preview " + preview + " any more"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
 }
 
 // inspectImage answers whether a container image can be resolved, so the form can

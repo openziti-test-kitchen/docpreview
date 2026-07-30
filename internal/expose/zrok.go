@@ -349,7 +349,8 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 		return nil
 	}
 
-	var errs []error
+	// The doomed set, decided before anything is deleted.
+	var doomed []string
 	for _, shr := range resp.Payload.Shares {
 		if shr == nil || liveTokens[shr.ShareToken] {
 			continue
@@ -363,10 +364,48 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 			continue
 		}
 		z.log.Info("reaping orphaned zrok share", "token", shr.ShareToken, "target", shr.Target)
-		if err := sdk.DeleteShare(z.root, &sdk.Share{Token: shr.ShareToken}); err != nil {
-			errs = append(errs, fmt.Errorf("deleting orphaned share %s: %w", shr.ShareToken, err))
-		}
+		doomed = append(doomed, shr.ShareToken)
 	}
+
+	// Deleted concurrently, bounded.
+	//
+	// Serially this was the slowest thing the daemon does: each DeleteShare is a client
+	// construction, a version check and the call itself — five to fifteen seconds against
+	// the hosted controller — and startup does not finish, so no worker starts and no
+	// queued build runs, until every one of them has returned. Nine leftover build shares
+	// meant minutes of a daemon that looked started and would not build anything, which
+	// read as a stuck queue every time.
+	//
+	// Safe to parallelise because each deletion is independent: a share token is only ever
+	// in this list once, nothing here reads shared state after the list is built, and the
+	// controller is the serialisation point. What is *not* safe is overlapping this with
+	// the republish that follows — see the reap-before-republish rule in
+	// docs/design/02-exposers.md — and that ordering is unchanged.
+	//
+	// Eight at a time: enough to turn minutes into seconds, few enough not to look like an
+	// attack to a controller that rate-limits.
+	const parallel = 8
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+		sem  = make(chan struct{}, parallel)
+	)
+	for _, token := range doomed {
+		wg.Add(1)
+		go func(token string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if err := sdk.DeleteShare(z.root, &sdk.Share{Token: token}); err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("deleting orphaned share %s: %w", token, err))
+				mu.Unlock()
+			}
+		}(token)
+	}
+	wg.Wait()
 	return errors.Join(errs...)
 }
 

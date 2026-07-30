@@ -296,6 +296,28 @@ type PendingJob struct {
 	EnqueuedAt time.Time
 }
 
+// Dequeue removes a preview's pending build, reporting whether there was one.
+//
+// For cancelling a build that has not started yet. Cancelling a *running* build is a
+// context cancellation and touches nothing here; a queued one has no context to cancel, so
+// the only way to stop it is to take it out of the queue before a worker claims it.
+//
+// It reports what it did rather than returning nothing, because of the race with Claim: a
+// worker can take the job between the dashboard drawing the button and the click arriving,
+// and the caller has to tell "removed it" from "too late, it is running" so it can cancel
+// the running one instead.
+func (s *Store) Dequeue(ctx context.Context, previewID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM jobs WHERE preview_id = ?`, previewID)
+	if err != nil {
+		return false, fmt.Errorf("dequeueing %s: %w", previewID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // PendingJobs returns the queued builds, oldest first.
 //
 // PendingCount answers "how many", which is all a header needs. A dashboard

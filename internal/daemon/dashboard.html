@@ -344,6 +344,10 @@ input.control::placeholder { color: var(--muted) }
   background: var(--ink); color: var(--plane); border-color: var(--ink); font-weight: 600;
 }
 .btn.primary:hover { opacity: 0.9 }
+/* Destructive, and it borrows the failed colour rather than inventing one: red on this
+   page already means a build that is not going to finish, which is what this makes. */
+.btn.danger { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 40%, var(--ring)) }
+.btn.danger:hover { border-color: var(--critical) }
 /* Arrives with the render that follows a save. No animation on the way in: it appears
    where the form was, which is where the eye already is. */
 .flash-note { animation: fadeout 6s ease-in forwards }
@@ -414,6 +418,22 @@ input.control::placeholder { color: var(--muted) }
   border-left: 1px solid var(--hairline);
 }
 .row .go[href]:hover { color: var(--ink); text-decoration: underline }
+/* The pull request link borrows Open's look — same border-left, same padding — because
+   they are the same kind of thing in the same strip. Quieter, because Open is what
+   somebody reaches for from a list of previews and this is the secondary destination. */
+.row .go.pr {
+  color: var(--muted); font-weight: 500;
+  /* Fixed width, sized for five digits, so Open starts at the same x on every row. Sized
+     rather than shrink-to-fit because the content is a pull request number: #4 and #145
+     differ by two characters, which moved Open two characters left on one row and made a
+     column of them look ragged. Five digits covers a repository with 99999 pull requests;
+     beyond that it grows rather than truncating, because a wrong number is worse than a
+     misaligned one. */
+  min-width: 5.6rem;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.row .go.pr:hover { color: var(--ink-2) }
 /* An anchor with no href is not a link, which is the wanted state before a
    build has produced anything. Styling follows from that fact rather than from
    a `disabled` attribute anchors ignore. */
@@ -1250,7 +1270,12 @@ function renderList() {
       // The link is a sibling of the button, not inside it: an anchor nested in
       // a button is invalid, and clicking it would toggle the row as well as
       // follow the href.
-      item.innerHTML = `<div class="row"><button class="head"></button><a class="go"></a></div>`;
+      // Three siblings, not nested: an anchor inside a button is invalid markup, and
+      // clicking one would both follow the href and toggle the row. The pull request link
+      // sits between the head — whose last cell is the relative time — and Open, so the
+      // reading order is what happened, when, where to discuss it, where to look at it.
+      item.innerHTML = `<div class="row"><button class="head"></button>` +
+        `<a class="go pr" data-role="row-pr"></a><a class="go"></a></div>`;
       item.querySelector(".head").onclick = () => toggle(g.name);
     }
 
@@ -1344,7 +1369,30 @@ function updateHead(item, g) {
     </span>
     <span class="when">${ago(p.updated_at)}</span>`;
 
-  updateGoLink(item.querySelector(".go"), p);
+  updateRowPR(item.querySelector('[data-role="row-pr"]'), p);
+  // The Open link is the *last* .go, since the pull request link shares the class to
+  // share the look.
+  const gos = item.querySelectorAll(".go");
+  updateGoLink(gos[gos.length - 1], p);
+}
+
+// updateRowPR points the row's pull request link at the pull request.
+//
+// Hidden when there is none rather than greyed: the local platform has no web interface at
+// all, which is not a state anybody can act on, and a permanently dead control between two
+// live ones is worse than a gap.
+function updateRowPR(a, p) {
+  const url = safeURL(p.pr_url);
+  if (!url) {
+    a.hidden = true;
+    return;
+  }
+  a.hidden = false;
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noreferrer";
+  a.textContent = `#${p.number} ↗`;
+  a.title = `Open pull request #${p.number} on ${String(p.repo).split(":")[0]}`;
 }
 
 // The preview link belongs on the row, not inside the expanded panel: opening
@@ -1427,13 +1475,6 @@ function updateBody(item, g) {
              the selection immediately above it. -->
         <a class="btn" data-role="open-build" target="_blank" rel="noreferrer">Open build ↗</a>
         <span class="grow"></span>
-        <!-- The pull request itself. Here rather than on the row, because the row's head
-             is a <button> and an anchor cannot nest inside one — and because this is
-             where somebody reading a failed build wants it: the next thing they do is go
-             and say so on the pull request.
-
-             Absent for the local platform, which has no web interface at all. -->
-        <a class="btn" data-role="open-pr" target="_blank" rel="noreferrer" hidden></a>
       </div>
       <div class="logstate"></div>
       <div class="termwrap">
@@ -1445,6 +1486,15 @@ function updateBody(item, g) {
         <button class="btn" data-role="follow" aria-pressed="true">Following</button>
         <button class="btn" data-role="tall" aria-pressed="false">Expand</button>
         <span class="grow"></span>
+        <!-- Only while something is running. A permanently greyed Cancel is furniture,
+             and one next to Download on a finished build is a misclick waiting to
+             happen. Shown beside Download rather than in the top bar because it acts on
+             the build whose log is on screen. -->
+        <!-- Rebuild and Cancel are the same slot in two states, because the question
+             "is something running" has one answer and each button is useless in the
+             other case. -->
+        <button class="btn" data-role="rebuild" hidden>Rebuild</button>
+        <button class="btn danger" data-role="cancel" hidden>Cancel build</button>
         <a class="btn" data-role="download" download>Download</a>
       </div>`;
     item.appendChild(body);
@@ -1534,17 +1584,85 @@ function updateBody(item, g) {
   body.querySelector('[data-role="download"]').href =
     `/logs/${encodeURIComponent(p.preview_id)}/download`;
 
-  // The pull request. Hidden rather than greyed when there is none, because "no web
-  // interface" is a property of the platform and not a state the reader can change —
-  // a permanently dead control is furniture.
-  const prLink = body.querySelector('[data-role="open-pr"]');
-  const prURL = safeURL(p.pr_url);
-  prLink.hidden = !prURL;
-  if (prURL) {
-    prLink.href = prURL;
-    prLink.textContent = `#${p.number} ↗`;
-    prLink.title = `Open pull request #${p.number} on ${p.repo.split(":")[0]}`;
-  }
+  // Cancel, only while this preview is actually building. The state comes from the same
+  // status payload the row is drawn from, so the button appears and disappears with the
+  // row's own pill rather than on its own schedule.
+  // No reconnect-on-transition here, deliberately.
+  //
+  // Three attempts at making the page notice a build starting under it all failed the same
+  // way: the stream says live-or-replay once, at connect, and the page cannot know when
+  // that stopped being true except by reconnecting on a guess. It is now the server's job —
+  // /logs/{preview}/stream replays history and then *waits* for a build rather than closing
+  // (see Ingress.awaitLive), so the same connection announces the new build itself.
+  //
+  // Queued counts as cancellable. A queued build has no context to cancel, so the daemon
+  // takes it out of the queue instead — and a queue that cannot be emptied is the case
+  // that matters most, since a build waiting behind a slow one is the reason somebody
+  // wants to stop it.
+  const building = p.state === "building" || p.state === "queued";
+  const cancel = body.querySelector('[data-role="cancel"]');
+  cancel.hidden = !building;
+  cancel.textContent = p.state === "queued" ? "Cancel queued build" : "Cancel build";
+
+  // Rebuild, when nothing is running. It queues the commit already on the row rather than
+  // the branch tip: pushing is what builds the tip, and this is for the case a push cannot
+  // fix — a bad cache entry, a timeout, an image since corrected, a project setting changed
+  // under a preview nobody is pushing to.
+  const rebuild = body.querySelector('[data-role="rebuild"]');
+  rebuild.hidden = building;
+  rebuild.title = p.commit
+    ? `Build ${p.commit.slice(0, 7)} again`
+    : "Build this preview's recorded commit again";
+  rebuild.onclick = async () => {
+    const label = rebuild.textContent;
+    rebuild.disabled = true;
+    rebuild.textContent = "…";
+    try {
+      await api("POST", `/api/builds/${encodeURIComponent(p.preview_id)}/rebuild`);
+      // No alert on success: the row's own pill goes to Queued within a second, which is
+      // better confirmation than a dialog to dismiss.
+
+      // Move the pane to the live stream, and follow it.
+      //
+      // The selection is deliberately sticky — a reader part-way through an older build's
+      // log must not be yanked to a newer one by a background event. But this is not a
+      // background event: it is the reader asking for a build. Leaving the pin alone meant
+      // Rebuild started a build that ran to completion while the pane showed a *different*
+      // build's stored log and appeared to do nothing, which is exactly what it looked
+      // like. An empty build id is the picker's value for "follow the live stream".
+      ui.build[p.preview_id] = "";
+      ui.pick[g.name] = p.preview_id;
+      setFollow(true);
+      openLog(p.preview_id);
+      render();
+    } catch (e) {
+      alert(`Could not rebuild: ${e.message}`);
+    } finally {
+      rebuild.disabled = false;
+      rebuild.textContent = label;
+    }
+  };
+  cancel.onclick = async () => {
+    const what = p.state === "queued" ? "queued build" : "build";
+    if (!confirm(`Cancel the ${what} of ${p.branch} #${p.number}?\n\n` +
+      `It will be reported as failed on the pull request. Pushing again rebuilds it.`)) return;
+    const label = cancel.textContent;
+    cancel.disabled = true;
+    cancel.textContent = "…";
+    try {
+      const r = await api("POST", `/api/builds/${encodeURIComponent(p.preview_id)}/cancel`);
+      // Not an error when nothing was running: this page can be a second out of date, and
+      // a build that finished between the render and the click is not a failure.
+      if (!r.cancelled) alert("That build had already finished.");
+    } catch (e) {
+      alert(`Could not cancel: ${e.message}`);
+    } finally {
+      cancel.disabled = false;
+      cancel.textContent = label;
+    }
+  };
+
+  // The pull request link lives on the row, not here — see updateRowPR.
 
 
   // The preview link lives on the row, not here. See updateGoLink.
@@ -2372,9 +2490,17 @@ function renderSetup(s) {
              title="Mint a random value and show it once">Generate</button>`}
         ${e.set ? `<button class="btn" data-del="${esc(e.key)}">Delete</button>` : ""}`;
 
+    // A chip, not a sentence. The rule is the same for every build variable and stating
+    // it per row cost three wrapped lines each — the list stopped being a list. It is
+    // stated once, in the notice above.
+    const injected = e.env_var
+      ? `<span class="flag on" title="Injected into every build as ${esc(e.env_var)}, and
+           redacted from every log. A project can override it.">build var</span>`
+      : "";
+
     return `<div class="sec">
       <div>
-        <div class="name">${esc(e.label)} ${flag}</div>
+        <div class="name">${esc(e.label)} ${flag} ${injected}</div>
         <div class="key">${esc(e.key)}</div>
         ${e.hint ? `<div class="hint">${esc(e.hint)}</div>` : ""}
       </div>
@@ -2407,7 +2533,10 @@ function renderSetup(s) {
        <code>docpreview vault set &lt;key&gt;</code> there.</p></div>`
     : `<div class="notice ok">Values are written to the age-encrypted vault. Nothing here reads one
        back — the only time a secret is visible is the moment you generate it. Changing a build
-       secret re-arms the log redactor immediately.</div>`;
+       secret re-arms the log redactor immediately.
+       <p>An entry marked <span class="flag on">build var</span> is injected into every build
+       as that variable and redacted from every log; a project can override it with its own.
+       That is what an <code>UPPER_CASE</code> name means here.</p></div>`;
 
   el.innerHTML = `
     ${once}
@@ -2415,11 +2544,21 @@ function renderSetup(s) {
     ${rows}
     ${ro ? "" : `<div class="sec">
       <div><div class="name">Add another</div>
-        <div class="hint">any key you reference from <code>build.secrets</code></div></div>
+        <!-- What the name decides, since it decides everything here: a shell-shaped name
+             is injected into every build under that name, and anything else is a key only
+             the daemon's own config can reach. That rule used to be invisible, and six
+             tokens were stored in the belief that storing them was enough. -->
+        <div class="hint">An <code>UPPER_CASE</code> name is injected into every build as
+          that variable. Anything else is only read if <code>build.secrets</code> names
+          it.</div></div>
       <div>
-        <input type="text" id="new-key" placeholder="e.g. demo.algolia_key"
-               style="width:100%;margin-bottom:0.35rem">
-        <input type="password" id="new-val" placeholder="value">
+        <!-- No placeholder. A greyed-out example in the *name* box reads as a value
+             already filled in, and this is the field where getting it wrong is silent:
+             the build looks for a variable that is not there and falls back to whatever
+             its script does without one. -->
+        <input type="text" id="new-key" autocomplete="off" spellcheck="false"
+               aria-label="Name" style="width:100%;margin-bottom:0.35rem">
+        <input type="password" id="new-val" autocomplete="off" aria-label="Value">
       </div>
       <div class="act"><button class="btn" id="new-save">Save</button></div>
     </div>`}`;
@@ -3567,6 +3706,12 @@ function applyStatus(d) {
 
   document.getElementById("exposer").textContent = `exposer: ${d.exposer}`;
 
+  // While the daemon is recovering there are no workers, so a queued build cannot start.
+  // Said out loud, because "Queued" with nothing happening is indistinguishable from a
+  // stuck queue — which is exactly how it was reported, twice, both times a minute after a
+  // restart.
+  showStarting(d.starting);
+
 
   // A project whose last preview was torn down must not keep a stream open
   // behind a panel nobody can see. ui.open is a project name, so the test is
@@ -3579,6 +3724,29 @@ function applyStatus(d) {
 
   render();
   openFromFragment();
+}
+
+// showStarting puts a banner above the list while the daemon is recovering.
+//
+// Not a spinner on the row: the row is correct — the build *is* queued. What is missing is
+// that nothing can claim it yet, which is a property of the daemon and belongs where the
+// daemon's own state is reported.
+function showStarting(starting) {
+  let el = document.getElementById("starting");
+  if (!starting) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "starting";
+    el.className = "notice warn";
+    el.style.margin = "0 0 0.75rem";
+    el.innerHTML = `<strong>Starting up.</strong> Restoring previews and clearing shares
+      left by the previous run. Builds queue but do not start until this finishes —
+      each share is a round trip to the exposer.`;
+    document.querySelector(".wrap").prepend(el);
+  }
 }
 
 // openFromFragment honours `#preview=<id>`, which is where a failed build's comment
