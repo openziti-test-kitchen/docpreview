@@ -64,6 +64,13 @@ type ProjectsAdmin struct {
 	// was found.
 	rebuilder func(ctx context.Context, previewID string) (bool, error)
 
+	// unlinker removes a preview and records that its pull request must not be built
+	// again, reporting whether the preview was found. linker is the other direction, by
+	// pull request number, because a pull request nothing has built yet has no preview
+	// id to name it by.
+	unlinker func(ctx context.Context, previewID string) (bool, error)
+	linker   func(ctx context.Context, repo model.Repo, number int) error
+
 	// scmChecker verifies that a project's source-control credential reaches its
 	// repository, returning what it found. Nil for a daemon with no platform that can be
 	// checked, in which case the route answers 501 rather than pretending.
@@ -123,6 +130,16 @@ func (a *ProjectsAdmin) WithRebuilder(fn func(context.Context, string) (bool, er
 	return a
 }
 
+// WithLinking installs the unlink and link actions. Both or neither: a page that can
+// unlink a pull request and not link it back offers a one-way door.
+func (a *ProjectsAdmin) WithLinking(
+	unlink func(context.Context, string) (bool, error),
+	link func(context.Context, model.Repo, int) error,
+) *ProjectsAdmin {
+	a.unlinker, a.linker = unlink, link
+	return a
+}
+
 // WithSCMChecker installs the credential test behind the projects page's Test button.
 func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (string, error)) *ProjectsAdmin {
 	a.scmChecker = fn
@@ -176,6 +193,12 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// controls, and here for the same reason: one gate rather than a third copy of it.
 	mux.HandleFunc("POST /api/builds/{preview}/cancel", a.gated(a.cancelBuild))
 	mux.HandleFunc("POST /api/builds/{preview}/rebuild", a.gated(a.rebuild))
+
+	// Unlinking is keyed on the preview, because that is what the operator is looking
+	// at when they decide they do not want it. Linking is keyed on the project and a
+	// number, because a pull request nothing has built has no preview.
+	mux.HandleFunc("POST /api/builds/{preview}/unlink", a.gated(a.unlink))
+	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/link", a.gated(a.link))
 
 	// Checking an image runs a docker command with an operator-supplied argument and
 	// makes a registry round trip, so it is gated like every other write even though it
@@ -280,6 +303,13 @@ type projectView struct {
 	// Present so the form can say "set" rather than showing an empty box that gives no
 	// way to tell a stored token from a missing one.
 	SCM []string `json:"scm,omitempty"`
+
+	// Ignored are the pull requests unlinked on this repository, lowest number first.
+	//
+	// Displayed rather than only enforced. An ignore that nothing shows is
+	// indistinguishable from a build system that has quietly stopped noticing a pull
+	// request, and this list is also the only place a mistaken unlink can be undone.
+	Ignored []store.IgnoredPR `json:"ignored,omitempty"`
 }
 
 type projectDefaults struct {
@@ -457,6 +487,15 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 				view.Secrets = append(view.Secrets, name)
 			}
 		}
+		// A failure here is not worth failing the page for: the list is informational,
+		// and the enforcement that matters happens in the build path.
+		ignored, err := a.store.ListIgnored(r.Context(), model.Repo{
+			Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
+		})
+		if err != nil {
+			a.log.Warn("listing unlinked pull requests", "project", p.Key(), "error", err)
+		}
+		view.Ignored = ignored
 		st.Projects = append(st.Projects, view)
 	}
 
@@ -742,6 +781,83 @@ func (a *ProjectsAdmin) rebuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
+}
+
+// unlink removes a preview and stops its pull request being rediscovered.
+//
+// A destructive action with no undo beyond linking it again, so it is gated like every
+// other write and the page asks before calling it. What comes back names both halves of
+// what happened, because "removed" alone leaves the operator wondering whether the next
+// push brings it back.
+func (a *ProjectsAdmin) unlink(w http.ResponseWriter, r *http.Request) {
+	preview := r.PathValue("preview")
+	if !previewIDPattern.MatchString(preview) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "not a preview id: expected twelve hex characters, got " + preview,
+		})
+		return
+	}
+	if a.unlinker == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot unlink pull requests"})
+		return
+	}
+
+	found, err := a.unlinker(r.Context(), preview)
+	if err != nil {
+		// The ignore is written before the teardown, so a failure here means the pull
+		// request will not be rebuilt and something of the preview may remain. Say so:
+		// the operator's next step is to look at the log, not to press the button again.
+		a.log.Error("unlinking a preview", "preview", preview, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": err.Error() + " — the pull request will not be rebuilt, " +
+				"but some of the preview may remain; see the daemon log"})
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "there is no preview " + preview + " any more"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"unlinked": true})
+}
+
+// link builds one pull request by number, and un-ignores it if it was unlinked.
+func (a *ProjectsAdmin) link(w http.ResponseWriter, r *http.Request) {
+	p, bad := projectFromRequest(r)
+	if bad != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad})
+		return
+	}
+	var body struct {
+		Number int `json:"number"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if body.Number < 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "which pull request? give a number, as in 19"})
+		return
+	}
+	if a.linker == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot look up a pull request by number"})
+		return
+	}
+
+	repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
+	if err := a.linker(r.Context(), repo, body.Number); err != nil {
+		// 200 with an error, as scan does: the message is the operator's next step —
+		// usually that the number is closed or does not exist — and this is a button on
+		// a page that stays open, not a form submission.
+		a.log.Warn("linking a pull request", "project", p.Key(), "number", body.Number, "error", err)
+		writeJSON(w, http.StatusOK, map[string]any{"queued": false, "error": err.Error()})
+		return
+	}
+	a.log.Info("linked a pull request", "project", p.Key(), "number", body.Number)
+	writeJSON(w, http.StatusOK, map[string]any{"queued": true, "number": body.Number})
 }
 
 // inspectImage answers whether a container image can be resolved, so the form can

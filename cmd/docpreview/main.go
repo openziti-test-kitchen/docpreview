@@ -612,6 +612,10 @@ func cmdServe(args []string) error {
 			// failed for a reason outside the branch: a bad cache entry, a timeout, an
 			// image since corrected.
 			WithRebuilder(d.RebuildPreview).
+			// So a pull request nobody wants a preview of can be removed and stay
+			// removed. Without the ignore half, discovery finds it again on the next
+			// delivery or the next scan and the removal looks like it did nothing.
+			WithLinking(d.UnlinkPreview, d.LinkPR).
 			// So the form can grey out a driver that would fail rather than offering
 			// it and letting the operator discover the refusal from a failed build.
 			// So a pasted token can be checked before it is discovered wrong by a build

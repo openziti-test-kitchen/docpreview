@@ -130,6 +130,30 @@ CREATE TABLE IF NOT EXISTS projects (
     PRIMARY KEY (platform, owner, repo)
 );
 
+-- Pull requests this installation has been told not to build.
+--
+-- A preview is created by discovery — a webhook delivery, or the scan that runs when a
+-- project is added — and discovery cannot know which pull requests an operator cares
+-- about. Removing the preview alone is not an answer: the next delivery or the next
+-- scan finds the pull request again and rebuilds it, so "remove" without a record of
+-- the decision reads as the removal having silently failed.
+--
+-- Keyed by repository and number rather than by preview id, because the preview is
+-- deleted at the same moment this row is written and a reopened pull request gets a
+-- new preview for the same number.
+--
+-- Deliberately not a column on previews. The row has to outlive the preview, which is
+-- the entire point.
+CREATE TABLE IF NOT EXISTS ignored_prs (
+    platform   TEXT NOT NULL,
+    owner      TEXT NOT NULL,
+    repo       TEXT NOT NULL,
+    number     INTEGER NOT NULL,
+    branch     TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (platform, owner, repo, number)
+);
+
 -- Comments exist only for the local platform, which has nowhere else to put
 -- them. GitHub and Bitbucket keep the comment on the pull request, which is the
 -- point: the comment is self-identifying by its marker and needs no record
@@ -756,6 +780,91 @@ func (s *Store) ListPreviews(ctx context.Context) ([]Preview, error) {
 		p.State = scm.State(state)
 		p.UpdatedAt = time.UnixMilli(updated)
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// IgnorePR records that this pull request must not be built again.
+//
+// Written as part of unlinking, whose other half is tearing the preview down. Idempotent:
+// unlinking something already unlinked is not an error, it is the state the operator
+// asked for.
+func (s *Store) IgnorePR(ctx context.Context, pr model.PullRequest) error {
+	_, err := s.db.ExecContext(ctx, `
+        INSERT INTO ignored_prs (platform, owner, repo, number, branch, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (platform, owner, repo, number) DO UPDATE SET branch = excluded.branch`,
+		string(pr.Repo.Platform), pr.Repo.Owner, pr.Repo.Name, pr.Number, pr.Branch,
+		time.Now().UnixMilli())
+	if err != nil {
+		return fmt.Errorf("ignoring %s: %w", pr.String(), err)
+	}
+	return nil
+}
+
+// UnignorePR undoes IgnorePR, and reports whether there was anything to undo.
+//
+// The boolean is what tells the caller whether linking a pull request that was ignored
+// is a re-link or a first build, which is the difference between two sentences the
+// dashboard shows.
+func (s *Store) UnignorePR(ctx context.Context, repo model.Repo, number int) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+        DELETE FROM ignored_prs WHERE platform = ? AND owner = ? AND repo = ? AND number = ?`,
+		string(repo.Platform), repo.Owner, repo.Name, number)
+	if err != nil {
+		return false, fmt.Errorf("un-ignoring %s#%d: %w", repo.String(), number, err)
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// PRIgnored answers the question every build path asks before doing any work.
+func (s *Store) PRIgnored(ctx context.Context, repo model.Repo, number int) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `
+        SELECT 1 FROM ignored_prs
+        WHERE platform = ? AND owner = ? AND repo = ? AND number = ?`,
+		string(repo.Platform), repo.Owner, repo.Name, number).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking whether %s#%d is ignored: %w", repo.String(), number, err)
+	}
+	return true, nil
+}
+
+// IgnoredPR is one unlinked pull request, for the list the projects page shows.
+type IgnoredPR struct {
+	Number    int       `json:"number"`
+	Branch    string    `json:"branch,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ListIgnored returns the pull requests unlinked on one repository, lowest number first.
+//
+// Listed rather than merely enforced, because an ignore nothing displays is
+// indistinguishable from a build system that has stopped working. The list is also
+// where re-linking is offered.
+func (s *Store) ListIgnored(ctx context.Context, repo model.Repo) ([]IgnoredPR, error) {
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT number, branch, created_at FROM ignored_prs
+        WHERE platform = ? AND owner = ? AND repo = ? ORDER BY number`,
+		string(repo.Platform), repo.Owner, repo.Name)
+	if err != nil {
+		return nil, fmt.Errorf("listing ignored pull requests for %s: %w", repo.String(), err)
+	}
+	defer rows.Close()
+
+	var out []IgnoredPR
+	for rows.Next() {
+		var ig IgnoredPR
+		var created int64
+		if err := rows.Scan(&ig.Number, &ig.Branch, &created); err != nil {
+			return nil, fmt.Errorf("scanning an ignored pull request: %w", err)
+		}
+		ig.CreatedAt = time.UnixMilli(created)
+		out = append(out, ig)
 	}
 	return out, rows.Err()
 }

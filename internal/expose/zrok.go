@@ -164,7 +164,7 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 
 	for _, id := range superseded {
 		z.log.Info("replacing an earlier build's share of this name",
-			"exposer", "zrok2", "name", spec.Name, "superseded", id, "publication", spec.Key())
+			"name", spec.Name, "superseded", id, "publication", spec.Key())
 		z.withdraw(id)
 	}
 

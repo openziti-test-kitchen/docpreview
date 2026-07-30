@@ -1496,9 +1496,109 @@ func (d *Daemon) ScanRepo(ctx context.Context, repo model.Repo) (int, error) {
 	return queued, errors.Join(errs...)
 }
 
+// UnlinkPreview removes a preview and stops this pull request being built again.
+//
+// Two halves, and neither is useful alone. Tearing the preview down without recording
+// the decision means the next delivery or the next scan rebuilds it, which reads as
+// the removal having failed. Recording the decision without tearing down leaves a live
+// share and a pull request comment advertising a preview nothing maintains.
+//
+// The ignore is written first. A teardown reaches the exposer, the platform and the
+// filesystem, so it is the half that can fail partway — and a recorded ignore with a
+// half-removed preview is recoverable by unlinking again, while the reverse rebuilds
+// itself the moment somebody pushes.
+//
+// Reports whether the preview existed, so the caller can answer 404 rather than
+// pretending to have removed something.
+func (d *Daemon) UnlinkPreview(ctx context.Context, previewID string) (bool, error) {
+	// Found by listing, as RebuildPreview does: the store has no lookup by id, and one
+	// query per operator button press is not worth a second access path to keep in step.
+	previews, err := d.store.ListPreviews(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range previews {
+		if p.PreviewID != previewID {
+			continue
+		}
+		if err := d.store.IgnorePR(ctx, p.PR); err != nil {
+			return true, err
+		}
+		d.log.Info("unlinking a pull request", "pr", p.PR.String(), "preview", previewID)
+		if err := d.teardown(ctx, p.PR, previewID); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// LinkPR builds one pull request by number, whether or not it was unlinked.
+//
+// The counterpart to UnlinkPreview, and the answer to a pull request that no webhook
+// ever announced — a project added by hand before its webhook existed, or one unlinked
+// by mistake.
+//
+// The pull request's branch and head commit come from the platform rather than from the
+// caller: a build needs a commit, and a number typed into a form does not carry one.
+// That is also the check that the number exists and is open, which is why nothing is
+// written until the listing has answered.
+func (d *Daemon) LinkPR(ctx context.Context, repo model.Repo, number int) error {
+	client, ok := d.client(repo.Platform)
+	if !ok {
+		return fmt.Errorf("no %s client is configured on this daemon "+
+			"(store its credentials on /secrets)", repo.Platform)
+	}
+	lister, ok := client.(scm.PullRequestLister)
+	if !ok {
+		return fmt.Errorf("the %s client cannot look up a pull request by number", repo.Platform)
+	}
+
+	prs, err := lister.OpenPullRequests(ctx, repo)
+	if err != nil {
+		return err
+	}
+	for _, pr := range prs {
+		if pr.Number != number {
+			continue
+		}
+		// Un-ignored before the build rather than after: handleBuild is where the
+		// ignore is enforced, so a link that queued first would be dropped by its own
+		// check.
+		if _, err := d.store.UnignorePR(ctx, repo, number); err != nil {
+			return err
+		}
+		d.log.Info("linking a pull request", "pr", pr.String())
+		return d.handleBuild(ctx, scm.Event{Kind: scm.EventBuild, PR: pr})
+	}
+	return fmt.Errorf("%s has no open pull request #%d", repo.String(), number)
+}
+
 func (d *Daemon) handleBuild(ctx context.Context, ev scm.Event) error {
 	pr := ev.PR
 	id := pr.PreviewID()
+
+	// An unlinked pull request stops here, and this is the only place that check
+	// lives.
+	//
+	// Every route to a build passes through this function — a webhook delivery, the
+	// scan that runs when a project is added, an operator's Build now — so one check
+	// covers all of them and none of them can drift. Checked before the queued report,
+	// because reporting "queued" and then not building is worse than either.
+	//
+	// Linking a pull request deletes the row rather than passing a flag past this
+	// check: "build this" and "stop ignoring this" are the same request, and a bypass
+	// would make the ignore something an operator has to remember to undo.
+	if ignored, err := d.store.PRIgnored(ctx, pr.Repo, pr.Number); err != nil {
+		// Not fatal. A read failure here must not silently stop building — the
+		// unlinked set is a preference, and losing it costs an unwanted preview
+		// somebody can unlink again.
+		d.log.Warn("could not check whether this pull request is unlinked; building it",
+			"pr", pr.String(), "error", err)
+	} else if ignored {
+		d.log.Info("skipping an unlinked pull request", "pr", pr.String())
+		return nil
+	}
 
 	// Report queued before enqueueing, not after.
 	//

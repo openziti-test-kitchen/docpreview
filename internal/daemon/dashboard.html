@@ -600,6 +600,23 @@ input.control::placeholder { color: var(--muted) }
 .pcard-head .grow { flex: 1 }
 .pcard-off { opacity: 0.6 }
 
+/* The unlinked pull requests and the box that links one back. One line, because on a
+   working project it says one short sentence and must not cost a paragraph of height. */
+.pcard-links {
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+  margin-top: 0.45rem; padding-top: 0.45rem; border-top: 1px solid var(--hairline);
+}
+.pcard-links .grow { flex: 1 }
+.pcard-links .chip { gap: 0.3rem }
+/* Wide enough for four digits and no wider: a number box that stretches invites a
+   sentence, and this one takes 19. */
+.linknum {
+  width: 4.5rem; padding: 0.15rem 0.35rem; font: inherit;
+  border: 1px solid var(--ring); border-radius: 5px;
+  background: var(--surface); color: var(--ink);
+}
+.btn.tiny { padding: 0 0.3rem; font-size: 11px; line-height: 1.5 }
+
 /* A badge, not a fetched image. Two characters or an emoji, on a colour derived from
    the name so it is stable without being stored. */
 .ava {
@@ -1371,14 +1388,23 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g,
 // with the render, not with an assumption about who writes the value.
 const safeURL = u => /^https?:\/\//i.test(String(u ?? "")) ? String(u) : "";
 
-const ago = iso => {
-  const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
-  if (s < 60)    return Math.floor(s) + "s";
-  if (s < 3600)  return Math.floor(s / 60) + "m";
-  if (s < 86400) return Math.floor(s / 3600) + "h";
-  return Math.floor(s / 86400) + "d";
-};
 const clock = iso => new Date(iso).toLocaleTimeString([], {hour12: false});
+
+/* stamp is when something finished, written as a time that does not move.
+   A finished build used to render its relative age, which under a minute counts up
+   once a second — so a preview that had been ready for forty seconds looked like it
+   was still being timed, beside a status line that said it took 1m 9s. Two numbers
+   moving at once, one of them meaningless. The wall-clock time answers "when" and
+   never changes, and the duration beside it answers "how long". The date is added
+   only when it is not today, since most of what is on this page is. */
+const stamp = iso => {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const time = d.toLocaleTimeString([], {hour12: false});
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) return time;
+  return `${d.toLocaleDateString([], {month: "short", day: "numeric"})} ${time}`;
+};
 
 /* LIVE_STATES are the ones where the timestamp is a stopwatch rather than an age.
    A finished build's "6m" is a fact that does not change; a running build's is the
@@ -1403,14 +1429,14 @@ const elapsed = iso => {
   return h ? `${h}h ${out}` : out;
 };
 
-/* rowWhen picks between the two: a stopwatch while it runs, an age once it is over.
-   No "ago" suffix, because the row is a column of these and the word is the same on
-   every line. The pickers spell it out, since there the value sits mid-sentence. */
-const rowWhen = p => isLive(p.state) ? elapsed(p.updated_at) : ago(p.updated_at);
+/* rowWhen picks between the two: a stopwatch while it runs, the finishing time once
+   it is over. Only one of the two ticks, which is how the row says whether anything
+   is happening without reading the words. */
+const rowWhen = p => isLive(p.state) ? elapsed(p.updated_at) : stamp(p.updated_at);
 
 /* pickerWhen is the same choice inside a sentence: "Building · 04m 12s" for one in
-   flight, "Ready · 9h ago" for one that finished. */
-const pickerWhen = p => isLive(p.state) ? elapsed(p.updated_at) : `${ago(p.updated_at)} ago`;
+   flight, "Ready · 14:26:23" for one that finished. */
+const pickerWhen = p => isLive(p.state) ? elapsed(p.updated_at) : stamp(p.updated_at);
 
 /* secs renders a duration. Minutes and seconds rather than a bare count, because the
    numbers that matter here are a warm install at 40s and a cold one at 6m20s, and "380s"
@@ -1830,8 +1856,8 @@ function updateHead(item, g) {
   // that moves the URL without changing the state would otherwise leave the
   // anchor pointing at the old one.
   // The elapsed clock is deliberately part of the signature. It changes every second
-  // for a running build, which is the point — and for every other row it is the same
-  // coarse `ago` it always was, so a page of finished previews still rebuilds nothing.
+  // for a running build, which is the point — and for every other row it is a fixed
+  // finishing time, so a page of finished previews still rebuilds nothing.
   const sig = [p.preview_id, p.state, p.url, p.branch, p.number, rowWhen(p),
                ui.open === g.name, JSON.stringify(g.counts)].join("|");
 
@@ -2008,6 +2034,10 @@ function updateBody(item, g) {
              other case. -->
         <button class="btn" data-role="rebuild" hidden>Rebuild</button>
         <button class="btn danger" data-role="cancel" hidden>Cancel build</button>
+        <!-- Unlink is the only control here that ends a preview rather than changing
+             what it is doing, so it is last, and it is gated on /api/admin: a read-only
+             dashboard must not offer a button that 403s. -->
+        <button class="btn danger" data-role="unlink" hidden>Unlink</button>
         <a class="btn" data-role="download" download>Download</a>
       </div>`;
     item.appendChild(body);
@@ -2163,6 +2193,40 @@ function updateBody(item, g) {
       rebuild.textContent = label;
     }
   };
+  // Unlink: remove this preview and stop rediscovering the pull request.
+  //
+  // Both halves matter and the confirmation says so. Removing alone is not what anybody
+  // means by "I don't want this one" — the next delivery or the next project scan finds
+  // the pull request again and builds it, which reads as the removal having failed.
+  //
+  // Hidden rather than greyed where the page cannot write. Every other control here acts
+  // on a build; this one deletes a preview, its shares and its comment, and offering it
+  // to a reader who will get a 403 teaches them to distrust the page.
+  const unlink = body.querySelector('[data-role="unlink"]');
+  unlink.hidden = !admin.projects;
+  unlink.title = `Remove this preview and stop building ${p.branch} #${p.number}`;
+  unlink.onclick = async () => {
+    if (!confirm(`Unlink ${p.branch} #${p.number}?\n\n` +
+      `The preview, its URL and its pull request comment are removed, and this pull ` +
+      `request is not built again — a push or a project scan will skip it.\n\n` +
+      `You can link it again from the Projects page.`)) return;
+    const label = unlink.textContent;
+    unlink.disabled = true;
+    unlink.textContent = "…";
+    try {
+      await api("POST", `/api/builds/${encodeURIComponent(p.preview_id)}/unlink`);
+      // The row goes away on the next status tick, which is the confirmation. The pane
+      // is pinned to a preview that no longer exists, so let it go with the row.
+      if (ui.logFor === p.preview_id) closeLog();
+      render();
+    } catch (e) {
+      toast(`Could not unlink: ${e.message}`, "bad", e.message);
+    } finally {
+      unlink.disabled = false;
+      unlink.textContent = label;
+    }
+  };
+
   cancel.onclick = async () => {
     const what = p.state === "queued" ? "queued build" : "build";
     if (!confirm(`Cancel the ${what} of ${p.branch} #${p.number}?\n\n` +
@@ -2419,7 +2483,7 @@ function updateBuildPicker(previewID) {
     // No duration here. It was a third fact on every option — outcome, id, age, took —
     // and a picker of five builds became five unreadable lines. The banner under the
     // picker says how long the selected build took, where it costs no width.
-    `${esc(isLive(b.state) ? elapsed(b.started_at || b.mod_time) : `${ago(b.mod_time)} ago`)}` +
+    `${esc(isLive(b.state) ? elapsed(b.started_at || b.mod_time) : stamp(b.mod_time))}` +
     `</option>`).join("");
   sel.value = current;
 
@@ -3697,6 +3761,7 @@ function projectCard(p, s, ro) {
     </div>
     ${projectFacts(p)}
     ${credentialWanted(p, s)}
+    ${unlinkedSection(p, ro)}
     ${p.notes ? `<div class="hint pcard-notes">${esc(p.notes)}</div>` : ""}
     ${open === "build" ? `<div class="panel">${projectForm(s, p)}</div>` : ""}
     ${secretsSection(p, s)}
@@ -4167,6 +4232,39 @@ function scmCredentialFields(s, p, id) {
       </div>` : ""}
     </div>
     </div>`;
+}
+
+/* unlinkedSection lists the pull requests this project will not build, and links one.
+
+   Both halves are on the card because they answer the same two questions. "Why is #20 not
+   building" has no answer anywhere else — an ignore that nothing displays is
+   indistinguishable from a build system that has quietly stopped noticing a pull request.
+   And "build #19, which nothing has ever built" cannot be asked from the dashboard, where
+   every control is attached to a preview that already exists.
+
+   The link box is shown even with nothing unlinked, since that second case is the common
+   one: a project added before its webhook, or one whose delivery was missed. */
+function unlinkedSection(p, ro) {
+  if (ro) return "";
+  const key = projectKey(p);
+  const ignored = p.ignored || [];
+  const list = ignored.map(ig =>
+    `<span class="chip" title="unlinked ${ig.branch ? esc(ig.branch) + ", " : ""}${
+      esc(stamp(ig.created_at))}">#${ig.number}
+       <button class="btn tiny" data-relink="${esc(key)}" data-number="${ig.number}"
+         title="Build #${ig.number} again and stop skipping it">link</button></span>`).join("");
+
+  return `<div class="pcard-links">
+    ${ignored.length
+      ? `<span class="hint"><strong>Not building:</strong></span> ${list}`
+      : `<span class="hint">Every open pull request on this repository is built.</span>`}
+    <span class="grow"></span>
+    <label class="hint" for="link-${esc(key)}">Build one PR:</label>
+    <input id="link-${esc(key)}" class="linknum" type="number" min="1" step="1"
+      inputmode="numeric" placeholder="#" aria-label="pull request number">
+    <button class="btn" data-link="${esc(key)}"
+      title="Build this pull request, whether or not it was unlinked">Link</button>
+  </div>`;
 }
 
 /* credentialWanted is the line on a project card naming the credential it still needs.
@@ -5088,6 +5186,41 @@ function wireProjectHandlers(s) {
         return api("GET", "/api/projects");
       });
     };
+  }
+
+  // Link and re-link are one action reached two ways: a number typed into the box, or a
+  // chip for a pull request that was unlinked. Both POST the same route, which un-ignores
+  // the number and queues a build — "build this" and "stop skipping this" are the same
+  // request, so there is nothing to keep in step.
+  const linkPR = async (btn, key, number) => {
+    await runProject(btn, async () => {
+      const r = await api("POST", `${projectPath(key)}/link`, {number});
+      // The daemon answers 200 with an error for a number that is closed or absent,
+      // because that is a mistyped number rather than a broken installation.
+      projFlash = r.error
+        ? `Nothing queued: ${r.error}`
+        : `Queued a build for #${number} — watch the dashboard.`;
+      return api("GET", "/api/projects");
+    });
+  };
+
+  for (const b of el.querySelectorAll("[data-link]")) {
+    b.onclick = async () => {
+      const key = b.dataset.link;
+      const box = document.getElementById(`link-${key}`);
+      const number = parseInt(box && box.value, 10);
+      if (!number || number < 1) {
+        toast("Which pull request? Type its number, as in 19.", "bad");
+        if (box) box.focus();
+        return;
+      }
+      if (box) box.value = "";
+      await linkPR(b, key, number);
+    };
+  }
+
+  for (const b of el.querySelectorAll("[data-relink]")) {
+    b.onclick = () => linkPR(b, b.dataset.relink, parseInt(b.dataset.number, 10));
   }
 
   for (const b of el.querySelectorAll("[data-del-project]")) {

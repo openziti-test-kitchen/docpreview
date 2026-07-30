@@ -87,6 +87,10 @@ const state = () => ({
       // one: a public repo clones with no token, so a red "missing" beside one would be the
       // page inventing a problem.
       private: true,
+      // One pull request unlinked, which is what the card has to display: an ignore that
+      // nothing shows is indistinguishable from a build system that stopped noticing a
+      // pull request.
+      ignored: [{number: 20, branch: "feature/pricing", created_at: "2026-07-30T18:26:23Z"}],
     },
   ],
 });
@@ -1156,6 +1160,75 @@ console.log("\na failure is reported where it can be seen");
     fail("a second failure accumulated in the form");
   } else {
     ok(`${$$("#toasts .toast.bad").length} toasts, nothing added to the form`);
+  }
+}
+
+console.log("\nunlinked pull requests are listed, and can be linked back");
+{
+  const cards = $$(".pcard");
+  const bb = cards[1];
+  const links = bb.querySelector(".pcard-links");
+  if (!links) {
+    fail("the card with an unlinked pull request has no linking section");
+  } else {
+    // The number, because "one pull request is unlinked" does not tell anybody which.
+    if (!links.textContent.includes("#20")) {
+      fail(`the unlinked pull request is not named: ${JSON.stringify(links.textContent)}`);
+    } else ok("the unlinked pull request is named on the card");
+
+    // A project with nothing unlinked says so rather than rendering an empty strip: a
+    // blank space is not an answer to "is this repository being built".
+    const clean = cards[0].querySelector(".pcard-links");
+    if (!clean || !clean.textContent.includes("Every open pull request")) {
+      fail("a project with nothing unlinked says nothing about it");
+    } else ok("a project with nothing unlinked says so");
+  }
+
+  // Re-linking sends the number the chip carries. A button that renders correctly and
+  // posts the wrong number is exactly what a screenshot cannot catch.
+  calls.length = 0;
+  const relink = bb.querySelector("[data-relink]");
+  if (!relink) fail("no way to link an unlinked pull request back");
+  else {
+    await click(relink);
+    const post = calls.find(c => c.method === "POST" && c.url.endsWith("/link"));
+    if (!post) fail(`re-link posted nothing: ${JSON.stringify(calls)}`);
+    else if (!post.url.includes("/bitbucket/netfoundry/customer-connect-docs/")) {
+      fail(`re-link posted to ${post.url}`);
+    } else if (post.body?.number !== 20) {
+      fail(`re-link sent ${JSON.stringify(post.body)}, want number 20`);
+    } else ok("re-link posts the pull request number to its own project");
+  }
+
+  // Typing a number and pressing Link. The box is the only way to build a pull request
+  // nothing has built yet, which has no preview on the dashboard to press anything on.
+  calls.length = 0;
+  const box = doc.getElementById("link-bitbucket/netfoundry/customer-connect-docs");
+  const linkBtn = bb.querySelector("[data-link]");
+  if (!box || !linkBtn) fail("no way to link a pull request by number");
+  else {
+    await type(box, "19");
+    await click(linkBtn);
+    const post = calls.find(c => c.method === "POST" && c.url.endsWith("/link"));
+    if (!post) fail(`Link posted nothing: ${JSON.stringify(calls)}`);
+    else if (post.body?.number !== 19) {
+      fail(`Link sent ${JSON.stringify(post.body)}, want number 19`);
+    } else ok("Link posts the number typed into the box");
+  }
+
+  // An empty box asks rather than posting. A POST with no number would 400, and the
+  // page would report a server error for something it could see itself.
+  calls.length = 0;
+  const box2 = doc.getElementById("link-bitbucket/netfoundry/customer-connect-docs");
+  const linkBtn2 = $$(".pcard")[1].querySelector("[data-link]");
+  if (box2 && linkBtn2) {
+    await type(box2, "");
+    await click(linkBtn2);
+    if (calls.some(c => c.method === "POST")) {
+      fail("Link posted with no number in the box");
+    } else if (!$("#toasts .toast.bad")) {
+      fail("Link with an empty box did nothing and said nothing");
+    } else ok("Link with an empty box asks for a number instead of posting");
   }
 }
 
