@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,15 @@ func testProjectsAdmin(t *testing.T, cacheDir string) http.Handler {
 	cfg.Build.CacheDir = cacheDir
 	cfg.Listeners = []config.Listener{{TCP: "127.0.0.1:8471"}}
 
-	return NewProjectsAdmin(st, cfg, slog.New(slog.DiscardHandler)).Handler()
+	// No real docker. The cache controls delete volumes, and the first version of that
+	// ran against the machine's own daemon — a `go test` run deleted the cache volumes of
+	// every live preview on the host. Stubbed to nothing: what these tests are about is
+	// the directory half.
+	return NewProjectsAdmin(st, cfg, slog.New(slog.DiscardHandler)).
+		WithVolumeOps(
+			func(context.Context) ([]string, error) { return nil, nil },
+			func(context.Context, string) error { return nil },
+		).Handler()
 }
 
 // seedCache fills one preview's cache the way a build would.

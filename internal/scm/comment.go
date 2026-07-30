@@ -30,7 +30,19 @@ func RenderComment(r Report) string {
 
 	// The marker must be first. It is what findComment looks for, and putting
 	// it at the top means a truncated body still identifies itself.
-	b.WriteString(Marker(r.PreviewID))
+	//
+	// A link reference definition rather than an HTML comment, on every platform.
+	// `<!-- docpreview:… -->` is invisible in *rendered* markdown but visible in the raw
+	// body — which anybody sees when they quote the comment, edit it, or read it through
+	// an API — and it was reported as clutter above the heading. `[docpreview]: #<id>` is
+	// consumed by every CommonMark renderer, emits nothing, and needs no raw-HTML support,
+	// which is also why Bitbucket cannot render it as a stray paragraph.
+	//
+	// Safe to switch precisely because HasMarker matches both forms and always will: a
+	// daemon upgraded across this change still finds the comments it wrote in the old one
+	// and edits them in place. Without that it would post a second comment on every open
+	// pull request at once. See scm.HasMarker.
+	b.WriteString(MarkerFor(r.PreviewID, MarkerLinkRef))
 	b.WriteString("\n\n**Documentation preview**\n\n")
 
 	b.WriteString("| | |\n|---|---|\n")

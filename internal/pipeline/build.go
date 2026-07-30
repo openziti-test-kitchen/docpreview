@@ -199,7 +199,14 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 			cfg.Build.Dir, config.RepoConfigName, err)
 	}
 
-	timeout := b.defaults.Timeout
+	// The project's own cap wins over the server's. It is set only by applyProject
+	// from the operator's project row — never by the repository, see RepoBuild.Timeout
+	// — so this is the operator saying "this one takes longer" rather than a branch
+	// deciding how long it may hold a worker.
+	timeout := cfg.Build.Timeout
+	if timeout <= 0 {
+		timeout = b.defaults.Timeout
+	}
 	if timeout <= 0 {
 		timeout = 15 * time.Minute
 	}
@@ -213,6 +220,24 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 	default:
 		out, err = b.buildLocal(ctx, ws, buildDir, cfg, sink)
 	}
+
+	// The elapsed time, in the log, on both paths.
+	//
+	// The comment carries a duration and the dashboard shows a relative age, and neither
+	// answers "how long did this take" while you are reading the output — which is the
+	// question anybody has after watching a package install for four minutes. Written to the
+	// sink as well as the buffer, so a live tail gets it too.
+	//
+	// Before the error is wrapped: a failed build's duration is the more interesting one,
+	// since the whole point is finding out what took the time.
+	if sink != nil {
+		verb := "finished"
+		if err != nil {
+			verb = "failed after"
+		}
+		fmt.Fprintf(sink, "\n$ build %s %s\n", verb, time.Since(started).Round(time.Second))
+	}
+
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("build timed out after %s:\n%s", timeout, out)
@@ -335,6 +360,7 @@ func (b *Builder) buildLocal(ctx context.Context, ws *Workspace, buildDir string
 
 	var log bytes.Buffer
 	out := tee(&log, sink)
+	b.writeInjectedNames(out)
 
 	for _, step := range []struct {
 		name string
@@ -400,7 +426,11 @@ func exists(path string) bool {
 func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir string, cfg config.RepoConfig, sink io.Writer) (string, error) {
 	image := b.defaults.Image
 	if image == "" {
-		image = "node:24-bookworm-slim"
+		// The same default as config.DefaultImage, and it has to stay that way: this
+		// branch is reached by a Builder constructed without defaults, which is every
+		// test and any future caller that forgets. It used to be the -slim variant, so a
+		// build reaching here had no git and failed on the first clone.
+		image = config.DefaultImage
 	}
 
 	source, err := hostMountPath(ws.Dir)
@@ -420,7 +450,16 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	var log bytes.Buffer
 	out := tee(&log, sink)
 
-	args, err := b.createArgs(ws.PR, cfg, source, containerDir, buildDir, image)
+	// The environment goes in a file, not in the command line. See writeEnvFile: an
+	// injected token in argv is readable by any local process for as long as
+	// `docker create` runs.
+	envFile, envArgs, cleanupEnv, err := b.writeEnvFile(ws.PR, cfg)
+	if err != nil {
+		return "", err
+	}
+	defer cleanupEnv()
+
+	args, err := b.createArgs(ws.PR, cfg, source, containerDir, buildDir, image, envFile, envArgs)
 	if err != nil {
 		return "", err
 	}
@@ -451,6 +490,7 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 
 	fmt.Fprintf(out, "$ docker create %s → %s\n", image, container[:min(12, len(container))])
 	fmt.Fprintf(out, "$ mount %s → /workspace\n", source)
+	b.writeInjectedNames(out)
 	fmt.Fprintf(out, "$ %s\n$ %s\n", installCommand(buildDir), cfg.Build.Command)
 
 	if err := b.runContainer(ctx, container, out); err != nil {
@@ -477,7 +517,7 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 // in any log, which makes this the part of the driver most worth pinning.
 func (b *Builder) createArgs(
 	pr model.PullRequest, cfg config.RepoConfig,
-	source, containerDir, buildDir, image string,
+	source, containerDir, buildDir, image, envFile string, envArgs []string,
 ) ([]string, error) {
 	caches, err := b.cacheMounts(pr)
 	if err != nil {
@@ -510,20 +550,152 @@ func (b *Builder) createArgs(
 		// applied shallowest first, so the volume lands on top.
 		"--mount", "type=volume,target=" + containerDir + "/node_modules",
 		"--workdir", containerDir,
-		// Containers that outlive their build are the usual way a small build
-		// host runs out of memory.
-		"--memory", "4g",
-		"--cpus", "2",
+	}
+
+	// Capped, but not at the hardcoded 2 CPUs and 4 GB this used to be.
+	//
+	// A Docusaurus build prerenders every route and parallelises across cores, so the cap is
+	// the ceiling on the longest phase of the build — measured at fifty seconds of silence
+	// on a machine with twenty cores, two of which it was allowed to use. Configurable now;
+	// see config.BuildDefaults.
+	//
+	// Still capped, because a build is somebody else's code: a container able to take every
+	// core can stall the daemon that is supposed to be reporting on it. Zero means no flag
+	// at all, for an operator who wants the container to have the machine.
+	if b.defaults.CPUs > 0 {
+		args = append(args, "--cpus", strconv.FormatFloat(b.defaults.CPUs, 'f', -1, 64))
+	}
+	if b.defaults.Memory != "" {
+		args = append(args, "--memory", b.defaults.Memory)
 	}
 	args = append(args, caches...)
 	// After the caches, so a repository that names one of these variables in its
 	// own config wins — which is the general rule for build env here, and the
 	// escape hatch if a manager needs a cache somewhere else.
-	for _, kv := range b.buildEnv(pr, cfg, nil) {
-		args = append(args, "--env", kv)
+	if envFile != "" {
+		args = append(args, "--env-file", envFile)
 	}
+	// Whatever could not go in the file. See writeEnvFile: docker's env-file format has
+	// no way to express a value containing a newline.
+	args = append(args, envArgs...)
 	return append(args, image, "sh", "-lc",
 		installCommand(buildDir)+" && "+cfg.Build.Command), nil
+}
+
+// writeEnvFile puts the build's environment in a private file and returns its path.
+//
+// # Why not --env
+//
+// `docker create --env NAME=value` puts every value in the command line, and a command
+// line is world-readable: `ps` on Linux, Process Explorer or `Get-CimInstance
+// Win32_Process` on Windows, for as long as the process runs. Any local account could read
+// every injected token at the moment a build started. Redaction does not help — it scrubs
+// what this program *writes*, and this was the operating system publishing it.
+//
+// The file is created with 0600 in the system temp directory and deleted as soon as
+// `docker create` returns, which is the only moment docker reads it. Not inside the
+// workspace: that directory is bind-mounted into the container and is a git tree somebody
+// could commit, and a credential in a build output is worse than one in a process list.
+//
+// # The one thing the format cannot carry
+//
+// docker's env-file takes a value literally to the end of the line, so there is no way to
+// express a newline. A multi-line value — someone injecting a PEM as a build secret —
+// therefore still goes through --env, and is logged as the exposure it is rather than
+// silently mangled into one broken line.
+func (b *Builder) writeEnvFile(pr model.PullRequest, cfg config.RepoConfig) (
+	path string, args []string, cleanup func(), err error,
+) {
+	cleanup = func() {}
+
+	env := b.buildEnv(pr, cfg, nil)
+	var lines []string
+	for _, kv := range env {
+		if strings.ContainsAny(kv, "\n\r") {
+			name, _, _ := strings.Cut(kv, "=")
+			// Named, not valued. The name is the operator's own; the value is the thing
+			// this whole function exists to keep out of a process list.
+			b.log.Warn("a multi-line build variable goes on the docker command line, "+
+				"where any local process can read it while the build starts",
+				"variable", name)
+			args = append(args, "--env", kv)
+			continue
+		}
+		lines = append(lines, kv)
+	}
+	if len(lines) == 0 {
+		return "", args, cleanup, nil
+	}
+
+	f, err := os.CreateTemp("", "docpreview-env-*")
+	if err != nil {
+		return "", nil, cleanup, fmt.Errorf("creating the build environment file: %w", err)
+	}
+	path = f.Name()
+	cleanup = func() {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			b.log.Warn("removing the build environment file", "path", path, "error", err)
+		}
+	}
+
+	// Before writing, not after: a file that is briefly world-readable is a file that was
+	// world-readable. CreateTemp is already 0600 on Unix; on Windows the mode is
+	// advisory and the temp directory's ACL is what protects it, which is the same
+	// carve-out the vault documents for its own permission check.
+	if err := f.Chmod(0o600); err != nil && runtime.GOOS != "windows" {
+		f.Close()
+		cleanup()
+		return "", nil, func() {}, fmt.Errorf("securing the build environment file: %w", err)
+	}
+
+	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		f.Close()
+		cleanup()
+		return "", nil, func() {}, fmt.Errorf("writing the build environment file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", nil, func() {}, fmt.Errorf("closing the build environment file: %w", err)
+	}
+	return path, args, cleanup, nil
+}
+
+// injectedNames is the sorted list of variables this build gets, for the log.
+//
+// # Why the names are printed
+//
+// Twice in one evening a build failed because a variable was stored under a name the build
+// script does not read — `GH_ZITI_CI_REPO_ACCESS_PAT_NF` against the script's
+// `GH_ZITI_CI_REPO_ACCESS_PAT`. Both times the visible symptom was several steps removed
+// from the cause: the script fell back to SSH, the container has no key, and the log said
+// "Host key verification failed", which names neither the variable nor the fallback.
+//
+// A build cannot tell anyone which variables it *expected*, but docpreview knows exactly
+// which ones it supplied, and printing them turns that hunt into a glance.
+//
+// Names only. The values are what the redactor exists for, and a name is not a secret —
+// it is a lookup key an operator chose and has to be able to check.
+func (b *Builder) injectedNames() []string {
+	names := make([]string, 0, len(b.secrets))
+	for name := range b.secrets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// writeInjectedNames prints the injected variable names, or says there are none.
+//
+// "none" is stated rather than omitted, because an absent line is indistinguishable from a
+// build whose variables were fine — and no-variables-at-all is the state a misconfigured
+// daemon produces.
+func (b *Builder) writeInjectedNames(out io.Writer) {
+	names := b.injectedNames()
+	if len(names) == 0 {
+		fmt.Fprintf(out, "$ injected variables: none\n")
+		return
+	}
+	fmt.Fprintf(out, "$ injected variables (values redacted): %s\n", strings.Join(names, " "))
 }
 
 // tee returns a writer feeding both the in-memory log and the live sink.

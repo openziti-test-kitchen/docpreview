@@ -435,6 +435,34 @@ Cleanup is wired, not aspirational:
   Teardown also releases the exposer's names, before withdrawing the shares, so a crash mid-teardown self-heals.
 - The prefix is what stops it deleting shares an operator made by hand.
 
+- [x] **Shares are adopted at startup rather than deleted and recreated.** `Reap` used to run with an empty
+      keep-set — delete every share carrying the `docpreview:` prefix, then create them all again. Measured on
+      2026-07-30: 85 seconds of deleting followed by 183 seconds of creating, to put two pull requests back in
+      the state they were already in, and every preview URL 404s throughout.
+      What dies with the process is the overlay listener; the share on the controller does not, and
+      `sdk.NewListener(token, root)` binds to an existing token. So `expose.Adopter` lists what is already
+      published (`Adoptable`), startup passes the database's claim as the keep-set so only genuine orphans are
+      deleted, and each restore binds a listener to the share that is already there. A failed adoption falls
+      through to `Publish`, which replaces by name and so is also the cleanup.
+      **4m 28s → 3s** on the live instance, all thirteen shares adopted. Verified against the hosted account:
+      a bind against a share created by a dead process carries traffic, and `ListShares` reports
+      `FrontendEndpoints`, so no URL has to be reconstructed. `internal/daemon/adopt_test.go` covers
+      prefer-adoption, fall-back-to-publish, the wrong-key case, and an exposer with no `Adopter`.
+- [ ] **A name that cannot collide, and a defined answer when one does.** The template is configurable, so
+      whether two previews can render to one name is an operator's decision they have no reason to know they are
+      making — and the collision is silent: the loser's name-reclaim can delete the winner's fresh share. Make the
+      default carry the whole identity, narrowest first, so it reads as a hostname and sorts by branch:
+      `<branch>-<repo>-<owner>-<platform>`, with `gh` and `bb` for the platform to stay inside the DNS label
+      limit. Then define the conflict path, because a real collision is nearly always our own leaked share:
+      try to reclaim it (the `docpreview:` target prefix says it is ours); if that fails, suffix a counter; and if
+      *that* fails, refuse the build with an error naming the fix — rename the branch — rather than fighting over
+      a name forever. Needs a live zrok account to verify, which is the same gap that blocks the reap tests below.
+- [ ] **A failed republish leaves the row advertising a dead URL.** Seen live on 2026-07-30: a preview that had
+      built successfully failed to restore at startup when `CreateShare` timed out, and `/status` went on reporting
+      `state: ready` with a URL that answered 502. `restoreBuildShares` already clears a build's URL when it cannot
+      republish it, for exactly this reason; the preview path does not. Either clear it, or mark the row as needing
+      a republish and retry it — but the dashboard must not offer a link to something that is not served. Retry
+      with backoff around the zrok calls is in (`Zrok.retryTransient`), which makes this rarer, not impossible.
 - [ ] **No audit command.** `Reap` logs what it deletes but there is no `docpreview shares list` to see what a
       zrok namespace or Frontdoor tenant currently holds versus what the database thinks. The gap that matters
       is a share created by a daemon whose database was then deleted: nothing claims it, and nothing looks.
@@ -528,6 +556,20 @@ The four things that made this harder than a form, all still load-bearing and no
 - [ ] **Monorepo support.** One `.docpreview.yml` builds one site. A repository with several documentation
       sites cannot preview the one a pull request actually touched.
 - [ ] **Log search.** The viewer tails and downloads; finding a line in a 5000-line build means downloading it.
+- [ ] **`keep_builds: 10` means ten per-build shares nobody asked for.** Adoption made a restart cheap, so this
+      is no longer urgent — but eleven of the thirteen publications restored for two pull requests are per-commit
+      history, and the first restart after a database change pays full price for all of them. Capping the restore
+      at the newest one or two, or restoring a build's share lazily on first click, is a few lines.
+- [ ] **The build output is still written through the NTFS bind mount.** `node_modules` and the package cache both
+      moved to docker volumes — the cache was measured filling at 0.4 MB/s as a bind mount — but the site itself is
+      an entire tree of small files written to the host, and prerendering is the phase that visibly stalls. Build
+      to a volume and copy the output out in one transfer.
+- [x] **The daemon has a log file.** `log_file` in the server config, teed with an `io.MultiWriter` so the output
+      still reaches the terminal somebody may be watching. Appended to, never rotated — rotation belongs to
+      whatever supervises the process, and truncating on boot would delete the evidence from before the restart
+      being investigated. A path that cannot be opened is a warning, not a refusal to start.
+- [ ] **The container has no TTY, so build tools block-buffer.** Output arrives in 4-8 KiB lumps rather than by
+      the line, which reads as a stalled build. A TTY would line-buffer, at the cost of ANSI escapes to strip.
 - [ ] **Preview diffing.** Vercel shows what changed visually between deployments. Not attempted.
 - [ ] **`internal/scm/local` has no tests.** The package is exercised end to end by the demo but has no unit
       tests of its own; `VerifyWebhook`, `ChangedFiles` and the path checks all deserve them.

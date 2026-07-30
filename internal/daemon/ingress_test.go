@@ -94,6 +94,10 @@ func testIngress(t *testing.T, client *fakeClient) (*Ingress, *Daemon, *store.St
 
 	clients := map[model.Platform]scm.Client{model.PlatformGitHub: client}
 	d := New(cfg, st, ex, clients, log)
+	// No docker in tests. Teardown removes the docker cache volumes, and the real call is a
+	// `docker volume rm` subprocess per torn-down preview — which turned the daemon suite
+	// from thirty seconds into a timeout while a real build was occupying the daemon.
+	d.removeCacheVolumes = func(context.Context, string) error { return nil }
 	ingress := NewIngress(d, clients, st, log)
 
 	// The local exposer serves previews as paths on the daemon's own listener,

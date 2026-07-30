@@ -116,7 +116,10 @@ func TestStreamLogReplaysAFinishedBuild(t *testing.T) {
 	rec := get(t, ingress.Handler(), "/logs/preview1/stream")
 	body := rec.Body.String()
 
-	if !strings.Contains(body, "data: $ npm run build") {
+	// The content, not "data: " plus the content. Every stored line now begins with a
+	// timestamp, so the text no longer sits flush against the SSE field name — and what
+	// this test is about is whether the line was replayed at all.
+	if !strings.Contains(body, "$ npm run build") {
 		t.Errorf("the log was not replayed:\n%s", body)
 	}
 	// The done event is what stops the browser showing a spinner forever.
@@ -156,7 +159,7 @@ func TestStreamLogSaysWhetherItIsLiveOrAReplay(t *testing.T) {
 	}
 	// The start event must precede the lines, or the label arrives after the
 	// content it is labelling.
-	if strings.Index(body, "event: start") > strings.Index(body, "data: $ yarn build") {
+	if strings.Index(body, "event: start") > strings.Index(body, "$ yarn build") {
 		t.Errorf("start arrives after the log lines:\n%s", body)
 	}
 }

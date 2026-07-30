@@ -78,6 +78,39 @@ func ProjectSecretPrefix(platform, owner, repo string) string {
 	return ProjectPrefix + platform + "/" + owner + "/" + repo + "/"
 }
 
+// IsBuildEnvKey reports whether a vault key is a build environment variable rather than
+// an infrastructure credential.
+//
+// The rule is the key's *shape*: upper-case letters, digits and underscore, not starting
+// with a digit — the form a shell can read. That is what separates BB_REPO_TOKEN_ONPREM,
+// which a build script looks for by name, from github.private_key, which the daemon uses
+// itself and no build should ever see. The dotted keys are all infrastructure and the
+// naming convention already carried that distinction; this makes it load-bearing.
+//
+// It exists because the alternative made the dashboard a liar. A secret stored from the
+// credential page did nothing until somebody also added a `build.secrets` line to a YAML
+// file on the host — so the page accepted a token, said "set", and the next build behaved
+// exactly as if the token were absent. A global secret now reaches every build, and a
+// project's own entry of the same name overrides it.
+//
+// The consequence is worth stating plainly: anything stored here under a shell-shaped
+// name is handed to every build on this daemon, and a build can read its own environment.
+// Store what a build needs, and nothing else.
+func IsBuildEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, r := range key {
+		switch {
+		case r >= 'A' && r <= 'Z', r == '_':
+		case r >= '0' && r <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // ProjectSecretKey names one environment variable's value for one project.
 //
 // The environment variable name is the last segment, so listing a project's secrets

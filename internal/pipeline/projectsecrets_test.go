@@ -3,6 +3,7 @@ package pipeline
 import (
 	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/netfoundry/docpreview/internal/config"
@@ -88,6 +89,51 @@ func TestProjectSecretsDoNotLeakBetweenProjects(t *testing.T) {
 		if kv == "TOKEN_ONE=value-one-long-enough" || kv == "TOKEN_TWO=value-two-long-enough" {
 			t.Errorf("WithSecrets mutated the base builder: %s", kv)
 		}
+	}
+}
+
+// TestTheLogNamesTheInjectedVariables.
+//
+// Two builds in one evening failed because a variable was stored under a name the build
+// script does not read. Both times the symptom was several steps removed from the cause: the
+// script fell back to SSH, the container has no key, and the log said "Host key verification
+// failed" — naming neither the variable nor the fallback.
+//
+// So the log says which variables were supplied. Names only: a name is a lookup key the
+// operator chose and has to be able to check, and the values are what the redactor is for.
+func TestTheLogNamesTheInjectedVariables(t *testing.T) {
+	b := NewBuilder(config.BuildDefaults{}, slog.New(slog.DiscardHandler)).
+		WithSecrets(map[string]string{
+			"GH_ZITI_CI_REPO_ACCESS_PAT_NF": "github_pat_not-a-real-token",
+			"BB_REPO_TOKEN_ONPREM":          "ATCTT3-not-a-real-token",
+		})
+
+	var out strings.Builder
+	b.writeInjectedNames(&out)
+	line := out.String()
+
+	for _, want := range []string{"BB_REPO_TOKEN_ONPREM", "GH_ZITI_CI_REPO_ACCESS_PAT_NF"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the log does not name %s: %q", want, line)
+		}
+	}
+	// Sorted, so two builds of the same project produce the same line and a diff between
+	// logs shows a real change rather than map iteration order.
+	if strings.Index(line, "BB_REPO") > strings.Index(line, "GH_ZITI") {
+		t.Errorf("the names are not sorted: %q", line)
+	}
+	for _, secret := range []string{"github_pat_not-a-real-token", "ATCTT3-not-a-real-token"} {
+		if strings.Contains(line, secret) {
+			t.Fatalf("a value is in the log line: %q", line)
+		}
+	}
+
+	// And no variables at all says so, because an absent line reads as a build whose
+	// variables were fine.
+	var none strings.Builder
+	NewBuilder(config.BuildDefaults{}, slog.New(slog.DiscardHandler)).writeInjectedNames(&none)
+	if !strings.Contains(none.String(), "none") {
+		t.Errorf("a build with no variables says %q", none.String())
 	}
 }
 

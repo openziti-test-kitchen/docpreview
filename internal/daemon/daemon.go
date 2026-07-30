@@ -18,9 +18,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/netfoundry/docpreview/internal/buildlog"
@@ -59,6 +61,59 @@ type Daemon struct {
 
 	// secrets are injected into every build, from the server config.
 	secrets map[string]string
+
+	// starting is true from construction until recovery finishes. Atomic rather than under
+	// mu: it is read by every /status while recovery holds no lock, and written once.
+	starting atomic.Bool
+
+	// startupDone and startupTotal count exposer round trips during recovery, for the
+	// banner's progress bar. The total is written once, before any goroutine starts, and
+	// read-only afterwards; the counter is atomic because every restore increments it.
+	startupDone  atomic.Int64
+	startupTotal int
+
+	// startupItems is what recovery has actually done, most recent last, for the banner.
+	//
+	// A count and a stage answer "how far" and not "what is it doing" — which is the
+	// question a four-minute wait provokes, and the one that got asked. Guarded by its
+	// own mutex rather than d.mu: it is written from every restore goroutine and read by
+	// every /status, and none of that should queue behind a build's locking.
+	itemsMu      sync.Mutex
+	startupItems []string
+
+	// Outcome counters for the startup report, split by adopted and created because the
+	// difference between them is the difference between a ten-second restart and a
+	// four-minute one. Atomic: every restore goroutine increments them.
+	adoptedPreviews atomic.Int64
+	createdPreviews atomic.Int64
+	adoptedBuilds   atomic.Int64
+	createdBuilds   atomic.Int64
+
+	// startupOrphans is how many published shares the database no longer claimed. Written
+	// once during recovery, before the restore goroutines start, so it needs no lock.
+	startupOrphans int
+
+	// adoptable is what the exposer already has published, keyed by publication key,
+	// read during recovery to decide between taking a share over and creating one.
+	// Written once before the restore loops start and read-only afterwards.
+	adoptable map[string]expose.Adoptable
+
+	// lastStartup is the report of the most recent recovery, kept after it finishes so
+	// the dashboard can show what happened. Retained rather than cleared: the interesting
+	// moment is immediately *after* a startup nobody could see the middle of.
+	lastStartup atomic.Pointer[StartupSummary]
+
+	// startup is the stage recovery is in, for the banner. A pointer swapped whole
+	// rather than fields mutated in place, for the same reason `starting` is atomic:
+	// every /status reads it while recovery is holding no lock, and a half-updated
+	// stage would render a count against the wrong phase.
+	startup atomic.Pointer[StartupProgress]
+
+	// removeCacheVolumes deletes a preview's docker cache volumes. A field because it
+	// shells out to docker: a test running the real one spends a subprocess per teardown,
+	// and the version of this that deleted volumes by name deleted live ones. Defaulted in
+	// New.
+	removeCacheVolumes func(ctx context.Context, previewID string) error
 
 	// projectSecretsFn resolves the environment variables belonging to one project,
 	// which are not the same for two projects and are not in the server config at
@@ -145,20 +200,22 @@ func New(
 		// Copied, not aliased. The caller hands the same map to Ingress, and
 		// each now owns its own so that SetClient on one is not an
 		// unsynchronized write into the other's reads.
-		clients:  maps.Clone(clients),
-		cloner:   pipeline.NewCloner(cfg.WorkspacesDir(), log),
-		detector: pipeline.NewDetector(log),
-		builder:  pipeline.NewBuilder(cfg.Build, log),
-		secrets:  map[string]string{},
-		logs:     logs,
-		wake:     make(chan struct{}, 1),
+		clients:    maps.Clone(clients),
+		cloner:     pipeline.NewCloner(cfg.WorkspacesDir(), log),
+		detector:   pipeline.NewDetector(log),
+		builder:    pipeline.NewBuilder(cfg.Build, log),
+		secrets:    map[string]string{},
+		logs:       logs,
+		wake:       make(chan struct{}, 1),
 		instance:   time.Now().UTC().Format("20060102-150405.000"),
 		live:       map[string]*expose.Publication{},
 		liveBuilds: map[string]*expose.Publication{},
-		running:  map[string]*build{},
-		commit:   map[string]*sync.Mutex{},
-		reported: map[string]reportMark{},
-		events:   newEventLog(),
+		running:    map[string]*build{},
+		commit:     map[string]*sync.Mutex{},
+		reported:   map[string]reportMark{},
+		events:     newEventLog(),
+
+		removeCacheVolumes: pipeline.RemoveCacheVolumes,
 	}
 	d.publisher = newPublisher(reportDebounce, d.publishReport)
 	return d
@@ -405,13 +462,53 @@ func (d *Daemon) isCurrent(previewID string, b *build) bool {
 
 // Run starts the workers and the reaper and blocks until ctx is cancelled.
 func (d *Daemon) Run(ctx context.Context) error {
+	// Reported until recovery finishes, so a build queued in that window is explained
+	// rather than looking stuck. No worker exists yet: reap-then-republish must complete
+	// before anything may publish, which is the ordering that stops a restart deleting
+	// what it just restored.
+	d.starting.Store(true)
+	// Measured from here, so the report covers what the operator actually waited through
+	// — the reap, every republish, and the history load — rather than the republish loop
+	// alone, which is the part that happens to be instrumented.
+	bootStarted := time.Now()
 	if err := d.recover(ctx); err != nil {
+		d.starting.Store(false)
 		return err
 	}
 
 	// Before any worker can add to the feed, so the restored history sits behind
 	// this run's events rather than being interleaved with them.
+	d.setStartup(StageHistory, "Loading recent build history.", 0, 0)
 	d.backfill(ctx, eventLogSize)
+
+	// The report, assembled before the flag flips.
+	//
+	// The page shows it when it first sees `starting: false`, so it has to be there in
+	// the same payload that says so — stored afterwards, the first "started" status
+	// carries no report and the moment to show it has passed.
+	pending, err := d.store.PendingCount(ctx)
+	if err != nil {
+		// A count the report can do without. Failing startup over it would trade a
+		// working daemon for a statistic.
+		d.log.Warn("counting pending jobs for the startup report", "error", err)
+	}
+	d.lastStartup.Store(&StartupSummary{
+		Seconds:         int(time.Since(bootStarted).Seconds()),
+		Instance:        d.instance,
+		Previews:        int(d.adoptedPreviews.Load() + d.createdPreviews.Load()),
+		AdoptedPreviews: int(d.adoptedPreviews.Load()),
+		CreatedPreviews: int(d.createdPreviews.Load()),
+		AdoptedBuilds:   int(d.adoptedBuilds.Load()),
+		CreatedBuilds:   int(d.createdBuilds.Load()),
+		Orphans:         d.startupOrphans,
+		Pending:         pending,
+		Items:           d.startupItemsSnapshot(),
+	})
+
+	d.starting.Store(false)
+	// Cleared after the flag, not before: the page reads one payload, and a status
+	// assembled between the two would say "started" while still carrying a stage.
+	d.startup.Store(nil)
 
 	var wg sync.WaitGroup
 	for i := 0; i < d.cfg.Workers; i++ {
@@ -458,13 +555,42 @@ func (d *Daemon) recover(ctx context.Context) error {
 		return err
 	}
 
-	// Reap first, with an empty keep set: no publication we own can have
-	// survived the process that created it.
-	if err := d.exposer.Reap(ctx, nil); err != nil {
-		d.log.Warn("reaping orphaned shares at startup", "error", err)
-	}
+	// Republished concurrently, bounded, and only after the reap below has returned.
+	//
+	// Each publish is a share creation plus an overlay listener — ten to fifteen seconds
+	// against the hosted zrok controller — and no worker starts until every one of them is
+	// done, so serially this was minutes of a daemon that looked started and would not build
+	// anything. A queued build in that window is indistinguishable from a stuck queue, which
+	// is how it was reported twice.
+	//
+	// Safe to parallelise, for reasons specific to this loop rather than in general:
+	//
+	//   - Each preview publishes under its own name, and two previews sharing a name is
+	//     already refused by the exposer rather than resolved.
+	//   - Publishing is destructive to whoever holds the name. What holds these names now
+	//     is either nothing — the reap deleted it — or the share about to be adopted under
+	//     that same key, which is not a collision. That is why the reap still runs first,
+	//     rather than being merged into this loop.
+	//   - The stores of live publications are behind d.mu in every exposer, and the daemon's
+	//     own maps are written under it here.
+	//
+	// Bounded by workers, with a floor: a daemon configured for one worker still has no
+	// reason to restore one preview at a time, and unbounded would open a listener per
+	// preview at once against a controller that rate-limits.
+	limit := max(d.cfg.Workers, 4)
 
-	restored, builds := 0, 0
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		restored int
+		builds   int
+		sem      = make(chan struct{}, limit)
+	)
+	// Eligibility is decided before anything is launched, so the progress banner has a
+	// denominator. Counting `previews` instead would show "1 of 9" on a database where
+	// eight rows are failed builds with no artifacts to restore, and a total that never
+	// arrives reads as a stall.
+	eligible := make([]store.Preview, 0, len(previews))
 	for _, p := range previews {
 		if p.State != scm.StateReady || p.ArtifactDir == "" {
 			continue
@@ -476,25 +602,112 @@ func (d *Daemon) recover(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := d.republish(ctx, p); err != nil {
-			// Artifacts that cannot be served are the same situation as artifacts
-			// that are not there: drop the row so the next push rebuilds. Keeping
-			// it means this error on every startup forever, and a preview whose
-			// comment advertises a URL that serves a broken page.
-			if errors.Is(err, errArtifactsUnusable) {
-				d.log.Warn("dropping preview whose artifacts cannot be served",
-					"preview", p.PreviewID, "error", err)
-				if err := d.store.DeletePreview(ctx, p.PreviewID); err != nil {
-					d.log.Error("forgetting preview", "preview", p.PreviewID, "error", err)
-				}
-				continue
-			}
-			d.log.Error("restoring preview", "preview", p.PreviewID, "error", err)
-			continue
-		}
-		restored++
-		builds += d.restoreBuildShares(ctx, p)
+		eligible = append(eligible, p)
 	}
+
+	// The denominator is round trips, not previews. Each preview is one share plus one
+	// per retained build, and the build shares are the bulk of it — restoring two pull
+	// requests is eleven calls. Counting previews gave a bar that read "1 of 2" and did
+	// not move for minutes.
+	//
+	// Costs one extra sqlite query per preview, which is local and immediate against the
+	// ten-to-fifteen seconds each of the calls it is counting takes.
+	d.startupDone.Store(0)
+	d.startupTotal = len(eligible)
+	keep := make(map[string]bool, len(eligible))
+	for _, p := range eligible {
+		keep[p.PreviewID] = true
+		for _, b := range d.buildSharesToRestore(ctx, p) {
+			keep[buildKey(p.PreviewID, b.BuildID)] = true
+			d.startupTotal++
+		}
+	}
+
+	// What the exposer already has, before anything is deleted.
+	//
+	// This is the whole of the adoption strategy: a share survives the process that
+	// created it, only its overlay listener does not. Listing first means the reap can be
+	// told what to keep, and each restore can bind to a share that is already there
+	// instead of paying to delete it and paying again to create an identical one — which
+	// was measured at 85 seconds of deleting followed by 183 seconds of creating, for two
+	// pull requests.
+	d.setStartup(StageReaping, "Checking what the exposer already has.", 0, 0)
+	d.adoptable = nil
+	if ad, ok := d.exposer.(expose.Adopter); ok {
+		found, err := ad.Adoptable(ctx)
+		if err != nil {
+			// Not fatal, and deliberately not retried here: without a listing every
+			// publication is created from scratch, which is exactly the old behaviour.
+			d.log.Warn("listing shares to adopt; falling back to recreating them", "error", err)
+		} else {
+			d.adoptable = found
+			d.log.Info("shares available to adopt", "count", len(found))
+		}
+	}
+
+	// Reap, now with a keep-set rather than nil.
+	//
+	// nil meant "delete everything you own", on the reasoning that a share cannot outlive
+	// its process. The share does outlive it; the listener does not. So what must be
+	// deleted is only what the database no longer claims — a preview since torn down, a
+	// build since pruned, a share left by a create that timed out after succeeding.
+	var orphans int
+	for key := range d.adoptable {
+		if !keep[key] {
+			orphans++
+		}
+	}
+	// Recorded for the report. Counted from our own listing rather than from Reap, which
+	// returns an error and not a tally — so this is "what we could see that nothing
+	// claims", which is the same set Reap is about to delete.
+	d.startupOrphans = orphans
+	d.setStartup(StageReaping, "Clearing shares the database no longer claims.", 0, 0)
+	if orphans > 0 {
+		d.addStartupItem(fmt.Sprintf("clearing %d share(s) nothing claims", orphans))
+	}
+	if err := d.exposer.Reap(ctx, keep); err != nil {
+		d.log.Warn("reaping orphaned shares at startup", "error", err)
+	}
+
+	d.setStartup(StageRestoring, restoringNote, 0, d.startupTotal)
+
+	for _, p := range eligible {
+		wg.Add(1)
+		go func(p store.Preview) {
+			defer wg.Done()
+			// The preview's own share is one counted round trip, and it is counted
+			// whether it worked. A failure consumed the wait just the same, and the
+			// alternative — counting successes — leaves the bar short of its total
+			// exactly when something went wrong, which is when it is being read.
+			defer d.bumpStartup()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if err := d.republish(ctx, p); err != nil {
+				// Artifacts that cannot be served are the same situation as artifacts
+				// that are not there: drop the row so the next push rebuilds. Keeping
+				// it means this error on every startup forever, and a preview whose
+				// comment advertises a URL that serves a broken page.
+				if errors.Is(err, errArtifactsUnusable) {
+					d.log.Warn("dropping preview whose artifacts cannot be served",
+						"preview", p.PreviewID, "error", err)
+					if err := d.store.DeletePreview(ctx, p.PreviewID); err != nil {
+						d.log.Error("forgetting preview", "preview", p.PreviewID, "error", err)
+					}
+					return
+				}
+				d.log.Error("restoring preview", "preview", p.PreviewID, "error", err)
+				return
+			}
+
+			n := d.restoreBuildShares(ctx, p)
+			mu.Lock()
+			restored++
+			builds += n
+			mu.Unlock()
+		}(p)
+	}
+	wg.Wait()
 
 	pending, err := d.store.PendingCount(ctx)
 	if err != nil {
@@ -507,6 +720,94 @@ func (d *Daemon) recover(ctx context.Context) error {
 		d.nudge()
 	}
 	return nil
+}
+
+// buildSharesToRestore is the build shares one preview expects to have published: a
+// recorded URL, and artifacts still on disk to serve.
+//
+// Used for two things before any of them is published — the progress denominator, and
+// the reap's keep-set. Both have to agree with what restoreBuildShares will actually
+// attempt: a total that includes work nobody does leaves the bar short of the end every
+// time, and a keep-set that misses one deletes a share that is about to be adopted.
+//
+// Side-effect free, which is why restoreBuildShares still runs its own loop rather than
+// consuming this: that loop also *clears* the URL of a build whose artifacts have been
+// pruned, and doing that from a function called to count things would mean the keep-set
+// pass silently rewrote rows.
+//
+// A failed query is an empty list rather than an error. Wrong by a share makes the bar
+// finish early; failing recovery over it restores nothing at all.
+func (d *Daemon) buildSharesToRestore(ctx context.Context, p store.Preview) []store.Build {
+	rows, err := d.store.BuildsFor(ctx, p.PreviewID)
+	if err != nil {
+		d.log.Warn("listing builds to count their shares", "preview", p.PreviewID, "error", err)
+		return nil
+	}
+	out := make([]store.Build, 0, len(rows))
+	for _, b := range rows {
+		if b.URL == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(d.cfg.ArtifactsDir(), p.PreviewID, b.BuildID)); err != nil {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// publishOrAdopt serves h for spec, taking over an existing publication when the
+// exposer has one under the same key.
+//
+// Reports whether it adopted, because that is the difference between a restart costing
+// one overlay bind per preview and costing a delete plus a create against a controller
+// that answers in ten to fifteen seconds.
+//
+// A failed adoption falls through to publishing. The share it could not bind to is left
+// alone deliberately — Publish replaces whatever holds the name, so the fallback is also
+// the cleanup.
+func (d *Daemon) publishOrAdopt(ctx context.Context, spec expose.Spec, h http.Handler) (*expose.Publication, bool, error) {
+	ad, ok := d.exposer.(expose.Adopter)
+	if a, found := d.adoptable[spec.Key()]; ok && found {
+		pub, err := ad.Adopt(ctx, spec, a, h)
+		if err == nil {
+			return pub, true, nil
+		}
+		d.log.Warn("adopting an existing share; creating a new one instead",
+			"publication", spec.Key(), "name", spec.Name, "error", err)
+	}
+	pub, err := d.exposer.Publish(ctx, spec, h)
+	return pub, false, err
+}
+
+// addStartupItem records one thing recovery did, for the banner and the report.
+//
+// Bounded, oldest dropped. It is a running commentary on a wait, not a log — the log
+// already has every line of it, and an unbounded slice on a daemon restoring a hundred
+// previews would be shipped in full to every /status.
+func (d *Daemon) addStartupItem(text string) {
+	const maxItems = 40
+
+	d.itemsMu.Lock()
+	d.startupItems = append(d.startupItems, text)
+	if len(d.startupItems) > maxItems {
+		d.startupItems = d.startupItems[len(d.startupItems)-maxItems:]
+	}
+	d.itemsMu.Unlock()
+}
+
+// startupItemsSnapshot copies the activity list for a payload.
+//
+// A copy, because the caller marshals it after the lock is released and recovery is
+// still appending — handing out the slice itself is a data race that shows up as a
+// truncated JSON body under load.
+func (d *Daemon) startupItemsSnapshot() []string {
+	d.itemsMu.Lock()
+	defer d.itemsMu.Unlock()
+	if len(d.startupItems) == 0 {
+		return nil
+	}
+	return slices.Clone(d.startupItems)
 }
 
 // restoreBuildShares republishes one preview's per-build shares, and forgets the
@@ -533,7 +834,19 @@ func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
 		return 0
 	}
 
-	n := 0
+	// Concurrent, bounded, for the same reason recover's own loop is: this is where the
+	// count multiplies. One preview can hold keep_builds shares — ten by default — and at
+	// ten to fifteen seconds per publish that is minutes for a single pull request, during
+	// which no build can start.
+	//
+	// Each build publishes under its own name (the branch name plus its short sha), so
+	// nothing here contends with anything else. Both maps written below are behind d.mu.
+	var (
+		wg  sync.WaitGroup
+		mu  sync.Mutex
+		n   int
+		sem = make(chan struct{}, max(d.cfg.Workers, 4))
+	)
 	for _, b := range rows {
 		if b.URL == "" {
 			continue
@@ -543,7 +856,6 @@ func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
 		if _, err := os.Stat(dir); err != nil {
 			// Pruned by keep_builds, or never written. Forget the URL so nothing
 			// offers it; the row itself stays, because the history is still true.
-			b.URL, b.Name = "", ""
 			if err := d.store.ClearBuildShare(ctx, p.PreviewID, b.BuildID); err != nil {
 				d.log.Warn("forgetting a pruned build's URL",
 					"preview", p.PreviewID, "build", b.BuildID, "error", err)
@@ -551,29 +863,53 @@ func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
 			continue
 		}
 
-		site, err := preview.New(dir, p.BaseURL)
-		if err != nil {
-			d.log.Warn("serving a build's artifacts", "build", b.BuildID, "error", err)
-			continue
-		}
+		wg.Add(1)
+		go func(b store.Build) {
+			defer wg.Done()
+			// Counted on the way out, whatever happened. A share that fails to publish
+			// still consumed the round trip the operator is waiting on, and a progress
+			// bar that only counts successes stops short of its own total and reads as
+			// a stall at the very end.
+			defer d.bumpStartup()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		pub, err := d.exposer.Publish(ctx, expose.Spec{
-			PreviewID: p.PreviewID,
-			BuildID:   b.BuildID,
-			Name:      b.Name,
-			BaseURL:   p.BaseURL,
-			PR:        p.PR,
-		}, site)
-		if err != nil {
-			d.log.Warn("restoring a build share", "build", b.BuildID, "name", b.Name, "error", err)
-			continue
-		}
+			site, err := preview.New(dir, p.BaseURL)
+			if err != nil {
+				d.log.Warn("serving a build's artifacts", "build", b.BuildID, "error", err)
+				return
+			}
 
-		d.mu.Lock()
-		d.liveBuilds[buildKey(p.PreviewID, b.BuildID)] = pub
-		d.mu.Unlock()
-		n++
+			pub, adopted, err := d.publishOrAdopt(ctx, expose.Spec{
+				PreviewID: p.PreviewID,
+				BuildID:   b.BuildID,
+				Name:      b.Name,
+				BaseURL:   p.BaseURL,
+				PR:        p.PR,
+			}, site)
+			if err != nil {
+				d.log.Warn("restoring a build share", "build", b.BuildID, "name", b.Name, "error", err)
+				d.addStartupItem("failed " + b.Name)
+				return
+			}
+			if adopted {
+				d.adoptedBuilds.Add(1)
+				d.addStartupItem("adopted " + b.Name)
+			} else {
+				d.createdBuilds.Add(1)
+				d.addStartupItem("created " + b.Name)
+			}
+
+			d.mu.Lock()
+			d.liveBuilds[buildKey(p.PreviewID, b.BuildID)] = pub
+			d.mu.Unlock()
+
+			mu.Lock()
+			n++
+			mu.Unlock()
+		}(b)
 	}
+	wg.Wait()
 	return n
 }
 
@@ -613,6 +949,19 @@ func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg con
 	}
 	if p.DetectScript != "" {
 		cfg.Detect.Script = p.DetectScript
+	}
+	// Parsed here rather than stored parsed, and a bad value is dropped rather than
+	// failing the build. The projects page refuses an unparseable duration on save, so
+	// reaching this with one means a row edited by hand in sqlite — and the server
+	// default is a better answer to that than no build at all.
+	if p.Timeout != "" {
+		if dur, err := time.ParseDuration(p.Timeout); err == nil && dur > 0 {
+			cfg.Build.Timeout = dur
+		} else {
+			d.log.Warn("ignoring an unusable project build timeout",
+				"repo", pr.Repo.String(), "timeout", p.Timeout,
+				"fix", "set it to a duration like 45m on the projects page")
+		}
 	}
 	return cfg
 }
@@ -860,7 +1209,7 @@ func (d *Daemon) republish(ctx context.Context, p store.Preview) error {
 		return err
 	}
 
-	pub, err := d.exposer.Publish(ctx, expose.Spec{
+	pub, adopted, err := d.publishOrAdopt(ctx, expose.Spec{
 		PreviewID: p.PreviewID,
 		Name:      p.Name,
 		BaseURL:   p.BaseURL,
@@ -868,6 +1217,13 @@ func (d *Daemon) republish(ctx context.Context, p store.Preview) error {
 	}, site)
 	if err != nil {
 		return err
+	}
+	if adopted {
+		d.adoptedPreviews.Add(1)
+		d.addStartupItem(fmt.Sprintf("adopted %s (#%d %s)", p.Name, p.PR.Number, p.PR.Branch))
+	} else {
+		d.createdPreviews.Add(1)
+		d.addStartupItem(fmt.Sprintf("created %s (#%d %s)", p.Name, p.PR.Number, p.PR.Branch))
 	}
 
 	d.mu.Lock()
@@ -903,6 +1259,196 @@ func (d *Daemon) Handle(ctx context.Context, ev scm.Event) error {
 	default:
 		return fmt.Errorf("unknown event kind %q", ev.Kind)
 	}
+}
+
+// CancelBuild abandons the build running for a preview, and reports whether there was one.
+//
+// The machinery already existed for supersede — a push abandons the build the previous
+// push started — and nothing exposed it. So a build wedged on a slow registry, or one
+// somebody started against the wrong image, held a worker until the fifteen-minute timeout
+// with the only remedy being to restart the daemon.
+//
+// The entry is cleared, not merely cancelled, exactly as supersede does it: clearing is
+// what makes the abandoned build fail its own isCurrent check and decline to publish. A
+// build cancelled while still registered would go on to take the name.
+//
+// Queued but not started is a different thing and is not this: there is no context to
+// cancel, and the job stays in the queue. The caller is told so rather than being told
+// nothing happened.
+func (d *Daemon) CancelBuild(ctx context.Context, previewID string) bool {
+	d.mu.Lock()
+	b := d.running[previewID]
+	if b != nil {
+		delete(d.running, previewID)
+	}
+	d.mu.Unlock()
+
+	if b == nil {
+		// Nothing running. A queued build has no context to cancel, so stopping it means
+		// taking it out of the queue before a worker claims it.
+		//
+		// Checked second, and that order is the race: a worker can claim the job between
+		// the page being drawn and the click arriving. Looking at `running` first means a
+		// job that has just started is cancelled properly rather than being reported as
+		// "already gone" because the queue row had disappeared.
+		// Read before deleting: the pull request lives in the queue row, and a comment
+		// left reading "Queued" for a build that will never run is the abandoned-comment
+		// failure in another form.
+		var queuedPR model.PullRequest
+		if jobs, err := d.store.PendingJobs(ctx); err == nil {
+			for _, j := range jobs {
+				if j.PR.PreviewID() == previewID {
+					queuedPR = j.PR
+					break
+				}
+			}
+		}
+
+		removed, err := d.store.Dequeue(ctx, previewID)
+		if err != nil {
+			d.log.Warn("dequeueing a build", "preview", previewID, "error", err)
+			return false
+		}
+		if !removed {
+			return false
+		}
+		d.log.Info("removed a queued build on request", "preview", previewID)
+
+		if queuedPR.Repo.Name != "" {
+			d.report(ctx, scm.Report{
+				PR: queuedPR, PreviewID: previewID, State: scm.StateFailed,
+				Commit: queuedPR.HeadSHA, Reason: "cancelled from the dashboard before it started",
+				UpdatedAt: time.Now(),
+			})
+			d.recordf(queuedPR, "failed", "queued build cancelled from the dashboard")
+		}
+		return true
+	}
+	d.log.Info("cancelling a build on request", "pr", b.pr.String(), "sha", b.pr.HeadSHA)
+	b.cancel()
+
+	// Reported as failed rather than left as building. The pull request comment says
+	// "Building" until something says otherwise, and a cancelled build that never reports
+	// leaves it saying that forever.
+	d.report(ctx, scm.Report{
+		PR: b.pr, PreviewID: previewID, State: scm.StateFailed,
+		Commit: b.pr.HeadSHA, Reason: "cancelled from the dashboard", UpdatedAt: time.Now(),
+	})
+	d.recordf(b.pr, "failed", "build cancelled from the dashboard")
+	return true
+}
+
+// Expecting reports whether a build is running or queued for a preview.
+//
+// It exists for the log stream, which has to decide between two right answers. A preview
+// with nothing coming should replay its last log and close, so a tab opening yesterday's
+// failure is not holding a connection open for a build that will never happen. A preview
+// with a build queued should keep the connection and announce that build when it starts,
+// because the alternative is what Rebuild used to do: connect, learn "nothing is running",
+// and have no way to find out that changed.
+//
+// Queued as well as running, and that is the case it was written for: Rebuild enqueues, and
+// a worker claims the job a second or two later.
+func (d *Daemon) Expecting(ctx context.Context, previewID string) bool {
+	d.mu.Lock()
+	_, running := d.running[previewID]
+	d.mu.Unlock()
+	if running {
+		return true
+	}
+
+	jobs, err := d.store.PendingJobs(ctx)
+	if err != nil {
+		// Unknown, so assume not: holding a connection open on a failed lookup is the
+		// worse of the two mistakes.
+		return false
+	}
+	for _, j := range jobs {
+		if j.PR.PreviewID() == previewID {
+			return true
+		}
+	}
+	return false
+}
+
+// RebuildPreview queues a build of a preview's recorded commit again.
+//
+// The commit that is already on the row, not whatever the branch has moved to since. "Build
+// this again" and "build what is on the branch now" are different requests, and the second
+// is what a push already does — so this one is for the case a push cannot fix: a build that
+// failed on a bad cache entry, a timeout, an image that has since been corrected, or a
+// project setting that changed under a preview nobody is pushing to.
+//
+// It goes through handleBuild, so it supersedes anything already running for the preview
+// and reports the same states in the same order as a webhook would. A rebuild is not a
+// second kind of build.
+//
+// Reports false when the preview is unknown, which includes one torn down between the page
+// being drawn and the button being pressed.
+func (d *Daemon) RebuildPreview(ctx context.Context, previewID string) (bool, error) {
+	previews, err := d.store.ListPreviews(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range previews {
+		if p.PreviewID != previewID {
+			continue
+		}
+		pr := p.PR
+		// ListPreviews already copies the stored commit into HeadSHA; stated here because
+		// a build with an empty HeadSHA silently builds the branch tip instead, which is
+		// the thing this function exists not to do.
+		if pr.HeadSHA == "" {
+			pr.HeadSHA = p.Commit
+		}
+		d.log.Info("rebuilding on request", "pr", pr.String(), "sha", pr.HeadSHA)
+		if err := d.handleBuild(ctx, scm.Event{Kind: scm.EventBuild, PR: pr}); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// ScanRepo queues a build for every open pull request on a repository, and reports how
+// many it queued.
+//
+// This is what makes adding a project from the dashboard do something. Every other way
+// into a build begins with a webhook delivery, so a repository added by hand had nothing
+// to build until somebody pushed — and from the operator's side that is
+// indistinguishable from a broken installation.
+//
+// Each pull request goes through handleBuild, exactly as a delivery would: the same
+// queued comment, the same supersede behaviour, the same commit lock. Nothing here is a
+// second build path, which is the point — a parallel one would drift.
+//
+// Errors are collected rather than fatal. One pull request whose enqueue fails must not
+// stop the rest, and the count tells the caller what actually happened.
+func (d *Daemon) ScanRepo(ctx context.Context, repo model.Repo) (int, error) {
+	client, ok := d.client(repo.Platform)
+	if !ok {
+		return 0, fmt.Errorf("no %s client is configured on this daemon", repo.Platform)
+	}
+	lister, ok := client.(scm.PullRequestLister)
+	if !ok {
+		return 0, fmt.Errorf("the %s client cannot list open pull requests", repo.Platform)
+	}
+
+	prs, err := lister.OpenPullRequests(ctx, repo)
+	if err != nil {
+		return 0, err
+	}
+
+	queued := 0
+	var errs []error
+	for _, pr := range prs {
+		if err := d.handleBuild(ctx, scm.Event{Kind: scm.EventBuild, PR: pr}); err != nil {
+			errs = append(errs, fmt.Errorf("pull request %d: %w", pr.Number, err))
+			continue
+		}
+		queued++
+	}
+	return queued, errors.Join(errs...)
 }
 
 func (d *Daemon) handleBuild(ctx context.Context, ev scm.Event) error {
@@ -1011,6 +1557,16 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	// lifetime as the workspace and artifacts above, so it goes the same way. A
 	// cache with a longer life than the branch that filled it has no moment at which
 	// anything knows it is safe to delete, and grows until somebody notices the disk.
+	// The docker driver's caches are volumes, not directories — see
+	// pipeline.CacheVolume for why. Removed here for the same reason the directory is:
+	// the cache has the lifetime of the pull request that filled it, and a volume nothing
+	// records is a volume nobody ever deletes.
+	if d.removeCacheVolumes != nil {
+		if err := d.removeCacheVolumes(ctx, previewID); err != nil {
+			errs = append(errs, fmt.Errorf("removing the build cache volumes: %w", err))
+		}
+	}
+	// The local driver's cache is still a directory on the host.
 	if dir := d.cfg.PreviewCacheDir(previewID); dir != "" {
 		if err := os.RemoveAll(dir); err != nil {
 			errs = append(errs, fmt.Errorf("removing the build cache: %w", err))
@@ -1844,7 +2400,20 @@ func (d *Daemon) publishReport(r scm.Report, client scm.Client) {
 
 	if err := client.Publish(ctx, r); err != nil {
 		d.log.Error("publishing report", "pr", r.PR.String(), "state", r.State, "error", err)
+		return
 	}
+	// Logged on success too, at info.
+	//
+	// Without this a published report left no trace: the failure path logged, the github
+	// client logged its comment *edit* at debug, and a comment stuck on "Building" was
+	// therefore indistinguishable in the log from one updated correctly. Which is exactly
+	// the state a real timeout left — the build row said failed, the comment did not, and
+	// nothing recorded whether the write was attempted, refused, or never reached.
+	//
+	// One line per state change per preview, four-ish per build. Cheap against being able
+	// to answer "did the pull request hear about this".
+	d.log.Info("reported to the platform",
+		"pr", r.PR.String(), "state", r.State, "commit", r.Commit)
 }
 
 // reportMessage is the one-line description of a state change.
@@ -1978,6 +2547,144 @@ type Status struct {
 	Running  int             `json:"running"`
 	Previews []StatusPreview `json:"previews"`
 	Events   []Event         `json:"events"`
+
+	// Starting is true while recovery is still running.
+	//
+	// Workers do not exist until it finishes — reap-then-republish has to complete before
+	// anything may publish — so a build queued during that window sits there, and the page
+	// showed "Queued" with no way to tell it apart from a stuck queue. Which is what it was
+	// reported as, twice.
+	Starting bool `json:"starting"`
+
+	// Startup is which part of recovery is running, and how far through it is.
+	//
+	// Starting alone answered "not yet" and nothing else, for the two minutes it takes
+	// eleven zrok round trips to complete. A wait with no progress is indistinguishable
+	// from a hang, so the first thing anybody did with that banner was restart the
+	// daemon — losing the recovery it was reporting. Absent once recovery finishes,
+	// because there is then nothing to say.
+	Startup *StartupProgress `json:"startup,omitempty"`
+
+	// LastStartup is what the most recent recovery did. Present from the moment recovery
+	// finishes until the process ends, because the page shows it once — on the first
+	// status that says the daemon has started — and a report that vanished with the
+	// banner could only be read by somebody already watching.
+	LastStartup *StartupSummary `json:"last_startup,omitempty"`
+
+	// Projects is every configured project, as a label and a badge.
+	//
+	// Here rather than fetched from /api/projects, for two reasons. The dashboard-only
+	// share allowlists a handful of read paths, and the project switcher has to work
+	// through it — a picker that renders unlabelled rows for a remote viewer is a
+	// different page for no reason. And it is one payload the page already polls
+	// instead of a second request whose failure mode is a list that fills in late.
+	//
+	// Labels and badges only. Nothing here says what a project builds, and nothing
+	// here is a secret.
+	Projects []StatusProject `json:"projects"`
+}
+
+// StatusProgress stages, in the order recovery runs them. Exported because the
+// dashboard names them and a test asserts the sequence.
+const (
+	// StageReaping has no count. The exposer deletes what it finds behind one Reap
+	// call and reports a total only when it returns, so a fabricated denominator here
+	// would be a number the operator could watch and not believe.
+	StageReaping   = "reaping"
+	StageRestoring = "restoring"
+	StageHistory   = "history"
+)
+
+// StartupSummary is what recovery did, kept after it finishes.
+//
+// Shown once, when the dashboard notices the daemon has started. Startup is the one
+// event nobody can watch the middle of — it takes minutes, and anybody who reloads
+// during it sees a banner and no detail — so the interesting moment for a report is
+// immediately after.
+type StartupSummary struct {
+	// Seconds the whole of recovery took, reap and republish and backfill.
+	Seconds int `json:"seconds"`
+
+	// Instance ties this report to one process, so a dashboard left open across two
+	// restarts does not re-announce the older one.
+	Instance string `json:"instance"`
+
+	Previews        int `json:"previews"`
+	AdoptedPreviews int `json:"adopted_previews"`
+	CreatedPreviews int `json:"created_previews"`
+	AdoptedBuilds   int `json:"adopted_builds"`
+	CreatedBuilds   int `json:"created_builds"`
+
+	// Orphans is what the database no longer claimed, and so was deleted.
+	Orphans int `json:"orphans"`
+
+	// Pending is how many builds were waiting when the workers finally started. Not
+	// zero after a restart that interrupted something, and the first thing to know.
+	Pending int `json:"pending"`
+
+	// Items is the same running commentary the banner showed, kept so the report can be
+	// read by somebody who was not watching.
+	Items []string `json:"items,omitempty"`
+}
+
+// StartupProgress is one stage of recovery, as the dashboard shows it.
+//
+// Note is a whole sentence written for somebody watching a URL fail to load, not a
+// stage label — the question being answered is "why is nothing working yet", and
+// "reaping" does not answer it.
+type StartupProgress struct {
+	Stage string `json:"stage"`
+	Note  string `json:"note"`
+
+	// Done and Total are omitted together when there is nothing countable. Total 0
+	// means unknown, which the page renders as an indeterminate bar rather than as
+	// "3 of 0".
+	Done  int `json:"done"`
+	Total int `json:"total"`
+
+	// Items is what has been done so far, most recent last — "adopted docs-main-3fc1a0d",
+	// "created docpreview-round-4". A stage and a count say how far along a four-minute
+	// wait is and not what it is spending the time on, which is the question that gets
+	// asked out loud.
+	Items []string `json:"items,omitempty"`
+}
+
+// setStartup publishes the current recovery stage.
+//
+// Safe to call from the concurrent republish loop: each call swaps a fresh value in,
+// so a racing pair produces one of the two, never a mix.
+func (d *Daemon) setStartup(stage, note string, done, total int) {
+	d.startup.Store(&StartupProgress{
+		Stage: stage, Note: note, Done: done, Total: total,
+		Items: d.startupItemsSnapshot(),
+	})
+}
+
+// bumpStartup records one completed exposer round trip.
+//
+// Counted in round trips rather than in previews, and that is the whole point of it.
+// Restoring two pull requests is eleven calls — one share per preview plus one per
+// retained build — at ten to fifteen seconds each, so a bar reading "1 of 2" sat
+// unchanged for minutes while eleven things happened behind it. Reported as the UI
+// being broken, which is a fair reading of a progress indicator that does not move.
+func (d *Daemon) bumpStartup() {
+	done := int(d.startupDone.Add(1))
+	d.setStartup(StageRestoring, restoringNote, done, d.startupTotal)
+}
+
+// restoringNote is the sentence the banner shows for the long stage. A package-level
+// const because both the stage's opening call and every bump have to send the same
+// text — a note that changes as the count rises looks like a different stage.
+const restoringNote = "Republishing preview URLs from artifacts on disk."
+
+// StatusProject is what the project switcher needs to draw one row.
+//
+// Key is `<platform>:<owner>/<repo>`, matching StatusPreview.Repo, so the page can join
+// the two without parsing either.
+type StatusProject struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Avatar string `json:"avatar,omitempty"`
 }
 
 // StatusPreview is one preview in the status payload.
@@ -1991,6 +2698,14 @@ type StatusPreview struct {
 	State     string    `json:"state"`
 	Reason    string    `json:"reason,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// PRURL is where a human reads the pull request this preview is for.
+	//
+	// Composed here rather than stored, because it is a function of the platform, the
+	// repository and the number — all three already in the row — and storing it would be
+	// a fourth copy to keep in step. Empty for the local platform, which has no web
+	// interface at all; the page renders a link only when it is set.
+	PRURL string `json:"pr_url,omitempty"`
 }
 
 // Status summarizes the daemon's state.
@@ -2019,9 +2734,29 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 	out := Status{
 		Exposer:  d.exposer.Kind(),
 		Instance: d.instance,
+		Starting:    d.starting.Load(),
+		Startup:     d.startup.Load(),
+		LastStartup: d.lastStartup.Load(),
 		Pending:  pending,
 		Running:  len(running),
 		Events:   d.markOpenable(d.events.recent(60)),
+	}
+
+	// Best effort. The switcher degrades to repository names, which is what it showed
+	// before projects had labels at all — and a status endpoint that fails because a
+	// cosmetic lookup failed would take the whole dashboard down with it.
+	if projects, err := d.store.ListProjects(ctx); err == nil {
+		for _, p := range projects {
+			label := p.DisplayName
+			if label == "" {
+				label = p.Repo
+			}
+			out.Projects = append(out.Projects, StatusProject{
+				Key: p.Key(), Label: label, Avatar: p.Avatar,
+			})
+		}
+	} else {
+		d.log.Warn("listing projects for the status payload", "error", err)
 	}
 
 	// The stored rows are the committed history: a preview is written when a
@@ -2050,6 +2785,7 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 			State:     string(p.State),
 			Reason:    p.Reason,
 			UpdatedAt: p.UpdatedAt,
+			PRURL:     p.PR.WebURL(),
 		}
 
 		// Building wins over queued: a push that supersedes a running build
@@ -2088,6 +2824,7 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 			Branch:    b.pr.Branch,
 			State:     string(scm.StateBuilding),
 			UpdatedAt: b.started,
+			PRURL:     b.pr.WebURL(),
 		})
 	}
 	for _, j := range queued {
@@ -2106,6 +2843,7 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 			// now" on every poll, which hides a job that has been stuck in the
 			// queue — the one thing this row exists to reveal.
 			UpdatedAt: j.EnqueuedAt,
+			PRURL:     j.PR.WebURL(),
 		})
 	}
 

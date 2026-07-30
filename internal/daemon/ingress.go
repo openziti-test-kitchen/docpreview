@@ -176,6 +176,9 @@ func (i *Ingress) Handler() http.Handler {
 		// rather than a third copy of the same two checks.
 		mux.Handle("/api/images/", i.projects.Handler())
 
+		// Cancelling a build, for the same reason: one gate, already written.
+		mux.Handle("/api/builds/", i.projects.Handler())
+
 		// Its own address, for the same reasons /secrets has one: it can be linked
 		// from a runbook, and a proxy or a future authentication layer can gate one
 		// path where it cannot gate a panel inside "/".

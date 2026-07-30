@@ -167,17 +167,36 @@ fields that *are* queried — preview id, state, updated_at, enqueued_at — are
 
 At startup, in this order:
 
-1. **Reap everything remote.** `exposer.Reap(ctx, nil)`. Nothing is serving yet — the process just started — so
-   every share the exposer owns is an orphan.
-2. **Republish each recorded preview** from its artifacts on disk, and then **each of its build shares** from
-   `builds.name` and `builds.url` (`restoreBuildShares`). A build whose artifacts are gone has its two share columns
+1. **Decide what should exist.** Every `ready` preview with artifacts on disk, plus every build row that recorded a
+   URL and still has artifacts. That set is the keep-set, and it is assembled before anything is deleted or
+   published.
+2. **Ask the exposer what it already has.** `Adoptable(ctx)`, keyed by publication key. Optional: an exposer that
+   cannot answer means step 4 creates everything, which is what this used to do unconditionally.
+3. **Reap what nothing claims.** `exposer.Reap(ctx, keep)`.
+4. **Restore each publication**, adopting where the exposer already holds one and creating where it does not, then
+   the same for each build share (`restoreBuildShares`). A build whose artifacts are gone has its two share columns
    cleared instead.
 
-That restores working URLs within a second or two of startup without re-cloning or re-running a single
-`npm install`. It is why a restart is cheap enough to do casually.
+That restores working URLs in seconds without re-cloning or re-running a single `npm install`. It is why a restart
+is cheap enough to do casually.
 
 The order matters and is the reverse of the intuitive one. Reaping *after* republishing would delete what was
 just restored.
+
+### Why the keep-set, and not `Reap(ctx, nil)`
+
+This used to reap with an empty keep-set, on the reasoning that nothing serving can have survived the process that
+served it. Half of that is true. The **overlay listener** dies with the process; the **share** does not — it lives
+on the controller, holds its name, and can be bound by a new listener through its token.
+
+Deleting them all therefore paid twice for nothing. Measured on 2026-07-30 against the hosted zrok controller, for
+two pull requests and thirteen publications: **85 seconds** to delete them, then **183 seconds** to create thirteen
+identical ones, with every preview URL 404ing throughout and no build able to start. The same restart with adoption
+takes **3 seconds**.
+
+So the rule is now: delete only what the database no longer claims — a torn-down preview, a pruned build, a share
+left behind by a create that timed out after succeeding — and bind a listener to everything else. A failed adoption
+falls through to `Publish`, which replaces whatever holds the name, so the fallback is also the cleanup.
 
 Only `ready` rows are republished. A `failed` row describes a build that produced nothing; a `torn-down` one
 describes a preview that was deliberately removed.

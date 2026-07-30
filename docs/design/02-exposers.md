@@ -278,9 +278,12 @@ in `Spec.Key()`, so it holds both a preview's own id and `<preview>/<build>` for
 survive — a startup that forgot the build keys would reap every build share on the first sweep, which is why the
 `builds` table records `name` and `url` at all (see [08-storage.md](08-storage.md)).
 
-- **At startup**, `keep` is nil. Nothing is serving yet, so everything docpreview-tagged is an orphan from a
-  previous process. Not merely tidy: zrok accounts have share limits, and a daemon that leaks a share per
-  restart eventually stops working.
+- **At startup**, `keep` is what the database claims — the same set as a sweep tick. It used to be nil, on the
+  reasoning that nothing serving could have survived the process that served it, and that turned every restart
+  into "delete all thirteen, then create thirteen identical ones": 85 seconds followed by 183 against the hosted
+  zrok controller, versus 3 seconds when they are adopted instead. See **Adoption** below. Reaping still matters —
+  zrok accounts have share limits, and a daemon that leaks a share per restart eventually stops working — but what
+  leaks is what the database no longer claims, not everything.
 - **On every reaper tick** (hourly), `keep` is the set of keys the database still holds — every preview id, plus
   `<preview>/<build>` for each build row that recorded a URL (`internal/daemon/daemon.go:1770`). Build rows with no
   URL never had a share, so adding them would enlarge the set and keep nothing. If listing a preview's builds
@@ -295,6 +298,29 @@ false of a map entry. A mount left behind after its preview is deleted keeps ser
 **Open:** there is no `docpreview shares list` to audit a namespace against the database. The gap that matters
 is a share created by a daemon whose database was then deleted — nothing claims it, and nothing looks.
 
+## Adoption
+
+`Adopter` is an optional interface: `Adoptable(ctx)` reports what this exposer already has published, keyed by
+publication key, and `Adopt(ctx, spec, candidate, h)` serves `h` on one of them instead of creating anything.
+
+The distinction it rests on is worth stating plainly, because the old code had it wrong in a way that looked
+right: **a share outlives the process that created it; its listener does not.** Under zrok the share is a
+controller-side object holding a name and a frontend endpoint, and `sdk.NewListener(token, root)` binds a fresh
+listener to it by token. So the expensive half of a restart — two controller round trips per publication, at ten
+to fifteen seconds each — is avoidable whenever the database still claims what the exposer still has.
+
+Implemented for zrok only. `local` cannot adopt: its URLs are paths on a listener that no longer exists, so there
+is nothing to take over. `frontdoor` and `ziti` are unimplemented rather than impossible.
+
+Three rules, each of which is a way to get this wrong:
+
+1. **Match on the publication key, never on the name.** Adopting by name would let a preview serve a share
+   belonging to a different preview — the same collision `Publish` refuses, arrived at from the other direction.
+2. **A candidate with no reported origin is not adoptable.** The URL goes into a pull request comment, and one
+   reconstructed by guessing a frontend's DNS suffix works until the day it does not.
+3. **A failed adoption falls through to `Publish`.** Publishing replaces whatever holds the name, so the fallback
+   is also the cleanup — and a share that cannot be bound must not cost the preview.
+
 ## Invariants
 
 1. A publication is identified by `Spec.Key()`, never by `Spec.Name`. `local`, `zrok` and `frontdoor` key `live`
@@ -307,5 +333,6 @@ is a share created by a daemon whose database was then deleted — nothing claim
 5. Publishing a *different* preview under a name in use fails, and says which preview holds it.
 6. `MountPath` is pure, and callable before the build.
 7. `Reap(ctx, nil)` means "keep nothing", and a keep-set that cannot be assembled completely means "do not reap".
+   Startup passes a real keep-set; nothing should pass nil any more.
 8. `Publication.Close` is safe to call twice.
 9. `Zrok.close` never touches a name. Releasing a name happens once, in teardown, through `NameReleaser`.

@@ -50,7 +50,10 @@ const state = () => ({
   defaults: {
     driver: "docker", image: "node:24-bookworm-slim",
     docker_available: true, allow_local_driver: false,
-    images: ["node:24-bookworm-slim", "node:22-bookworm-slim"],
+    // The shape the daemon actually sends (knownImages), including the two entries the
+    // rows annotate: a -slim one with no git, and an alpine one whose musl breaks
+    // dependencies shipping prebuilt binaries.
+    images: ["node:24-bookworm-slim", "node:24-bookworm", "node:24-alpine"],
   },
   projects: [
     {
@@ -120,6 +123,13 @@ const click = async el => {
   el.dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
   await settle();
 };
+// Typing, not assignment: the page listens for input, and a bare `.value =` exercises
+// none of it — the kind of stub that makes a harness agree with itself.
+const type = async (el, v) => {
+  el.value = v;
+  el.dispatchEvent(new win.Event("input", {bubbles: true}));
+  await settle();
+};
 const btn = text => $$("#projects-body .btn, #projects-body button")
   .find(b => b.textContent.trim().startsWith(text));
 
@@ -128,7 +138,7 @@ console.log("operations chrome");
   // The bug that made half the page noise. `hidden` is set by the page; whether it
   // takes effect is a question about the stylesheet, so it is asked of the computed
   // style rather than of the property.
-  for (const sel of [".wrap", "#counters", "#project", "#search"]) {
+  for (const sel of [".wrap", "#counters", "#projpick", "#search"]) {
     const el = $(sel);
     if (!el.hidden) {
       fail(`${sel} is not marked hidden on /projects`);
@@ -313,12 +323,44 @@ console.log("\nthe new-project form");
   if (docker?.disabled) fail("docker is disabled although the probe found it");
   ok("the driver select disables what would be refused");
 
-  // The image field suggests without constraining.
+  // The image field is a search box over the known images, and still free text — a
+  // private registry mirror is the normal answer in an enterprise and must not be
+  // refused by a closed list.
   const image = $("#p-image");
-  if (image.getAttribute("list") !== "known-images") fail("the image field offers no suggestions");
-  if ($$("#known-images option").length < 2) fail("the suggestion list is empty");
   if (image.tagName !== "INPUT") fail("the image field is a closed list, not pick-or-type");
-  ok("image is pick-or-type");
+  const panel = $("#p-image-panel");
+  if (!panel) {
+    fail("the image field has no suggestion panel");
+  } else {
+    if (!panel.hidden) fail("the image panel is open before the field was touched");
+    image.dispatchEvent(new win.Event("focus", {bubbles: true}));
+    await settle();
+    if (panel.hidden) fail("focusing the image field did not open the list");
+    const all = $$("#p-image-panel [data-image]").filter(r => !r.hidden);
+    if (all.length < 2) fail(`${all.length} images offered`);
+
+    // The field filters its own list, which is the point of it being one field.
+    await type(image, "alpine");
+    const shown = $$("#p-image-panel [data-image]").filter(r => !r.hidden);
+    if (!shown.length || shown.some(r => !r.dataset.image.includes("alpine"))) {
+      fail(`filtering by "alpine" gave ${JSON.stringify(shown.map(r => r.dataset.image))}`);
+    }
+    // Each row says the one thing worth knowing about that image.
+    if (!shown[0].textContent.includes("musl")) fail("an alpine row does not mention musl");
+
+    // A value that matches nothing is legal, and the panel gets out of the way.
+    await type(image, "registry.internal/ours:1");
+    if (!$("#p-image-panel").hidden) fail("the panel stayed open over a custom value");
+
+    // Clicking a row sets the field.
+    image.dispatchEvent(new win.Event("focus", {bubbles: true}));
+    await type(image, "bookworm");
+    const row = $$("#p-image-panel [data-image]").find(r => !r.hidden);
+    await click(row);
+    if (image.value !== row.dataset.image) {
+      fail(`clicking a row set ${JSON.stringify(image.value)}`);
+    } else ok(`pick-or-type: filtered, clicked, field reads ${image.value}`);
+  }
 
   // Notes is a textarea with a cap, not a one-line input.
   const notes = $("#p-notes");
@@ -355,11 +397,114 @@ console.log("\nsecrets panel");
 
     // No value may appear anywhere in the panel, because nothing can read one back.
     if ($$(".pcard .env input").length) fail("a value input sits inside the variable list");
+
+    // The value being typed is masked, and the name field carries no placeholder — a
+    // greyed-out example in the name box reads as a value already entered.
+    const val = doc.getElementById("s-val-github/netfoundry/unified-doc");
+    if (val?.type !== "password") fail(`the value field is type=${val?.type}, want password`);
+    const env = doc.getElementById("s-env-github/netfoundry/unified-doc");
+    if (env?.getAttribute("placeholder")) {
+      fail(`the name field has placeholder ${JSON.stringify(env.getAttribute("placeholder"))}`);
+    }
+    ok("the value is masked and the name box is empty");
+  }
+}
+
+console.log("\nsaving an edit closes the form and says so");
+{
+  await click($$(".pcard [data-tab=build]")[0]);
+  if (!$(".pcard .panel")) fail("Edit did not open the panel");
+  calls.length = 0;
+  await click(btn("Save changes"));
+
+  if ($(".pcard .panel")) {
+    fail("the form is still open after saving, which looks identical to nothing happening");
+  }
+  // A toast, over the page. An inline notice landed where the form used to be — which is
+  // where the eye has already stopped looking — so a successful save read as nothing
+  // happening.
+  const note = $("#toasts .toast");
+  if (!note || !note.textContent.includes("Saved")) {
+    fail(`no confirmation after saving: ${JSON.stringify(note?.textContent || null)}`);
+  } else ok(`closed, and toasted ${JSON.stringify(note.textContent.trim())}`);
+
+  // An edit must not scan: the pull requests are already known to the daemon, and
+  // re-queueing every one of them on every settings tweak would rebuild the world.
+  if (calls.some(c => c.method === "POST" && c.url.endsWith("/scan"))) {
+    fail("editing a project queued builds for every open pull request");
+  }
+}
+
+console.log("\nBuild now");
+{
+  calls.length = 0;
+  await click(btn("Build now"));
+  const scan = calls.find(c => c.method === "POST" && c.url.endsWith("/scan"));
+  if (!scan) {
+    fail("Build now sent no scan");
+  } else if (scan.url !== "/api/projects/github/netfoundry/unified-doc/scan") {
+    fail(`Build now scanned ${scan.url}`);
+  } else ok(`POST ${scan.url}`);
+
+  // And it says what happened, since queueing is invisible from this page.
+  const notes = $$("#toasts .toast");
+  if (!notes.length) fail("Build now reported nothing");
+  else ok(`toasted ${JSON.stringify(notes[notes.length - 1].textContent.trim().slice(0, 48))}`);
+}
+
+console.log("\nunsaved edits are not thrown away silently");
+{
+  // Open a project's settings and type into it.
+  await click($$(".pcard [data-tab=build]")[0]);
+  const dir = doc.getElementById("p-dir-github/netfoundry/unified-doc");
+  dir.value = "somewhere-else";
+  dir.dispatchEvent(new win.Event("input", {bubbles: true}));
+  await settle();
+
+  // Refuse the confirm: the panel stays open with the typing in it.
+  win.confirm = () => false;
+  await click(btn("Cancel"));
+  if (!$(".pcard .panel")) fail("declining the discard prompt closed the form anyway");
+  else if (doc.getElementById("p-dir-github/netfoundry/unified-doc").value !== "somewhere-else") {
+    fail("declining the prompt lost the typing");
+  } else ok("declining keeps the form and its edits");
+
+  // Accept it: the panel closes.
+  win.confirm = () => true;
+  await click(btn("Cancel"));
+  if ($(".pcard .panel")) fail("accepting the discard prompt left the form open");
+  else ok("accepting discards and closes");
+}
+
+console.log("\nadding a project queues its open pull requests");
+{
+  calls.length = 0;
+  await click($("#p-new"));
+  doc.getElementById("p-url").value = "https://github.com/acme/newdocs";
+  doc.getElementById("p-url").dispatchEvent(new win.Event("input", {bubbles: true}));
+  await settle();
+  await click(btn("Create project"));
+
+  const put = calls.find(c => c.method === "PUT");
+  const scan = calls.find(c => c.method === "POST" && c.url.endsWith("/scan"));
+  if (!put) fail("Create sent no PUT");
+  if (!scan) {
+    fail("Create did not scan for open pull requests, so nothing gets built");
+  } else if (scan.url !== "/api/projects/github/acme/newdocs/scan") {
+    fail(`scanned ${scan.url}`);
+  } else ok(`POST ${scan.url}`);
+
+  // And the order matters: the project has to exist before anything is queued against it.
+  if (put && scan && calls.indexOf(put) > calls.indexOf(scan)) {
+    fail("the scan was sent before the project was saved");
   }
 }
 
 console.log("\nadding a variable");
 {
+  // Reopen the panel: the sections above left the page elsewhere, and a harness that
+  // depends on the previous section's leftover state breaks the moment one is inserted.
+  if (!$(".pcard .env")) await click($$(".pcard [data-tab=secrets]")[0]);
   const key = "github/netfoundry/unified-doc";
   doc.getElementById(`s-env-${key}`).value = "BB_REPO_TOKEN_FRONTDOOR";
   doc.getElementById(`s-val-${key}`).value = "a-token-value";
@@ -419,16 +564,34 @@ console.log("\na failure is reported where it can be seen");
   doc.getElementById(`s-val-${key}`).value = "a-token-value";
   await click(btn("Add variable"));
 
-  const notice = $("#projects-body .notice.bad");
-  if (!notice) {
+  // A toast, not a notice in the panel. Ten rejected saves used to leave ten stacked
+  // red boxes above the form, pushing the fields being corrected off the screen — so
+  // this asserts both halves: the message is shown, and the document did not grow a
+  // permanent notice to show it.
+  const t = $("#toasts .toast.bad");
+  if (!t) {
     fail("a failed call reported nothing on the page it happened on");
-  } else if (!notice.textContent.includes("vault is locked")) {
-    fail(`the notice says ${JSON.stringify(notice.textContent)}`);
+  } else if (!t.textContent.includes("vault is locked")) {
+    fail(`the toast says ${JSON.stringify(t.textContent)}`);
   } else {
-    ok("the error lands in #projects-body");
+    ok("the error is toasted");
+  }
+  if ($("#projects-body .notice.bad")) {
+    fail("the error was also left in the page, which is what stacked up");
   }
   if ($("#setup-body .notice.bad")) {
     fail("the error was also written into the hidden secrets panel");
+  }
+
+  // Two failures in a row leave two toasts and no residue in the form.
+  nextFails = "the vault is locked; unlock it at /secrets first";
+  doc.getElementById(`s-env-${key}`).value = "BB_REPO_TOKEN_ONPREM";
+  doc.getElementById(`s-val-${key}`).value = "a-token-value";
+  await click(btn("Add variable"));
+  if ($$("#projects-body .notice.bad").length) {
+    fail("a second failure accumulated in the form");
+  } else {
+    ok(`${$$("#toasts .toast.bad").length} toasts, nothing added to the form`);
   }
 }
 

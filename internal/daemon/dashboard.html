@@ -174,6 +174,223 @@ input.control::placeholder { color: var(--muted) }
 .notice code { font: 12px/1.5 ui-monospace, Consolas, monospace }
 .notice p { margin: 0.4rem 0 0 }
 
+/* ── Startup report ─────────────────────────────────────────────────────────
+   A dialog rather than another banner. It is read once and dismissed, and a banner
+   that has to be dismissed competes with the one that reports a build. */
+.modal {
+  position: fixed; inset: 0; z-index: 70;
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.25rem; background: rgb(0 0 0 / 0.45);
+}
+.modal-card {
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 12px;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.35);
+  padding: 1.1rem 1.2rem; width: min(34rem, 100%);
+  max-height: 84vh; overflow-y: auto;
+}
+/* The dialog's own title is the quiet part: "Ready" is not news. The number is. */
+.modal-card h3 {
+  margin: 0; font-size: 0.72rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted);
+}
+/* The headline, labelled. A bare "3s" above a sentence was read as decoration and the
+   one number the report exists to give went unseen — so the label sits above the value
+   and the value is the largest thing in the dialog. */
+.boot-hero { padding: 0.7rem 0 0.9rem }
+.boot-hero-k {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); font-weight: 600;
+}
+.boot-hero-v {
+  font-size: 2.4rem; line-height: 1.05; font-weight: 680; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.boot-hero-n { font-size: 0.8rem; color: var(--ink-2); margin-top: 0.2rem }
+/* Label-and-value rows rather than a grid of tiles. The values are sentences —
+   "11 — bound to shares that already existed" — and a tile is a box for a number. */
+.boot-rows { margin: 0; border-top: 1px solid var(--hairline) }
+.boot-row {
+  display: flex; gap: 0.75rem; align-items: baseline;
+  padding: 0.4rem 0; border-bottom: 1px solid var(--hairline);
+}
+.boot-row dt {
+  flex: none; width: 9.5rem; font-size: 0.75rem; color: var(--muted);
+}
+.boot-row dd {
+  margin: 0; font-size: 0.82rem; font-variant-numeric: tabular-nums;
+}
+.boot-row dd.good { color: var(--good) }
+.boot-row dd.warn { color: var(--warning) }
+/* Collapsed by default. Thirteen monospace lines is the bulk of the dialog and the
+   least-read part of it: the counts above answer the question, and this is for when
+   they do not. */
+.boot-details { margin-top: 0.85rem }
+.boot-details summary {
+  cursor: pointer; font-size: 0.75rem; color: var(--ink-2);
+  padding: 0.2rem 0;
+}
+.boot-details summary:hover { color: var(--ink) }
+.boot-list {
+  font: 11.5px/1.75 ui-monospace, Consolas, monospace; color: var(--ink-2);
+  margin-top: 0.4rem; padding-left: 0.9rem;
+  border-left: 2px solid var(--hairline);
+  max-height: 14rem; overflow-y: auto;
+}
+
+/* ── Startup banner ─────────────────────────────────────────────────────────
+   A sibling of .wrap rather than a child, so it must reproduce .wrap's own box:
+   same max width, same 1.25rem gutter, or its left edge does not line up with the
+   list it sits above. Sized by subtracting the gutter rather than by padding,
+   because the padding here belongs to the notice's border. */
+#starting {
+  width: calc(100% - 2.5rem); max-width: calc(96rem - 2.5rem);
+  margin: 1.25rem auto 0;
+}
+.starting-steps {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.55rem;
+  margin: 0.55rem 0 0; font-size: 0.72rem;
+}
+/* Stages are text with a leading mark, not bordered pills.
+   Pills were the first attempt and they were read as buttons — a rounded box with a
+   border and a label is a button everywhere else on this page, so three of them in a
+   row invited clicks that do nothing. Nothing here is interactive: it is a sentence
+   about what the daemon is doing, so it is styled as one. The mark carries the state,
+   which also survives being read without colour. */
+.step { color: var(--muted); display: inline-flex; align-items: center; gap: 0.35rem }
+.step::before { content: "○"; font-size: 0.85em }
+.step.done { color: var(--ink-2) }
+.step.done::before { content: "✓"; color: var(--good) }
+/* The stage in progress spins, and that is the only moving thing in the banner.
+   A checkmark and an empty circle say which stages are behind and ahead, but between
+   them "the one in bold" was not obvious enough to find at a glance — and on a page
+   where the complaint is that nothing appears to be happening, motion is the signal
+   that answers it. */
+.step.now {
+  color: var(--ink); font-weight: 650;
+  /* Its own line, so the stage being worked on is not one item in a row of three. */
+  flex-basis: 100%;
+}
+/* No ::before for the current stage — it carries a real element instead, so the ring is
+   not competing with the mark the other two states use. */
+.step.now::before { content: none }
+/* The ring is an element, not a pseudo-element, and its border avoids color-mix().
+   Both were bugs in the first version: as a ::before it inherited the pending mark's
+   font sizing, and `border: 2px solid color-mix(…)` is one declaration — an engine that
+   cannot parse the colour drops the whole thing, leaving a 0.72em box with no border and
+   nothing visible. Two flat colours cannot fail that way. */
+.spinner {
+  width: 0.8em; height: 0.8em; flex: none; border-radius: 50%;
+  border: 2px solid var(--hairline);
+  border-top-color: var(--warning);
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg) } }
+/* With motion suppressed a still ring reads as the empty circle that means "not started",
+   so the current stage becomes a filled dot instead. If you have reduced motion enabled
+   at the OS level, this is what you get, and it is deliberate. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    width: auto; height: auto; border: 0; animation: none;
+    color: var(--warning);
+  }
+  .spinner::after { content: "●" }
+}
+/* The count belongs to the stage it is counting, so it sits inside that step rather
+   than after the row: "1 of 2" at the end of three stage names was read as counting
+   the stages, of which there are three. */
+.step .step-count { color: var(--ink-2); font-variant-numeric: tabular-nums; font-weight: 400 }
+.starting-bar {
+  height: 3px; margin-top: 0.55rem; border-radius: 999px;
+  background: var(--hairline); overflow: hidden;
+}
+/* What it is actually doing, newest first. Monospace because these are share names, and
+   a column of names in a proportional font is harder to scan for the one that changed. */
+.starting-items {
+  margin-top: 0.5rem; font: 11.5px/1.7 ui-monospace, Consolas, monospace;
+  color: var(--muted);
+}
+/* The newest line is the one being read; the rest are there for context and fade back. */
+.starting-item:first-child { color: var(--ink-2) }
+.starting-bar span {
+  display: block; height: 100%; background: var(--warning);
+  transition: width 0.3s ease;
+}
+/* An uncounted stage gets a sliding sliver, not a full bar and not a 0%-wide one:
+   the first says finished and the second says stuck, and the reap is neither. */
+.starting-bar[data-indeterminate] span {
+  width: 30% !important; animation: slide 1.4s ease-in-out infinite;
+}
+@keyframes slide {
+  0% { transform: translateX(-100%) } 100% { transform: translateX(333%) }
+}
+@media (prefers-reduced-motion: reduce) {
+  .starting-bar span { transition: none }
+  /* With motion suppressed the sliver would sit still at the left and read as 30%
+     complete, so the whole track is filled and dimmed instead: clearly "working",
+     clearly not a measurement. */
+  .starting-bar[data-indeterminate] span { animation: none; width: 100% !important; opacity: 0.35 }
+}
+
+/* ── Project switcher ───────────────────────────────────────────────────────
+   A trigger and a panel, rather than a <select>: a select shows one line, cannot be
+   typed into, and cannot carry a badge, so a dozen near-identical repository names
+   become a scrolling menu nobody can aim at. */
+.picker { position: relative }
+.pick-trigger {
+  display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer;
+  max-width: 16rem;
+}
+.pick-trigger .pick-label {
+  display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0;
+}
+.pick-trigger .pick-label > span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pick-trigger .pick-caret { color: var(--muted); flex: none }
+.pick-trigger .ava { width: 1.1rem; height: 1.1rem; border-radius: 4px; font-size: 0.6rem }
+
+.pick-panel {
+  position: absolute; z-index: 40; top: calc(100% + 0.3rem); left: 0;
+  width: 20rem; max-width: 90vw;
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
+  overflow: hidden;
+}
+.pick-search { display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--hairline) }
+.pick-search input {
+  flex: 1; min-width: 0; font: inherit; font-size: 0.85rem;
+  background: transparent; color: var(--ink); border: 0; outline: none;
+}
+.pick-search kbd {
+  font: 10px/1.6 ui-monospace, Consolas, monospace; color: var(--muted);
+  border: 1px solid var(--ring); border-radius: 4px; padding: 0 0.25rem;
+}
+/* Bounded, because the list is as long as somebody's project count and the panel
+   floats over the page. */
+.pick-list { max-height: 18rem; overflow: auto; padding: 0.25rem }
+.pick-row {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  padding: 0.4rem 0.45rem; border: 0; border-radius: 6px;
+  background: transparent; color: var(--ink); font: inherit; font-size: 0.85rem;
+  text-align: left; cursor: pointer; text-decoration: none;
+}
+.pick-row:hover, .pick-row.here { background: var(--raised) }
+.pick-row.here { font-weight: 600 }
+.pick-row .count { margin-left: auto; color: var(--muted); font-size: 0.75rem }
+.pick-row.add { border-top: 1px solid var(--hairline); border-radius: 0; margin-top: 0.25rem;
+  padding-top: 0.5rem; color: var(--ink-2) }
+.pick-empty { padding: 0.7rem 0.5rem; color: var(--muted); font-size: 0.8rem }
+
+/* The image field is the same panel, anchored under a text box that is also the filter.
+   Full width of the field rather than a fixed 20rem, because image references are long
+   and truncating the thing you are choosing between defeats the point. */
+.imgpick { display: block }
+.imgpick .pick-panel { width: 100%; top: calc(100% - 1.4rem) }
+.imgpick .pick-row { font: 12px/1.5 ui-monospace, Consolas, monospace }
+.imgpick .pick-row .count { font-family: inherit; font-size: 11px }
+
 /* ── Projects ───────────────────────────────────────────────────────────── */
 
 /* One card per project, because a project is a block of related facts and the
@@ -272,9 +489,60 @@ input.control::placeholder { color: var(--muted) }
   gap: 0.6rem; align-items: center; padding: 0.22rem 0;
 }
 .field-note { text-transform: none; letter-spacing: 0; font-weight: 400 }
-.imgcheck { font-size: 0.74rem; margin-top: 0.22rem; color: var(--muted) }
+.backlink { margin: 0 0 0.5rem; font-size: 0.82rem }
+.avafield { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap }
+
+/* The form's own actions, set apart from the fields above them so the row that commits
+   is not just more controls in a column of controls. */
+.formact {
+  margin-top: 0.8rem; padding-top: 0.7rem; border-top: 1px solid var(--hairline);
+  max-width: 52rem;
+}
+.btn.primary {
+  background: var(--ink); color: var(--plane); border-color: var(--ink); font-weight: 600;
+}
+.btn.primary:hover { opacity: 0.9 }
+/* Destructive, and it borrows the failed colour rather than inventing one: red on this
+   page already means a build that is not going to finish, which is what this makes. */
+.btn.danger { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 40%, var(--ring)) }
+.btn.danger:hover { border-color: var(--critical) }
+/* Toasts. Fixed, so nothing in the document moves when one appears — a banner that pushes
+   a list down is its own small confusion, and the list is what somebody is reading. */
+#toasts {
+  position: fixed; z-index: 60; top: 0.9rem; right: 0.9rem;
+  display: flex; flex-direction: column; gap: 0.4rem; pointer-events: none;
+}
+.toast {
+  background: var(--ink); color: var(--plane);
+  font-size: 0.82rem; font-weight: 500;
+  padding: 0.5rem 0.75rem; border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  max-width: 22rem;
+  animation: toastin 140ms ease-out, fadeout 5s ease-in forwards;
+}
+@keyframes toastin { from { opacity: 0; transform: translateY(-0.4rem) } to { opacity: 1 } }
+@keyframes fadeout { 0%, 82% { opacity: 1 } 100% { opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none } }
+/* A failure toast reads as one, and its fade matches its own lifetime — the default
+   animation is timed to the 5s removal, so a 9s toast styled with it would go
+   invisible four seconds before it left the DOM and take clicks nowhere near it. */
+.toast.bad {
+  background: var(--critical); color: #fff;
+  animation: toastin 140ms ease-out, fadeout 9s ease-in forwards;
+}
+/* Column 2, like .why. Without this it was a third child of a two-column grid, so it
+   wrapped into the *label* column of the next row — docker's error rendered where a
+   field name belongs, in 0.74rem, which is how "errors:" ended up looking like a
+   label. */
+.imgcheck { grid-column: 2; font-size: 0.78rem; margin-top: 0.3rem; color: var(--muted) }
 .imgcheck.ok  { color: var(--good) }
-.imgcheck.bad { color: var(--critical) }
+/* A wrong image fails the build minutes later with docker's message buried in a log.
+   It gets a box, because this is the one moment somebody is looking. */
+.imgcheck.bad {
+  color: var(--critical); font-weight: 600;
+  border: 1px solid var(--critical); border-radius: 6px;
+  padding: 0.3rem 0.45rem; background: color-mix(in srgb, var(--critical) 7%, transparent);
+}
 .field > label { font-size: 0.78rem; color: var(--ink-2) }
 .field .why { grid-column: 2; font-size: 0.72rem; color: var(--muted); margin-top: -0.1rem }
 .field textarea {
@@ -327,6 +595,29 @@ input.control::placeholder { color: var(--muted) }
   border-left: 1px solid var(--hairline);
 }
 .row .go[href]:hover { color: var(--ink); text-decoration: underline }
+/* The pull request link borrows Open's look — same border-left, same padding — because
+   they are the same kind of thing in the same strip. Quieter, because Open is what
+   somebody reaches for from a list of previews and this is the secondary destination. */
+.row .go.pr {
+  color: var(--muted); font-weight: 500;
+  /* Fixed width, sized for five digits, so Open starts at the same x on every row. Sized
+     rather than shrink-to-fit because the content is a pull request number: #4 and #145
+     differ by two characters, which moved Open two characters left on one row and made a
+     column of them look ragged. Five digits covers a repository with 99999 pull requests;
+     beyond that it grows rather than truncating, because a wrong number is worse than a
+     misaligned one. */
+  min-width: 5.6rem;
+  /* Mark hard left, number hard right, rather than the pair centred together. Centring
+     put the icon at a different x on every row, because it moved with the width of the
+     number beside it — so a column of previews had a wandering column of logos. Pinned
+     to the two edges of a fixed-width cell, both line up down the whole list. */
+  justify-content: space-between;
+  gap: 0.45rem;
+  font-variant-numeric: tabular-nums;
+}
+.row .go.pr svg { flex: none; opacity: 0.75 }
+.row .go.pr:hover svg { opacity: 1 }
+.row .go.pr:hover { color: var(--ink-2) }
 /* An anchor with no href is not a link, which is the wanted state before a
    build has produced anything. Styling follows from that fact rather than from
    a `disabled` attribute anchors ignore. */
@@ -363,7 +654,9 @@ input.control::placeholder { color: var(--muted) }
 
   /* Full width, each on its own line. Side by side at this width they were two
      truncated controls instead of one usable one. */
-  select#project, input#search { width: 100%; max-width: none }
+  #projpick, .pick-trigger, input#search { width: 100%; max-width: none }
+  /* The panel is anchored to the trigger, which is now full width, so it can be too. */
+  .pick-panel { width: 100% }
 
   /* The counters scroll rather than wrap. Wrapping reflowed the header every time
      a build changed state, which moved everything under it while being read. */
@@ -420,6 +713,10 @@ input.control::placeholder { color: var(--muted) }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .when { color: var(--muted); font-size: 0.75rem; font-variant-numeric: tabular-nums }
+/* A running stopwatch is darker than a settled age. Same size and same tabular
+   figures — it must not change width as it counts — just not the grey the page uses
+   for things that have stopped mattering. */
+.when.ticking { color: var(--ink-2) }
 
 .pill {
   display: inline-flex; align-items: center; gap: 0.35rem;
@@ -524,6 +821,24 @@ pre.term {
   white-space: pre-wrap; word-break: break-word;
 }
 pre.term.tall { height: 34rem }
+
+/* A pane with nothing to show does not get a 15rem black rectangle.
+
+   A skipped build is the common case and the one that looked broken: the row said
+   Skipped, a 0.72rem grey line said "no build log", and below it sat an empty terminal
+   the size of the screen. Three signals, none of them the one that matters — *why* it was
+   skipped, which the daemon knew all along and put in the pull request comment.
+
+   Auto height and a light background, because this is prose rather than output. */
+pre.term.empty {
+  height: auto; min-height: 0; padding: 1.1rem 1rem;
+  background: var(--raised); color: var(--ink-2);
+  font: inherit; font-size: 0.84rem; white-space: normal;
+  border: 1px solid var(--hairline);
+}
+pre.term.empty strong { color: var(--ink); display: block; margin-bottom: 0.25rem }
+pre.term.empty .reason { color: var(--ink-2) }
+pre.term.empty .why { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 0.45rem }
 
 /* The copy button floats over the log rather than sitting in the toolbar.
    Reaching for it happens while reading the scrollback, so that is where it
@@ -694,7 +1009,28 @@ footer {
     </div>
     <div class="seg" id="counters"></div>
     <span class="grow"></span>
-    <select class="control" id="project" aria-label="Project"></select>
+    <!-- The project scope is a searchable list, not a <select>.
+
+         A select shows one line at a time, cannot be typed into, and cannot carry a
+         badge — so at a dozen projects it becomes a scrolling menu of near-identical
+         repository names. This is the shape Vercel uses for the same problem: a trigger
+         showing the current scope, and a panel with a filter, the projects with their
+         badges, and a way to add one. -->
+    <div class="picker" id="projpick">
+      <button class="control pick-trigger" id="projpick-btn" aria-haspopup="listbox"
+        aria-expanded="false">
+        <span class="pick-label">All projects</span>
+        <span class="pick-caret" aria-hidden="true">⌄</span>
+      </button>
+      <div class="pick-panel" id="projpick-panel" hidden>
+        <div class="pick-search">
+          <input type="search" id="projpick-find" placeholder="Find project…"
+            aria-label="Find project" autocomplete="off">
+          <kbd>Esc</kbd>
+        </div>
+        <div class="pick-list" id="projpick-list" role="listbox"></div>
+      </div>
+    </div>
     <input class="control" id="search" type="search" placeholder="branch, PR, project…" aria-label="Filter">
     <!-- The admin links appear only for a request the daemon accepts writes from,
          and it answers that question itself: /api/admin is gated by the same
@@ -721,9 +1057,12 @@ footer {
     <!-- The vault's path is a detail of where the daemon keeps its files, not
          something anyone acts on from here. It stays as a tooltip: findable
          when you are debugging, absent when you are not. -->
+    <!-- The way out goes above the content, not below it. Below, it is past a form
+         eleven fields long and past however many project cards exist, so on any real
+         page it is off screen — a page with no visible way back reads as a dead end. -->
+    <p class="backlink"><a href="/">← back to previews</a></p>
     <h2 id="setup-head">Secrets</h2>
     <div id="setup-body"></div>
-    <p style="margin:1rem 0 0"><a href="/">← back to previews</a></p>
   </div>
 </div>
 
@@ -731,9 +1070,9 @@ footer {
      switched on pathname, so the styles and the fetch helper exist once. -->
 <div class="setup" id="projects" hidden>
   <div class="setup-inner">
+    <p class="backlink"><a href="/">← back to previews</a></p>
     <h2>Projects</h2>
     <div id="projects-body"></div>
-    <p style="margin:1rem 0 0"><a href="/">← back to previews</a></p>
   </div>
 </div>
 
@@ -750,6 +1089,20 @@ footer {
       <div class="feed" id="events"></div>
     </div>
   </aside>
+</div>
+
+<!-- The startup report, shown once when the daemon finishes recovering.
+     Startup is the one event nobody can watch the middle of: it takes minutes, and
+     anybody who arrives during it sees a banner and no detail. So the report is shown
+     immediately after, once per process, and dismissed for good. -->
+<div class="modal" id="boot" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="boot-title">
+    <h3 id="boot-title">Startup report</h3>
+    <div id="boot-body"></div>
+    <div class="act">
+      <button class="btn primary" id="boot-close">Close</button>
+    </div>
+  </div>
 </div>
 
 <footer>
@@ -791,6 +1144,51 @@ const ago = iso => {
 };
 const clock = iso => new Date(iso).toLocaleTimeString([], {hour12: false});
 
+/* LIVE_STATES are the ones where the timestamp is a stopwatch rather than an age.
+   A finished build's "6m" is a fact that does not change; a running build's is the
+   thing being watched. */
+const LIVE_STATES = new Set(["building", "queued"]);
+const isLive = s => LIVE_STATES.has(s);
+
+/* elapsed renders a running duration in one fixed shape, zero-padded.
+   `ago` is wrong for a build in flight, for two reasons that both showed up on the
+   same screen. It coarsens: at 61 seconds it prints "1m" and then does not change
+   for a minute, so the one number telling you the build is alive sits still while
+   you watch it. And it changes width — "9s" to "10s" to "1m" — which makes a column
+   of them jitter. Fixed-width minutes and seconds always move, once a second, and
+   never reflow. */
+const elapsed = iso => {
+  const n = Math.max(0, Math.floor((Date.now() - new Date(iso)) / 1000));
+  const pad = v => String(v).padStart(2, "0");
+  const h = Math.floor(n / 3600);
+  const out = `${pad(Math.floor(n / 60) % 60)}m ${pad(n % 60)}s`;
+  // Hours are prepended rather than folded into the minutes, because a configurable
+  // timeout can exceed an hour and "72m 04s" is a number nobody reads at a glance.
+  return h ? `${h}h ${out}` : out;
+};
+
+/* rowWhen picks between the two: a stopwatch while it runs, an age once it is over.
+   No "ago" suffix, because the row is a column of these and the word is the same on
+   every line. The pickers spell it out, since there the value sits mid-sentence. */
+const rowWhen = p => isLive(p.state) ? elapsed(p.updated_at) : ago(p.updated_at);
+
+/* pickerWhen is the same choice inside a sentence: "Building · 04m 12s" for one in
+   flight, "Ready · 9h ago" for one that finished. */
+const pickerWhen = p => isLive(p.state) ? elapsed(p.updated_at) : `${ago(p.updated_at)} ago`;
+
+/* secs renders a duration. Minutes and seconds rather than a bare count, because the
+   numbers that matter here are a warm install at 40s and a cold one at 6m20s, and "380s"
+   makes the reader do the division. */
+const secs = n => {
+  n = Math.max(0, Math.round(Number(n) || 0));
+  if (n < 60) return `${n}s`;
+  const m = Math.floor(n / 60);
+  const s = n % 60;
+  // Spaced, to match the stopwatch on the row. Two durations on one screen written
+  // "10m14s" and "10m 14s" look like two different units.
+  return s ? `${m}m ${s}s` : `${m}m`;
+};
+
 const project = p => String(p.repo || "").split("/").pop() || "unknown";
 
 
@@ -828,6 +1226,9 @@ const ui = {
   status: {},
   logSource: null,
   logFor: null,       // preview id the open stream belongs to
+  // The preview timestamp a reconnect was last done for, so it happens once per transition.
+  // See updateBody.
+  reconnectedAt: null,
 };
 
 // Inline SVG rather than an icon font or an emoji. A font is a network request
@@ -927,10 +1328,27 @@ function renderCounters() {
   }
 }
 
-/* ── Project selector ─────────────────────────────────────────────────────
-   A select, not chips. Chips are better at three projects and unusable at
-   three hundred; the browser already knows how to render a long list, scroll
-   it, and type-ahead it. */
+/* ── Project switcher ─────────────────────────────────────────────────────
+   A trigger plus a filtered list, which is the shape this problem has: at a dozen
+   projects a <select> is a scrolling menu of near-identical repository names, with no
+   room for a badge and no way to type at it.
+
+   Two sources join here. The previews say which projects have activity and how much;
+   the status payload's `projects` say what each is called and what badge it carries. A
+   project with no previews yet still appears, because "I added it and it is not in the
+   list" is the question this page was answering wrongly an hour ago. */
+
+// projectMeta maps a project name to its label and badge, from status.projects.
+function projectMeta() {
+  const out = new Map();
+  for (const p of (ui.status?.projects || [])) {
+    // The key is `<platform>:<owner>/<repo>`; the previews group by the repository name
+    // alone, which is what `project()` returns.
+    const repo = String(p.key || "").split("/").pop();
+    if (repo) out.set(repo, p);
+  }
+  return out;
+}
 
 function renderProjects() {
   const counts = new Map();
@@ -938,19 +1356,118 @@ function renderProjects() {
     const k = project(p);
     counts.set(k, (counts.get(k) || 0) + 1);
   }
+  const meta = projectMeta();
+  // Every configured project, not only those with previews.
+  for (const k of meta.keys()) if (!counts.has(k)) counts.set(k, 0);
+
   const names = [...counts.keys()].sort();
+  const label = document.querySelector("#projpick-btn .pick-label");
+  const current = names.includes(ui.project) ? ui.project : "";
 
-  // Rebuilding a select closes its open dropdown and loses the keyboard
-  // position, so only touch it when the set of projects actually changed.
-  const sig = names.map(n => `${n}:${counts.get(n)}`).join("|");
-  const el = document.getElementById("project");
-  if (el.dataset.sig === sig) return;
-  el.dataset.sig = sig;
+  // The trigger shows the scope, with its badge when it has one.
+  const m = current ? meta.get(current) : null;
+  label.innerHTML = current
+    ? `${m ? badgeHTML(m, current) : ""}<span>${esc(m?.label || current)}</span>`
+    : `<span>All projects (${ui.previews.length})</span>`;
+  label.classList.toggle("with-ava", Boolean(m));
 
-  el.innerHTML =
-    `<option value="">All projects (${ui.previews.length})</option>` +
-    names.map(n => `<option value="${esc(n)}">${esc(n)} (${counts.get(n)})</option>`).join("");
-  el.value = names.includes(ui.project) ? ui.project : "";
+  // The list is rebuilt only when something in it changed, so an open panel keeps its
+  // filter text and its scroll position across a status tick.
+  const sig = names.map(n => `${n}:${counts.get(n)}:${meta.get(n)?.avatar ? 1 : 0}`)
+    .join("|") + `|${current}|${ui.previews.length}`;
+  const list = document.getElementById("projpick-list");
+  if (list.dataset.sig === sig) return;
+  list.dataset.sig = sig;
+  list.dataset.names = JSON.stringify(names);
+
+  const rows = [
+    `<button class="pick-row${current === "" ? " here" : ""}" data-pick-project=""
+      role="option" aria-selected="${current === ""}">
+      <span>All projects</span><span class="count">${ui.previews.length}</span></button>`,
+  ];
+  for (const n of names) {
+    const pm = meta.get(n);
+    rows.push(`<button class="pick-row${current === n ? " here" : ""}"
+      data-pick-project="${esc(n)}" role="option" aria-selected="${current === n}">
+      ${badgeHTML(pm, n)}<span>${esc(pm?.label || n)}</span>
+      <span class="count">${counts.get(n) || ""}</span></button>`);
+  }
+  // The way to add one, where Vercel puts it and for the same reason: the moment you
+  // discover a project is missing is while looking for it.
+  rows.push(`<a class="pick-row add" href="/projects">+ New project</a>`);
+
+  list.innerHTML = rows.join("");
+  for (const b of list.querySelectorAll("[data-pick-project]")) {
+    b.onclick = () => {
+      ui.project = b.dataset.pickProject;
+      closePicker();
+      render();
+    };
+  }
+}
+
+// badgeHTML draws a project's badge for the switcher: the uploaded image when there is
+// one, otherwise initials on a hue derived from the name — the same derivation the
+// projects page uses, so a project looks the same in both places.
+function badgeHTML(meta, name) {
+  const avatar = meta?.avatar || "";
+  if (avatar.startsWith("data:image/")) {
+    return `<span class="ava ava-img"><img src="${esc(avatar)}" alt="" width="14" height="14"></span>`;
+  }
+  const label = avatar || monogram(meta?.label || name);
+  let h = 0;
+  for (const ch of (meta?.key || name)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `<span class="ava" style="background:hsl(${h} 62% 88%);border-color:hsl(${h} 40% 74%)"
+    aria-hidden="true">${esc(label)}</span>`;
+}
+
+function openPicker() {
+  document.getElementById("projpick-panel").hidden = false;
+  document.getElementById("projpick-btn").setAttribute("aria-expanded", "true");
+  const find = document.getElementById("projpick-find");
+  find.value = "";
+  filterPicker("");
+  find.focus();
+}
+
+function closePicker() {
+  document.getElementById("projpick-panel").hidden = true;
+  document.getElementById("projpick-btn").setAttribute("aria-expanded", "false");
+}
+
+// filterPicker hides rows that do not match, matching on both the label and the
+// repository name — somebody typing "customer" should find a project called "Customer
+// Connect" and somebody typing the repository name should find it too.
+function filterPicker(q) {
+  const needle = q.trim().toLowerCase();
+  const list = document.getElementById("projpick-list");
+  let shown = 0;
+  for (const row of list.querySelectorAll("[data-pick-project]")) {
+    const hay = `${row.textContent} ${row.dataset.pickProject}`.toLowerCase();
+    const hit = !needle || hay.includes(needle);
+    row.hidden = !hit;
+    if (hit) shown++;
+  }
+  // "All projects" is not a match anybody means when they have typed something. Only
+  // decremented when it was actually counted: unconditionally, a filter matching nothing
+  // took the count to -1, which is truthy, so the "no match" message never appeared.
+  const all = list.querySelector('[data-pick-project=""]');
+  if (needle && all && !all.hidden) {
+    all.hidden = true;
+    shown--;
+  }
+
+  let empty = list.querySelector(".pick-empty");
+  if (!shown) {
+    if (!empty) {
+      empty = document.createElement("div");
+      empty.className = "pick-empty";
+      list.prepend(empty);
+    }
+    empty.textContent = `No project matches “${q.trim()}”.`;
+  } else if (empty) {
+    empty.remove();
+  }
 }
 
 /* ── Accordion ────────────────────────────────────────────────────────────
@@ -1003,7 +1520,12 @@ function renderList() {
       // The link is a sibling of the button, not inside it: an anchor nested in
       // a button is invalid, and clicking it would toggle the row as well as
       // follow the href.
-      item.innerHTML = `<div class="row"><button class="head"></button><a class="go"></a></div>`;
+      // Three siblings, not nested: an anchor inside a button is invalid markup, and
+      // clicking one would both follow the href and toggle the row. The pull request link
+      // sits between the head — whose last cell is the relative time — and Open, so the
+      // reading order is what happened, when, where to discuss it, where to look at it.
+      item.innerHTML = `<div class="row"><button class="head"></button>` +
+        `<a class="go pr" data-role="row-pr"></a><a class="go"></a></div>`;
       item.querySelector(".head").onclick = () => toggle(g.name);
     }
 
@@ -1071,7 +1593,10 @@ function updateHead(item, g) {
   // p.url is in the signature because the row now carries the link: a republish
   // that moves the URL without changing the state would otherwise leave the
   // anchor pointing at the old one.
-  const sig = [p.preview_id, p.state, p.url, p.branch, p.number, ago(p.updated_at),
+  // The elapsed clock is deliberately part of the signature. It changes every second
+  // for a running build, which is the point — and for every other row it is the same
+  // coarse `ago` it always was, so a page of finished previews still rebuilds nothing.
+  const sig = [p.preview_id, p.state, p.url, p.branch, p.number, rowWhen(p),
                ui.open === g.name, JSON.stringify(g.counts)].join("|");
 
   const head = item.querySelector(".head");
@@ -1095,9 +1620,56 @@ function updateHead(item, g) {
     <span class="pill${s.work ? " work" : s.spin ? " spin" : ""}" style="--edge:${s.color}">
       <span class="dot"></span>${esc(s.label)}
     </span>
-    <span class="when">${ago(p.updated_at)}</span>`;
+    <span class="when${isLive(p.state) ? " ticking" : ""}">${rowWhen(p)}</span>`;
 
-  updateGoLink(item.querySelector(".go"), p);
+  updateRowPR(item.querySelector('[data-role="row-pr"]'), p);
+  // The Open link is the *last* .go, since the pull request link shares the class to
+  // share the look.
+  const gos = item.querySelectorAll(".go");
+  updateGoLink(gos[gos.length - 1], p);
+}
+
+// updateRowPR points the row's pull request link at the pull request.
+//
+// Hidden when there is none rather than greyed: the local platform has no web interface at
+// all, which is not a state anybody can act on, and a permanently dead control between two
+// live ones is worse than a gap.
+function updateRowPR(a, p) {
+  const url = safeURL(p.pr_url);
+  if (!url) {
+    a.hidden = true;
+    return;
+  }
+  const platform = String(p.repo).split(":")[0];
+  a.hidden = false;
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noreferrer";
+  // The platform's own mark, so which host a pull request is on is readable without
+  // parsing the URL — which matters the moment one dashboard watches both.
+  a.innerHTML = `${platformIcon(platform)}<span>#${p.number}</span>`;
+  a.title = `Open pull request #${p.number} on ${platform}`;
+}
+
+/* Inline SVG, one path each, currentColor.
+
+   Not an icon font and not an image: this page fetches nothing from the internet, and a
+   remote logo would announce every open dashboard to whoever hosts it.
+
+   GitHub's mark is the Octicon `mark-github` path, taken from github.com itself. The
+   simple-icons version was here first and it does not survive being scaled up — its
+   silhouette is drawn for 14px, and at 20 the ear and the tail read as artefacts.
+   `overflow: visible` comes with the Octicon and matters: the path is drawn slightly
+   outside the 24-unit box, so clipping it shaves the outline. */
+const ICON_GITHUB = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
+  focusable="false" fill="currentColor" overflow="visible"><path d="M10.226 17.284c-2.965-.36-5.054-2.493-5.054-5.256 0-1.123.404-2.336 1.078-3.144-.292-.741-.247-2.314.09-2.965.898-.112 2.111.36 2.83 1.01.853-.269 1.752-.404 2.853-.404 1.1 0 1.999.135 2.807.382.696-.629 1.932-1.1 2.83-.988.315.606.36 2.179.067 2.942.72.854 1.101 2 1.101 3.167 0 2.763-2.089 4.852-5.098 5.234.763.494 1.28 1.572 1.28 2.807v2.336c0 .674.561 1.056 1.235.786 4.066-1.55 7.255-5.615 7.255-10.646C23.5 6.188 18.334 1 11.978 1 5.62 1 .5 6.188.5 12.545c0 4.986 3.167 9.12 7.435 10.669.606.225 1.19-.18 1.19-.786V20.63a2.9 2.9 0 0 1-1.078.224c-1.483 0-2.359-.808-2.987-2.313-.247-.607-.517-.966-1.034-1.033-.27-.023-.359-.135-.359-.27 0-.27.45-.471.898-.471.652 0 1.213.404 1.797 1.235.45.651.921.943 1.483.943.561 0 .92-.202 1.437-.719.382-.381.674-.718.944-.943"/></svg>`;
+const ICON_BITBUCKET = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
+  fill="currentColor"><path d="M.8 1.1A.8.8 0 0 0 0 2l3.3 19.8c.1.5.5.8 1 .8h15.7c.4 0 .7-.3.8-.7l3.2-19.9a.8.8 0 0 0-.8-.9zm13.6 14.3H9.7L8.4 8.6h7.2z"/></svg>`;
+
+function platformIcon(platform) {
+  if (platform === "github") return ICON_GITHUB;
+  if (platform === "bitbucket") return ICON_BITBUCKET;
+  return "";
 }
 
 // The preview link belongs on the row, not inside the expanded panel: opening
@@ -1191,6 +1763,15 @@ function updateBody(item, g) {
         <button class="btn" data-role="follow" aria-pressed="true">Following</button>
         <button class="btn" data-role="tall" aria-pressed="false">Expand</button>
         <span class="grow"></span>
+        <!-- Only while something is running. A permanently greyed Cancel is furniture,
+             and one next to Download on a finished build is a misclick waiting to
+             happen. Shown beside Download rather than in the top bar because it acts on
+             the build whose log is on screen. -->
+        <!-- Rebuild and Cancel are the same slot in two states, because the question
+             "is something running" has one answer and each button is useless in the
+             other case. -->
+        <button class="btn" data-role="rebuild" hidden>Rebuild</button>
+        <button class="btn danger" data-role="cancel" hidden>Cancel build</button>
         <a class="btn" data-role="download" download>Download</a>
       </div>`;
     item.appendChild(body);
@@ -1280,6 +1861,94 @@ function updateBody(item, g) {
   body.querySelector('[data-role="download"]').href =
     `/logs/${encodeURIComponent(p.preview_id)}/download`;
 
+  // Cancel, only while this preview is actually building. The state comes from the same
+  // status payload the row is drawn from, so the button appears and disappears with the
+  // row's own pill rather than on its own schedule.
+  // Reconnect when this preview starts building under a pane showing something else.
+  //
+  // The server does the load-bearing half: a stream opened while a build is queued waits
+  // and announces it (Ingress.awaitLive), which is the Rebuild case and is deterministic.
+  // This covers the other one — a *push* arriving while somebody has a finished build's
+  // log open, where the stream closed at connect because nothing was coming yet.
+  //
+  // Guarded by the preview's own updated_at so it fires once per transition rather than on
+  // every status tick: openLog's start event may arrive after the next tick, and a
+  // condition that stayed true would reconnect in a loop.
+  if (p.state === "building" && ui.logFor === p.preview_id && !ui.build[p.preview_id] &&
+      ui.banner?.kind !== "live" && ui.reconnectedAt !== p.updated_at) {
+    ui.reconnectedAt = p.updated_at;
+    openLog(p.preview_id);
+  }
+  //
+  // Queued counts as cancellable. A queued build has no context to cancel, so the daemon
+  // takes it out of the queue instead — and a queue that cannot be emptied is the case
+  // that matters most, since a build waiting behind a slow one is the reason somebody
+  // wants to stop it.
+  const building = p.state === "building" || p.state === "queued";
+  const cancel = body.querySelector('[data-role="cancel"]');
+  cancel.hidden = !building;
+  cancel.textContent = p.state === "queued" ? "Cancel queued build" : "Cancel build";
+
+  // Rebuild, when nothing is running. It queues the commit already on the row rather than
+  // the branch tip: pushing is what builds the tip, and this is for the case a push cannot
+  // fix — a bad cache entry, a timeout, an image since corrected, a project setting changed
+  // under a preview nobody is pushing to.
+  const rebuild = body.querySelector('[data-role="rebuild"]');
+  rebuild.hidden = building;
+  rebuild.title = p.commit
+    ? `Build ${p.commit.slice(0, 7)} again`
+    : "Build this preview's recorded commit again";
+  rebuild.onclick = async () => {
+    const label = rebuild.textContent;
+    rebuild.disabled = true;
+    rebuild.textContent = "…";
+    try {
+      await api("POST", `/api/builds/${encodeURIComponent(p.preview_id)}/rebuild`);
+      // No alert on success: the row's own pill goes to Queued within a second, which is
+      // better confirmation than a dialog to dismiss.
+
+      // Move the pane to the live stream, and follow it.
+      //
+      // The selection is deliberately sticky — a reader part-way through an older build's
+      // log must not be yanked to a newer one by a background event. But this is not a
+      // background event: it is the reader asking for a build. Leaving the pin alone meant
+      // Rebuild started a build that ran to completion while the pane showed a *different*
+      // build's stored log and appeared to do nothing, which is exactly what it looked
+      // like. An empty build id is the picker's value for "follow the live stream".
+      ui.build[p.preview_id] = "";
+      ui.pick[g.name] = p.preview_id;
+      setFollow(true);
+      openLog(p.preview_id);
+      render();
+    } catch (e) {
+      alert(`Could not rebuild: ${e.message}`);
+    } finally {
+      rebuild.disabled = false;
+      rebuild.textContent = label;
+    }
+  };
+  cancel.onclick = async () => {
+    const what = p.state === "queued" ? "queued build" : "build";
+    if (!confirm(`Cancel the ${what} of ${p.branch} #${p.number}?\n\n` +
+      `It will be reported as failed on the pull request. Pushing again rebuilds it.`)) return;
+    const label = cancel.textContent;
+    cancel.disabled = true;
+    cancel.textContent = "…";
+    try {
+      const r = await api("POST", `/api/builds/${encodeURIComponent(p.preview_id)}/cancel`);
+      // Not an error when nothing was running: this page can be a second out of date, and
+      // a build that finished between the render and the click is not a failure.
+      if (!r.cancelled) alert("That build had already finished.");
+    } catch (e) {
+      alert(`Could not cancel: ${e.message}`);
+    } finally {
+      cancel.disabled = false;
+      cancel.textContent = label;
+    }
+  };
+
+  // The pull request link lives on the row, not here — see updateRowPR.
+
 
   // The preview link lives on the row, not here. See updateGoLink.
 
@@ -1309,7 +1978,7 @@ function updateBody(item, g) {
 }
 
 function updatePicker(sel, g) {
-  const sig = g.list.map(p => `${p.preview_id}:${p.state}:${ago(p.updated_at)}`).join("|");
+  const sig = g.list.map(p => `${p.preview_id}:${p.state}:${pickerWhen(p)}`).join("|");
 
   // A <select> being rewritten while its dropdown is open closes it, with no
   // visible cause — you reach for an older preview, a build finishes somewhere
@@ -1326,7 +1995,7 @@ function updatePicker(sel, g) {
     sel.dataset.sig = sig;
     sel.innerHTML = g.list.map(p =>
       `<option value="${esc(p.preview_id)}">` +
-      `${esc(p.branch)} · #${p.number} · ${esc(state(p.state).label)} · ${ago(p.updated_at)} ago` +
+      `${esc(p.branch)} · #${p.number} · ${esc(state(p.state).label)} · ${esc(pickerWhen(p))}` +
       `</option>`).join("");
   }
   sel.value = g.current.preview_id;
@@ -1351,6 +2020,53 @@ function banner(kind, text) {
     el.className = "logstate " + kind;
     el.textContent = text;
   }
+}
+
+// explainEmptyPane puts the reason there is nothing to read where the log would be.
+//
+// The alternative, which is what this replaces, is a banner in 0.72rem grey above an
+// empty black terminal — and for a skipped build that is every signal except the useful
+// one. The daemon already knows why it skipped; it tells the pull request. This shows the
+// same sentence to whoever is looking at the dashboard instead.
+//
+// Also called for a log retention pruned, which is a different fact and says so: the
+// build happened, its output is simply not kept any more.
+function explainEmptyPane(previewID, commit, kind) {
+  const t = term();
+  if (!t) return;
+
+  // The reason travels on the activity entry for that commit, and on the preview row
+  // for its newest build. Prefer the entry: it is the one the reader clicked.
+  const ev = (ui.events || []).find(e =>
+    e.preview_id === previewID && e.commit === commit && e.message);
+  const p = (ui.previews || []).find(x => x.preview_id === previewID);
+  const why = ev?.message || (p && p.commit === commit ? p.reason : "") || "";
+
+  const heads = {
+    skipped: "This build was skipped, so there is no log.",
+    queued: "Queued. Nothing has run yet.",
+    building: "Building. Output will appear here as it is written.",
+  };
+  const head = heads[kind] || `No build log was kept for ${commit}.`;
+  const tail = heads[kind]
+    ? ""
+    : `<span class="why">Logs are kept for <code>build.keep_logs</code>, which is shorter
+       than the history in the activity rail — so an entry can outlive what it produced.</span>`;
+
+  t.className = "term empty";
+  // The reason is its own block. Concatenated onto the heading it read as one run-on
+  // sentence: "This build was skipped, so there is no log.no documentation changes".
+  t.innerHTML = `<strong>${esc(head)}</strong>` +
+    (why ? `<div class="reason">${esc(why)}</div>` : "") + tail;
+  ui.buffer = "";
+}
+
+// resetPane puts the terminal back to being a terminal.
+function resetPane() {
+  const t = term();
+  if (!t) return;
+  t.className = "term" + (ui.tall ? " tall" : "");
+  t.innerHTML = "";
 }
 
 function toggle(name) {
@@ -1452,9 +2168,22 @@ function updateBuildPicker(previewID) {
   // while it runs, so reading it as a file would show a truncated copy that never
   // updates.
   const current = ui.build[previewID] || "";
+  // How long each build took, beside its outcome. The relative age answers "when", and
+  // "how long" is the other half of the question anybody asks after watching a package
+  // install for four minutes — and it is the number that shows a cache going cold.
   sel.innerHTML = builds.map((b, i) =>
     `<option value="${i === 0 ? "" : esc(b.build_id)}">` +
-    `${buildIcon(b)} ${esc(buildLabel(b))} · ${esc(b.build_id)} · ${ago(b.mod_time)} ago` +
+    // A running build has no duration to report yet, so its age becomes the
+    // stopwatch — "running · 04m 12s" — and the `took` clause appears once it has
+    // actually taken something.
+    `${buildIcon(b)} ${esc(buildLabel(b))} · ${esc(b.build_id)} · ` +
+    // started_at, not mod_time: mod_time is the log file's, which advances with every
+    // line the build writes, so a stopwatch driven from it would read a few seconds
+    // old for the whole build.
+    // No duration here. It was a third fact on every option — outcome, id, age, took —
+    // and a picker of five builds became five unreadable lines. The banner under the
+    // picker says how long the selected build took, where it costs no width.
+    `${esc(isLive(b.state) ? elapsed(b.started_at || b.mod_time) : `${ago(b.mod_time)} ago`)}` +
     `</option>`).join("");
   sel.value = current;
 
@@ -1526,8 +2255,10 @@ function openLog(previewID) {
   ui.buffer = "";
   banner("none", "connecting…");
 
-  const t = term();
-  if (t) t.innerHTML = "";
+  // Back to being a terminal. Without this, opening a preview that has output after one
+  // that had none leaves the pane in its prose styling and the first lines arrive in the
+  // wrong font on the wrong background.
+  resetPane();
 
   const src = new EventSource(`/logs/${encodeURIComponent(previewID)}/stream`);
   ui.logSource = src;
@@ -1539,10 +2270,27 @@ function openLog(previewID) {
   src.addEventListener("start", e => {
     let d = {};
     try { d = JSON.parse(e.data) || {}; } catch {}
+
+    // Clear the pane on every start, not only the first.
+    //
+    // One connection can announce twice. Press Rebuild and the stream opens while the build
+    // is still queued: the server replays the *previous* build, says done, then waits and
+    // sends a second start when the new build begins. Without this, the new output appended
+    // below the old log and its "— end of log —" line, so the pane showed two builds
+    // spliced together under a banner that flipped halfway down. Which is what "not tailing
+    // properly" looked like.
+    //
+    // Safe on the first start too: it arrives before any line, so there is nothing to lose.
+    resetPane();
+    ui.buffer = "";
+
     if (d.live) {
       banner("live", "streaming this build");
     } else {
-      banner("past", `previous build${d.build_id ? " · " + d.build_id : ""} — nothing is running`);
+      // The duration goes here rather than in the build picker's options, where it was
+      // a third fact on every line and made the dropdown unreadable.
+      banner("past", `previous build${d.build_id ? " · " + d.build_id : ""} — ` +
+        `nothing is running${d.seconds ? ` · took ${secs(d.seconds)}` : ""}`);
     }
   });
 
@@ -1552,11 +2300,13 @@ function openLog(previewID) {
     try { d = JSON.parse(e.data) || {}; } catch {}
 
     if (d.reason) {
-      // "no build log" and "log unreadable" arrive with no start event, so the
-      // banner is still whatever the last preview left. Say what happened here
-      // rather than in the terminal, and leave the pane empty — an empty
-      // black box under an explanation is clearer than the words alone in it.
+      // "no build log" and "log unreadable" arrive with no start event, so the banner is
+      // still whatever the last preview left. Both the banner and the pane say it: the
+      // banner is 0.72rem grey, and on its own above an empty black terminal it reads as
+      // a page that failed to load rather than as an answer.
       banner("none", d.reason);
+      const p = (ui.previews || []).find(x => x.preview_id === previewID);
+      explainEmptyPane(previewID, p?.commit || "", p?.state === "skipped" ? "skipped" : "");
     } else if (!d.live) {
       appendLog("\n— end of log —");
     } else {
@@ -1623,6 +2373,13 @@ function appendLog(text) {
 
   const t = term();
   if (!t) return;
+  // A line arriving into a pane that is currently an explanation — a build that was
+  // skipped and is now being rebuilt — turns it back into a terminal first, or the output
+  // lands under prose in the wrong font.
+  if (t.classList.contains("empty")) {
+    resetPane();
+    ui.buffer = html;
+  }
   t.insertAdjacentHTML("beforeend", html);
 
   if (!ui.follow) return;
@@ -1944,11 +2701,12 @@ async function selectBuildForCommit(previewID, commit, kind) {
     // rather than left alone: leaving the previous build on screen under a banner
     // about a different one is the most confusing of the three options.
     if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
-    const t = term();
-    if (t) t.innerHTML = "";
-    ui.buffer = "";
-    banner("none", `no build log was kept for ${commit}` +
-      (kind === "skipped" ? " — it was skipped, so nothing was built" : ""));
+    // The explanation goes in the pane, not only in the banner above an empty black
+    // rectangle 15rem tall. For a skipped build the banner said "no build log", which is
+    // true and is not the fact anybody wants.
+    explainEmptyPane(previewID, commit, kind);
+    banner("none", kind === "skipped" ? "skipped — nothing was built"
+      : `no log kept for ${commit}`);
     return;
   }
 
@@ -2047,9 +2805,17 @@ function renderSetup(s) {
              title="Mint a random value and show it once">Generate</button>`}
         ${e.set ? `<button class="btn" data-del="${esc(e.key)}">Delete</button>` : ""}`;
 
+    // A chip, not a sentence. The rule is the same for every build variable and stating
+    // it per row cost three wrapped lines each — the list stopped being a list. It is
+    // stated once, in the notice above.
+    const injected = e.env_var
+      ? `<span class="flag on" title="Injected into every build as ${esc(e.env_var)}, and
+           redacted from every log. A project can override it.">build var</span>`
+      : "";
+
     return `<div class="sec">
       <div>
-        <div class="name">${esc(e.label)} ${flag}</div>
+        <div class="name">${esc(e.label)} ${flag} ${injected}</div>
         <div class="key">${esc(e.key)}</div>
         ${e.hint ? `<div class="hint">${esc(e.hint)}</div>` : ""}
       </div>
@@ -2082,7 +2848,10 @@ function renderSetup(s) {
        <code>docpreview vault set &lt;key&gt;</code> there.</p></div>`
     : `<div class="notice ok">Values are written to the age-encrypted vault. Nothing here reads one
        back — the only time a secret is visible is the moment you generate it. Changing a build
-       secret re-arms the log redactor immediately.</div>`;
+       secret re-arms the log redactor immediately.
+       <p>An entry marked <span class="flag on">build var</span> is injected into every build
+       as that variable and redacted from every log; a project can override it with its own.
+       That is what an <code>UPPER_CASE</code> name means here.</p></div>`;
 
   el.innerHTML = `
     ${once}
@@ -2090,11 +2859,21 @@ function renderSetup(s) {
     ${rows}
     ${ro ? "" : `<div class="sec">
       <div><div class="name">Add another</div>
-        <div class="hint">any key you reference from <code>build.secrets</code></div></div>
+        <!-- What the name decides, since it decides everything here: a shell-shaped name
+             is injected into every build under that name, and anything else is a key only
+             the daemon's own config can reach. That rule used to be invisible, and six
+             tokens were stored in the belief that storing them was enough. -->
+        <div class="hint">An <code>UPPER_CASE</code> name is injected into every build as
+          that variable. Anything else is only read if <code>build.secrets</code> names
+          it.</div></div>
       <div>
-        <input type="text" id="new-key" placeholder="e.g. demo.algolia_key"
-               style="width:100%;margin-bottom:0.35rem">
-        <input type="password" id="new-val" placeholder="value">
+        <!-- No placeholder. A greyed-out example in the *name* box reads as a value
+             already filled in, and this is the field where getting it wrong is silent:
+             the build looks for a variable that is not there and falls back to whatever
+             its script does without one. -->
+        <input type="text" id="new-key" autocomplete="off" spellcheck="false"
+               aria-label="Name" style="width:100%;margin-bottom:0.35rem">
+        <input type="password" id="new-val" autocomplete="off" aria-label="Value">
       </div>
       <div class="act"><button class="btn" id="new-save">Save</button></div>
     </div>`}`;
@@ -2265,10 +3044,14 @@ async function run(btn, fn, opts) {
   } catch (e) {
     btn.disabled = false;
     btn.textContent = label;
-    const n = document.createElement("div");
-    n.className = "notice bad";
-    n.textContent = e.message;
-    document.getElementById(bodyID).prepend(n);
+    // A toast, not a notice prepended into the panel.
+    //
+    // Prepending was the original, and every rejected save added another one: ten
+    // attempts at a base URL left ten identical red boxes stacked above the form,
+    // pushing the fields somebody was correcting off the screen. A failure is an
+    // event, and an event that accumulates in the document is a leak. This one
+    // expires on its own and never moves the form.
+    toast(e.message, "bad");
   }
 }
 
@@ -2307,6 +3090,71 @@ async function loadProjects() {
    comes back to where you were. */
 let projOpen = {key: null, tab: null};
 
+/* Whether the open form has edits nobody has saved.
+
+   Every way out of this page throws the form away without a word: closing the panel,
+   opening a different project's, the back link, the browser's own navigation. Eleven
+   fields of typing lost to a misplaced click, with no undo, because a project form has
+   no draft state anywhere.
+
+   Set by an input listener rather than by comparing values, which sounds sloppier and is
+   not: a comparison has to know which fields belong to which project and what "unchanged"
+   means for a select whose default moved, and it silently answers "clean" when it gets
+   that wrong. Typing into a form is the signal. */
+let formDirty = false;
+
+/* A one-shot message for the render that follows an action.
+
+   Consumed by the next renderProjectsPage and cleared as it is read, so a render five
+   seconds later — a second save, another panel opening — does not replay it. The element
+   removes *itself* on a timer rather than being cleared by a re-render, because a
+   re-render at an arbitrary moment would throw away whatever somebody had started typing
+   in another panel. */
+let projFlash = "";
+
+/* toast says something happened, over the page rather than in it.
+
+   An inline notice was the first attempt and it was too easy to miss: it landed where the
+   form had been, which is where the form no longer is, so the eye had already moved. This
+   sits in a fixed corner, outside the document flow, so nothing below it shifts — a banner
+   that pushes a list down is its own small confusion.
+
+   Detached from any render. The element removes itself on a timer, because clearing it by
+   re-rendering would throw away whatever somebody had started typing in another panel. */
+function toast(text, kind) {
+  let host = document.getElementById("toasts");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "toasts";
+    document.body.appendChild(host);
+  }
+  const t = document.createElement("div");
+  t.className = kind ? `toast ${kind}` : "toast";
+  t.textContent = text;
+  host.appendChild(t);
+  // Long enough to read a sentence, and it does not block anything while it is there.
+  // A failure is left up longer: it is usually a sentence about what to type instead,
+  // and it appears at the moment somebody's attention is on the form they just broke.
+  setTimeout(() => t.remove(), kind === "bad" ? 9000 : 5000);
+}
+
+// confirmDiscard asks before throwing away unsaved edits, and returns whether to go on.
+function confirmDiscard() {
+  if (!formDirty) return true;
+  if (!confirm("You have unsaved changes to this project. Discard them?")) return false;
+  formDirty = false;
+  return true;
+}
+
+// The browser's own guard, for the back link, a bookmark, or a closed tab. The wording is
+// the browser's — every one of them ignores a custom message — so preventDefault plus
+// returnValue is the whole of the API.
+window.addEventListener("beforeunload", e => {
+  if (!formDirty) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
+
 function renderProjectsPage(s) {
   const el = document.getElementById("projects-body");
   const ro = !s.can_write;
@@ -2331,6 +3179,13 @@ function renderProjectsPage(s) {
     : `<div class="act"><button class="btn" id="p-new">New project</button></div>`);
 
   el.innerHTML = `${banner}${rows}${adder}`;
+
+  // Read once and cleared, so it cannot reappear on an unrelated render.
+  if (projFlash) {
+    toast(projFlash);
+    projFlash = "";
+  }
+
   // Wired unconditionally: with no write access there are no buttons to wire, and a
   // read-only page that skipped this would still have to know that.
   wireProjectHandlers(s);
@@ -2359,10 +3214,15 @@ function projectCard(p, s, ro) {
         p.driver ? "" : " (default)"}</span>
       <span class="grow"></span>
       ${ro ? "" : `<button class="btn" data-tab="build" data-key="${esc(key)}"
-          aria-pressed="${open === "build"}">Build</button>
+          aria-pressed="${open === "build"}">Edit</button>
         <button class="btn" data-tab="secrets" data-key="${esc(key)}"
           aria-pressed="${open === "secrets"}">Secrets${
             p.secrets.length ? ` (${p.secrets.length})` : ""}</button>
+        <!-- Queues a build for every open pull request on this repository, which is the
+             same thing adding a project does. It exists because the answer to "I changed
+             the image, now what" was to wait for somebody to push. -->
+        <button class="btn" data-build="${esc(key)}"
+          title="Queue a build for every open pull request">Build now</button>
         <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
     </div>
     ${projectFacts(p)}
@@ -2413,6 +3273,45 @@ function avatarHTML(p) {
     aria-hidden="true">${esc(label)}</span>`;
 }
 
+// imagePicker is the container image field: a text box that is also a search box, over a
+// list of the images known to work here.
+//
+// A <datalist> was the first attempt and it is not this. Its dropdown is the browser's,
+// which means no descriptions, no styling, no way to say which one is the default, and on
+// some browsers no way to see the list at all without typing a character that matches. The
+// list is short and opinionated, and the interesting part is *why* one entry differs from
+// another — which needs a row you can put a sentence in.
+//
+// Free text is preserved on purpose: the value is whatever the operator types, and a
+// private registry mirror is the normal answer in an enterprise. The list is a shortcut,
+// never a constraint.
+function imagePicker(elID, value, s) {
+  const images = s.defaults.images || [];
+  return `<span class="picker imgpick">
+    <input class="control" id="${elID}" value="${value}"
+      placeholder="${esc(s.defaults.image)}" autocomplete="off" spellcheck="false"
+      aria-expanded="false" aria-haspopup="listbox">
+    <div class="pick-panel" id="${elID}-panel" hidden>
+      <div class="pick-list" role="listbox">
+        ${images.map(i => `<button type="button" class="pick-row" data-image="${esc(i)}"
+          role="option">
+          <span>${esc(i)}</span>
+          ${i === s.defaults.image ? `<span class="count">default</span>` : ""}
+          ${imageNote(i) ? `<span class="count">${esc(imageNote(i))}</span>` : ""}
+        </button>`).join("")}
+      </div>
+    </div>
+    <div class="imgcheck" id="${elID}-check"></div>
+  </span>`;
+}
+
+// imageNote is the one thing worth knowing about an image beyond its name.
+function imageNote(image) {
+  if (image.includes("-slim")) return "no git";
+  if (image.includes("alpine")) return "musl";
+  return "";
+}
+
 // avatarField is a short input for two characters and a textarea for an inlined image.
 //
 // Two controls rather than one, because a 2.4 KB data URI in a 5rem input is a field
@@ -2421,12 +3320,19 @@ function avatarHTML(p) {
 // other.
 function avatarField(p, elID) {
   const cur = p ? (p.avatar || "") : "";
-  if (cur.startsWith("data:image/")) {
-    return `<textarea class="control" id="${elID}" style="min-height:3.5rem;
-      font:11px/1.4 ui-monospace,Consolas,monospace">${esc(cur)}</textarea>`;
-  }
-  return `<input class="control" id="${elID}" style="max-width:9rem"
-    value="${esc(cur)}" placeholder="${esc(monogram(p ? projectLabel(p) : "?"))} or data:image/…">`;
+  const isImg = cur.startsWith("data:image/");
+  // The value itself is hidden once it is an image: 1.4 KB of percent-encoded SVG in a
+  // text field is not something anybody reads or edits, and showing it made the field
+  // look broken. What is shown is the image, a picker, and a way to clear it.
+  return `<span class="avafield">
+    <input type="${isImg ? "hidden" : "text"}" class="control" id="${elID}"
+      style="max-width:9rem" value="${esc(cur)}"
+      placeholder="${esc(monogram(p ? projectLabel(p) : "?"))}">
+    ${isImg ? `<span class="ava ava-img"><img src="${esc(cur)}" alt="" width="22" height="22"></span>` : ""}
+    <input type="file" id="${elID}-file" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
+    <button type="button" class="btn" data-pick="${elID}">${isImg ? "Replace" : "Upload"}</button>
+    ${isImg ? `<button type="button" class="btn" data-clearava="${elID}">Clear</button>` : ""}
+  </span>`;
 }
 
 // monogram takes the first character of the first two words, or the first two
@@ -2449,6 +3355,9 @@ function projectFacts(p) {
     ["base URL", p.base_url],
     ["ignore script", p.detect_script],
     ["image", p.image],
+    // Listed because a project with a raised timeout is the one whose builds look
+    // hung, and the card is where somebody checks what it was set to.
+    ["timeout", p.timeout],
   ].filter(([, v]) => v);
 
   const env = (p.secrets || []).length
@@ -2498,11 +3407,17 @@ function secretsPanel(p, s) {
     <div class="grid-form" style="margin-top:0.6rem">
       <div class="field">
         <label for="s-env-${esc(key)}">Name</label>
-        <input class="control" id="s-env-${esc(key)}" placeholder="BB_REPO_TOKEN_ONPREM">
+        <!-- No placeholder. A greyed-out BB_REPO_TOKEN_ONPREM in the box read as a
+             value already entered, and the field it names is the one where getting it
+             wrong is silent: the build looks for a variable that is not there. -->
+        <input class="control" id="s-env-${esc(key)}" autocomplete="off" spellcheck="false">
       </div>
       <div class="field">
         <label for="s-val-${esc(key)}">Value</label>
-        <input class="control" id="s-val-${esc(key)}" type="password" placeholder="the token">
+        <input class="control" id="s-val-${esc(key)}" type="password" autocomplete="off">
+        <div class="why">Masked here, never returned by the API, and replaced with
+          asterisks in every build log. Nothing can read it back — removing it means
+          finding the token again wherever it came from.</div>
       </div>
     </div>
     <div class="act" style="margin-top:0.5rem">
@@ -2519,13 +3434,24 @@ function projectKey(p) { return `${p.platform}/${p.owner}/${p.repo}`; }
 // is disabled when the startup probe did not find it, local is disabled unless
 // build.allow_local_driver is set, and each says which it is in its own label.
 function driverSelect(s, p, elID) {
-  const d = s.defaults, cur = p ? (p.driver || "") : "";
+  const d = s.defaults;
+  // A blank value means "follow the server default", and the server default is always
+  // one of the two concrete drivers — so offering it as a third option listed the same
+  // driver twice, "docker — server default" above "docker — build in a container",
+  // which is a distinction nobody outside this file can act on.
+  //
+  // So: two options, and saving pins the choice. Pinning is also the better default
+  // semantic. A project's build environment should not change because somebody moved a
+  // server-wide setting, and the one move that matters — flipping the server default to
+  // local — is exactly the one you would not want applied silently to every project.
+  // An existing row with a blank driver arrives at the server default preselected.
+  const cur = (p && p.driver) || d.driver;
   const opt = (value, label, disabled) =>
     `<option value="${value}"${value === cur ? " selected" : ""}${
-      disabled && value !== cur ? " disabled" : ""}>${label}</option>`;
+      disabled && value !== cur ? " disabled" : ""}>${label}${
+      value === d.driver ? " · server default" : ""}</option>`;
 
   return `<select class="control" id="${elID}">
-    ${opt("", `${esc(d.driver)} — server default`, false)}
     ${opt("docker", d.docker_available
       ? "docker — build in a container"
       : `docker — not available: ${esc(d.docker_detail || "no docker")}`, !d.docker_available)}
@@ -2630,11 +3556,11 @@ function projectForm(s, p) {
       <div class="field-head">Build <span class="field-note">— blank means the
         repository decides</span></div>
       ${field("driver", "Driver", driverSelect(s, p, id("driver")), driverWhy(s))}
-      ${field("image", "Container image", `<input class="control" id="${id("image")}"
-        list="known-images" value="${v("image")}" placeholder="${esc(s.defaults.image)}">
-        <div class="imgcheck" id="${id("image")}-check"></div>`,
-        "Pick one or type your own — a private mirror is a normal answer. Needs node; " +
-        "alpine's musl breaks dependencies that ship prebuilt binaries.")}
+      ${field("image", "Container image", imagePicker(id("image"), v("image"), s),
+        "Pick one or type your own — a private mirror is a normal answer. Needs node and " +
+        "<code>git</code> if the build clones other repositories, which the " +
+        "<code>-slim</code> images do not have; alpine's musl breaks dependencies that " +
+        "ship prebuilt binaries.")}
       ${field("dir", "Build directory", text("dir", "www"),
         "Where <code>package.json</code> lives, relative to the repository root. Blank " +
         "means the root.")}
@@ -2650,18 +3576,26 @@ function projectForm(s, p) {
       ${field("detect", "Ignore-build script", text("detect", "ci/needs-build.sh"),
         "Executed directly, so its shebang decides the interpreter. Gets the changed " +
         "paths on stdin; exit 0 to build, 78 to skip. Blank uses path matching.")}
+      ${field("timeout", "Build timeout", text("timeout", esc(s.defaults.timeout || "15m0s")),
+        "How long one build of this project may run before it is killed. Blank uses the " +
+        "server's <code>build.timeout</code>, shown above as the placeholder. A duration " +
+        "with a unit — <code>45m</code>, <code>2h</code> — because a repository that " +
+        "clones seven others is not a two-minute build and every other project should " +
+        "not have to wait that long to be told it hung.")}
 
       <div class="field-head">Notes</div>
       ${field("notes", "Notes", `<textarea class="control" id="${id("notes")}"
         maxlength="5000" placeholder="Why this project is set up the way it is. Nothing
         reads this but the next person.">${v("notes")}</textarea>`)}
     </div>
-    <datalist id="known-images">${(s.defaults.images || []).map(i =>
-      `<option value="${esc(i)}"></option>`).join("")}</datalist>
-    <div class="act" style="margin-top:0.6rem">
-      <button class="btn" data-save="${p ? esc(projectKey(p)) : NEW}">${
+    <div class="act formact">
+      <!-- Primary, so which button commits is not a reading exercise. Cancel is beside
+           it and says what it discards, because "Cancel" alone on a form somebody has
+           been typing into for two minutes is not a promise anyone should have to
+           guess at. -->
+      <button class="btn primary" data-save="${p ? esc(projectKey(p)) : NEW}">${
         p ? "Save changes" : "Create project"}</button>
-      <button class="btn" data-close-panel="1">Cancel</button>
+      <button class="btn" data-close-panel="1">Cancel${p ? " — discard edits" : ""}</button>
       ${p ? `<span class="grow"></span>
         <button class="btn" data-toggle-enabled="${esc(projectKey(p))}">${
           p.enabled ? "Disable" : "Enable"}</button>` : ""}
@@ -2675,6 +3609,114 @@ function projectPath(key) {
   const [platform, owner, repo] = key.split("/");
   return `/api/projects/${encodeURIComponent(platform)}` +
     `/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+// AVATAR_MAX is the server's cap on an inlined badge, mirrored here so a file that will
+// not fit is shrunk before it is sent rather than refused after.
+const AVATAR_MAX = 16 * 1024;
+
+// wireAvatarPickers turns the file input into a badge.
+//
+// The image is stored in the project row as a data: URI rather than as a file on disk.
+// One binary in one sqlite row travels with the database, survives a restore, and needs
+// no static route, no MIME sniffing on the way out, and no orphaned file when a project
+// is deleted. The cost is a size cap, which is why anything large is rasterized first.
+//
+// SVG is kept as-is when it fits, because it is already small and stays sharp. Anything
+// else — and any oversized SVG — is drawn onto a 64px canvas and exported as PNG, which
+// takes a 2 MB photo to a few kilobytes. 64 is twice the rendered size, for a retina
+// display, and nothing here is ever shown larger than a favicon.
+function wireAvatarPickers(root) {
+  for (const b of root.querySelectorAll("[data-pick]")) {
+    const target = b.dataset.pick;
+    const file = document.getElementById(`${target}-file`);
+    b.onclick = () => file.click();
+    file.onchange = async () => {
+      const f = file.files?.[0];
+      if (!f) return;
+      try {
+        const value = await readAvatar(f);
+        const input = document.getElementById(target);
+        input.value = value;
+        // The field was a text input until now if the project had no image. Re-render so
+        // it becomes the image-plus-buttons form, with the new value in it.
+        input.type = "hidden";
+        b.textContent = "Replace";
+        let shown = b.parentElement.querySelector(".ava-img img");
+        if (!shown) {
+          const span = document.createElement("span");
+          span.className = "ava ava-img";
+          span.innerHTML = `<img alt="" width="22" height="22">`;
+          b.parentElement.insertBefore(span, b);
+          shown = span.querySelector("img");
+        }
+        shown.src = value;
+      } catch (e) {
+        alert(`That image could not be used: ${e.message}`);
+      }
+    };
+  }
+  for (const b of root.querySelectorAll("[data-clearava]")) {
+    b.onclick = () => {
+      const input = document.getElementById(b.dataset.clearava);
+      input.value = "";
+      input.type = "text";
+      b.parentElement.querySelector(".ava-img")?.remove();
+      b.remove();
+    };
+  }
+}
+
+// readAvatar returns a data: URI small enough for the row.
+function readAvatar(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error("the file could not be read"));
+    fr.onload = async () => {
+      const raw = String(fr.result);
+      if (file.type === "image/svg+xml" && raw.length <= AVATAR_MAX) {
+        resolve(raw);
+        return;
+      }
+      try {
+        resolve(await rasterize(raw));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+// rasterize draws a data URI onto a 64px canvas and returns a PNG data URI.
+//
+// Contain rather than cover, so a wide logo is letterboxed instead of cropped through
+// the middle. Quality is stepped down only if the PNG is still too large, which for a
+// 64px image effectively never happens.
+function rasterize(dataURI) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onerror = () => reject(new Error("that file is not an image this browser can draw"));
+    img.onload = () => {
+      const size = 64;
+      const c = document.createElement("canvas");
+      c.width = c.height = size;
+      const ctx = c.getContext("2d");
+      const scale = Math.min(size / img.width, size / img.height);
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      ctx.drawImage(img, Math.round((size - w) / 2), Math.round((size - h) / 2), w, h);
+
+      let out = c.toDataURL("image/png");
+      if (out.length > AVATAR_MAX) out = c.toDataURL("image/jpeg", 0.8);
+      if (out.length > AVATAR_MAX) {
+        reject(new Error(`still ${Math.round(out.length / 1024)} KB after shrinking`));
+        return;
+      }
+      resolve(out);
+    };
+    img.src = dataURI;
+  });
 }
 
 // imageState is the last answer per image field, so save can refuse what the operator
@@ -2730,9 +3772,64 @@ function wireImageCheck(root) {
       }
     };
 
-    input.oninput = () => { clearTimeout(timer); timer = setTimeout(check, 600); };
+    // The input is also the filter over the known-image list, which is why the panel
+    // opens on focus rather than behind a separate control: there is one field, and
+    // typing in it both narrows the list and sets the value.
+    const panel = document.getElementById(`${input.id}-panel`);
+    const showPanel = on => {
+      if (!panel) return;
+      panel.hidden = !on;
+      input.setAttribute("aria-expanded", String(on));
+    };
+    const filterImages = () => {
+      if (!panel) return;
+      const needle = input.value.trim().toLowerCase();
+      let shown = 0;
+      for (const row of panel.querySelectorAll("[data-image]")) {
+        const hit = !needle || row.dataset.image.toLowerCase().includes(needle);
+        row.hidden = !hit;
+        if (hit) shown++;
+      }
+      // Nothing matching is not an error here — the value is free text and a private
+      // mirror will match nothing. The panel simply gets out of the way.
+      showPanel(shown > 0);
+    };
+
+    input.onfocus = () => filterImages();
+    input.oninput = () => {
+      filterImages();
+      clearTimeout(timer);
+      timer = setTimeout(check, 600);
+    };
     input.onchange = () => { clearTimeout(timer); check(); };
-    input.onblur = () => { clearTimeout(timer); check(); };
+    input.onblur = () => {
+      clearTimeout(timer);
+      check();
+      // Late enough for a click on a row to land first. A panel that closes on blur
+      // closes before the click it was opened for.
+      setTimeout(() => showPanel(false), 150);
+    };
+    input.onkeydown = e => {
+      if (e.key === "Escape") showPanel(false);
+      if (e.key === "Enter" && panel && !panel.hidden) {
+        const first = [...panel.querySelectorAll("[data-image]")].find(r => !r.hidden);
+        if (first) {
+          e.preventDefault();
+          first.click();
+        }
+      }
+    };
+
+    for (const row of panel?.querySelectorAll("[data-image]") || []) {
+      row.onclick = () => {
+        input.value = row.dataset.image;
+        formDirty = true;
+        showPanel(false);
+        clearTimeout(timer);
+        check();
+      };
+    }
+
     if (input.value.trim()) check();
   }
 }
@@ -2741,10 +3838,23 @@ function wireProjectHandlers(s) {
   const el = document.getElementById("projects-body");
   const val = id => (document.getElementById(id)?.value || "").trim();
 
+  // Any typing in an open panel makes it dirty. One listener on the container rather
+  // than one per field, so a field added later is covered without anybody remembering.
+  el.addEventListener("input", e => {
+    if (e.target.closest(".panel, .pcard [data-save]")) formDirty = true;
+  });
+
   const newBtn = document.getElementById("p-new");
-  if (newBtn) newBtn.onclick = () => { projOpen = {key: NEW, tab: "build"}; renderProjectsPage(s); };
+  if (newBtn) {
+    newBtn.onclick = () => {
+      if (!confirmDiscard()) return;
+      projOpen = {key: NEW, tab: "build"};
+      renderProjectsPage(s);
+    };
+  }
 
   wireImageCheck(el);
+  wireAvatarPickers(el);
 
   // Paste a repository URL and the three identity fields fill themselves. On input
   // rather than on a button, because a paste is the whole gesture — and left alone if
@@ -2761,13 +3871,18 @@ function wireProjectHandlers(s) {
   }
 
   for (const b of el.querySelectorAll("[data-close-panel]")) {
-    b.onclick = () => { projOpen = {key: null, tab: null}; renderProjectsPage(s); };
+    b.onclick = () => {
+      if (!confirmDiscard()) return;
+      projOpen = {key: null, tab: null};
+      renderProjectsPage(s);
+    };
   }
 
   // One expanded panel at a time, and clicking the open one closes it. A page of
   // expanded cards is the wall of fields this replaced.
   for (const b of el.querySelectorAll("[data-tab]")) {
     b.onclick = () => {
+      if (!confirmDiscard()) return;
       const same = projOpen.key === b.dataset.key && projOpen.tab === b.dataset.tab;
       projOpen = same ? {key: null, tab: null} : {key: b.dataset.key, tab: b.dataset.tab};
       renderProjectsPage(s);
@@ -2810,14 +3925,45 @@ function wireProjectHandlers(s) {
           build_output: val(id("output")),
           base_url: val(id("baseurl")),
           detect_script: val(id("detect")),
+          timeout: val(id("timeout")),
           image: val(id("image")),
           notes: val(id("notes")),
           display_name: val(id("name")),
           avatar: val(id("avatar")),
         });
-        // Stay where you were on an edit; close the add form, since its project now
-        // has a card of its own.
-        if (!editing) projOpen = {key: null, tab: null};
+        // Saved, so nothing is unsaved. Cleared before the scan, or the confirm-on-leave
+        // guard fires on a form the server has already accepted.
+        formDirty = false;
+
+        // Close the panel and say so. Leaving it open was meant to keep somebody in
+        // place for a second edit, and instead made a successful save look like nothing
+        // had happened — the form it left on screen is indistinguishable from the form
+        // that was there before the click.
+        if (editing) {
+          projOpen = {key: null, tab: null};
+          projFlash = `Saved ${key.split("/").slice(1).join("/")}.`;
+        }
+
+        // A new project builds what is already open. Without this, adding a repository
+        // does nothing visible until somebody pushes to it — and the reason for adding it
+        // is usually that nobody has.
+        if (!editing) {
+          projOpen = {key: null, tab: null};
+          try {
+            const scan = await api("POST", `${projectPath(target)}/scan`);
+            if (scan.error) {
+              alert(`The project was saved, but nothing could be queued:\n\n${scan.error}`);
+            } else if (scan.queued) {
+              alert(`Saved. ${scan.queued} open pull request${scan.queued === 1 ? "" : "s"} ` +
+                `queued for building — watch the dashboard.`);
+            } else {
+              alert("Saved. That repository has no open pull requests, so there is " +
+                "nothing to build yet.");
+            }
+          } catch (e) {
+            alert(`The project was saved, but the scan failed: ${e.message}`);
+          }
+        }
         return out;
       });
     };
@@ -2836,6 +3982,23 @@ function wireProjectHandlers(s) {
           build_output: p.build_output, base_url: p.base_url,
           detect_script: p.detect_script, image: p.image, notes: p.notes,
         }));
+    };
+  }
+
+  for (const b of el.querySelectorAll("[data-build]")) {
+    b.onclick = async () => {
+      const key = b.dataset.build;
+      await runProject(b, async () => {
+        const scan = await api("POST", `${projectPath(key)}/scan`);
+        // The count is the whole answer: 3 says it worked, 0 with an error says the App
+        // is not installed there, 0 without one says the repository has nothing open.
+        projFlash = scan.error
+          ? `Nothing queued: ${scan.error}`
+          : scan.queued
+            ? `Queued ${scan.queued} build${scan.queued === 1 ? "" : "s"} — watch the dashboard.`
+            : "That repository has no open pull requests, so there is nothing to build.";
+        return api("GET", "/api/projects");
+      });
     };
   }
 
@@ -2892,6 +4055,15 @@ function applyStatus(d) {
 
   document.getElementById("exposer").textContent = `exposer: ${d.exposer}`;
 
+  // While the daemon is recovering there are no workers, so a queued build cannot start.
+  // Said out loud, because "Queued" with nothing happening is indistinguishable from a
+  // stuck queue — which is exactly how it was reported, twice, both times a minute after a
+  // restart.
+  showStarting(d.starting, d.startup);
+  // Only once the daemon says it has finished, so the report does not appear over the
+  // banner that is still counting.
+  if (!d.starting) showBootReport(d);
+
 
   // A project whose last preview was torn down must not keep a stream open
   // behind a panel nobody can see. ui.open is a project name, so the test is
@@ -2904,6 +4076,174 @@ function applyStatus(d) {
 
   render();
   openFromFragment();
+}
+
+// showStarting puts a banner above the list while the daemon is recovering.
+//
+// Not a spinner on the row: the row is correct — the build *is* queued. What is missing is
+// that nothing can claim it yet, which is a property of the daemon and belongs where the
+// daemon's own state is reported.
+/* showBootReport shows what the last recovery did, once per daemon process.
+
+   Gated on the instance stamp, in sessionStorage: the daemon reports its startup for as
+   long as it runs, so without a marker every reload would re-announce a restart from an
+   hour ago. sessionStorage rather than localStorage because it is scoped to the tab,
+   which is the right lifetime for "I have seen this" — and rather than a variable,
+   because reloading the page is the commonest way to arrive here. */
+function showBootReport(s) {
+  const r = s && s.last_startup;
+  if (!r || !r.instance) return;
+
+  const seen = `docpreview.boot.${r.instance}`;
+  try {
+    if (sessionStorage.getItem(seen)) return;
+    sessionStorage.setItem(seen, "1");
+  } catch {
+    // Private browsing, or storage disabled. Showing it every reload is worse than not
+    // showing it, because it appears over whatever the reader came back to look at.
+    return;
+  }
+
+  // Adopted versus created is the number worth reporting: adoption binds a listener to a
+  // share that already exists, creating one is a controller round trip that answers in
+  // ten to fifteen seconds. The difference between the two is the difference between a
+  // restart nobody notices and four minutes of 404s.
+  const adopted = (r.adopted_previews || 0) + (r.adopted_builds || 0);
+  const created = (r.created_previews || 0) + (r.created_builds || 0);
+
+  const shares = adopted + created;
+  // One row per fact, and only for facts that happened. A tile reading "0 created" is a
+  // reader's problem to dismiss; its absence says the same thing and takes no space.
+  const row = (k, v, cls) => v === "" ? "" :
+    `<div class="boot-row"><dt>${esc(k)}</dt><dd${cls ? ` class="${cls}"` : ""}>${esc(v)}</dd></div>`;
+
+  const rows = [
+    row("Previews restored", String(r.previews || 0)),
+    row("Build shares", String(r.adopted_builds + r.created_builds || 0)),
+    row("Adopted", adopted ? `${adopted} — bound to shares that already existed` : "", "good"),
+    row("Created", created ? `${created} — a controller round trip each` : "", "warn"),
+    row("Cleared", r.orphans ? `${r.orphans} the database no longer claimed` : ""),
+    row("Queued builds", r.pending ? String(r.pending) : "", "warn"),
+  ].join("");
+
+  // The headline is labelled. It was a bare "3s" above a sentence, and the one number
+  // the report exists to give was read as decoration — "I didn't see a total time".
+  document.getElementById("boot-body").innerHTML = `
+    <div class="boot-hero">
+      <div class="boot-hero-k">Startup took</div>
+      <div class="boot-hero-v" id="boot-hero-v">${esc(secs(r.seconds))}</div>
+      <div class="boot-hero-n">${
+        shares === 0 ? "nothing to restore"
+          : adopted && !created ? `all ${shares} shares adopted, none recreated`
+          : created && !adopted ? `all ${shares} shares recreated — the slow path`
+          : `${adopted} of ${shares} shares adopted`
+      }</div>
+    </div>
+    <dl class="boot-rows">${rows}</dl>
+    ${(r.items || []).length ? `<details class="boot-details">
+      <summary>What it did · ${r.items.length} step${r.items.length === 1 ? "" : "s"}</summary>
+      <div class="boot-list">${r.items.map(t => `<div>${esc(t)}</div>`).join("")}</div>
+    </details>` : ""}`;
+
+  const modal = document.getElementById("boot");
+  modal.hidden = false;
+
+  const close = () => { modal.hidden = true; };
+  document.getElementById("boot-close").onclick = close;
+  // Click-away and Escape, because a dialog with one button and no way out is a dialog
+  // somebody has to aim at.
+  modal.onclick = e => { if (e.target === modal) close(); };
+  document.addEventListener("keydown", function esc(e) {
+    if (e.key !== "Escape") return;
+    close();
+    document.removeEventListener("keydown", esc);
+  });
+}
+
+// STAGES is every stage the daemon reports, in the order it runs them, so the banner
+// can show what is finished and what is still to come. A stage the page does not know
+// still renders — its note carries the text — it just gets no step of its own.
+const STAGES = [
+  ["reaping",   "Clear old shares"],
+  ["restoring", "Restore previews"],
+  ["history",   "Load history"],
+];
+
+function showStarting(starting, startup) {
+  const wrap = document.querySelector(".wrap");
+  let el = document.getElementById("starting");
+
+  if (!starting) {
+    if (el) el.remove();
+    return;
+  }
+
+  // The page's own content stays on screen.
+  //
+  // Hiding it was tried, on the reasoning that during recovery the Open links point at
+  // shares that do not exist yet and the feed is empty until backfill — so the content
+  // contradicts the banner. What it actually produced was a dashboard whose entire
+  // visible contents were one notice, which reads as a broken page rather than as a
+  // careful one. The rows are true: they come from the database, and their state is
+  // what it says. The dead-link window is a real problem and is a separate fix, listed
+  // in TODO.md — it is not solved by showing nothing at all.
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "starting";
+    el.className = "notice warn";
+    // A sibling of .wrap, never a child of it.
+    //
+    // This banner used to be prepended into .wrap — which is a two-column grid, so the
+    // banner became its first cell, the previews list was pushed into the 21rem rail
+    // column, and the activity rail took the wide one. Every row in the list then
+    // overlapped itself in a third of the width it was designed for, which read as
+    // broken row CSS and is not: prepending into a grid shifts every sibling by one.
+    wrap.parentNode.insertBefore(el, wrap);
+  }
+
+  const stage = startup && startup.stage ? startup.stage : "";
+  const note = startup && startup.note ? startup.note : "Restoring previews.";
+  const total = startup ? startup.total || 0 : 0;
+  const done = startup ? startup.done || 0 : 0;
+
+  // Counted stages get a determinate bar and "3 of 11"; uncounted ones get a bar with
+  // no width, because a reap reports nothing until it returns and a bar creeping on a
+  // timer would be inventing progress.
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  // The unit is named, because "7 of 13" against two previews invites the question of
+  // what the thirteen are: one share per preview plus one per retained build.
+  const count = total > 0
+    ? `${done} of ${total}${stage === "restoring" ? " shares" : ""}`
+    : "";
+
+  // -1 for a stage this page has never heard of, which leaves every step pending
+  // rather than marking them all complete.
+  // Newest first, capped. The daemon sends up to forty and the interesting ones are the
+  // last few — a banner that grows a forty-line list pushes the page it is describing off
+  // the screen, which is the failure the hidden-content version had.
+  const items = (startup && startup.items ? startup.items : [])
+    .slice(-6).reverse()
+    .map(t => `<div class="starting-item">${esc(t)}</div>`).join("");
+
+  const at = STAGES.findIndex(s => s[0] === stage);
+  const steps = STAGES.map(([key, label], i) => {
+    const cls = at > i ? "step done" : at === i ? "step now" : "step";
+    // The count goes inside the current step, not after the list.
+    const n = at === i && count ? ` <span class="step-count">${esc(count)}</span>` : "";
+    // The spinner is markup rather than a ::before, so it cannot inherit the pending
+    // mark's sizing and cannot be lost to one unparseable colour function.
+    const spin = at === i ? `<span class="spinner" aria-hidden="true"></span>` : "";
+    return `<span class="${cls}">${spin}${esc(label)}${n}</span>`;
+  }).join("");
+
+  el.innerHTML = `<div class="starting-head">
+      <strong>Starting up.</strong> ${esc(note)} Builds queue but do not start yet.
+    </div>
+    <div class="starting-steps">${steps}</div>
+    ${items.length ? `<div class="starting-items">${items}</div>` : ""}
+    <div class="starting-bar"${total > 0 ? "" : ` data-indeterminate="1"`}>
+      <span style="width:${pct}%"></span>
+    </div>`;
 }
 
 // openFromFragment honours `#preview=<id>`, which is where a failed build's comment
@@ -2930,7 +4270,38 @@ function openFromFragment() {
   reveal(m[1], p.commit, null, p.state);
 }
 
-document.getElementById("project").onchange = e => { ui.project = e.target.value; render(); };
+/* The switcher's own events.
+
+   Bound once, here, rather than in renderProjects: that runs on every status tick, and
+   rebinding a handler per tick is how a click ends up firing twice. */
+document.getElementById("projpick-btn").onclick = () => {
+  const open = !document.getElementById("projpick-panel").hidden;
+  if (open) closePicker(); else openPicker();
+};
+
+document.getElementById("projpick-find").oninput = e => filterPicker(e.target.value);
+
+document.getElementById("projpick-find").onkeydown = e => {
+  if (e.key === "Escape") {
+    closePicker();
+    document.getElementById("projpick-btn").focus();
+    return;
+  }
+  // Enter takes the first row still visible, so filtering and choosing is one gesture
+  // for somebody who knows what they are looking for.
+  if (e.key === "Enter") {
+    const first = [...document.querySelectorAll("#projpick-list [data-pick-project]")]
+      .find(r => !r.hidden);
+    if (first) first.click();
+  }
+};
+
+// Anywhere else closes it. A panel that floats over the page and stays open after a
+// click somewhere else is a panel covering whatever you were trying to reach.
+document.addEventListener("click", e => {
+  if (document.getElementById("projpick-panel").hidden) return;
+  if (!e.target.closest("#projpick")) closePicker();
+});
 
 let searchTimer = null;
 document.getElementById("search").oninput = e => {
@@ -2963,7 +4334,7 @@ function connect() {
 function hideOperationsChrome(label) {
   document.querySelector(".wrap").hidden = true;
   document.getElementById("counters").hidden = true;
-  document.getElementById("project").hidden = true;
+  document.getElementById("projpick").hidden = true;
   document.getElementById("search").hidden = true;
   document.getElementById("conn").textContent = label;
 }
@@ -2983,9 +4354,23 @@ if (isSetupPage) {
   connect();
   render();
   showAdminLinks();
-  // Relative timestamps drift without a redraw, and the status stream is silent
-  // when nothing changes — which is exactly when "2s ago" has become a lie.
-  setInterval(() => { if (ui.previews.length) renderList(); }, 5000);
+  // Every second, not every five.
+  //
+  // Timestamps drift without a redraw and the status stream is silent when nothing
+  // changes — which is exactly when "2s ago" has become a lie. Five seconds was
+  // enough for an age that coarsens; it is not enough for a stopwatch, which is
+  // read to answer "is this still moving" and answered it four times out of five
+  // with a number that had not changed.
+  //
+  // Affordable because the row already repaints only on a changed signature: a
+  // finished preview's coarse age is the same string on all five ticks, so this is
+  // one string comparison per row per second and no DOM work at all. The running
+  // row's signature does change every second, which is the entire point.
+  //
+  // The log pane is untouched by any of this. It is a live EventSource written to
+  // as lines arrive — never on a poll — which is worth stating because a ticking
+  // clock beside a log makes it look like the log is what is being polled.
+  setInterval(() => { if (ui.previews.length) renderList(); }, 1000);
 }
 
 // showAdminLinks draws the Secrets and Projects links, and only for a request the

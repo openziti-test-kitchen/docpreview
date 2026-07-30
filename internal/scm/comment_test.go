@@ -100,8 +100,20 @@ func TestEveryCommentCarriesItsMarkerFirst(t *testing.T) {
 		r := testReport(state)
 		r.Reason = "something"
 		body := RenderComment(r)
-		if !strings.HasPrefix(body, Marker("abc123")) {
+		// Asserted through HasMarker rather than against one spelling: which style is
+		// written is a choice that has already changed once, and what must hold is that the
+		// matcher finds it. The position is checked separately, because a truncated body
+		// still has to identify itself.
+		if !HasMarker(body, "abc123") {
+			t.Errorf("%s: the body carries no marker:\n%s", state, body)
+		}
+		if !strings.HasPrefix(body, MarkerFor("abc123", MarkerLinkRef)) {
 			t.Errorf("%s: body does not start with the marker:\n%s", state, body)
+		}
+		// And the HTML comment form must not appear: it is visible in the raw body, which
+		// is what taking it out was for.
+		if strings.Contains(body, "<!--") {
+			t.Errorf("%s: an HTML comment is in the body:\n%s", state, body)
 		}
 	}
 }

@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/netfoundry/docpreview/internal/config"
+	"github.com/netfoundry/docpreview/internal/model"
 	"github.com/netfoundry/docpreview/internal/pipeline"
 	"github.com/netfoundry/docpreview/internal/store"
 	"github.com/netfoundry/docpreview/internal/vault"
@@ -46,10 +48,48 @@ type ProjectsAdmin struct {
 	// what the daemon found.
 	dockerOK  bool
 	dockerWhy string
+
+	// scanner queues a build for every open pull request on a repository, returning how
+	// many. A function rather than the daemon, so this admin keeps depending on nothing
+	// but the store and the config — and so a test can count queued builds without a
+	// GitHub client.
+	scanner func(ctx context.Context, repo model.Repo) (int, error)
+
+	// canceller abandons the build running for a preview, reporting whether there was
+	// one. Same reasoning as scanner: this admin depends on the store and the config, not
+	// on the daemon.
+	canceller func(ctx context.Context, previewID string) bool
+
+	// rebuilder queues a preview's recorded commit again, reporting whether the preview
+	// was found.
+	rebuilder func(ctx context.Context, previewID string) (bool, error)
+
+	// The docker volume operations behind the cache controls, injectable because they are
+	// destructive and reach the real docker daemon.
+	//
+	// A test that called the real ones deleted the cache volumes of every live preview on
+	// the machine it ran on — which is what happened the first time this shipped, and is
+	// why they are fields rather than direct calls. Defaulted in NewProjectsAdmin.
+	listVolumes   func(ctx context.Context) ([]string, error)
+	removeVolumes func(ctx context.Context, previewID string) error
 }
 
 func NewProjectsAdmin(st *store.Store, cfg config.Server, log *slog.Logger) *ProjectsAdmin {
-	return &ProjectsAdmin{store: st, cfg: cfg, log: log.With("component", "projects")}
+	return &ProjectsAdmin{
+		store: st, cfg: cfg, log: log.With("component", "projects"),
+		listVolumes:   listCacheVolumes,
+		removeVolumes: pipeline.RemoveCacheVolumes,
+	}
+}
+
+// WithVolumeOps replaces the docker volume calls. For tests, which must not delete the
+// cache volumes of whatever is running on the machine they happen to run on.
+func (a *ProjectsAdmin) WithVolumeOps(
+	list func(context.Context) ([]string, error),
+	remove func(context.Context, string) error,
+) *ProjectsAdmin {
+	a.listVolumes, a.removeVolumes = list, remove
+	return a
 }
 
 // WithVault gives this admin the ability to manage a project's own environment
@@ -57,6 +97,24 @@ func NewProjectsAdmin(st *store.Store, cfg config.Server, log *slog.Logger) *Pro
 // rather than absent, for the same reason the read-only banner exists.
 func (a *ProjectsAdmin) WithVault(fn func() *vault.Vault) *ProjectsAdmin {
 	a.vault = fn
+	return a
+}
+
+// WithScanner installs the open-pull-request scan.
+func (a *ProjectsAdmin) WithScanner(fn func(context.Context, model.Repo) (int, error)) *ProjectsAdmin {
+	a.scanner = fn
+	return a
+}
+
+// WithCanceller installs the build cancellation.
+func (a *ProjectsAdmin) WithCanceller(fn func(context.Context, string) bool) *ProjectsAdmin {
+	a.canceller = fn
+	return a
+}
+
+// WithRebuilder installs the per-preview rebuild.
+func (a *ProjectsAdmin) WithRebuilder(fn func(context.Context, string) (bool, error)) *ProjectsAdmin {
+	a.rebuilder = fn
 	return a
 }
 
@@ -92,6 +150,15 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// slash that this namespace is built on.
 	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.setSecret))
 	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.delSecret))
+
+	// Build what is already open. A project added here has no webhook behind it, so
+	// without this the answer to "I added it, now what" is "wait for somebody to push".
+	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/scan", a.gated(a.scan))
+
+	// Cancelling a build. Keyed on a preview rather than a project, like the cache
+	// controls, and here for the same reason: one gate rather than a third copy of it.
+	mux.HandleFunc("POST /api/builds/{preview}/cancel", a.gated(a.cancelBuild))
+	mux.HandleFunc("POST /api/builds/{preview}/rebuild", a.gated(a.rebuild))
 
 	// Checking an image runs a docker command with an operator-supplied argument and
 	// makes a registry round trip, so it is gated like every other write even though it
@@ -153,9 +220,9 @@ func (a *ProjectsAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
 
 // projectsState is what the page renders.
 type projectsState struct {
-	CanWrite    bool           `json:"can_write"`
-	ReadOnlyWhy string         `json:"read_only_why,omitempty"`
-	Projects    []projectView  `json:"projects"`
+	CanWrite    bool          `json:"can_write"`
+	ReadOnlyWhy string        `json:"read_only_why,omitempty"`
+	Projects    []projectView `json:"projects"`
 
 	// Defaults are the server-wide values a project inherits when it states none,
 	// so the form can show what an empty field will actually do rather than
@@ -193,6 +260,11 @@ type projectView struct {
 type projectDefaults struct {
 	Driver string `json:"driver"`
 	Image  string `json:"image"`
+
+	// Timeout is the server-wide build.timeout, as the placeholder of the per-project
+	// field — so an empty box says what it will actually do instead of leaving the
+	// operator to find the number in a config file.
+	Timeout string `json:"timeout,omitempty"`
 
 	// DockerAvailable is the startup probe's answer, and DockerDetail is docker's own
 	// message when it is no. The form uses them to disable a choice that would refuse,
@@ -277,10 +349,15 @@ func validAvatar(a string) string {
 // names the image.
 func knownImages() []string {
 	return []string{
+		// The default first, and it is the full image rather than -slim because a build
+		// that clones another repository needs git and the slim ones do not have it.
+		config.DefaultImage,
+		"node:22-bookworm",
+		"node:20-bookworm",
+		// Smaller, and only usable by a build that clones nothing. The picker annotates
+		// them rather than hiding them: it is a real choice, with a condition on it.
 		"node:24-bookworm-slim",
-		"node:24-bookworm",
 		"node:22-bookworm-slim",
-		"node:20-bookworm-slim",
 		"node:24-alpine",
 		"mcr.microsoft.com/devcontainers/javascript-node:24",
 		"registry.access.redhat.com/ubi9/nodejs-22",
@@ -295,9 +372,10 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 
 	v := a.openVault()
 	st := projectsState{
-		Projects:         []projectView{},
+		Projects: []projectView{},
 		Defaults: projectDefaults{
 			Driver: a.cfg.Build.Driver, Image: a.cfg.Build.Image,
+			Timeout:         a.cfg.Build.Timeout.String(),
 			DockerAvailable: a.dockerOK, AllowLocalDriver: a.cfg.Build.AllowLocalDriver,
 			Images: knownImages(),
 		},
@@ -366,6 +444,7 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 		Notes        string `json:"notes"`
 		DisplayName  string `json:"display_name"`
 		Avatar       string `json:"avatar"`
+		Timeout      string `json:"timeout"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -389,6 +468,16 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 	p.Notes = strings.TrimSpace(body.Notes)
 	p.DisplayName = strings.TrimSpace(body.DisplayName)
 	p.Avatar = strings.TrimSpace(body.Avatar)
+	p.Timeout = strings.TrimSpace(body.Timeout)
+
+	// Checked here, once, rather than at the start of every build. A build that
+	// discovers the timeout is unusable has already cloned the repository, and the only
+	// thing it can do about it is pick a different number — so the value is refused
+	// while somebody is looking at the field they typed it into.
+	if why := validTimeout(p.Timeout); why != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
+		return
+	}
 
 	if p.Driver != "" && p.Driver != config.DriverLocal && p.Driver != config.DriverDocker {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
@@ -422,13 +511,22 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("a name is capped at %d characters", maxDisplayName)})
 		return
 	}
-	// A base URL that does not start and end with "/" produces a preview whose
-	// assets 404, and the build verifies it against the built output — so the
-	// error belongs here, where somebody is looking at a form, rather than twenty
-	// seconds into a build.
-	if p.BaseURL != "" && (!strings.HasPrefix(p.BaseURL, "/") || !strings.HasSuffix(p.BaseURL, "/")) {
+	// A base URL that does not start and end with "/" produces a preview whose assets
+	// 404, and the build verifies it against the built output — so this is enforced
+	// before a form is saved rather than twenty seconds into a build.
+	//
+	// Enforced by fixing it, not by refusing it. The slashes are mandatory, this code
+	// knows exactly where they go, and "/docs" is not ambiguous — so rejecting it
+	// makes the operator retype a value the server could have corrected. That is the
+	// whole of the validation that was here, and it produced a page of identical
+	// errors while somebody guessed at the punctuation.
+	p.BaseURL = normalizeBaseURL(p.BaseURL)
+	// What is left is not a punctuation slip and cannot be guessed at: a query or a
+	// fragment is not part of a path prefix, and whitespace inside one is a copy-paste
+	// accident that would produce a URL nobody can type.
+	if strings.ContainsAny(p.BaseURL, " \t?#") {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": `base_url must start and end with "/", e.g. "/" or "/docs/"`})
+			"error": `a base URL is a path like "/docs/" — no spaces, query or fragment`})
 		return
 	}
 
@@ -471,6 +569,95 @@ func (a *ProjectsAdmin) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// scan asks the platform what is open on a repository and queues a build for each.
+//
+// Reported rather than silent, and counted, because "queued 3 builds" and "queued 0
+// builds — the App is not installed there" are the two answers somebody who just added a
+// project needs to tell apart. A repository with no open pull requests is the third, and
+// is not a failure.
+//
+// It goes through the daemon's ordinary build path, so a scanned pull request is
+// indistinguishable from a pushed one: same supersede rules, same commit lock, same
+// queued comment on the pull request.
+func (a *ProjectsAdmin) scan(w http.ResponseWriter, r *http.Request) {
+	p, bad := projectFromRequest(r)
+	if bad != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad})
+		return
+	}
+	if a.scanner == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot scan for open pull requests"})
+		return
+	}
+
+	queued, err := a.scanner(r.Context(), model.Repo{
+		Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
+	})
+	if err != nil {
+		// The project itself saved. This is a separate action that failed, and its
+		// message is the operator's next step — usually "install the App there".
+		a.log.Warn("scanning for open pull requests", "project", p.Key(), "error", err)
+		writeJSON(w, http.StatusOK, map[string]any{"queued": 0, "error": err.Error()})
+		return
+	}
+	a.log.Info("queued builds for open pull requests", "project", p.Key(), "queued", queued)
+	writeJSON(w, http.StatusOK, map[string]any{"queued": queued})
+}
+
+// cancelBuild abandons the build running for a preview.
+//
+// Gated like a write, because it is one: it stops work and reports the pull request as
+// failed. Answering whether anything was running rather than 404ing on "nothing to
+// cancel" — the button is offered from a page that may be a second out of date, and a
+// build that finished on its own between the render and the click is not an error.
+func (a *ProjectsAdmin) cancelBuild(w http.ResponseWriter, r *http.Request) {
+	preview := r.PathValue("preview")
+	if !previewIDPattern.MatchString(preview) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "not a preview id: expected twelve hex characters, got " + preview,
+		})
+		return
+	}
+	if a.canceller == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot cancel builds"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled": a.canceller(r.Context(), preview)})
+}
+
+// rebuild queues a preview's recorded commit again.
+func (a *ProjectsAdmin) rebuild(w http.ResponseWriter, r *http.Request) {
+	preview := r.PathValue("preview")
+	if !previewIDPattern.MatchString(preview) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "not a preview id: expected twelve hex characters, got " + preview,
+		})
+		return
+	}
+	if a.rebuilder == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot rebuild"})
+		return
+	}
+
+	found, err := a.rebuilder(r.Context(), preview)
+	if err != nil {
+		a.log.Error("rebuilding a preview", "preview", preview, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !found {
+		// Gone rather than broken: a preview torn down between the page being drawn and
+		// the button being pressed is the ordinary way this happens.
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "there is no preview " + preview + " any more"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
 }
 
 // inspectImage answers whether a container image can be resolved, so the form can
@@ -627,6 +814,83 @@ func validEnvName(env string) string {
 		}
 	}
 	return ""
+}
+
+// maxProjectTimeout is the longest a project may cap one of its builds at.
+//
+// Not a safety limit — the operator writes this value and could raise the server
+// default instead. It is a typo limit: "45" parses as 45 nanoseconds and "45h" is a
+// day and a half of a worker held by one pull request, and both are far more likely
+// to be a slip than an intention.
+const maxProjectTimeout = 6 * time.Hour
+
+// validTimeout checks a project's build timeout, returning why not.
+//
+// Empty is valid and means the server-wide build.timeout, which is the answer for
+// almost every project.
+func validTimeout(s string) string {
+	if s == "" {
+		return ""
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return `a build timeout is a duration like "45m", "90s" or "2h" — ` +
+			"leave it empty to use the server default"
+	}
+	// A bare number parses as nanoseconds, so "45" becomes 45ns and every build of
+	// that project dies before docker is even invoked. Naming the unit in the error is
+	// what tells somebody the number they typed was not the number they meant.
+	if d <= 0 {
+		return "a build timeout must be positive — leave it empty to use the server default"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%q is %s, shorter than any real build — a duration needs "+
+			`a unit, e.g. "45m"`, s, d)
+	}
+	if d > maxProjectTimeout {
+		return fmt.Sprintf("a build timeout is capped at %s", maxProjectTimeout)
+	}
+	return ""
+}
+
+// normalizeBaseURL puts a base URL into the only form that works, rather than
+// refusing the forms that do not.
+//
+// Docusaurus and every check in this codebase want a leading and a trailing slash.
+// "/docs", "docs/" and "docs" all mean one thing, and it is not in doubt — so they
+// are corrected. Empty stays empty: blank means "defer to the repository", which is
+// a different answer from "/".
+//
+// Interior doubled slashes are collapsed because "//docs/" is a protocol-relative
+// URL to a host named "docs" in every browser, which is a very confusing way for a
+// preview to fail.
+func normalizeBaseURL(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+	// A pasted absolute URL keeps its path and loses the rest. Somebody copying
+	// "https://docs.example.com/docs/" out of a browser means the "/docs/" part; the
+	// host is this preview's own and not theirs to set. Before slash collapsing,
+	// which would otherwise eat the "//" in the scheme.
+	if i := strings.Index(base, "://"); i >= 0 {
+		rest := base[i+3:]
+		if slash := strings.Index(rest, "/"); slash >= 0 {
+			base = rest[slash:]
+		} else {
+			base = "/"
+		}
+	}
+	for strings.Contains(base, "//") {
+		base = strings.ReplaceAll(base, "//", "/")
+	}
+	if !strings.HasPrefix(base, "/") {
+		base = "/" + base
+	}
+	if !strings.HasSuffix(base, "/") {
+		base += "/"
+	}
+	return base
 }
 
 // projectFromRequest reads the identity out of the path, returning a reason when

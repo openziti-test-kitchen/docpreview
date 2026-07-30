@@ -2,8 +2,7 @@ package pipeline
 
 import (
 	"log/slog"
-	"os"
-	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -18,16 +17,17 @@ func testPR(owner, repo string, number int) model.PullRequest {
 	}
 }
 
-// TestCacheMountsPointEachManagerAtItsOwnDirectory is the assertion that keeps
-// builds fast. Without these mounts every build re-downloads its whole dependency
-// tree, because the workspace they would otherwise cache into is created per commit
-// and pruned with its siblings.
-func TestCacheMountsPointEachManagerAtItsOwnDirectory(t *testing.T) {
-	root := t.TempDir()
-	b := &Builder{
-		defaults: config.BuildDefaults{CacheDir: root},
-		log:      slog.New(slog.DiscardHandler),
-	}
+// TestCacheMountsPointEachManagerAtItsOwnVolume is the assertion that keeps builds
+// fast. Without these mounts every build re-downloads its whole dependency tree,
+// because the workspace they would otherwise cache into is created per commit and
+// pruned with its siblings.
+//
+// A **volume**, not a bind mount, and that is the interesting half. As a bind mount on
+// Windows the cache was measured filling at 0.4 MB/s — every package tarball crossing
+// WSL to NTFS — which made the thing meant to speed builds up the slowest part of one.
+// See CacheVolume.
+func TestCacheMountsPointEachManagerAtItsOwnVolume(t *testing.T) {
+	b := &Builder{log: slog.New(slog.DiscardHandler)}
 
 	pr := testPR("openziti-test-kitchen", "docpreview", 2)
 	args, err := b.cacheMounts(pr)
@@ -46,33 +46,33 @@ func TestCacheMountsPointEachManagerAtItsOwnDirectory(t *testing.T) {
 		}
 	}
 
-	// Created on the host first. A bind mount of a missing path creates it
-	// root-owned, which on a Linux host leaves a cache the operator cannot clear.
-	previewRoot := filepath.Join(root, pr.PreviewID())
+	// One volume per manager, named for the preview. Shared, pnpm's hard-linked store
+	// would land inside another manager's tree.
 	for _, m := range []string{"npm", "yarn", "pnpm"} {
-		if _, err := os.Stat(filepath.Join(previewRoot, m)); err != nil {
-			t.Errorf("the %s cache directory was not created on the host: %v", m, err)
+		want := "type=volume,source=" + CacheVolume(pr.PreviewID(), m) + ",target=/cache/" + m
+		if !strings.Contains(joined, want) {
+			t.Errorf("no mount for the %s cache: want %s in\n%s", m, want, joined)
 		}
 	}
 
-	// Windows spellings must not survive into a mount argument — see hostMountPath.
-	for _, a := range args {
-		if strings.HasPrefix(a, "type=bind") && strings.ContainsAny(strings.SplitN(a, ",target=", 2)[0], `\`) {
-			t.Errorf("a mount source is still in Windows form: %s", a)
-		}
+	// No host path anywhere: a bind source is what this replaced, and one reappearing is
+	// the regression that costs twenty minutes a build on Windows.
+	if strings.Contains(joined, "type=bind") {
+		t.Errorf("a cache is still bind-mounted from the host:\n%s", joined)
 	}
 }
 
-// TestCacheMountsAreAbsentWithoutACacheDir — the docker driver has to work with no
-// cache configured, since that is what every existing config says.
-func TestCacheMountsAreAbsentWithoutACacheDir(t *testing.T) {
+// TestCachesExistWithoutACacheDir — a volume needs no configuration at all, where the
+// bind mount needed a path. Every existing config says nothing about a cache, and the
+// docker driver has to be fast anyway.
+func TestCachesExistWithoutACacheDir(t *testing.T) {
 	b := &Builder{log: slog.New(slog.DiscardHandler)}
 	args, err := b.cacheMounts(testPR("owner", "repo", 1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(args) != 0 {
-		t.Errorf("args = %v, want none when no cache dir is set", args)
+	if len(args) == 0 {
+		t.Error("no cache mounts without a cache_dir; the docker cache needs no host path")
 	}
 }
 
@@ -144,28 +144,28 @@ func TestCacheFollowsThePullRequestNotTheBranch(t *testing.T) {
 	}
 }
 
-// sourceOf returns the first bind source in a docker argument list.
+// sourceOf returns the first cache volume name in a docker argument list.
 func sourceOf(t *testing.T, args []string) string {
 	t.Helper()
 	for _, a := range args {
-		if strings.HasPrefix(a, "type=bind,source=") {
-			return strings.SplitN(strings.TrimPrefix(a, "type=bind,source="), ",", 2)[0]
+		if strings.HasPrefix(a, "type=volume,source=") {
+			return strings.SplitN(strings.TrimPrefix(a, "type=volume,source="), ",", 2)[0]
 		}
 	}
-	t.Fatalf("no bind mount in %v", args)
+	t.Fatalf("no volume mount in %v", args)
 	return ""
 }
 
-// TestCacheDirIsNotBuiltFromWebhookText — the owner and repository names arrive from
-// a webhook, and joining one onto a path is how an owner of ".." would put a cache
-// outside the cache root. The preview ID is a hex digest, so it cannot; this pins
-// that the mount source stays inside the root even for hostile names.
-func TestCacheDirIsNotBuiltFromWebhookText(t *testing.T) {
-	root := t.TempDir()
-	b := &Builder{
-		defaults: config.BuildDefaults{CacheDir: root},
-		log:      slog.New(slog.DiscardHandler),
-	}
+// TestCacheNameIsNotBuiltFromWebhookText — the owner and repository names arrive from a
+// webhook. As a path, an owner of ".." put a cache outside the cache root; as a docker
+// volume name, a stray slash or dot produces either a name docker refuses or, worse, one
+// that collides with another preview's.
+//
+// The preview ID is a hex digest, so neither is reachable. This pins that: the name is the
+// documented prefix, twelve hex characters, and a manager — whatever the webhook said.
+func TestCacheNameIsNotBuiltFromWebhookText(t *testing.T) {
+	b := &Builder{log: slog.New(slog.DiscardHandler)}
+	valid := regexp.MustCompile(`^docpreview-cache-[0-9a-f]{12}-(npm|yarn|pnpm)$`)
 
 	for _, c := range []struct{ owner, repo string }{
 		{"..", "docs"},
@@ -178,16 +178,22 @@ func TestCacheDirIsNotBuiltFromWebhookText(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		src := sourceOf(t, args)
-		wantPrefix, err := hostMountPath(root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.HasPrefix(src, wantPrefix+"/") {
-			t.Errorf("owner %q repo %q produced a cache outside the root: %s", c.owner, c.repo, src)
-		}
-		if strings.Contains(src, "..") {
-			t.Errorf("owner %q repo %q produced a traversal: %s", c.owner, c.repo, src)
+		for _, name := range volumesIn(args) {
+			if !valid.MatchString(name) {
+				t.Errorf("owner %q repo %q produced the volume name %q", c.owner, c.repo, name)
+			}
 		}
 	}
+}
+
+// volumesIn returns every cache volume name in a docker argument list.
+func volumesIn(args []string) []string {
+	var out []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "type=volume,source=") {
+			out = append(out,
+				strings.SplitN(strings.TrimPrefix(a, "type=volume,source="), ",", 2)[0])
+		}
+	}
+	return out
 }

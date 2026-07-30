@@ -12,6 +12,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -150,6 +151,22 @@ func defaultConfigPath() string {
 }
 
 func newLogger(level string) *slog.Logger {
+	return newLoggerTo(level, "")
+}
+
+// newLoggerTo builds the logger, optionally teeing it to a file.
+//
+// stderr alone means the daemon's own log is readable by whoever started the process and
+// by nobody else — which is most of the time, since it is normally started in a terminal
+// somebody has since closed. "Are there logs for this?" had no good answer.
+//
+// Both, not either. A file only would take the output away from the terminal it is being
+// watched in, and this is the one process where somebody is often watching both.
+//
+// A failure to open the file is a warning on the logger that does work, not a refusal to
+// start: a daemon that will not boot because it cannot write a log is worse than a daemon
+// with no log.
+func newLoggerTo(level, path string) *slog.Logger {
 	lvl := slog.LevelInfo
 	switch strings.ToLower(level) {
 	case "debug":
@@ -159,7 +176,29 @@ func newLogger(level string) *slog.Logger {
 	case "error":
 		lvl = slog.LevelError
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
+
+	var w io.Writer = os.Stderr
+	var openErr error
+	if path != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			openErr = err
+		} else if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err != nil {
+			openErr = err
+		} else {
+			// Never closed, deliberately: it lives as long as the process, and closing it
+			// on any path short of exit would leave the logger writing to a closed file.
+			// Appended to rather than truncated, because the interesting content is
+			// usually from before the restart that is being investigated.
+			w = io.MultiWriter(os.Stderr, f)
+		}
+	}
+
+	log := slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: lvl}))
+	if openErr != nil {
+		log.Warn("log_file could not be opened; logging to stderr only",
+			"path", path, "error", openErr)
+	}
+	return log
 }
 
 // wiring is everything a command needs after configuration is resolved.
@@ -244,7 +283,9 @@ func setup(configPath, logLevel string) (*wiring, error) {
 	if err != nil {
 		return nil, err
 	}
-	log := newLogger(logLevel)
+	// Teed to a file when the config names one. After LoadServer, because the path comes
+	// from the config — so a failure to parse the config still logs, to stderr.
+	log := newLoggerTo(logLevel, cfg.LogFile)
 
 	for _, dir := range []string{cfg.DataDir, cfg.WorkspacesDir(), cfg.ArtifactsDir()} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -460,7 +501,19 @@ func cmdServe(args []string) error {
 		if v == nil {
 			return
 		}
-		next := make(map[string]string, len(w.cfg.Build.Secrets))
+		next := map[string]string{}
+		// Every shell-shaped key, injected under its own name. The same rule startup
+		// uses, and it has to be the same rule: a token stored from the page would
+		// otherwise apply only after a restart, which is the trap this whole callback
+		// exists to avoid.
+		for _, key := range v.Keys() {
+			if !vault.IsBuildEnvKey(key) {
+				continue
+			}
+			if s, err := v.Get(key); err == nil {
+				next[key] = s.RevealString()
+			}
+		}
 		for env, key := range w.cfg.Build.Secrets {
 			s, err := v.Get(key)
 			if err != nil {
@@ -499,6 +552,17 @@ func cmdServe(args []string) error {
 		WithSecrets(admin).
 		WithProjects(daemon.NewProjectsAdmin(w.store, w.cfg, w.log).
 			WithVault(admin.Vault).
+			// So adding a project builds what is already open, instead of waiting for
+			// somebody to push to a repository that was added precisely because nobody
+			// had.
+			WithScanner(d.ScanRepo).
+			// So a build wedged on a slow registry can be stopped without restarting the
+			// daemon, which was the only remedy.
+			WithCanceller(d.CancelBuild).
+			// Rebuilds the commit already on the row, which is what fixes a build that
+			// failed for a reason outside the branch: a bad cache entry, a timeout, an
+			// image since corrected.
+			WithRebuilder(d.RebuildPreview).
 			// So the form can grey out a driver that would fail rather than offering
 			// it and letting the operator discover the refusal from a failed build.
 			WithDocker(dockerOK, dockerWhy))
@@ -1037,17 +1101,49 @@ func openVault(configPath string) (*vault.Vault, error) {
 //
 // The vault is opened only when there is something to look up, so a server
 // with no build secrets still starts without a passphrase.
+// buildSecrets resolves the environment every build gets.
+//
+// Two sources, and the second is the one somebody can reach from a browser:
+//
+//   - `build.secrets` in the config, mapping an environment variable name to a vault key
+//     whose name is something else. Still supported, and still fails startup when the key
+//     is missing, because a configured credential that is absent is a misconfiguration.
+//   - **Every vault entry whose key is already shell-shaped**, injected under its own
+//     name. This is what makes the credential page mean something: a token stored there
+//     reaches every build without also editing a YAML file on the host.
+//
+// The second exists because the first, alone, made the dashboard lie. Storing
+// BB_REPO_TOKEN_ONPREM from the page did nothing at all — the page said "set", and the
+// next build behaved exactly as if it were absent, with no error anywhere to explain it.
+//
+// A project's own variables override these by name; see Daemon.SetProjectSecrets.
 func buildSecrets(w *wiring) (map[string]string, error) {
-	if len(w.cfg.Build.Secrets) == 0 {
-		return nil, nil
-	}
-
 	v, err := w.Vault()
 	if err != nil {
+		if len(w.cfg.Build.Secrets) == 0 {
+			// No vault and nothing configured to need one. A daemon serving a directory
+			// on loopback needs no credentials at all, and demanding one here would make
+			// the simplest setup the one that does not start.
+			return nil, nil
+		}
 		return nil, fmt.Errorf("build.secrets is set, so the vault must open: %w", err)
 	}
 
-	out := make(map[string]string, len(w.cfg.Build.Secrets))
+	out := map[string]string{}
+
+	// Shell-shaped keys first, so an explicit build.secrets mapping wins over a bare key
+	// of the same name — the config file is the deliberate statement.
+	for _, key := range v.Keys() {
+		if !vault.IsBuildEnvKey(key) {
+			continue
+		}
+		s, err := v.Get(key)
+		if err != nil {
+			continue
+		}
+		out[key] = s.RevealString()
+	}
+
 	for env, key := range w.cfg.Build.Secrets {
 		s, err := v.Get(key)
 		if err != nil {
