@@ -35,7 +35,11 @@ const sitePath = (p: string) => `${baseUrl}${p}`;
 const config: Config = {
   title: 'docpreview',
   tagline: 'Documentation previews for pull requests, running anywhere',
-  favicon: 'img/favicon.ico',
+  // SVG rather than the .ico it replaced: one file, sharp at every size, and it can
+  // be edited. Every browser this documentation targets has supported an SVG favicon
+  // for years. img/favicon.ico is deliberately left in place for anything that asks
+  // for /favicon.ico by convention rather than by reading the markup.
+  favicon: 'img/favicon.svg',
 
   future: {
     v4: true,
@@ -124,7 +128,10 @@ const config: Config = {
         ],
       },
     },
-    image: 'img/docusaurus-social-card.jpg',
+    // No social card. The one here was Docusaurus's own artwork, so every link
+    // preview of this site advertised a dragon that has nothing to do with it —
+    // worse than no image. A replacement has to be a raster: Open Graph and every
+    // consumer of it ignore SVG. See TODO.md.
     colorMode: {
       respectPrefersColorScheme: true,
     },

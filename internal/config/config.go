@@ -374,9 +374,29 @@ type GitHubConfig struct {
 // BuildDefaults are the fallbacks applied when a repository does not ship its
 // own .docpreview.yml.
 type BuildDefaults struct {
-	// Driver is "local" (run npm on this host) or "docker" (run it in a
-	// throwaway container).
+	// Driver is "docker" (run the build in a throwaway container) or "local" (run
+	// it on this host). Docker is the default and local must be enabled first —
+	// see AllowLocalDriver.
 	Driver string `yaml:"driver"`
+
+	// AllowLocalDriver permits the local driver. False by default, and that is a
+	// security decision rather than a preference.
+	//
+	// The local driver runs the pull request's own build on this machine as the
+	// daemon's user. `npm install` executes every dependency's postinstall script
+	// and `npm run build` executes whatever the branch's package.json says, so a
+	// contributor who can push a branch to a watched repository can run code on the
+	// host that holds the GitHub App private key and every project's tokens. That
+	// is not a hole to be patched — it is what "run the build here" means.
+	//
+	// So it cannot be arrived at by accident: not by a missing config file, not by
+	// docker being absent at startup, and not by a project row naming it. An
+	// operator who wants it says so once, in writing, in the server config.
+	//
+	// It is a legitimate choice for a daemon that only ever builds repositories
+	// whose contributors already have access to the host, which is why it exists at
+	// all rather than being deleted.
+	AllowLocalDriver bool `yaml:"allow_local_driver"`
 
 	// Image is the container image used by the docker driver.
 	Image string `yaml:"image"`
@@ -473,6 +493,19 @@ type PreviewConfig struct {
 //	{{.Repo.Name}}-{{.Name}}-{{.HeadSHA}}      immutable per commit
 const DefaultNameTemplate = "{{.Repo.Name}}-{{.Name}}"
 
+// The two build drivers, and the command a build runs when nobody trustworthy has
+// said otherwise.
+//
+// DefaultBuildCommand is named rather than repeated because it is also the value the
+// daemon falls back to when it discards a branch-supplied command under the local
+// driver — two spellings of one string would make that substitution invisible.
+const (
+	DriverDocker = "docker"
+	DriverLocal  = "local"
+
+	DefaultBuildCommand = "npm run build"
+)
+
 // DefaultServer returns a Server with every field populated to a sane value.
 // LoadServer starts from this and overlays the file, so an empty config file is
 // a valid config file.
@@ -509,7 +542,11 @@ func DefaultServer() Server {
 			DefaultBase: "main",
 		},
 		Build: BuildDefaults{
-			Driver:   "local",
+			// Docker, because the alternative executes a pull request's own code on
+			// this host. The default used to be local, which meant every install that
+			// never touched this key was running branch-authored build scripts as the
+			// daemon's user. See AllowLocalDriver.
+			Driver:   DriverDocker,
 			Image:    "node:24-bookworm-slim",
 			Timeout:  15 * time.Minute,
 			KeepLogs: 7 * 24 * time.Hour,
@@ -808,7 +845,7 @@ func (c *RepoConfig) validate() error {
 		c.Build.BaseURL = "/"
 	}
 	if c.Build.Command == "" {
-		c.Build.Command = "npm run build"
+		c.Build.Command = DefaultBuildCommand
 	}
 
 	for name, p := range map[string]string{

@@ -33,8 +33,9 @@ constrains what it can do:
 
 - No path may escape the repository root — checked for absolute paths, `..` traversal, and Windows
   drive-qualified paths.
-- `build.command` is honored **only under the Docker driver**. Under the local driver it is ignored, because
-  it would be arbitrary shell on the host.
+- `build.command` is honored under **both** drivers. Under `docker` the blast radius is a container. **Under
+  `local` it is a shell command on the build host**, so on a repository where opening a pull request is not a
+  privilege, run the Docker driver or put the repository behind a [project](./projects.md) that states the command.
 - `build.env` cannot set `DOCUSAURUS_BASE_URL` or any other reserved variable.
 - `detect.script` is resolved through symlinks and re-checked, because a symlink in an attacker-controlled
   working tree can point anywhere.
@@ -56,11 +57,21 @@ build:
 
 ### `command`
 
-Default `npm run build`. Honored only under the Docker driver.
+Default `npm run build`. It runs after the dependency install, in `dir`, as one shell command.
 
-If you need a different command under the local driver, put it behind `npm run build` in `package.json` —
-that keeps the decision about what executes on the host in the hands of whoever can merge, not whoever can
-open a pull request.
+:::danger This is arbitrary shell, from the pull request
+
+Under the **local** driver the command runs on the build host as the daemon's user. Under **docker** it runs in the
+container. Either way, whoever can open a pull request chooses it.
+
+That is not as large a step as it sounds — `npm run build` already executes `package.json` scripts from the same
+branch, so the local driver hands a contributor code execution regardless. It is why forks are refused at the webhook
+and why the Docker driver exists. But do not read this field as constrained: it is not.
+
+To take the decision out of the branch, set the command on a [project](./projects.md). A project's answer wins, and
+a project row is the operator's.
+
+:::
 
 ### Dependency install
 
@@ -100,7 +111,7 @@ build:
 
 ```yaml
 build:
-  base_url: /docs/     # served at https://<name>.share.zrok.io/docs/
+  base_url: /docs/     # served at https://<name>.shares.zrok.io/docs/
 ```
 
 ```yaml
@@ -209,10 +220,24 @@ detect:
   script: .docpreview/detect
 ```
 
-The script has a 60-second timeout and a five-variable environment. It does not inherit the host's
-environment, because a build server's environment contains things a pull request author should not be handed.
+The script has a 60-second timeout and a **three-variable** environment — `PATH`, `HOME` pointed at the workspace,
+and `DOCPREVIEW=1`. It does not inherit the host's environment, because a build server's environment contains things
+a pull request author should not be handed.
+
+## A project row overrides all of this
+
+If the repository has a [project](./projects.md) on this daemon, every build field the project states wins over what
+this file says: driver, image, `dir`, `command`, `output`, `base_url` and the detect script. Blank on the project
+means "defer to the repository", and a project row that names only a repository is the common case.
+
+That is the point of projects. This file arrives in the pull request, so on any repository where opening one is not
+a privilege, its author chooses what it says. A project row is the operator's.
+
+`build.env` here is applied first and cannot set a variable docpreview reserves, one named in the server's
+`build.secrets`, or one of the project's own — see [precedence, end to end](./projects.md#precedence-end-to-end).
 
 ## Related
 
 - [Server configuration](./configuration.md)
+- [Projects](./projects.md)
 - [Troubleshooting](../troubleshooting.md)

@@ -264,12 +264,11 @@ func (c *Client) Publish(ctx context.Context, r scm.Report) error {
 // right answer or an honest miss.
 func (c *Client) upsertComment(ctx context.Context, r scm.Report) error {
 	body := scm.RenderComment(r)
-	marker := scm.Marker(r.PreviewID)
 
 	existing, ok := c.knownComment(r.PreviewID)
 	if !ok {
 		var err error
-		existing, err = c.findComment(ctx, r.PR, marker)
+		existing, err = c.findComment(ctx, r.PR, r.PreviewID)
 		if err != nil {
 			return err
 		}
@@ -325,7 +324,11 @@ func (c *Client) createComment(ctx context.Context, r scm.Report, body string) e
 // breaks the moment the database is rebuilt or the service is reinstalled, and
 // the failure mode is duplicate comments on every open PR. Paying a few reads
 // to keep the comment self-identifying is the better trade.
-func (c *Client) findComment(ctx context.Context, pr model.PullRequest, marker string) (int64, error) {
+// Matched with scm.HasMarker rather than against one rendered marker string, so a
+// comment written in either marker style is found. A daemon that recognised only the
+// style it currently writes would post a second comment on every open pull request
+// the first time that style changed.
+func (c *Client) findComment(ctx context.Context, pr model.PullRequest, previewID string) (int64, error) {
 	const perPage = 100
 	for page := 1; ; page++ {
 		path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=%d&page=%d",
@@ -339,7 +342,7 @@ func (c *Client) findComment(ctx context.Context, pr model.PullRequest, marker s
 			return 0, fmt.Errorf("listing comments on %s: %w", pr, err)
 		}
 		for _, cm := range comments {
-			if strings.Contains(cm.Body, marker) {
+			if scm.HasMarker(cm.Body, previewID) {
 				return cm.ID, nil
 			}
 		}
@@ -467,7 +470,7 @@ func (c *Client) Retract(ctx context.Context, pr model.PullRequest) error {
 	existing, ok := c.knownComment(previewID)
 	if !ok {
 		var err error
-		existing, err = c.findComment(ctx, pr, scm.Marker(previewID))
+		existing, err = c.findComment(ctx, pr, previewID)
 		if err != nil {
 			return err
 		}

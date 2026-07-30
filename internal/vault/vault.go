@@ -61,6 +61,33 @@ const (
 	KeyFrontdoorToken    = "frontdoor.api_token"
 )
 
+// ProjectPrefix is the namespace every project-scoped secret lives under.
+//
+// One vault, one flat map, and a naming convention rather than a second store: the
+// key is the only structure there is, and adding a nested format would change the
+// on-disk shape of every existing vault to express something a prefix already can.
+//
+// The slash is deliberate and is what keeps the two scopes from ever colliding. A
+// global key is validated as letters, digits, dot, dash and underscore — no slash —
+// so `/api/secrets/{key}` cannot reach into this namespace even if somebody asks it
+// to, and a project secret cannot shadow `github.private_key`.
+const ProjectPrefix = "project/"
+
+// ProjectSecretPrefix is where one project's secrets live.
+func ProjectSecretPrefix(platform, owner, repo string) string {
+	return ProjectPrefix + platform + "/" + owner + "/" + repo + "/"
+}
+
+// ProjectSecretKey names one environment variable's value for one project.
+//
+// The environment variable name is the last segment, so listing a project's secrets
+// is a prefix scan of Keys() and needs no parsing — which matters because an owner
+// or a repository may contain a dot or a dash and splitting on those would be
+// ambiguous.
+func ProjectSecretKey(platform, owner, repo, env string) string {
+	return ProjectSecretPrefix(platform, owner, repo) + env
+}
+
 // ErrLocked is returned when the vault file exists but no key was available to
 // open it.
 var ErrLocked = errors.New("vault is locked: no master key available")
@@ -213,6 +240,48 @@ func (v *Vault) Keys() []string {
 		out = append(out, k)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// KeysWithPrefix lists the stored names under a prefix, sorted. Names only.
+func (v *Vault) KeysWithPrefix(prefix string) []string {
+	var out []string
+	for _, k := range v.Keys() {
+		if strings.HasPrefix(k, prefix) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// Reveal returns every value under a prefix, keyed by the segment after it.
+//
+// This is the one bulk read of values in the package, and it exists because the
+// alternative is the caller doing Keys-then-Get in a loop and getting the prefix
+// arithmetic subtly wrong. It is named Reveal for the same reason Secret.Reveal is:
+// a reviewer grepping for where plaintext credentials come from has to find this.
+//
+// The returned map holds bare strings, so the caller owns the consequences. Its only
+// intended use is building a process environment for a build, where the value has to
+// be a string eventually — and where the redactor is compiled from these same values
+// so they cannot reach a log.
+func (v *Vault) RevealPrefix(prefix string) map[string]string {
+	out := map[string]string{}
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	for k, s := range v.secrets {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		name := strings.TrimPrefix(k, prefix)
+		// Nothing deeper than one segment is a project secret. A key with another
+		// slash in it came from somewhere this does not know about, and guessing
+		// would inject an environment variable with a slash in its name.
+		if name == "" || strings.Contains(name, "/") {
+			continue
+		}
+		out[name] = s.RevealString()
+	}
 	return out
 }
 

@@ -28,7 +28,7 @@ that now describes it, and deleted.
 
 | Document | Covers |
 |---|---|
-| [11-github-setup-state.md](11-github-setup-state.md) | Where the GitHub App exercise stands. A working note; delete it when the smoke test passes |
+| [11-github-setup-state.md](11-github-setup-state.md) | The GitHub App exercise. The smoke test has passed; what is left is the App's identity, and this should go |
 | [12-github-roadmap.md](12-github-roadmap.md) | What GitHub support is missing: auth and rate-limit failure modes, forks, uninstall, opt-in |
 | [13-github-testing.md](13-github-testing.md) | Testing GitHub without GitHub: a fake API, the supersede timing test, the restart gap |
 | [14-production-deployment.md](14-production-deployment.md) | Running the daemon as a service, backups, observability, and the five things blocking real HA |
@@ -36,6 +36,7 @@ that now describes it, and deleted.
 | [16-exposer-zrok.md](16-exposer-zrok.md) | zrok2 in production: names, namespaces, the reap footgun, access grants |
 | [17-exposer-frontdoor.md](17-exposer-frontdoor.md) | Frontdoor in production: the bound port, tenant-wide reaping, authorization |
 | [18-exposer-ziti.md](18-exposer-ziti.md) | Plain OpenZiti, and the per-preview authorization question that gates it |
+| [19-zrok-namespacing.md](19-zrok-namespacing.md) | Deleting a leaked zrok name, what the account limits count, and why an owned subdomain is admin-only |
 
 ## CLAUDE.md files
 

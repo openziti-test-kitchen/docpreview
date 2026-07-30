@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/netfoundry/docpreview/internal/model"
@@ -148,16 +149,73 @@ type Event struct {
 	Delivery string
 }
 
-// Marker returns the hidden HTML comment that identifies docpreview's own
-// comment on a pull request.
+// MarkerStyle selects how the self-identifying marker is embedded in a comment
+// body.
 //
-// This is how the comment gets edited instead of duplicated. There is no
-// platform API for "the comment I made earlier", and storing comment IDs in our
-// database means a restored backup or a fresh install starts spamming. A marker
-// in the body makes the comment self-identifying: list the comments, find ours,
-// edit it. The preview ID is included so that two docpreview instances watching
-// the same repository — staging and production, say — do not fight over one
-// comment.
+// The protocol is the same on every platform — list the comments, find ours, edit
+// it — but the syntax that renders to nothing is not, and that is not a detail a
+// platform can be trusted to get right by copying the other one.
+type MarkerStyle int
+
+const (
+	// MarkerHTMLComment is `<!-- docpreview:<id> -->`, and is what GitHub gets.
+	// Invisible there, because GitHub's renderer honours raw HTML.
+	MarkerHTMLComment MarkerStyle = iota
+
+	// MarkerLinkRef is `[docpreview]: #<id>`, a CommonMark link reference
+	// definition: every conforming renderer consumes it as a definition and emits
+	// nothing for it, whether or not raw HTML is allowed.
+	//
+	// It exists because Bitbucket Cloud escapes raw HTML, which turns
+	// MarkerHTMLComment into a visible paragraph of literal text at the bottom of
+	// the comment. That is not a guess — Vercel's own integration ships
+	// `<!-- vercel-commit-author-required -->` and Bitbucket renders it as
+	// `<p>&lt;!-- … --&gt;</p>` on a public pull request. Their *other* comment
+	// uses a link reference definition and the line vanishes from the rendered
+	// HTML entirely. See docs/design/15-bitbucket.md.
+	MarkerLinkRef
+)
+
+// Marker returns the marker that identifies docpreview's own comment on a pull
+// request, in the style GitHub wants.
+//
+// This is how the comment gets edited instead of duplicated. There is no platform
+// API for "the comment I made earlier", and storing comment IDs in our database
+// means a restored backup or a fresh install starts spamming. A marker in the body
+// makes the comment self-identifying: list the comments, find ours, edit it. The
+// preview ID is included so that two docpreview instances watching the same
+// repository — staging and production, say — do not fight over one comment.
+//
+// Kept as the one-argument form because every caller that writes a comment today
+// writes a GitHub one, and a platform that needs the other style should reach for
+// MarkerFor rather than change what this means.
 func Marker(previewID string) string {
+	return MarkerFor(previewID, MarkerHTMLComment)
+}
+
+// MarkerFor renders a marker in the given style.
+func MarkerFor(previewID string, s MarkerStyle) string {
+	if s == MarkerLinkRef {
+		// A `#`-prefixed destination, so that a renderer which does resolve the
+		// label produces a same-page anchor rather than a request to somewhere.
+		return fmt.Sprintf("[docpreview]: #%s", previewID)
+	}
 	return fmt.Sprintf("<!-- docpreview:%s -->", previewID)
+}
+
+// HasMarker reports whether a comment body is docpreview's, in any style.
+//
+// **Both styles, forever.** This is the load-bearing part of having two, and the
+// reason introducing MarkerLinkRef is not just "change the constant": a daemon
+// upgraded across a style change finds comments it wrote in the old one, and a
+// matcher that knew only the new style would post a second comment on every open
+// pull request at once — the exact failure the marker exists to prevent.
+//
+// So a style may be added here and none may ever be removed. Deleting a branch of
+// this function is the one change that cannot be made safely, however dead the old
+// style looks: the comments are on somebody else's server and outlive every release
+// of this program.
+func HasMarker(body, previewID string) bool {
+	return strings.Contains(body, MarkerFor(previewID, MarkerHTMLComment)) ||
+		strings.Contains(body, MarkerFor(previewID, MarkerLinkRef))
 }

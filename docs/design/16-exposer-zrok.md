@@ -27,9 +27,11 @@ opaque 401 on the first pull request (`zrok.go:99-122`). `main.go:303-304` is th
 
 1. Withdraws this preview's own earlier publication, so the name is free (`zrok.go:142`).
 2. Refuses the name if a *different* live preview holds it (`zrok.go:143-153`).
-3. Builds a `sdk.ShareRequest` — public share, proxy backend, `Target: "docpreview:<previewID>"`, one
-   `NameSelection{Namespace, Name}`, permission and OAuth from config (`zrok.go:156-171`).
-4. **Registers the name** in the namespace (`ensureName`, `zrok.go:178`), then calls `sdk.CreateShare`, retrying
+3. Builds a `sdk.ShareRequest` — public share, proxy backend, `Target: "docpreview:" + spec.Key()`, one
+   `NameSelection{Namespace, Name}`, permission and OAuth from config (`zrok.go:156-171`). The tag is the
+   publication key, not the preview id, because a preview now has a branch share *and* one per build — see
+   [02-exposers.md](02-exposers.md).
+4. **Registers the name** in the namespace (`ensureName`, `zrok.go:178-180`), then calls `sdk.CreateShare`, retrying
    once behind `reapName` (`zrok.go:182-194`). Step 4 did not exist and nothing could publish without it; see
    below.
 5. Opens an overlay listener for the returned share token and starts an `http.Server` on it
@@ -41,7 +43,7 @@ opaque 401 on the first pull request (`zrok.go:99-122`). `main.go:303-304` is th
    a failed build.
 
 The resulting URL is whatever the controller returned plus the base URL — the code does not construct the
-hostname. Its *shape* is asserted in exactly one place: `endpointsMatchName` (`zrok.go:445`) assumes the
+hostname. Its *shape* is asserted in exactly one place: `endpointsMatchName` (`zrok.go:553`) assumes the
 first DNS label of a frontend endpoint is the name we asked for.
 
 **`FrontendEndpoints` reports a bare hostname, not a URL.** Observed against a real account. Without the scheme
@@ -50,12 +52,13 @@ relative to github.com and every reviewer who clicked one got a 404 there. Nothi
 nothing logged an error; the URL was simply not a URL. `JoinURL`'s tests use `https://x.share.zrok.io` as a
 fixture (`expose_test.go:118`) — a plausible-looking value, not a recorded one — which is why no test caught it.
 
-`Publication.Close` calls `withdrawEntry` with the entry identity (`zrok.go:236-239`), which is the guard that
+`Publication.Close` calls `withdrawEntry` with the entry identity (`zrok.go:253-256`), which is the guard that
 stops a superseded publication from tearing down its own replacement — under zrok that would not merely 404 the
-preview, it would delete the share (`zrok.go:248-267`). `close` shuts down the HTTP server, closes the overlay
-listener, and calls `sdk.DeleteShare` (`zrok.go:269-284`). `Reap` lists shares filtered by this environment's
-ziti identity and by the `docpreview:` target substring, skips the tokens it knows are live, and deletes the
-rest whose preview ID is not in `keep` (`zrok.go:294-342`).
+preview, it would delete the share (`zrok.go:269-284`). `close` shuts down the HTTP server, closes the overlay
+listener, and calls `sdk.DeleteShare` (`zrok.go:298-313`) — and touches no *name*, for the reason in "Releasing a
+name" below. `Reap` lists shares filtered by this environment's ziti identity and by the `docpreview:` target
+substring, skips the tokens it knows are live, and deletes the rest whose publication key is not in `keep`
+(`zrok.go:323-371`).
 
 That is a complete implementation of the interface. The problems are not gaps in it; they are things it does
 that are wrong, and things it assumes that nobody has checked.
@@ -86,27 +89,25 @@ nothing then has to remember to release it.
 **That was wrong, and the run against a real account is what showed it.** zrok v2 does not create a name
 implicitly. `CreateShare` with a `NameSelection` naming an unregistered name fails 409 — see the next section —
 so no named share could be created at all. The name has to exist first, and creating it is a separate call:
-`CreateShareName` (`zrok.go:372`).
+`CreateShareName`, wrapped as `ensureName` (`zrok.go:385`).
 
-So docpreview now owns names it does not delete, and the cost the original argument was avoiding is real. A name
-outlives every share bound to it, which is what keeps a preview's URL stable across rebuilds and restarts, and it
-means the account accumulates one name per preview name ever published (`zrok.go:368-371`). Nothing releases them:
-`DeleteShareName` exists on the client and docpreview never calls it.
+So docpreview owns names, and the cost the original argument was avoiding is real. A name outlives every share
+bound to it, which is what keeps a preview's URL stable across rebuilds and restarts, and it means the account
+accumulates one name per preview name ever published (`zrok.go:383-384`).
 
-That is a leak, and it is the audit gap in `TODO.md` widened rather than avoided — a name survives the deletion of
-the daemon's database with nothing claiming it and nothing looking. It is not urgent, because the name is
-idempotent: the next daemon publishing the same preview registers the same name, gets the 409, treats it as
-success, and reuses it. It becomes urgent the moment name limits on an account are known, which they are not.
+**For a long time nothing released them.** That leak is now closed, and the shape of the fix is the interesting
+part — see "Releasing a name" below.
 
 **Invariant, restated:** a name docpreview registers must be reusable by the next process without coordination.
 `ensureName` treating "already exists" as success is what makes that hold.
 
 The consequence for [08-storage.md](08-storage.md)'s "The URL can move" is the good outcome. The URL is a
 function of the name, the name is a function of the template, and the template is a function of the repository
-and the branch. So a restart republishes each recorded preview under `p.Name` (`daemon.go:417-422`), gets a new
+and the branch. So a restart republishes each recorded preview under `p.Name` (`daemon.go:785-790`), gets a new
 share with the same name, gets the same hostname back, and `pub.URL != p.URL` is false — no row rewrite, no
-comment churn (`daemon.go:436-446`). The comment written once and edited thereafter, which is the whole product,
-survives.
+comment churn (`daemon.go:804-814`). Each preview's build shares are then republished the same way, from
+`builds.name` (`restoreBuildShares`, `daemon.go:529`). The comment written once and edited thereafter, which is the
+whole product, survives.
 
 ## A name must exist before a share can bind it
 
@@ -115,31 +116,99 @@ involved. Nothing in the local git simulator or in any test creates a share.
 
 `sdk.CreateShare` with `NameSelections: [{Namespace, Name}]` for a name that is not registered in that namespace
 answers **409**. So every publish failed, every build reported failed, and no preview ever got a URL. The fix is
-one call: `ensureName` registers the name before `CreateShare` (`zrok.go:173-180`).
+one call: `ensureName` registers the name before `CreateShare` (`zrok.go:178-180`).
 
-`ensureName` is **idempotent by design rather than by check** (`zrok.go:360-390`). Asking whether the name exists
+`ensureName` is **idempotent by design rather than by check** (`zrok.go:385-403`). Asking whether the name exists
 and then creating it is a race against another publish, and the create is the cheaper of the two calls anyway. So
 "already exists" is the success case and is matched on rather than returned.
 
-**Matched on the generated type, not the message.** The 409 arrives with an **empty body** — the whole of it is
-`[POST /share/name][409] createShareNameConflict ""` — so there is no text to match. `CreateShareNameConflict` is
-documented in the swagger definition as "name already exists", which makes the type the only signal there is
-(`isNameAlreadyExists`, `zrok.go:403`).
+**Matched on the generated type *and an empty payload*, not on the message.** The 409 that means "already exists"
+arrives with an empty body — the whole of it is `[POST /share/name][409] createShareNameConflict ""` — so there is
+no text to match. But the type alone is not enough, and reading `controller/createShareName.go` is what showed it:
+**four situations answer 409 and only one of them is this one.**
 
-**It cannot tell a name this account owns from one another account holds.** Nothing can, given the empty body.
-Treating both as success is safe because the `CreateShare` that follows binds the name and fails on its own if it
-is not ours — one call later, with its own error, which is the error an operator can act on.
+| Payload | Situation |
+|---|---|
+| empty | the name already exists — the success case |
+| `names limit reached; cannot reserve additional names` | the account is at its reserved-name limit |
+| `'…' is not a valid share name; failed profanity or DNS check` | the name will never be registrable |
+| a stale-frontend-mapping message | the controller could not heal the mapping |
 
-`CreateShareNameBody` carries only `Name` and `NamespaceToken`. There is no reserved flag to set, so whatever
-`rest_model_zrok.Name.Reserved` ends up as is the server's default, and docpreview does not choose it.
+All four are `*share.CreateShareNameConflict`, so payload presence is the only discriminator available. Matching
+the type alone — which this did — reported a *registered name* to an account that had hit its name limit
+(`isNameAlreadyExists`, `zrok.go:427`), and the
+`CreateShare` a few lines later then failed for a reason that never mentioned quotas. That went from theoretical to
+likely the moment builds got their own shares: one name per commit reaches a limit far sooner than one per branch.
+Covered by `TestQuotaConflictIsNotAnExistingName` (`zrok_test.go`), with the controller's own strings as fixtures.
+
+**It still cannot tell a name this account owns from one another account holds.** Nothing can, given the empty
+body. Treating both as success is safe because the `CreateShare` that follows binds the name and fails on its own
+if it is not ours — one call later, with its own error, which is the error an operator can act on.
+
+`CreateShareNameBody` carries only `Name` and `NamespaceToken`. There is no reserved flag to set, and the
+controller hardcodes `Reserved: true` (`controller/createShareName.go`) — which turns out to be the whole leak, for
+the reason the next section gives.
+
+## Releasing a name
+
+Teardown deletes a share. The name is a separate object that survives it — deliberately — and it is also the object
+an account's quota counts. So something has to release it when the pull request is gone for good.
+
+**The obvious fix is the wrong one.** `close` (`zrok.go:298`) serves three callers and only one of them is a teardown:
+Publish's own withdraw on a rebuild, the `Publication.Close` the daemon uses when it supersedes a build, and
+shutdown. Releasing there would rehost every rebuilt preview at a new address on every push, silently, while the
+pull request comment went on advertising the old one — worse than the leak and much harder to notice. So releasing
+is the daemon's decision, made once, in `Daemon.releaseNames` (`internal/daemon/daemon.go:980`), reached through the
+optional `expose.NameReleaser` interface (`internal/expose/expose.go:112`), and `close` must never touch a name.
+`TestRebuildMustNotReleaseTheName` (`internal/daemon/releasename_test.go`) is what keeps that true.
+
+**`ReleaseName` de-reserves before it deletes, and the order is the point.** The controller's `unshare` already
+deletes any name bound to the share it is deleting whose `reserved` flag is false
+(`controller/unshare.go`, `cleanupShareNameMappings`). `PATCH /share/name` flips that flag, has no live-share
+conflict check, and works on a name a share is still bound to. So:
+
+1. `UpdateShareName` with `reserved` false (`zrok.go:478-492`). A 404 means the name is already gone, which is
+   success.
+2. `DeleteShareName` (`zrok.go:494-510`). A 409 — "still attached to share" — is the *expected* path when a share is
+   still bound, and
+   also a success: unshare will finish the job. A name with no share to reap it, which is the case for a preview
+   whose republish failed after a restart, is deleted outright here.
+
+That is what makes it self-healing. A crash between de-reserving and withdrawing leaves a non-reserved name whose
+share the next startup's `Reap` deletes, and the name goes with it. An explicit delete that never runs leaks
+silently and forever. Both orders work, so the daemon releases *before* withdrawing, leaving the flag already clear
+if the withdraw is the thing that fails.
+
+One trap in the generated client: `UpdateShareNameBody.Reserved` is tagged `omitempty`, so `false` is not
+serialized at all — and the controller reads an absent flag as false. Setting it explicitly produces the same
+request. Do not "fix" it with a pointer field.
+
+**Which names.** Every name the preview ever took: its own and one per build share, and `ReleaseName` is called once
+per distinct name rather than once per publication (`daemon.go:988-1023`). The live publications are not the whole
+set, so `releaseNames` reads the `previews` and `builds` rows too — a preview restored after a restart
+whose republish failed, or a build whose artifacts were pruned, has a recorded name and no publication, and those
+are exactly the names most likely to be leaked already. It reads them before `DeletePreview` runs, which is a few
+lines later in the same function.
+
+**A release failure cannot fail a teardown.** The pull request is gone either way; what is left is one name against
+a quota, which is worth a warning naming the name. Aborting would strand the artifacts, the workspace, the cache
+and the comment as well (`TestTeardownSurvivesAReleaseFailure`).
+
+**Names leaked before this existed are still there** — one per branch from every teardown so far, and the account
+has no way to read its own limit. Recovering them means `ListNamesForNamespace` plus the same release path, which
+is the `docpreview names prune` in the build order below.
 
 ## Names and collisions
 
 `RenderName` renders the template, sanitizes the branch into `{{.Name}}`, and sanitizes the whole result again
-(`internal/expose/expose.go:138-159`). `model.SanitizeName` lowercases, replaces every non-ASCII-alphanumeric run
+(`internal/expose/expose.go:205-226`). `model.SanitizeName` lowercases, replaces every non-ASCII-alphanumeric run
 with a single hyphen, trims hyphens, and appends a six-hex-character hash of the original **only when the
 transformation was lossy or the result exceeded 48 characters** (`internal/model/model.go:118-151`). So `main`
 stays `main`, and `feature/foo` and `feature_foo` do not collapse onto each other.
+
+A build share's name is not rendered a second time. `publishBuildShare` appends `-<sha7>` to the branch share's name
+(`internal/daemon/daemon.go:1442`), so a template that separates repositories keeps separating them here, and the two
+names sort next to each other in any list of shares.
 
 `DefaultNameTemplate` is `{{.Repo.Name}}-{{.Name}}` (`config.go:435`), not the branch alone. The init prompt
 says why: "zrok names are unique per namespace, so two repos with a main branch would collide"
@@ -154,11 +223,11 @@ dead code, and the default configuration publishes into a namespace shared with 
 
 What a collision looks like to a user depends on who holds the name:
 
-- **Another live preview in this process.** `Publish` refuses, with an error naming the other preview ID and the
-  template that would separate them (`zrok.go:146-151`). This is the good case: a failed build, a comment that
+- **Another live preview in this process.** `Publish` refuses, with an error naming the other publication key and the
+  template that would separate them (`zrok.go:144-153`). This is the good case: a failed build, a comment that
   says so, and a fix in the message.
 - **A share this daemon left behind.** `reapName` reclaims it once and `CreateShare` is retried once
-  (`zrok.go:175-184`). Exactly once, because a retry loop against a name someone else owns is a busy-wait.
+  (`zrok.go:186-194`). Exactly once, because a retry loop against a name someone else owns is a busy-wait.
 - **Anyone else, including another docpreview.** `CreateShare` fails, `reapName` finds nothing matching, and the
   build fails with `creating zrok share "docs-main" in namespace "public": …`. The operator has no way to tell
   from that message whether the name is held by a stranger or by their own second daemon.
@@ -179,15 +248,15 @@ Recommendations, in order of how much they matter:
 
 ## Two previews, one name, at the same time
 
-The collision check releases the mutex before `CreateShare` (`zrok.go:143-153`) and does not take it again until
-after the listener is up (`zrok.go:213-215`). The daemon's commit lock is **per preview**
-(`daemon.go:299-320`), so two different previews are free to be inside `Publish` simultaneously — and two
-different previews rendering to one name is exactly the situation the check exists for.
+The collision check releases the mutex before `CreateShare` (`zrok.go:144-154`) and does not take it again until
+after the listener is up (`zrok.go:223-225`). The daemon's commit lock is **per preview**, so two different previews
+are free to be inside `Publish` simultaneously — and two different previews rendering to one name is exactly the
+situation the check exists for.
 
 Both pass the check. Both call `CreateShare` with the same `NameSelection`. One wins. The loser's error path
-calls `reapName`, and `reapName` — unlike `Reap`, which skips `liveTokens` (`zrok.go:325`) — deletes **any**
+calls `reapName`, and `reapName` — unlike `Reap`, which skips `liveTokens` (`zrok.go:354`) — deletes **any**
 docpreview-tagged share whose endpoint matches the name, including the one the winner created seconds ago
-(`zrok.go:364-376`). It then retries and succeeds. The loser takes the name; the winner is left holding an
+(`zrok.go:537-548`). It then retries and succeeds. The loser takes the name; the winner is left holding an
 overlay listener for a deleted share and a database row that says `ready`.
 
 This is the same class of bug as the two already recorded in [02-exposers.md](02-exposers.md) — a name treated
@@ -210,15 +279,17 @@ func (z *Zrok) release(name, previewID string)
 ## Reaping, orphans, and the footgun
 
 `Reap(ctx, keep)` lists shares with `EnvZID` set to this environment's ziti identity and `Target` set to the
-substring `docpreview:` (`zrok.go:300-310`), re-checks the prefix properly because the API filter is documented
+substring `docpreview:` (`zrok.go:328-339`), re-checks the prefix properly because the API filter is documented
 as a substring match (`rest_client_zrok/metadata/list_shares_parameters.go:122-126`), skips live tokens, and
-deletes everything whose trailing preview ID is not in `keep` (`zrok.go:324-340`).
+deletes everything whose trailing **publication key** is not in `keep` (`zrok.go:353-369`). The daemon assembles that
+set from the `previews` rows *and* every `builds` row with a recorded URL, and skips the sweep entirely if it cannot
+read all of it — see [08-storage.md](08-storage.md).
 
-At startup `keep` is nil (`daemon.go:375`), and `keep[x]` on a nil map is false, so **everything
+At startup `keep` is nil (`daemon.go:463`), and `keep[x]` on a nil map is false, so **everything
 docpreview-tagged in this environment is deleted**. The documented reasoning is sound: nothing is serving yet,
-so every share is from a previous process ([08-storage.md](08-storage.md), `daemon.go:359-377`). Then each
-`ready` row with artifacts on disk is republished, in that order, because reaping afterwards would delete what
-was just restored.
+so every share is from a previous process ([08-storage.md](08-storage.md), `daemon.go:455-497`). Then each
+`ready` row with artifacts on disk is republished, and then its build shares, in that order, because reaping
+afterwards would delete what was just restored.
 
 **A hard kill leaves shares behind and that is fine.** The share lives on the controller; the process that made
 it is gone. `Reap(ctx, nil)` on the next start removes it, and because names go with shares, the name is free
@@ -339,7 +410,7 @@ client version error accessing api endpoint …`. Worth a specific mention in th
 
 **Share limits.** `ShareSummary` carries `Limited bool` (`rest_model_zrok/share_summary.go:30`), so a share can
 be present and disabled. Nothing in docpreview reads it. A limited share leaves a `ready` row pointing at a URL
-that does not serve, and `Reap` will not touch it because its preview ID is in `keep`. Reading `Limited` during
+that does not serve, and `Reap` will not touch it because its publication key is in `keep`. Reading `Limited` during
 `Reap` and logging it is a two-line change and the only warning an operator would get before the account stops
 accepting new shares.
 
@@ -356,7 +427,7 @@ SDK simply ignores (`daemon.go:822`).
 **The overlay listener leaks a ziti context per publish.** `NewListenerWithOptions` builds a fresh
 `ziti.NewContext` from the identity file on every call and returns only the listener
 (`sdk/listener.go:18-40`). Nothing in the SDK or in docpreview ever closes that context — `entry.listener.Close()`
-(`zrok.go:277`) closes the listener, not the context that created it. A long-lived daemon rebuilding previews on
+(`zrok.go:306`) closes the listener, not the context that created it. A long-lived daemon rebuilding previews on
 every push accumulates one ziti context, control channel and API session per publish, for the life of the
 process. This is upstream behaviour, not a docpreview bug, but it is docpreview's problem: it makes a restart a
 periodic necessity rather than a casual convenience, and it is the first thing to measure once real traffic
@@ -444,7 +515,9 @@ type zrokAPI interface {
     EnvironmentID() string
     CreateShare(req *sdk.ShareRequest) (*sdk.Share, error)  // no ctx: the SDK has none
     DeleteShare(token string) error
-    CreateShareName(ctx context.Context, name string) error // idempotent; swallows the empty-body 409
+    CreateShareName(ctx context.Context, name string) error // idempotent; swallows the empty-body 409 only
+    SetNameReserved(ctx context.Context, name string, reserved bool) error // PATCH; 404 is success
+    DeleteShareName(ctx context.Context, name string) error  // 409 means a share is still bound: success
     ListShares(ctx context.Context, envZID, target string) ([]shareRow, error)
     Listen(token string) (net.Listener, error)
 }
@@ -475,11 +548,15 @@ argued above:
 | Concurrent publish of two previews with one name: the winner survives | The race in "Two previews, one name" |
 | `reapName` does not delete a live share | Same bug, other half |
 | Republish keeps the URL | The property the whole comment design rests on |
-| Replace-then-close leaves the replacement live | `withdrawEntry`'s identity check (`zrok.go:252-267`) |
+| Replace-then-close leaves the replacement live | `withdrawEntry`'s identity check (`zrok.go:269-284`) |
 | `Reap(ctx, nil)` deletes all, `Reap(ctx, keep)` deletes the complement | The startup contract |
-| `Reap` skips shares whose target merely contains the prefix | Guarded in code (`zrok.go:330`), untested |
+| `Reap` skips shares whose target merely contains the prefix | Guarded in code (`zrok.go:359`), untested |
 | `Reap` ignores a share from a different `EnvZID`/instance | The footgun, once fixed |
 | A share with no frontend endpoints is torn down, not returned | `zrok.go:236-246` |
+| A build share and its branch share coexist, and closing one leaves the other | `Spec.Key()`; done as `TestTwoPublicationsPerPreview` |
+| A rebuild does not release the name | Done as `TestRebuildMustNotReleaseTheName` (`internal/daemon`) |
+| An empty-payload 409 is "exists" and a quota 409 is not | Done as `TestQuotaConflictIsNotAnExistingName` |
+| `ReleaseName` de-reserves before deleting, and a 409 from the delete is success | Needs the seam below; the calls have been read, not run |
 | `ensureName` treats an empty-body 409 as success and any other error as fatal | The bug that stopped every publish |
 | A publish fails if the name cannot be registered, before any share exists | Otherwise the failure surfaces one call later, from `CreateShare` |
 | A scheme-less frontend endpoint becomes an `https://` URL | The relative-link bug; needs a fixture without a scheme |
@@ -489,7 +566,7 @@ What genuinely needs an account, and belongs in a build-tagged integration test 
 `ziti_integration_test.go`:
 
 - That the frontend endpoint's first DNS label really is the requested name. `endpointsMatchName`
-  (`zrok.go:445`) and the whole stable-URL argument depend on it and nothing has confirmed it.
+  (`zrok.go:553`) and the whole stable-URL argument depend on it and nothing has confirmed it.
 - That a registered name is reusable by a new share after the previous share is deleted, without a delay.
 - That the OAuth gate actually challenges a browser, and that `oauth_email_domains` excludes what it should.
 - What `permissionMode: closed` plus `access_grants` does to a *public* share — the one place the security story
@@ -520,8 +597,8 @@ What is left:
    (`main.go:293-320`), plus the instance token in `Target`. Two daemons must not reap each other.
 5. **Restart the daemon with previews live** and confirm the URLs and the comments do not move. Then kill it hard
    and confirm the next start reaps and republishes cleanly. Now cheap to do, since publishing works.
-6. **Decide whether registered names need releasing**, and if so where — `DeleteShareName` on teardown, or a
-   `docpreview names prune`. Blocked on knowing whether an account has a name limit.
+6. **`docpreview names prune`**, over `ListNamesForNamespace` and `ReleaseName`, to recover the names leaked before
+   teardown released them. Teardown itself is done; this is the backlog of names it cannot reach.
 7. **Surface `Limited`, and improve the version-mismatch error** — both are things a longer run will have taught
    you the shape of.
 8. **Make recovery concurrent**, bounded by `workers`.
@@ -536,26 +613,29 @@ Everything above cited to a file and line was read. These were not:
 
 - **The frontend endpoint hostname format.** Now partly known: the endpoint is a **bare hostname with no scheme**,
   which is why `Publish` prefixes `https://`. Whether its first DNS label is always the requested name is still an
-  assumption — `endpointsMatchName` (`zrok.go:445`) and `reapName` depend on it, and it has not been checked against
+  assumption — `endpointsMatchName` (`zrok.go:553`) and `reapName` depend on it, and it has not been checked against
   a name that would make the two differ. The `JoinURL` tests still use `https://x.share.zrok.io`
   (`expose_test.go:118`), a plausible-looking fixture rather than a recorded value.
 - **What `permissionMode: closed` and `accessGrants` enforce on a public share**, and against what identity. The
   fields are sent (`sdk/share.go:88-91`) and `init` describes them as zrok accounts (`init.go:150`); the
   server-side behaviour is not in the vendored client.
-- **Whether deleting a share releases its name.** This one moved: a name is *not* implicitly created with a share,
-  so it is not implicitly share-scoped either, and docpreview now registers names explicitly and never deletes
-  them. What is still unknown is whether the registered name is durable indefinitely, and whether
-  `rest_model_zrok.Name.Reserved` is set for a name created this way — `CreateShareNameBody` has no field for it.
-  Item 6 of the build order depends on the answer.
+- ~~**Whether deleting a share releases its name.**~~ Answered from the controller source, not the field names:
+  `createShareName` hardcodes `Reserved: true`, and `unshare` deletes a bound name only when that flag is false. So
+  a share deletion releases nothing unless the name is de-reserved first, which is what `ReleaseName` now does.
+  What remains unknown is whether the *release* actually lands against a live account — the two calls have been
+  read, not run.
 - **Whether `CreateShare` fails, or silently succeeds with a different name, when the requested name is registered
   but bound to somebody else's share.** `Publish`'s retry-once logic (`zrok.go:182-194`) assumes it fails. The
   unregistered case is now known to fail with 409. If the taken case instead succeeds under an assigned name, the
   returned endpoint would not match the requested name and the comment would carry a URL the database did not
   predict — the `pub.URL != p.URL` path (`daemon.go:436`) would cover it, but noisily.
-- **Name limits on an account.** Names now accumulate one per preview name ever published and nothing releases
-  them, so a limit here is a slow-motion outage rather than a single failed build. Neither the limit nor the error
-  it produces is known.
-- **Share and name limits on a zrok account**: that they exist is asserted in `zrok.go:290-293` and
+- **Name limits on an account.** The error is now known — `names limit reached; cannot reserve additional names`,
+  as a 409 payload from `POST /share/name`, which is what `isNameAlreadyExists` had to learn to tell apart. **The
+  number is not**, and nothing can read it: all six countable dimensions default to `Unlimited` with
+  `Enforcing: false` in the source, and `adminListAppliedLimitClasses` is admin-only. The hosted free tier
+  publishes 5 GB/day, 25 environments, 50 share backends and 50 private frontends, and no reserved-name figure
+  anywhere. It has to be measured — see [19-zrok-namespacing.md](19-zrok-namespacing.md).
+- **Share and name limits on a zrok account**: that they exist is asserted in `zrok.go:316-322` and
   `02-exposers.md`; the numbers, and what the controller returns when one is hit, are not known.
 - **What `ListShares` returns for a large account.** The parameters expose filters but no limit or offset
   (`list_shares_parameters.go:60-143`), so either it returns everything or it truncates somewhere invisible to

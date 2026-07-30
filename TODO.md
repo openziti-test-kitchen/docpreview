@@ -6,51 +6,146 @@ Related: `www/docs/future/ziti-native-previews.md` holds the design research tha
 
 ## In flight
 
-**A share per build, not just per branch.** Today one preview owns one share, and it always serves the newest
-successful build. The consequence shows up on the dashboard: the log pane can be reading
-`build 20260729-190307-85912e2` while the Open button next to it goes to whatever is currently published. Two
-different builds described side by side, and no way to look at the older one at all.
+**Secrets have a scope now, and the projects page is where they live.** `build.secrets` was one map for the whole
+daemon, which is the wrong shape for the case it exists for: a documentation site assembling several private
+repositories needs a token per source, and those are not the same for every project. A single global map also means
+every project's build can read every other project's tokens.
 
-Wanted: a share per commit built **and** one for the branch. Five builds of a branch means six shares — the branch
-share following the newest, plus five that stay pinned to their commit.
+- [x] **Project-scoped environment variables.** `project/<platform>/<owner>/<repo>/<ENV>` in the same vault,
+      `PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}`, resolved per build through
+      `Daemon.SetProjectSecrets` and merged by `Builder.WithSecrets` — which rebuilds the redactor in the same call,
+      because the two must never be separable. Written up in
+      [docs/design/05-secrets.md](docs/design/05-secrets.md) and [www/docs/reference/projects.md](www/docs/reference/projects.md).
+- [x] **The projects page is usable.** Cards with label-over-value facts, the add form behind a button, edit in
+      place, and a secrets panel per project. Two real bugs fell out of it: `[hidden]` loses to `.wrap`'s
+      `display: grid`, so the previews and activity sections rendered empty under both admin pages; and `run()`
+      reported failures into `#setup-body`, hidden on `/projects`, so a failed save did nothing and said nothing.
+      Covered by `tools/dashboardtest/projects.mjs`.
+- [ ] **Non-secret project env.** A project can hold credentials but not plain values like `BB_USERNAME`. Today
+      those go in the repository's `.docpreview.yml`, which is right for anything not secret — but the split will
+      confuse somebody, and the same panel could hold both if the secret ones stayed write-only.
+- [ ] **Report which variables a build actually used.** The build log is redacted, so a token that was set but never
+      read looks identical to one that was missing. The build script's own "🔑 Using X" lines are the only signal,
+      and they are the script's, not ours.
+- [ ] **A project's secrets survive its deletion.** `DELETE /api/projects/...` removes the row and leaves
+      `project/<platform>/<owner>/<repo>/*` in the vault. Deliberate for now — deleting credentials as a side effect
+      of removing a build config is not obviously right, and re-adding the project gets them back — but nothing says
+      so on the page, and a vault that accumulates unreachable entries is the audit gap widened again.
+
+**A share that exists before the build does.** Today a share is created after a successful build, so the first
+push to a branch gives a reviewer `share ... not found!` until it finishes, and a restart briefly 404s everything.
+
+The fix is a handler that can be swapped rather than a share that gets replaced. `Publish` takes an
+`http.Handler`, so publish a `switchable` holding an atomic pointer:
+
+- **Queued or building** — it serves a status page: which commit, how long, a spinner, and a poll against
+  `/_docpreview/status` on its own origin. Same share, so same origin, so no CORS and no daemon URL to know.
+- **Ready** — the pointer is swapped to the built site. The page's poll sees `ready` and reloads itself into it.
+- **Failed** — it serves the failure and the log excerpt, which is more use than a 404.
+
+Three things this fixes beyond the missing page. Publishing a name is destructive, so a rebuild currently
+withdraws a live share and takes the name again — with a swap there is nothing to withdraw and the supersede race
+that `commitLock` exists for gets narrower. A restart republishes once per preview instead of once per preview
+*and* once per build. And the reviewer gets a URL that is safe to paste into a review before the build lands.
+
+- [ ] `switchable` handler, and `Publish` called at enqueue rather than at commit.
+- [ ] `/_docpreview/status` on the placeholder, and the poll-and-reload page. Reserved prefix so it cannot
+      collide with a documentation route.
+- [ ] **Decide what a failed first build should hold.** Publishing at enqueue means a name is taken by a branch that
+      may never build, and the name is the quota-bearing object. Teardown releases it now, so the cost is bounded by
+      how long an abandoned branch stays open rather than being permanent. Serving the failure is the useful answer.
+- [ ] Keep the artifact check. `errArtifactsUnusable` drops a preview whose stored `base_url` no longer matches
+      the exposer, and a swap must not skip it — serving a site whose every asset 404s is worse than a placeholder.
+
+**A share per build, not just per branch. Shipped; what is left is the accounting around it.** One preview used to
+own one share, always serving the newest successful build, and the consequence showed up on the dashboard: the log
+pane could be reading `build 20260729-190307-85912e2` while the Open button next to it went to whatever was
+currently published. Two different builds described side by side, and no way to look at the older one at all.
+
+Now a preview has a share per commit built **and** one for the branch. Five builds of a branch means six shares — the
+branch share following the newest, plus five pinned to their commit. Written up in
+[docs/design/02-exposers.md](docs/design/02-exposers.md) and [docs/design/08-storage.md](docs/design/08-storage.md).
+**Not yet run for a week**: the whole feature multiplies the number of remote objects by the push rate, and the two
+open items about limits below are the ones that decide whether that holds up.
 
 - [x] **One preview can hold more than one publication.** `expose.Spec.BuildID` and `Spec.Key()`, and all four
       exposers key their live map, their remote tag and `Reap`'s keep-set on the key rather than on the preview id.
       This was the structural blocker: `Publish` withdraws whatever holds the key before taking it, so a build
       share used to tear down the branch share it was meant to sit beside. The branch share keeps the bare preview
       id as its key so an in-place upgrade does not reap every restored preview on the first sweep.
-- [ ] **Decide the naming.** Blocked on whether zrok v2 can hang shares off one owned subdomain
-      (`85912e2.docpreview.shares.zrok.io`) rather than flat siblings — see
-      [docs/design/19-zrok-namespacing.md](docs/design/19-zrok-namespacing.md). A provisional flat
-      `<branch>-<sha7>` is enough to build against and is one template away from either answer.
-- [ ] **Publish the build share.** `runPipeline` publishes once, keyed by preview. It needs a second `Publish`
-      with `BuildID` set, the daemon's `live` map keyed by publication rather than preview, and `Reap`'s keep-set
-      widened to include every build key — a keep-set still listing only preview ids reaps every build share on
-      the next sweep.
-- [ ] **Record the per-build URL.** The `builds` table has no `name` or `url`, so nothing can link to a build
-      share after a restart.
-- [ ] **Find the per-account reserved-share limit.** One share per build multiplies share count by the number of
-      pushes to every open pull request. If zrok caps reserved shares per account, that cap is the feature's real
-      ceiling and has to be known before this is built, not after.
-- [ ] **Artifacts per build, not per preview.** `artifacts/<preview>` currently holds one built site. Per-build
-      shares need `artifacts/<preview>/<build>`, which changes what teardown removes and what the base-URL check
-      compares against.
-- [ ] **Two Open buttons, not one.** The row's Open goes to the branch share, which follows the newest successful
-      build. Each entry in the build dropdown gets its own Open, going to that build's share. This is what fixes
-      the mismatch that prompted the whole idea: the log pane can read `build 20260729-190307-85912e2 — not live`
-      while the only Open button on screen goes somewhere else entirely, and no wording makes one button honest
-      about two different things.
-- [ ] **Decide what an Open button does for a build with no share.** Older builds will have been evicted by the
-      disk limits below, and a skipped build never had one. The dropdown will therefore contain entries that
-      cannot be opened, and the button has to say so rather than 404 — the same rule the log pane already follows
-      for a build whose log was not kept.
+- [x] **Decide the naming.** Flat `<branch-name>-<sha7>`, derived from the branch share's name rather than rendered
+      from the template a second time — so a `name_template` that separates repositories keeps doing so, and the two
+      names sort next to each other in any list of shares (`publishBuildShare`, `internal/daemon/daemon.go:1442`).
+      The owned-subdomain shape (`85912e2.docpreview.shares.zrok.io`) is not available: it needs a delegated
+      namespace, which on hosted zrok.io is admin-only and a sales conversation — see
+      [docs/design/19-zrok-namespacing.md](docs/design/19-zrok-namespacing.md), section 3. One template change away
+      if that ever lands.
+- [x] **Publish the build share.** `publishBuildShare` runs after the branch share, best effort: the branch share
+      is the contract and is already live, so a reserved-name quota or a collision logs a warning and costs one URL
+      rather than failing a build that succeeded. `d.liveBuilds` holds them, teardown closes them, and the reap
+      keep-set lists every build with a recorded URL.
+- [x] **Record the per-build URL.** `builds.name` and `builds.url`, with the project's first schema migration —
+      `CREATE TABLE IF NOT EXISTS` does nothing to an existing table, so the columns had to be added by `ALTER`.
+- [x] **Reclaim the zrok name on teardown.** `Daemon.releaseNames` releases every name the preview took — its own
+      and one per build share, from the live publications *and* the recorded rows, since a preview whose republish
+      failed has a name and no publication. `Zrok.ReleaseName` de-reserves via `PATCH /share/name` and then deletes,
+      which is self-healing: `unshare` collects a non-reserved name on its own, so a crash mid-teardown is cleaned
+      up by the next startup's `Reap`. `close` must never touch a name, because two of its three callers are
+      rebuilds whose URL has to survive — `TestRebuildMustNotReleaseTheName`. Written up in
+      [docs/design/16-exposer-zrok.md](docs/design/16-exposer-zrok.md), "Releasing a name". **Not yet run against a
+      live account**: both calls were read from the controller source, not exercised.
+- [x] **`isNameAlreadyExists` treated a quota rejection as success.** Four situations answer 409 from
+      `POST /share/name` and only the empty-payload one means the name exists. Matching the type alone reported a
+      registered name to an account at its name limit, and the following `CreateShare` failed for a reason that
+      never mentioned quotas. Payload presence is the discriminator; the controller's own strings are the test
+      fixtures. One name per commit reaches that limit far sooner than one per branch did.
+- [ ] **Recover the names already leaked.** Every teardown before the item above left one behind. Wants a one-shot
+      sweep that lists reserved names in the namespace, keeps the ones matching a live preview or a recorded build,
+      and releases the rest — the same keep-set logic `Reap` uses for shares, applied to names. `ReleaseName` is the
+      call; `ListNamesForNamespace` is the list. Filed as `docpreview names prune` in
+      [docs/design/16-exposer-zrok.md](docs/design/16-exposer-zrok.md).
+- [ ] **Decide what happens to `builds` rows on teardown.** `DeletePreview` removes only the `previews` row, so a
+      torn-down preview's build rows survive and `backfill` puts them back in the feed after a restart. They render
+      inert, because `markOpenable` finds no log and no artifacts, and `PruneBuilds` ages them out at `keep_logs`
+      — so this is bounded and arguably correct: the history outlives the preview on purpose elsewhere. It is
+      accidental rather than decided, and nothing says which it is.
+- [ ] **Find the per-account reserved-name limit.** One name per build multiplies the count by the number of pushes
+      to every open pull request, and the *name* is the quota-bearing object rather than the share
+      (`controller/share.go` counts a `POST /share` against `shares` only). Nothing published says what a hosted
+      zrok.io account is allowed, and `adminListAppliedLimitClasses` is admin-only, so an account cannot read its own
+      ceiling — it has to be probed on a throwaway account by creating names until the 409 payload says
+      `names limit reached`. Steady state is now the number of *live* previews rather than the number of builds ever
+      run, since teardown releases names, which makes this tolerable rather than blocking. Section 2 of
+      [docs/design/19-zrok-namespacing.md](docs/design/19-zrok-namespacing.md) has the method.
+- [x] **Artifacts per build, not per preview.** `artifacts/<preview>/<build>`, so a build share has its own directory
+      to serve and teardown removes the whole preview tree in one `RemoveAll`. `restoreBuildShares` republishes each
+      build from its own directory at startup, and a build whose directory is gone — pruned by `keep_builds` — has its
+      `builds.name` and `builds.url` cleared instead, because leaving the URL would keep the dashboard offering a link
+      to something no longer on disk.
+- [x] **Two Open buttons, not one.** The row's Open goes to the branch share; the log pane's top bar carries
+      `Open build ↗` for whichever build is selected (`updateOpenBuild` in `dashboard.html`). That is what fixes the
+      mismatch that prompted the whole idea: the log pane could read `build 20260729-190307-85912e2 — not live` while
+      the only Open button on screen went somewhere else entirely, and no wording makes one button honest about two
+      different things.
+- [x] **Decide what an Open button does for a build with no share.** Greyed with the reason, not hidden and not a
+      404 — the same rule the log pane already follows for a build whose log was not kept. A build has no share when
+      it failed, when it predates per-build publishing, or when `keep_builds` pruned its artifacts and
+      `ClearBuildShare` emptied the two columns. Hiding the control would read as a missing feature; a disabled one
+      that says why does not.
 
 **Limits, because the above makes unbounded growth the default.** Nothing in this project caps disk today. One
 share and one artifact directory per preview kept that survivable by accident; per-build artifacts do not.
 
-- [ ] **Per-build and total disk caps.** A byte limit per build output, a cap on retained builds per preview, and
-      a total ceiling for the artifacts tree — with a documented eviction order when one is hit. Oldest build of
-      the least recently updated preview is the obvious first rule.
+- [x] **A cap on retained builds per preview.** `preview.keep_builds`, default 10, pruned after each publish and
+      never removing the build that just published — a clock stepping backwards would otherwise delete what is
+      being served.
+- [ ] **Byte and total caps.** A limit on one build's output size and a ceiling for the whole artifacts tree, with
+      a documented eviction order. `keep_builds` bounds the *count*, which says nothing about a repository whose
+      site is a gigabyte. Oldest build of the least recently updated preview is the obvious first rule.
+- [ ] **Startup is serial and slow.** Reap-then-republish took 55 seconds for three previews, roughly 14 seconds
+      per zrok round trip, with nothing reachable until it finishes. Thirty open pull requests is about seven
+      minutes of downtime per restart. Republishing concurrently is the obvious fix; the reason it is not done yet
+      is that `Reap` must complete first and publishing a name is destructive, so the ordering needs care.
 - [ ] **Report usage where it can be acted on.** A dashboard that does not say how much disk the previews are
       using is a dashboard nobody can use to decide what to delete.
 - [ ] **Exempt the paid exposers.** These limits exist because zrok's hosted service is free and shared. Frontdoor
@@ -107,8 +202,9 @@ test having been the next thing to do rather than more tests.
 - [x] **No named zrok share could be created at all.** `CreateShare` with a `NameSelection` naming a name that is
       not registered in the namespace answers 409, so every publish failed and no preview ever got a URL.
       `Zrok.ensureName` registers it first and treats "already exists" as success — matched on the generated
-      `*share.CreateShareNameConflict` type rather than the message, because the 409 arrives with an empty body.
-      See [16-exposer-zrok.md](docs/design/16-exposer-zrok.md).
+      `*share.CreateShareNameConflict` type **and an empty payload**, because the 409 arrives with an empty body and
+      three other situations answer 409 with a payload. Matching the type alone was itself a bug; see the
+      quota item in the in-flight section. [16-exposer-zrok.md](docs/design/16-exposer-zrok.md).
 - [x] **Preview URLs went into comments with no scheme.** `Share.FrontendEndpoints` reports a bare hostname, so
       the link resolved relative to github.com and 404'd there. `Publish` prefixes `https://` when the endpoint has
       none.
@@ -221,11 +317,10 @@ a DNS suffix — but it is a **bare hostname**, not a URL, so anything putting i
 - [ ] **A zrok name race.** The collision check drops the lock before `CreateShare`, and the daemon's commit
       lock is per preview, so two previews rendering to one name both pass and the loser's `reapName` deletes
       the winner's fresh share. See [16-exposer-zrok.md](docs/design/16-exposer-zrok.md).
-- [ ] **Registered zrok names are never released.** `ensureName` creates one per preview name ever published and
-      nothing calls `DeleteShareName`, so the account accumulates them and they survive the deletion of the
-      database — the audit gap below, widened. Harmless today because registration is idempotent; it becomes an
-      outage if an account has a name limit, which nobody has established. Needs the limit checked first, then
-      either a release on teardown or `docpreview names prune`.
+- [x] **Registered zrok names were never released.** One per preview name ever published, surviving the deletion of
+      the database. Teardown releases them now; the names leaked before it did are still there, and recovering them
+      is the `docpreview names prune` in the in-flight section. A name still survives a database wiped by hand,
+      which is the audit gap below rather than this item.
 - [ ] **`ensureName` cannot tell a name this account owns from a stranger's.** The 409 has an empty body, so both
       read as success and the failure surfaces one call later from `CreateShare` with a message that does not say
       which it was. `ListNamesForNamespace` would tell them apart and is the same call `docpreview shares list`
@@ -237,6 +332,12 @@ a DNS suffix — but it is a **bare hostname**, not a URL, so anything putting i
       no row, so the history shows a gap where a push was deliberately not built — which is the one case somebody
       asks the history about. The skip branch in `Daemon.build` (`internal/daemon/daemon.go:812`) is where the
       first belongs.
+- [ ] **A pending job survives the teardown of its preview.** The only statement that removes a `jobs` row is
+      `Claim`, and `teardown` deletes the `previews` row and nothing else — so a push landing just before a close
+      leaves a job that a worker later claims and builds, republishing a preview that was deliberately removed.
+      Unverified against a live pull request. The fix has to choose between deleting the job in `teardown` and
+      re-checking the pull request's state in the commit phase; the second is more correct and needs an API call the
+      commit phase does not make today.
 - [ ] **`/healthz` is `ok\n` and answers before recovery runs**, and the vault's locked state — which makes
       every GitHub webhook answer 501 — appears in no endpoint. Extend `/status`.
 - [ ] **Log the dialing identity on the ziti exposer**, then enforce against it. This is the cheap first half of
@@ -270,11 +371,23 @@ NetFoundry-hosted is a decision nobody has made.
 
 ## Bitbucket
 
-Nothing exists beyond the interface. `POST /webhook/bitbucket` returns 501.
+Nothing exists beyond the interface. `POST /webhook/bitbucket` returns 501. The research is done —
+[docs/design/15-bitbucket.md](docs/design/15-bitbucket.md), read against a live Vercel integration on
+`bitbucket.org/netfoundry/customer-connect-docs` — and stage 1 of its build order has landed.
 
-- [ ] `internal/scm/bitbucket` implementing `scm.Client`
-- [ ] Webhook verification, comment upsert via `PUT`, diffstat for changed files
-- [ ] App passwords are dead as of June 2026 — Atlassian account email plus API token only
+- [x] **The marker is portable.** `scm.MarkerStyle`, `MarkerFor` and `HasMarker`; `findComment` matches with
+      `HasMarker` rather than against one rendered string. Bitbucket escapes raw HTML, so `<!-- docpreview:… -->`
+      would render as a visible paragraph there — Vercel ships exactly that defect on a public pull request. The
+      working form is a CommonMark link reference definition. Done first and on GitHub alone, because a matcher that
+      forgets a style posts a duplicate comment on every open pull request, and only GitHub has comments in the wild.
+- [ ] `internal/scm/bitbucket` implementing `scm.Client`, writing `MarkerLinkRef`
+- [ ] Webhook verification, comment upsert, diffstat for changed files
+- [ ] **A repository access token, not app passwords** — those were removed 28 July 2026. Not an Atlassian account
+      email plus API token either: that credential is a whole-account one.
+- [ ] **`Repo.Name` must hold the slug, not the display name.** Bitbucket distinguishes them, and fork detection
+      comparing the wrong one refuses every pull request.
+- [ ] **`source.commit.hash` is 12 characters, not 40.** The client has to normalize, or `Report.Commit` silently
+      holds two widths depending on the platform.
 - [ ] Vault keys already reserved: `bitbucket.email`, `bitbucket.api_token`, `bitbucket.webhook_secret`
 
 ## Identity management
@@ -304,7 +417,8 @@ revocation story**.
 
 ## Namespace hygiene
 
-Each preview gets its own share, its own name, its own listener. The default `name_template` is
+Each preview gets its own share, its own name, its own listener — and, since per-build publishing, one more of each
+per build, named `<branch-name>-<sha7>`. The default `name_template` is
 `{{.Repo.Name}}-{{.Name}}` — project and branch — because the branch alone collides across repositories and
 every exposer keys something on the name. Deliberately not the commit SHA: the pull request comment is edited
 in place, so the link a reviewer already opened has to survive the next push. `{{.HeadSHA}}` is available for
@@ -313,9 +427,12 @@ anyone who wants immutable per-commit URLs.
 Cleanup is wired, not aspirational:
 
 - `Exposer.Reap(ctx, keep)` runs at startup with `keep == nil` — nothing is live yet, so every share carrying
-  the `docpreview:` target prefix is a leak from a previous process — and again on every sweep tick with the
-  set of preview IDs the database still recognises.
+  the `docpreview:` target prefix is a leak from a previous process — and again on every sweep tick with the set of
+  publication keys the database still recognises: every preview id, plus `<preview>/<build>` for each build row that
+  recorded a URL. A keep-set that cannot be assembled completely skips the sweep, because an incomplete one does not
+  under-delete, it deletes live shares.
 - `Preview.TTL` tears down previews nobody has touched, which removes them from `keep` and so from the remote.
+  Teardown also releases the exposer's names, before withdrawing the shares, so a crash mid-teardown self-heals.
 - The prefix is what stops it deleting shares an operator made by hand.
 
 - [ ] **No audit command.** `Reap` logs what it deletes but there is no `docpreview shares list` to see what a
@@ -330,8 +447,10 @@ Not bugs. Listed so nobody rediscovers them as surprises.
 
 - **One docpreview per ziti service.** Binding creates a terminator; two instances create two and the router
   load-balances between them, so each holds a disjoint routing table. Give a second instance its own service.
-- **The `local` exposer's URL moves between builds.** It allocates an ephemeral port per publish. zrok and ziti
-  keep a stable name; `local` is for trying the pipeline, not for sharing a link.
+- **The `local` exposer's URL is reachable by one person.** It is a path on the daemon's own loopback listener,
+  `/preview/<name>/`. Stable now — it used to allocate an ephemeral port per publish, which made every recorded URL
+  dead after a restart while the row still said `ready` — but still reachable only from the machine that built it.
+  `local` is for trying the pipeline, not for sharing a link.
 - **A preview link is only offered while the state is `ready`.** Queued, building and failed have no URL, and a
   torn-down one has a URL that no longer answers. The dashboard renders the button inert rather than linking to
   a connection-refused.
@@ -371,31 +490,33 @@ harder.
 
 ## Secret management from the dashboard
 
-Today the only way in is `docpreview vault set <key>` on the daemon's host, and the only scope is global:
-`build.secrets` maps one environment variable to one vault key for every build, everywhere. Three scopes are
-wanted, narrowest winning:
+Mostly built. `/secrets` sets, generates and deletes global vault entries and `/projects` holds a project's own
+environment variables; `docpreview vault set <key>` on the host is no longer the only way in. Two of the three wanted
+scopes exist, narrowest winning:
 
-- [ ] **Global** — what exists now. Applies to every build.
-- [ ] **Per project** — an Algolia key that belongs to one documentation site and has no business being in
-      another project's environment. Needs a scope column on the vault entry and a lookup in
-      `buildSecrets` (`cmd/docpreview/main.go`) keyed by `model.Repo`.
+- [x] **Global** — `build.secrets`, applied to every build on the daemon.
+- [x] **Per project** — `project/<platform>/<owner>/<repo>/<ENV>`, resolved per build. See the in-flight section for
+      what shipped and [docs/design/05-secrets.md](docs/design/05-secrets.md) for why the scope is a key prefix
+      rather than a column.
 - [ ] **Per git provider** — the GitHub App private key and webhook secret are already provider-scoped by
       convention (`vault.KeyGitHubPrivateKey`); making that a real scope is what lets one daemon serve a
-      GitHub org and a Bitbucket workspace without their credentials sharing a namespace.
+      GitHub org and a Bitbucket workspace without their credentials sharing a namespace. The project prefix is the
+      precedent to follow, and `bitbucket.*` already sits beside `github.*` by convention alone.
 
-What makes this harder than a form:
+The four things that made this harder than a form, all still load-bearing and none of them finished business:
 
-- **Write-only.** The UI must be able to set and delete a secret and never read one back. `vault.Secret`
-  already refuses to render itself through Stringer, Formatter, GoStringer and json.Marshaler; the endpoint
-  has to be equally deliberate, returning names and scopes and never values.
-- **The dashboard has no authentication.** It is loopback-or-overlay today, and that is load-bearing: adding
-  a write endpoint for credentials to an unauthenticated surface is worse than having no UI. Under the ziti
-  listener the dialing identity is available on `edge.Conn` and is the natural authorization hook; under a
-  TCP listener there is nothing, and this should probably refuse to serve at all.
-- **Rotation has to re-arm the redactor.** `buildSecrets` runs once at startup and
-  `NewBuilderWithSecrets` compiles the patterns from the values. A secret changed at runtime that does not
-  rebuild the redactor is a secret that appears in the next build log verbatim.
-- **Audit.** Who set what, when. Not who read it — nobody can.
+- **Write-only.** The UI can set and delete a secret and never read one back. `vault.Secret` refuses to render
+  itself through Stringer, Formatter, GoStringer and json.Marshaler, and no endpoint returns a stored value —
+  `generate` returns what that call minted, once, which is not a read. Keep it that way.
+- **The dashboard has no authentication.** Writes are gated on two independent checks — a loopback-only daemon
+  *and* a local, unforwarded request — because a tunnel makes every route reachable while every listener is still
+  loopback. That is a boundary, not authentication; the real credential is the open item under "The webhook
+  tunnel". A ziti listener is refused outright until the dialing identity is checked.
+- **Rotation has to re-arm the redactor.** `rearm(changed)` rebuilds the redactor and the GitHub client on every
+  write. A secret changed at runtime that does not rebuild the redactor is a secret that appears in the next build
+  log verbatim, and `Builder.WithSecrets` merges and recompiles in one call so the two cannot drift apart.
+- **Audit.** Who set what, when. Not who read it — nobody can. `SecretsAdmin` logs writes; `Vault.Get` logs
+  nothing. Still open, above.
 
 ## Improvements worth making
 
@@ -423,8 +544,8 @@ Rounds of review that produced fixes worth not regressing:
   overlong logs unreadable.
 - SSE carriage-return injection: build output could otherwise forge event frames.
 - Name collisions in every exposer: `live` was keyed by the preview's name, which is the branch, so a second
-  repository with the same branch name tore down the first one's publication. Now keyed by preview ID, with
-  zrok and Frontdoor refusing a name another preview holds rather than taking it.
+  repository with the same branch name tore down the first one's publication. Now keyed by the publication —
+  `expose.Spec.Key()` — with zrok and Frontdoor refusing a name another preview holds rather than taking it.
 - `build.secrets` was dead config — nothing called `WithBuildSecrets`, so no secret was ever injected and the
   redactor was never armed. An unredacted log is indistinguishable from a log with no secrets in it.
 - `Status` read only the preview table, which never holds `queued` or `building`, so the dashboard's counters

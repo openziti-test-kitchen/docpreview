@@ -80,9 +80,14 @@ Deliberately **excludes the branch and the commit**. A pull request that is forc
 the same pull request, and its preview must keep the same identity — otherwise a force-push orphans the
 artifacts, the share, and the comment, and leaves a second preview beside the first.
 
-Everything durable is keyed by it: the database row, the artifact directory, the log directory, the live
-publication map, the in-flight build map. Anything keyed by something else is a bug waiting to be found —
-see [02-exposers.md](02-exposers.md) for the four places it already was.
+Everything durable is keyed by it or prefixed with it: the database row, the artifact and log directories, the
+package cache, the in-flight build map. Anything keyed by something *unrelated* to it — a branch, a name — is a bug
+waiting to be found; see [02-exposers.md](02-exposers.md) for the four places it already was.
+
+The one refinement is publication identity. A preview publishes more than once — a branch share plus one per build
+— so the exposers key on `expose.Spec.Key()`, which is the preview id for the branch share and
+`<preview>/<build>` for a build's. That is still derived from the preview id and nothing else, so the property
+above holds; what changed is that "one preview" and "one publication" stopped being the same thing.
 
 ## The name, and how it differs from the ID
 
@@ -92,9 +97,10 @@ see [02-exposers.md](02-exposers.md) for the four places it already was.
 name_template → RenderName → SanitizeName → "mydocs-new-install-guide"
 ```
 
-Default `{{.Repo.Name}}-{{.Name}}`. The name must be unique per live preview, because every exposer keys a
+Default `{{.Repo.Name}}-{{.Name}}`. The name must be unique per live publication, because every exposer keys a
 public address on it. It is not required to be stable — but it is, in practice, because the default template
-depends only on the repository and the branch.
+depends only on the repository and the branch. A build share's name is that name plus `-<sha7>`, appended rather
+than re-rendered, so a template that separates repositories keeps separating them.
 
 ## Request flow, precisely
 

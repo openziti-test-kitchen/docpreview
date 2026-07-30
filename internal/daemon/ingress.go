@@ -171,6 +171,11 @@ func (i *Ingress) Handler() http.Handler {
 		mux.Handle("/api/cache", i.projects.Handler())
 		mux.Handle("/api/cache/", i.projects.Handler())
 
+		// Checking a container image, for the same reason: it runs docker with an
+		// operator-supplied argument, so it belongs behind a gate that already exists
+		// rather than a third copy of the same two checks.
+		mux.Handle("/api/images/", i.projects.Handler())
+
 		// Its own address, for the same reasons /secrets has one: it can be linked
 		// from a runbook, and a proxy or a future authentication layer can gate one
 		// path where it cannot gate a panel inside "/".

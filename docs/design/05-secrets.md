@@ -104,6 +104,54 @@ deliberately, and look.
 
 Guarded now by `cmd/docpreview/secrets_test.go`, and by the demo, which prints the secret on every build.
 
+### Scoped to a project
+
+`build.secrets` is one map for the whole daemon, which is the wrong shape for the case that motivated it. A
+documentation site assembling several private repositories needs a credential per source — a build script
+dispatching on `process.env.BB_REPO_TOKEN_ONPREM` and falling back to SSH — and those credentials are not the same
+for every project the daemon serves. A single global map means every project's build can read every other project's
+tokens.
+
+So a project can own environment variables of its own, at
+`project/<platform>/<owner>/<repo>/<ENV>` in the same vault (`vault.ProjectSecretKey`, `internal/vault/vault.go:87`).
+Four decisions in that:
+
+- **A key prefix, not a second store.** The vault is one flat encrypted map, and the key is the only structure it
+  has (`vault.ProjectPrefix`, `internal/vault/vault.go:74`). A nested format would change the on-disk shape of every
+  existing vault to express what a prefix already can.
+- **The slash is the separator, and that is load-bearing.** A global key is validated as letters, digits, dot, dash
+  and underscore, so `PUT /api/secrets/{key}` cannot write into the namespace and a project's variables cannot
+  shadow `github.private_key`. Relaxing `validKey` removes the only thing keeping the scopes apart —
+  `TestGlobalSecretKeyCannotReachTheProjectNamespace` is what stops that happening quietly.
+- **Routed under the project**, at `PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}` and the matching
+  `DELETE` (`internal/daemon/projects.go:79-80`), so the scope is expressed by the URL and the vault key is composed
+  server-side from path values already validated as a project identity. Both go through the same `gated` pair of
+  checks as a global credential write, for the reason in "Two gates" below: a project's variables are credentials in
+  the process that runs its build.
+- **Resolved per build, not cached.** `Daemon.SetProjectSecrets` takes a function, not a map
+  (`internal/daemon/daemon.go:66`). The vault may be locked at startup, and a token added from the projects page then
+  applies to the next build with no rearm and no restart — which matters because the operator adding it is usually
+  looking at the build that just failed without it. Listing a project's variables is a prefix scan of `Keys()`, which
+  is why the variable name is the *last* segment: an owner or a repository may contain a dot or a dash, so splitting
+  on those would be ambiguous.
+
+The name must match `[A-Z_][A-Z0-9_]*` and be at most 128 characters (`validEnvName`,
+`internal/daemon/projects.go:429`). Stricter than a vault key, because this one is not a lookup key: it becomes a
+variable in a process running a build script, and a name with a dot or a dash is settable through `exec.Cmd` and
+unreadable from `sh` — so the operator would store a value the build could never see. Upper case is not a shell
+requirement; it is the convention every build script this exists for already follows, and refusing the alternative
+is cheaper than supporting two spellings of one name.
+
+**`Builder.WithSecrets` merges and rebuilds the redactor in one call**, and the two must never be separable. A
+builder copied with a larger secrets map and the base redactor injects a credential the scrubber was never told
+about, and the first `set -x` puts it in a pull request comment. It also copies rather than mutates, because two
+projects build concurrently from one base builder — mutation would hand whichever built second the other's tokens,
+which is the failure the scoping exists to prevent. Both are tested in
+`internal/pipeline/projectsecrets_test.go`.
+
+Because the merged map is what `buildEnv` reserves against `.docpreview.yml`, a project's variables inherit
+invariant 6 for free: a pull request cannot shadow one.
+
 ## Redaction
 
 `internal/redact` is built from the **values**, not the names. A build that prints its own environment — which
@@ -201,8 +249,10 @@ That exists because working redaction and absent redaction are indistinguishable
 - **A secret straddling the 64 KiB flush boundary survives.** Lines longer than the cap are flushed in exact
   chunks rather than buffered without limit, and each chunk is scrubbed — but a secret spanning exactly that
   split is missed.
-- **Secrets are global.** One map, applied to every build. Per-project and per-provider scopes are wanted; see
-  `TODO.md`.
+- **`build.secrets` is still global.** One map from the server config, applied to every build. A project's *own*
+  variables are scoped — see "Scoped to a project" above — but anything in `build.secrets` reaches every build on
+  the daemon, so a credential that belongs to one repository belongs in that project's variables instead. A
+  per-provider scope is still wanted; see `TODO.md`.
 
 ## The admin surface
 
@@ -277,8 +327,11 @@ header, locked vault, and a round trip asserting no response body ever carries a
 3. The redactor is built from values, and every value reaching a build is in it.
 4. Nothing unredacted is written to disk or handed to a subscriber.
 5. The mask is fixed-width.
-6. A repository cannot shadow an operator secret's variable name.
+6. A repository cannot shadow an operator secret's variable name, whether it is server-wide or the project's own.
 7. No API response carries a stored secret value; `generate` returns only what that call created.
 8. Every write to the vault re-arms the redactor and anything else built from vault contents.
-9. A mutating credential call requires both a loopback-only daemon and a local, unforwarded request.
+9. A mutating credential call requires both a loopback-only daemon and a local, unforwarded request. That includes
+   a project's own variables, which are credentials in a process that runs a build.
 10. A credential in git's own output is redacted before it becomes an error string.
+11. A project's secret is separated from a global one by a character no global key may contain.
+12. Injecting a value and adding it to the redactor are one operation, never two.

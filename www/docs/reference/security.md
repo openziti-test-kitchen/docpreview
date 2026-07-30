@@ -109,12 +109,22 @@ through JSON and get the value back.
 
 Getting a value out requires calling `Reveal()`, which is awkward to type and easy to grep for.
 
-## The credential API
+## The mutating surfaces
 
-The dashboard can create the vault, unlock it, store a credential, delete one, and generate a webhook secret.
-Those endpoints live under `/api/secrets`, on the same listener that serves the dashboard, the previews and the
-webhook — so how reachable they are is a property of your deployment, not of the code. Two conditions must both
-hold before any of them will act (`internal/daemon/secrets.go:375`):
+There are two, and everything else the daemon serves is a `GET`:
+
+| Surface | Endpoints | What it can do |
+|---|---|---|
+| Credentials | `/api/secrets/…` | Create the vault, unlock it, store a credential, delete one, generate a webhook secret |
+| [Projects](./projects.md) | `/api/projects/…`, `/api/cache/…` | Decide which repositories build and how, hold a per-project environment variable, clear a build cache |
+
+They share both gates below, deliberately. **The projects surface is the more dangerous of the two**: a project row
+decides what command runs on the build host, and a project's environment variables are credentials handed to the
+process that runs it — a more direct route to executing code on this machine than reading the vault would be.
+
+Both live on the same listener that serves the dashboard, the previews and the webhook, so how reachable they are is
+a property of your deployment, not of the code. Two conditions must both hold before either will act
+(`internal/daemon/secrets.go:375`, `internal/daemon/projects.go:120`):
 
 - **Every configured listener is loopback.** A daemon bound to `0.0.0.0` refuses credential writes, and so does
   one serving over an OpenZiti listener: the admin surface does not yet check the dialing identity, so "enrolled
@@ -155,10 +165,26 @@ reachable through the tunnel at all and the locality gate becomes a second line 
 
 ### Reading is deliberately open
 
-`GET /api/secrets` is not gated. It returns names and set/unset flags, never a value, and it reports `can_write`
-plus `read_only_why` so a remote dashboard renders the panel read-only with the reason on it. A panel that
-vanished instead would read as a broken feature, and a panel offering buttons that 403 is worse than one that
-explains itself.
+`GET /api/secrets` and `GET /api/projects` are not gated. They return names and set/unset flags, never a value, and
+each reports `can_write` plus `read_only_why` so a remote dashboard renders the panel read-only with the reason on
+it. A panel that vanished instead would read as a broken feature, and a panel offering buttons that 403 is worse than
+one that explains itself.
+
+A refused write is a `403` with the reason in it, and the daemon logs it — `refused a remote credential request` or
+`refused a remote project change`, with the remote address, method and path.
+
+The **Projects**, **Secrets** and **Clear caches** controls on the dashboard are drawn from `GET /api/admin`, which
+runs the same locality check the write endpoints run. The server decides, not the page: a `Host`-header test in the
+browser would be worthless, since `Host` is whatever the client typed. Anything other than an outright yes leaves the
+links absent — which is what happens through
+[`dashboard-only`](./cli.md#dashboard-only), where that endpoint is not in the allowlist at all.
+
+### One preview URL per build is one more public surface
+
+Every retained build has its own URL as well as every branch. Nothing about them is guessable — the name carries a
+commit — but they are public in exactly the way the branch URL is, they are `noindex`, and they keep serving until
+the preview is torn down or `preview.keep_builds` evicts them. If a commit contained something that should never have
+been published, tearing the pull request's preview down removes every build's URL, not only the latest.
 
 ## Credentials in git output
 
@@ -223,14 +249,23 @@ installation token that can write to yours. There is no configuration flag for t
 Constraints:
 
 - Paths are rejected if absolute, drive-qualified, or traversing outside the root.
-- `build.command` is ignored under the `local` driver. Under `docker` it is honored, because the blast radius
-  is a container.
+- `build.command` is honored under **both** drivers, so under `local` it is a shell command on the build host. This
+  is not a hole so much as a restatement of the driver's own posture: `npm run build` already runs `package.json`
+  scripts from the same branch. Treat "who can open a pull request here" and "who I would give a shell to" as the
+  same question under `local`, or run `docker`. A [project](./projects.md) row is how to state the command yourself.
 - `build.env` cannot set reserved variables — a pull request that could set `DOCUSAURUS_BASE_URL` could break
   its own preview in a way that looks like a docpreview bug.
 - `detect.script` is resolved through symlinks and re-checked against the workspace root, because a symlink
   inside an attacker-controlled tree can point anywhere.
-- The detect script runs with a three-variable environment. A build server's environment contains things a
-  pull request author should not be handed.
+- The detect script runs with a three-variable environment — `PATH`, `HOME` pointed at the workspace, and
+  `DOCPREVIEW=1`. A build server's environment contains things a pull request author should not be handed.
+- Under the Docker driver, **a build whose output contains a symlink is refused rather than published.** The preview
+  file server blocks path traversal but follows symlinks out of its root, so `build/leak -> /etc/passwd` would
+  otherwise be served to anyone holding the preview URL.
+
+A [project row](./projects.md) overrides every one of the build fields above, which is the point of having one:
+`.docpreview.yml` arrives in the pull request, and a project row is the operator's. It does not relax any of these
+constraints — a project's `command` still runs, but the operator wrote it.
 
 ## The preview surface
 
