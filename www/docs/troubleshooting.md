@@ -43,7 +43,10 @@ Fix it either way round:
         baseUrl: process.env.DOCUSAURUS_BASE_URL ?? '/my-project/',
 ```
 
-That message lands in the pull request comment, so the person who can fix it is the person who reads it.
+That message is in the build log and in the daemon's own log. It is **not** in the pull request comment — see
+[the comment says only that the build failed](#the-comment-says-only-that-the-build-failed) — so the person who
+reports "the preview is broken" has to be sent to the log, or told to run
+`docpreview preview -build` against the same directory, which prints the identical error locally.
 
 ### How the inference works
 
@@ -72,7 +75,7 @@ build:
   base_url: /my-project/
 ```
 
-The preview is then served at `https://<name>.share.zrok.io/my-project/`, and a request to the bare origin
+The preview is then served at `https://<name>.shares.zrok.io/my-project/`, and a request to the bare origin
 redirects there.
 
 ---
@@ -200,10 +203,20 @@ restart is needed.
 `docpreview doctor` reports which of these applies. With no key source it prints
 `key: none — the daemon starts locked and is unlocked from the dashboard`.
 
-### The Secrets page shows the credentials but no input fields
+### There are no Secrets or Projects links on the dashboard
+
+They are drawn only for a request the daemon would accept a write from, and the daemon decides, not the page. Open the
+dashboard on the machine running docpreview — `http://127.0.0.1:8471/` — rather than through a tunnel.
+
+Through [`dashboard-only`](reference/cli.md#dashboard-only) they will never appear: that proxy does not forward the
+endpoint the page asks, so the fetch 404s and the links stay hidden. That is deliberate, not a fault.
+
+The pages themselves still answer if you type `/secrets` or `/projects`, read-only, with a banner saying why.
+
+### The Secrets or Projects page shows what is stored but no input fields
 
 It is read-only, and the banner at the top says why. The request did not originate on the machine running
-docpreview. Writing a credential requires **both** of:
+docpreview. Writing a credential — or changing a project, or clearing a cache — requires **both** of:
 
 - a loopback `RemoteAddr`, and
 - no forwarding header — `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-Ip` or `Forwarded`.
@@ -214,7 +227,10 @@ daemon's own machine, tunnel `docpreview webhook-only` rather than the daemon, o
 `docpreview vault set <key>`.
 
 The whole panel is replaced by **Not available on this daemon** instead when a listener is not loopback, or when any
-listener is ziti — the credential surface does not check the dialing identity yet, so writes are refused outright.
+listener is ziti — neither admin surface checks the dialing identity yet, so writes are refused outright.
+
+The projects page is gated identically and for a stronger reason: a project row decides what command runs on the
+build host. See [Projects](reference/projects.md) and [the security model](reference/security.md#the-mutating-surfaces).
 
 ---
 
@@ -238,7 +254,24 @@ For anything more nuanced, use a [detect script](./reference/repo-config.md#scri
 
 ## The build fails
 
-The tail of the build output is in the comment, in a collapsed `<details>` block.
+### The comment says only that the build failed
+
+That is deliberate and complete. A failed build's comment is one line:
+
+```text
+The build failed. See the build log for details: https://docpreview-dash.shares.zrok.io/logs/9f2a1c4b7e01
+```
+
+Neither the error text nor the build output is quoted. The comment is public on any public repository, and neither
+was written with that in mind: an error carries host paths, internal hostnames and third-party API detail, and the
+log is whatever a build script chose to print. The redactor removes known secret *values*, which is not the same as
+deciding a line is fit to publish.
+
+Nothing is lost. The reason is in the daemon's log and the whole output is in the build log, both on the machine
+that ran the build.
+
+The URL in that line comes from [`dashboard_url`](reference/configuration.md#dashboard_url). Unset, the comment says
+"on the docpreview dashboard" and links nowhere — which is the commonest reason this line looks unhelpful.
 
 ### `no package.json in "."`
 
@@ -286,6 +319,44 @@ build:
 
 Or switch to the Docker driver, which gets a clean, predictable environment each time.
 
+### `cannot express ... as a path the docker daemon can mount`
+
+```text
+cannot express \\nas\builds\ws as a path the docker daemon can mount;
+the docker driver needs the workspace on a lettered drive
+```
+
+The Docker driver bind-mounts the workspace, and on Windows it translates the host path to the docker daemon's own
+view — `D:\docpreview\workspaces\...` becomes `/mnt/d/docpreview/workspaces/...`. A UNC path, a mapped network
+share, or anything else without a drive letter has no such translation, and guessing one produces an empty
+`/workspace` and a build that fails on a missing `package.json`.
+
+Point `data_dir` at a lettered local drive, or use the `local` driver. See
+[what the docker driver mounts](reference/configuration.md#what-the-docker-driver-mounts).
+
+### `the build output contains a symlink (...), which cannot be published`
+
+The site built, and its output contains a symlink. It is refused rather than published, because the preview file
+server blocks path traversal but follows symlinks out of its root — so a link to `/etc/passwd` in the output would
+be served to anyone with the preview URL.
+
+Find it and replace it with the file itself. A Docusaurus site does not normally emit one; the usual source is a
+build script that links a shared asset directory in rather than copying it.
+
+### A build fails cloning another private repository
+
+The symptom is a build log showing a `git clone` of some *other* repository failing on authentication, or falling
+back to SSH and failing there. docpreview holds an installation token for the repository the webhook came from and
+nothing else, and it has no SSH key.
+
+Give that project the token as an environment variable, on the dashboard's **Projects** page. The build script then
+picks it up and clones over HTTPS. See
+[environment variables scoped to a project](reference/projects.md#environment-variables-scoped-to-a-project) — that
+page also has the worked example of a script dispatching on one variable per source repository.
+
+A variable set in the server config's `build.secrets` does the same thing for every project at once, which is the
+wrong shape when the credentials differ per repository.
+
 ---
 
 ## Every build takes minutes on `npm ci`
@@ -306,9 +377,30 @@ The driver mounts a volume at `<build dir>/node_modules` to avoid exactly this, 
 effect. Check the driver actually in use — under **local** there is no mount and no volume, and the install writes
 wherever the daemon's disk is.
 
-Do not reach for [`build.cache_dir`](reference/configuration.md#the-build-cache) to fix this. A cold install of 1325
-packages, downloading every one, finishes in 14 seconds once `node_modules` is on a volume. The cache is not what
-makes builds fast here.
+Do not reach for [`build.cache_dir`](reference/configuration.md#the-build-cache) to fix this. It was measured: the
+same build was **4m28s** with an empty cache and **4m21s** with a full one. A cold install of 1325 packages,
+downloading every one, finishes in 14 seconds once `node_modules` is on a volume. The cache is not what makes builds
+fast here.
+
+---
+
+## Rebuilding docpreview fails with "used by another process"
+
+```text
+open build.claude\docpreview.exe: The process cannot access the file because
+it is being used by another process.
+```
+
+A running daemon holds its own executable open, and Windows will not let the linker overwrite it. This is the most
+common self-inflicted build failure here, and it is not a toolchain problem.
+
+Stop the daemon, rebuild, start it again. If `docpreview serve` is not in a terminal you can see:
+
+```powershell
+Get-Process docpreview -ErrorAction SilentlyContinue | Stop-Process
+```
+
+`webhook-only` and `dashboard-only` run from the same executable, so both hold it open too. Stop all three.
 
 ---
 
@@ -336,6 +428,28 @@ exposer:
     name_template: "{{.Repo.Owner}}-{{.Repo.Name}}-{{.Name}}"
 ```
 
+### `names limit reached; cannot reserve additional names`
+
+Your zrok account is out of reserved names. Each preview URL needs one, and since every *build* gets its own URL as
+well as every branch, the count grows with pushes rather than with pull requests.
+
+```powershell
+zrok2 list names
+```
+
+Names are released when a preview is torn down, so the usual cause is either genuinely more open pull requests than
+the account allows, or names left behind by something that could not release them — look for
+`could not release an exposer name` in the daemon's log.
+
+Lower [`preview.keep_builds`](reference/configuration.md#preview), close some pull requests, or delete the stragglers:
+
+```powershell
+zrok2 delete name <name>
+```
+
+The build share is what fails first. The branch share is created before it, so the pull request comment still gets a
+working link and the failure appears only in the log.
+
 ### `the name "x" is already serving a different preview`
 
 Two open pull requests render to one label. The error names the other preview's ID. Widen `name_template` — see
@@ -358,18 +472,55 @@ than three absolute references in `index.html`, which is below the threshold for
 
 ---
 
-## Previews vanish after a restart
+## Every preview 404s for the first minute after a restart
 
-They should not. On startup docpreview republishes every recorded preview from the artifacts already on disk,
-which takes seconds.
+**Expected. Wait for it.** This is the single most misleading thing docpreview does, and it has cost an afternoon.
+
+On startup, in this order:
+
+1. Every remote share docpreview owns is deleted. Nothing was serving them, so by definition they are orphans from
+   the process that just exited. **From here until step 2 finishes, every preview URL 404s.**
+2. Each recorded preview is republished from the artifacts already on disk — the branch share first, then each
+   build's own share.
+
+Reap-before-republish is not an ordering that can be relaxed: reversed, it deletes what it just restored.
+
+Under zrok each of those is a round trip to the controller, at roughly **14 seconds each**, and it is serial. Three
+previews is about a minute. Thirty open pull requests is about seven minutes.
+
+Two things inside that window look like failures and are not:
+
+- **`share not found`, or a bare 404, from a preview URL.** The share has been deleted and not yet recreated.
+- **`/status` answers `200` with an empty event list.** The activity feed is re-hydrated from the database *after*
+  recovery finishes, so the history is not there yet. `previews` fills in as each one comes back.
+
+The line that says it is over:
+
+```text
+level=INFO msg=recovered previews_restored=3 build_shares_restored=11 jobs_pending=0
+```
+
+Do not diagnose anything before that line appears.
+
+### Previews that really did vanish
 
 | Log line | Meaning |
 |---|---|
 | `dropping preview with missing artifacts` | The artifacts directory was deleted. Push again to rebuild. |
+| `dropping preview whose artifacts cannot be served` | The directory is there and unusable. Push again. |
+| `forgetting a pruned build's URL` | Normal. A build past `keep_builds` lost its artifacts; its share is not restored. |
 | `recovered previews_restored=0` | The database is empty. Different `data_dir`? |
 
 If the URL changed during recovery, the comment is updated to match — a comment pointing at a dead URL is
 worse than no comment.
+
+:::danger One daemon per exposer account
+
+Because startup deletes every share it recognises as its own, and "its own" means the zrok environment on this host
+plus docpreview's target tag, **two daemons sharing one zrok account delete each other's live previews** — each
+restart wiping the other. Give a second instance its own account.
+
+:::
 
 ---
 

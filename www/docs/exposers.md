@@ -75,6 +75,13 @@ shows one listener: the webhook ingress.
 an ownership tag, and zrok's share listing supports filtering on it. That is how the reaper distinguishes a
 share docpreview created from one you made by hand in another terminal.
 
+### The name is a separate object, and it has a quota
+
+A name is registered before the share, left untouched by every rebuild, and deleted when the preview is torn down.
+Both halves matter to an operator: the first is what makes a reviewer's bookmark keep working, and the second is
+what stops the account's reserved-name allowance filling up one push at a time. See
+[what docpreview does with names](./runbooks/zrok2.md#what-docpreview-does-with-names).
+
 ### Configuration
 
 ```yaml
@@ -188,9 +195,14 @@ than silently resolved — the default name template is the branch alone, so two
 ### Status
 
 The exposer works and has been exercised end to end against a real controller, a real edge router, and a real
-Ziti Desktop Edge install. What is missing is provisioning: the controller objects and reviewer identities are
-created by hand today. See [Tunneler-only previews](./future/ziti-native-previews.md) for the design, the
-research, and `scripts/ziti-trial/` for a working setup.
+Ziti Desktop Edge install. Provisioning is no longer by hand: `docpreview configure ziti` creates every controller
+object, both identities and the config file — see [the CLI reference](./reference/cli.md#configure-ziti) and
+[Quickstart](./quickstart.md), which walks it from nothing in four commands.
+
+What is still missing is per-identity authorization. One wildcard service serves every preview and requests are
+separated by the client-supplied `Host` header, so anyone holding the reader role attribute can reach every preview
+by sending any hostname. See [Tunneler-only previews](./future/ziti-native-previews.md) for the design and the
+research.
 
 ## Contract for implementations
 

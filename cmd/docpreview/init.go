@@ -180,13 +180,21 @@ func cmdInit(args []string) error {
 		}
 
 		p.section("Builds")
-		p.note("  local   Run npm on this host. Fine for repositories you trust.")
-		p.note("  docker  Run it in a capped throwaway container. Slower, and the right choice")
-		p.note("          when anyone who can open a pull request is not someone you would")
-		p.note("          give a shell to.")
-		cfg.Build.Driver = p.choice("Build driver", []string{"local", "docker"}, cfg.Build.Driver)
-		if cfg.Build.Driver == "docker" {
+		p.note("  docker  Run the build in a capped throwaway container. The default.")
+		p.note("  local   Run it on this host. This runs the pull request's own build scripts")
+		p.note("          here, as this user — npm install executes every dependency's install")
+		p.note("          script — so it needs allow_local_driver as well, and it is only right")
+		p.note("          when every contributor is someone you would give a shell to.")
+		cfg.Build.Driver = p.choice("Build driver",
+			[]string{config.DriverDocker, config.DriverLocal}, cfg.Build.Driver)
+		if cfg.Build.Driver == config.DriverDocker {
 			cfg.Build.Image = p.text("Container image", cfg.Build.Image)
+		} else {
+			// Asked rather than assumed. Choosing the driver and accepting what it does
+			// are two decisions, and the second is the one worth typing out.
+			cfg.Build.AllowLocalDriver = p.yesNo(
+				"Confirm: run pull request build scripts on this host as this user?",
+				cfg.Build.AllowLocalDriver)
 		}
 		cfg.Build.Timeout = p.duration("Build timeout", cfg.Build.Timeout)
 
@@ -491,8 +499,19 @@ func renderConfig(c config.Server) string {
 	fmt.Fprintf(&b, "  webhook_secret: %s\n\n", yamlString(c.Local.WebhookSecret))
 
 	b.WriteString("build:\n")
-	b.WriteString("  # local: run npm on this host. docker: run it in a capped container.\n")
+	b.WriteString("  # docker: run the build in a capped throwaway container. local: run it on\n")
+	b.WriteString("  # this host, which means the pull request's own build scripts run here as\n")
+	b.WriteString("  # this user — allow_local_driver below has to say so before that works.\n")
 	fmt.Fprintf(&b, "  driver: %s\n", yamlString(c.Build.Driver))
+	if c.Build.AllowLocalDriver {
+		b.WriteString("  # Enabled deliberately. npm install runs every dependency's postinstall\n")
+		b.WriteString("  # script, and npm run build runs whatever the branch says, as this user.\n")
+		b.WriteString("  allow_local_driver: true\n")
+	} else {
+		b.WriteString("  # Uncomment only if every contributor to every watched repository is\n")
+		b.WriteString("  # someone you would give a shell on this machine.\n")
+		b.WriteString("  # allow_local_driver: true\n")
+	}
 	fmt.Fprintf(&b, "  image: %s\n", yamlString(c.Build.Image))
 	fmt.Fprintf(&b, "  timeout: %s\n", c.Build.Timeout)
 	b.WriteString("  # Build output can contain anything a build printed, so it is not kept forever.\n")

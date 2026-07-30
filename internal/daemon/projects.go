@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/netfoundry/docpreview/internal/config"
+	"github.com/netfoundry/docpreview/internal/pipeline"
 	"github.com/netfoundry/docpreview/internal/store"
 	"github.com/netfoundry/docpreview/internal/vault"
 )
@@ -38,6 +39,13 @@ type ProjectsAdmin struct {
 	// the value at construction would make every project's secrets permanently
 	// missing on a daemon that booted locked, which is the ordinary case.
 	vault func() *vault.Vault
+
+	// dockerOK and dockerWhy are the startup probe's answer, so the form can grey out
+	// a driver that would refuse rather than offering it. Captured once: docker
+	// appearing later is not worth a probe per page load, and the log already said
+	// what the daemon found.
+	dockerOK  bool
+	dockerWhy string
 }
 
 func NewProjectsAdmin(st *store.Store, cfg config.Server, log *slog.Logger) *ProjectsAdmin {
@@ -49,6 +57,12 @@ func NewProjectsAdmin(st *store.Store, cfg config.Server, log *slog.Logger) *Pro
 // rather than absent, for the same reason the read-only banner exists.
 func (a *ProjectsAdmin) WithVault(fn func() *vault.Vault) *ProjectsAdmin {
 	a.vault = fn
+	return a
+}
+
+// WithDocker records what the startup probe found.
+func (a *ProjectsAdmin) WithDocker(ok bool, why string) *ProjectsAdmin {
+	a.dockerOK, a.dockerWhy = ok, why
 	return a
 }
 
@@ -78,6 +92,12 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// slash that this namespace is built on.
 	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.setSecret))
 	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.delSecret))
+
+	// Checking an image runs a docker command with an operator-supplied argument and
+	// makes a registry round trip, so it is gated like every other write even though it
+	// changes nothing here. Unauthenticated, it would be a way to make this host probe
+	// arbitrary registries.
+	mux.HandleFunc("POST /api/images/inspect", a.gated(a.inspectImage))
 
 	// The build cache is per preview, not per project, so this is not really a
 	// projects route — it lives here to inherit this admin's gate rather than
@@ -173,6 +193,98 @@ type projectView struct {
 type projectDefaults struct {
 	Driver string `json:"driver"`
 	Image  string `json:"image"`
+
+	// DockerAvailable is the startup probe's answer, and DockerDetail is docker's own
+	// message when it is no. The form uses them to disable a choice that would refuse,
+	// because "docker — not available: the docker command is not on PATH" in a dropdown
+	// answers the question, where a build failing an hour later does not.
+	DockerAvailable bool   `json:"docker_available"`
+	DockerDetail    string `json:"docker_detail,omitempty"`
+
+	// AllowLocalDriver mirrors build.allow_local_driver. The local driver runs a pull
+	// request's own build scripts on the host, so it is off unless the operator wrote
+	// it down — and the form must not offer what the build will refuse.
+	AllowLocalDriver bool `json:"allow_local_driver"`
+
+	// Images are the container images this project knows work, offered as suggestions
+	// beside a free-text field rather than as a closed list: the set of images that
+	// can run a Docusaurus build is not ours to bound, and a private registry mirror
+	// is the normal case in an enterprise.
+	Images []string `json:"images"`
+}
+
+// Field limits. Enforced server-side because the API is reachable without a browser,
+// and a browser's maxlength is a courtesy rather than a constraint.
+const (
+	maxNotes       = 5000
+	maxDisplayName = 120
+	maxAvatarRunes = 2
+
+	// Generous for an icon and far too small for anything else: this project's own
+	// logo is 2.4 KB of SVG, and the value travels with every projects payload.
+	maxAvatarBytes = 16 * 1024
+)
+
+// validAvatar accepts two shapes and refuses everything else, returning why.
+//
+// **Two characters or an emoji**, which is the zero-effort case and what a monogram
+// falls back to.
+//
+// **An inlined image**, as a `data:` URI, for a project that has a real logo. Inlined
+// rather than linked, and that is the whole rule: a remote `src` would announce every
+// project on the page to whoever hosts the image, every time anybody opened the
+// dashboard — on a loopback daemon whose entire premise is that it has no outbound
+// dependency. So `http://` and `https://` are refused rather than fetched.
+//
+// SVG and PNG only. An SVG loaded through `<img src>` cannot run script — that is a
+// property of the img element rather than of the file — and the page renders it that
+// way for exactly this reason. The size cap is what stops a vault-sized blob living in
+// the project row and being sent with every page load.
+func validAvatar(a string) string {
+	if a == "" {
+		return ""
+	}
+	if strings.HasPrefix(a, "data:") {
+		if !strings.HasPrefix(a, "data:image/svg+xml") && !strings.HasPrefix(a, "data:image/png") {
+			return "an inlined avatar must be data:image/svg+xml or data:image/png"
+		}
+		if len(a) > maxAvatarBytes {
+			return fmt.Sprintf("an inlined avatar is capped at %d bytes, got %d",
+				maxAvatarBytes, len(a))
+		}
+		return ""
+	}
+	if strings.Contains(a, "://") {
+		return "an avatar cannot be a URL: this dashboard fetches nothing from the " +
+			"internet, so inline the image as a data: URI instead"
+	}
+	// Counted in runes, because an emoji is several bytes and one glyph and a byte cap
+	// would refuse the intended use.
+	if n := len([]rune(a)); n > maxAvatarRunes {
+		return fmt.Sprintf("an avatar is at most %d characters or emoji, got %d",
+			maxAvatarRunes, n)
+	}
+	return ""
+}
+
+// knownImages are the suggestions in the image field.
+//
+// Node images first, because a Docusaurus build needs node and these are the ones
+// that have actually been used here. The Debian-based ones are the default for a
+// reason worth stating: alpine's musl breaks any dependency shipping a prebuilt
+// glibc binary, which for a documentation site usually means sharp or esbuild, and
+// the failure is a compile error deep in an install log rather than anything that
+// names the image.
+func knownImages() []string {
+	return []string{
+		"node:24-bookworm-slim",
+		"node:24-bookworm",
+		"node:22-bookworm-slim",
+		"node:20-bookworm-slim",
+		"node:24-alpine",
+		"mcr.microsoft.com/devcontainers/javascript-node:24",
+		"registry.access.redhat.com/ubi9/nodejs-22",
+	}
 }
 
 func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projectsState, error) {
@@ -184,9 +296,16 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 	v := a.openVault()
 	st := projectsState{
 		Projects:         []projectView{},
-		Defaults:         projectDefaults{Driver: a.cfg.Build.Driver, Image: a.cfg.Build.Image},
+		Defaults: projectDefaults{
+			Driver: a.cfg.Build.Driver, Image: a.cfg.Build.Image,
+			DockerAvailable: a.dockerOK, AllowLocalDriver: a.cfg.Build.AllowLocalDriver,
+			Images: knownImages(),
+		},
 		SecretsAvailable: a.vault != nil,
 		VaultLocked:      v == nil,
+	}
+	if !a.dockerOK {
+		st.Defaults.DockerDetail = a.dockerWhy
 	}
 	for _, p := range projects {
 		view := projectView{Project: p, Secrets: []string{}}
@@ -245,6 +364,8 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 		Driver       string `json:"driver"`
 		Image        string `json:"image"`
 		Notes        string `json:"notes"`
+		DisplayName  string `json:"display_name"`
+		Avatar       string `json:"avatar"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -266,10 +387,39 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 	p.Driver = strings.TrimSpace(body.Driver)
 	p.Image = strings.TrimSpace(body.Image)
 	p.Notes = strings.TrimSpace(body.Notes)
+	p.DisplayName = strings.TrimSpace(body.DisplayName)
+	p.Avatar = strings.TrimSpace(body.Avatar)
 
-	if p.Driver != "" && p.Driver != "local" && p.Driver != "docker" {
+	if p.Driver != "" && p.Driver != config.DriverLocal && p.Driver != config.DriverDocker {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": `driver must be "local", "docker", or empty for the server default`})
+		return
+	}
+	// Refused here as well as at build time, so an operator finds out while looking at
+	// the form rather than from a build that fails an hour later. The build-time check
+	// stays, because a row saved before the setting changed is still a row.
+	if p.Driver == config.DriverLocal && !a.cfg.Build.AllowLocalDriver {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "the local driver is not enabled on this daemon: it runs a pull " +
+				"request's own build scripts on this host. Set build.allow_local_driver: " +
+				"true in the server config if that is what you want"})
+		return
+	}
+	// Long enough for a paragraph of why this project is unusual, short enough that
+	// nobody pastes a log into it. The limit is here rather than only in the browser
+	// because the API is reachable without one.
+	if len(p.Notes) > maxNotes {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("notes are capped at %d characters, got %d", maxNotes, len(p.Notes))})
+		return
+	}
+	if why := validAvatar(p.Avatar); why != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
+		return
+	}
+	if len(p.DisplayName) > maxDisplayName {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("a name is capped at %d characters", maxDisplayName)})
 		return
 	}
 	// A base URL that does not start and end with "/" produces a preview whose
@@ -321,6 +471,40 @@ func (a *ProjectsAdmin) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// inspectImage answers whether a container image can be resolved, so the form can
+// refuse a typo while the operator is still looking at it.
+//
+// Not a validation step on save. A registry can be unreachable for a minute, and a
+// project whose image is briefly unresolvable is still the project the operator meant to
+// write down — refusing the save would lose their work over a network blip. The form
+// warns, the save proceeds, and the build is where an unresolvable image finally fails.
+func (a *ProjectsAdmin) inspectImage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Image string `json:"image"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if !a.dockerOK {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"found": false, "checked": false,
+			"detail": "docker is not available on this host, so nothing can be checked: " +
+				a.dockerWhy,
+		})
+		return
+	}
+
+	st, err := pipeline.InspectImage(r.Context(), body.Image)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"found": st.Found, "local": st.Local, "checked": true, "detail": st.Detail,
+	})
 }
 
 // setSecret stores one environment variable for one project.

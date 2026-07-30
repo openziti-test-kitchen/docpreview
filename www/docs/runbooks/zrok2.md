@@ -60,14 +60,32 @@ exposer:
 
 ## What docpreview does with names
 
-Nothing, ahead of time. On each build it creates a public share with a name selection of
-`{namespace, sanitized-branch-name}` and attaches a fresh overlay listener to it. Because v2 decoupled names
-from shares, that name survives the share being torn down and recreated, which is what keeps the URL in the
-pull request comment stable.
+A **name is an object with its own quota**, separate from a share, and docpreview manages the whole lifecycle:
 
-You do not need to pre-create names for branches. You **do** want a reserved name for the webhook ingress —
-see the [GitHub App runbook](./github-app.md) — because that URL lives in GitHub's App settings and you do not
-want to edit it on every restart.
+1. **Registers the name** before creating the share. v2 does not create one implicitly for a named share — it
+   answers `409` and complains it cannot find the name in the namespace — so this step is not optional.
+2. **Creates a public share** bound to `{namespace, name}` and attaches a fresh overlay listener to it.
+3. **Leaves the name alone** on every rebuild, supersede and shutdown. That is what keeps the URL in the pull
+   request comment stable across pushes, and it is why one comment can be edited forever instead of replaced.
+4. **Releases the name when the preview is torn down** — de-reserved first, then deleted, so a crash between the two
+   leaves a non-reserved name that the controller collects on its own.
+
+Two names per pull request, not one: the branch and, per build, the branch name with the short commit appended.
+
+You do not need to pre-create names for branches. You **do** want a reserved name for the webhook ingress and
+another for the public dashboard — see the [webhook tunnel runbook](./webhook-tunnel.md) — because those URLs live
+in somebody else's settings and you do not want to edit them on every restart. Those two are yours, created by hand,
+and docpreview never releases them.
+
+### Watch the count
+
+```powershell
+zrok2 list names
+```
+
+One name per pull request accumulated slowly. One name per *build* does not. If a build's share fails with
+`names limit reached; cannot reserve additional names`, the branch URL is unaffected and the failure appears only in
+the daemon's log — see [`preview.keep_builds`](../reference/configuration.md#preview).
 
 ## Verify docpreview can use it
 
@@ -95,6 +113,14 @@ Set `exposer.zrok2.namespace` in the config, or give the environment a default n
 **`creating zrok share "..." — name already in use`**
 Something else holds that name. docpreview tries once to reclaim a name held by one of its own orphaned
 shares and retries; if that fails, the name belongs to something it did not create. Check `zrok2 list shares`.
+
+**`registering zrok name "..." in namespace "...": names limit reached; cannot reserve additional names`**
+The account is out of reserved names. `zrok2 list names`, then close pull requests or lower
+`preview.keep_builds`. Note that the same `409` status also carries "failed profanity or DNS check" for an
+unusable name — the message distinguishes them, the status does not.
+
+**`could not release an exposer name; it stays counted against the account's limit until it is deleted by hand`**
+A teardown could not release a name. The preview is gone, the name is not. `zrok2 delete name <name>`.
 
 ## Restricting who can see previews
 

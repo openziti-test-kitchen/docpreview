@@ -203,6 +203,11 @@ func migrate(db *sql.DB) error {
 		// shares to keep — so Reap deletes every one of them on the first sweep.
 		`ALTER TABLE builds ADD COLUMN name TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE builds ADD COLUMN url TEXT NOT NULL DEFAULT ''`,
+		// A label and a badge, so a list of ten projects can be scanned. Neither
+		// affects a build: the identity a webhook is matched against is still
+		// platform/owner/repo.
+		`ALTER TABLE projects ADD COLUMN display_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE projects ADD COLUMN avatar TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -348,6 +353,23 @@ type Project struct {
 	// nowhere else; the build never reads it.
 	Notes string `json:"notes,omitempty"`
 
+	// DisplayName is what to call this project on screen. Empty means the
+	// repository name, which is what it was called before this existed.
+	//
+	// Separate from the identity rather than replacing it: platform/owner/repo is
+	// the primary key and is what a webhook delivery is matched against, so it
+	// cannot double as a label somebody wants to rename.
+	DisplayName string `json:"display_name,omitempty"`
+
+	// Avatar is a short label rendered as the project's badge — one or two emoji,
+	// or a couple of characters. Empty means a monogram derived from the name.
+	//
+	// Deliberately not a URL. The dashboard is served by a loopback daemon with no
+	// outbound dependency, and fetching a remote image would announce every project
+	// to whoever hosts it every time somebody opens the page. Two characters
+	// identify a row across a list of ten, which is what this is for.
+	Avatar string `json:"avatar,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -365,8 +387,9 @@ func (s *Store) SaveProject(ctx context.Context, p Project) error {
 
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO projects (platform, owner, repo, enabled, build_dir, build_command,
-            build_output, base_url, detect_script, driver, image, notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            build_output, base_url, detect_script, driver, image, notes,
+            display_name, avatar, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(platform, owner, repo) DO UPDATE SET
             enabled       = excluded.enabled,
             build_dir     = excluded.build_dir,
@@ -377,10 +400,12 @@ func (s *Store) SaveProject(ctx context.Context, p Project) error {
             driver        = excluded.driver,
             image         = excluded.image,
             notes         = excluded.notes,
+            display_name  = excluded.display_name,
+            avatar        = excluded.avatar,
             updated_at    = excluded.updated_at`,
 		p.Platform, p.Owner, p.Repo, p.Enabled, p.BuildDir, p.BuildCommand,
 		p.BuildOutput, p.BaseURL, p.DetectScript, p.Driver, p.Image, p.Notes,
-		created, now)
+		p.DisplayName, p.Avatar, created, now)
 	if err != nil {
 		return fmt.Errorf("saving project %s: %w", p.Key(), err)
 	}
@@ -397,7 +422,8 @@ var ErrNoProject = errors.New("no such project")
 func (s *Store) ProjectFor(ctx context.Context, platform, owner, repo string) (Project, error) {
 	rows, err := s.queryProjects(ctx,
 		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
-                base_url, detect_script, driver, image, notes, created_at, updated_at
+                base_url, detect_script, driver, image, notes, display_name, avatar,
+                created_at, updated_at
          FROM projects WHERE platform = ? AND owner = ? AND repo = ?`,
 		platform, owner, repo)
 	if err != nil {
@@ -413,7 +439,8 @@ func (s *Store) ProjectFor(ctx context.Context, platform, owner, repo string) (P
 func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	return s.queryProjects(ctx,
 		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
-                base_url, detect_script, driver, image, notes, created_at, updated_at
+                base_url, detect_script, driver, image, notes, display_name, avatar,
+                created_at, updated_at
          FROM projects ORDER BY platform, owner, repo`)
 }
 
@@ -443,7 +470,7 @@ func (s *Store) queryProjects(ctx context.Context, query string, args ...any) ([
 		var created, updated int64
 		if err := rows.Scan(&p.Platform, &p.Owner, &p.Repo, &p.Enabled, &p.BuildDir,
 			&p.BuildCommand, &p.BuildOutput, &p.BaseURL, &p.DetectScript, &p.Driver,
-			&p.Image, &p.Notes, &created, &updated); err != nil {
+			&p.Image, &p.Notes, &p.DisplayName, &p.Avatar, &created, &updated); err != nil {
 			return nil, err
 		}
 		p.CreatedAt = time.UnixMilli(created)

@@ -61,9 +61,9 @@ A variable added here is:
 - **never readable back**. Nothing in the API or the UI returns a value. Removing one means finding the token
   again wherever it came from.
 
-The name must be upper-case letters, digits and underscore, and cannot start with a digit. That is the form a
-shell can read: a name with a dot or a dash in it can be set through Go's process API and never read by `sh`, so
-you would store a value the build could not see.
+The name must be upper-case letters, digits and underscore, cannot start with a digit, and is capped at 128
+characters. That is the form a shell can read: a name with a dot or a dash in it can be set through Go's process API
+and never read by `sh`, so you would store a value the build could not see.
 
 ### What this is for
 

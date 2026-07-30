@@ -2,17 +2,167 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/netfoundry/docpreview/internal/model"
 )
+
+// ProbeDocker reports whether a docker daemon is reachable, and what to say when it
+// is not.
+//
+// It exists because the driver decision is a security decision. The local driver runs
+// the repository's own build on this host — `npm run build` executes whatever the
+// branch's package.json says, and `npm install` runs every dependency's postinstall
+// script — so the container is not an optimisation, it is the only thing standing
+// between a pull request and the machine holding the GitHub App private key. Choosing
+// that default silently, and then falling back to the unsandboxed driver just as
+// silently, is how an operator ends up believing they have isolation they do not have.
+//
+// `docker version` rather than `docker info`: it is the cheapest call that reaches the
+// *daemon* rather than only the client. A CLI present with no daemon behind it is the
+// common Windows case — Docker Desktop not started — and `docker --version` answers
+// happily in exactly that state, which is the wrong answer here.
+//
+// The detail is quoted from docker's own stderr, trimmed, because the useful part is
+// always docker's message rather than anything this could invent about it.
+func ProbeDocker(ctx context.Context) (bool, string) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}")
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		switch {
+		case errors.Is(err, exec.ErrNotFound):
+			return false, "the docker command is not on PATH"
+		case ctx.Err() != nil:
+			return false, "docker did not answer within 10s"
+		case errors.As(err, &exitErr):
+			detail := strings.TrimSpace(string(exitErr.Stderr))
+			// Multi-line on Windows, and the first line is the one that says what
+			// is wrong rather than what to try.
+			if i := strings.IndexAny(detail, "\r\n"); i > 0 {
+				detail = detail[:i]
+			}
+			if detail == "" {
+				detail = "docker version exited " + fmt.Sprint(exitErr.ExitCode())
+			}
+			return false, detail
+		default:
+			return false, err.Error()
+		}
+	}
+
+	version := strings.TrimSpace(string(out))
+	if version == "" {
+		// A zero exit with no server version means the client answered for itself.
+		return false, "docker reported no server version; is the daemon running?"
+	}
+	return true, version
+}
+
+// ImageStatus is what InspectImage found.
+type ImageStatus struct {
+	// Found is whether a build using this image would be able to start.
+	Found bool
+
+	// Local is true when the image is already pulled, so the first build does not
+	// wait for a download. Worth reporting separately: "found, but it is a 400 MB
+	// pull" and "found, already here" are different answers to "will this work".
+	Local bool
+
+	// Detail is docker's own message when Found is false, or the resolved digest or
+	// image id when it is true.
+	Detail string
+}
+
+// imageRef is what a reference may contain: a registry host with an optional port, a
+// path, and a tag or digest.
+//
+// Validated before being handed to docker, for two reasons. A reference beginning with
+// a dash would be parsed by docker as a flag rather than as an image, and this is
+// reachable from an HTTP handler — argv means there is no shell to inject into, but
+// there is still an argument parser. And a rejection here is a better error than
+// whatever docker says about a string nobody meant to type.
+var imageRef = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,255}$`)
+
+// InspectImage reports whether a container image can be resolved.
+//
+// It exists so that a typo in the image field is caught while somebody is looking at the
+// form, rather than surfacing as a failed build minutes later with docker's own
+// "manifest unknown" in the middle of a log. That is the entire justification: the
+// operator's attention is on this decision now and will not be later.
+//
+// Local first, then the registry. `docker image inspect` is instant and offline and
+// answers the common case — the default image, already pulled. `docker manifest
+// inspect` is a network round trip to the registry and is what catches a tag that does
+// not exist anywhere, but it also fails for a private registry the daemon has no
+// credentials for, which is why a local hit short-circuits it rather than the other way
+// round.
+func InspectImage(ctx context.Context, ref string) (ImageStatus, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ImageStatus{}, errors.New("no image given")
+	}
+	if !imageRef.MatchString(ref) {
+		return ImageStatus{}, fmt.Errorf("%q is not a container image reference", ref)
+	}
+
+	if out, err := dockerOut(ctx, 10*time.Second,
+		"image", "inspect", "--format", "{{.Id}}", ref); err == nil {
+		return ImageStatus{Found: true, Local: true, Detail: firstLine(out)}, nil
+	}
+
+	// Not here. Ask the registry, which is slower and can fail for reasons that have
+	// nothing to do with the reference being wrong.
+	out, err := dockerOut(ctx, 30*time.Second, "manifest", "inspect", ref)
+	if err == nil {
+		_ = out
+		return ImageStatus{Found: true, Detail: "found in the registry, and not yet pulled"}, nil
+	}
+	return ImageStatus{Detail: err.Error()}, nil
+}
+
+// dockerOut runs docker and returns stdout, or an error carrying docker's own first
+// line of stderr — which is the part worth showing an operator.
+func dockerOut(ctx context.Context, timeout time.Duration, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if detail := firstLine(string(exitErr.Stderr)); detail != "" {
+				return "", errors.New(detail)
+			}
+		}
+		if ctx.Err() != nil {
+			return "", errors.New("docker did not answer in time")
+		}
+		return "", err
+	}
+	return string(out), nil
+}
+
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "\r\n"); i > 0 {
+		s = s[:i]
+	}
+	return s
+}
 
 // hostMountPath spells a host directory the way the docker daemon can see it.
 //
@@ -49,8 +199,15 @@ func hostMountPath(dir string) (string, error) {
 //
 // Without these every build downloads the whole dependency tree again: a workspace
 // is created per commit and pruned with its siblings, so nothing inside it
-// survives a push. Measured on this project's own www/: two minutes for `npm ci`
-// cold, against a few seconds warm.
+// survives a push.
+//
+// **It is not the speed win, and this comment used to claim it was.** Measured on this
+// project's own www/: 4m28s cold against 4m21s warm — inside the noise. The whole
+// saving was node_modules, which moved off the bind mount onto a volume and took the
+// install from 5m46s to 14s (see the mount comments in build.go). What the cache buys
+// is network: the same tarballs are not fetched again on the second push to a branch,
+// which matters on a metered or slow link and not at all to the clock here. Keep it for
+// that reason, and do not credit it with the other one.
 //
 // # One cache per pull request
 //

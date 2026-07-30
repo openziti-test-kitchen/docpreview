@@ -226,6 +226,17 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 			cfg.Build.Output, config.RepoConfigName, out)
 	}
 
+	// Here rather than inside buildDocker, which is where it used to be and where it
+	// only ever covered one of the two drivers. What it defends against has nothing to
+	// do with containers: this directory is served by an http.FileServer, and
+	// http.Dir follows a symlink straight out of its own root. A build that writes
+	// `dist/secrets -> /home/daemon/.docpreview` publishes the vault at a preview URL.
+	// The local driver produced exactly the same servable directory and was never
+	// checked.
+	if err := rejectSymlinks(outputDir); err != nil {
+		return nil, fmt.Errorf("%w\n%s", err, out)
+	}
+
 	if err := verifyBaseURL(outputDir, cfg.Build.BaseURL); err != nil {
 		return nil, fmt.Errorf("%w\n%s", err, out)
 	}
@@ -452,11 +463,6 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	outputDir := filepath.Join(buildDir, filepath.FromSlash(cfg.Build.Output))
 	if !exists(outputDir) {
 		err := fmt.Errorf("the build exited cleanly but produced no %s directory", cfg.Build.Output)
-		fmt.Fprintf(out, "%v\n", err)
-		return log.String(), err
-	}
-
-	if err := rejectSymlinks(outputDir); err != nil {
 		fmt.Fprintf(out, "%v\n", err)
 		return log.String(), err
 	}

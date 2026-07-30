@@ -12,15 +12,29 @@ which exists only for the local platform, which has nowhere else to keep a comme
 
 ```
 <data_dir>/
-  docpreview.db          previews, jobs, builds, comments
-  vault.age              secrets
-  workspaces/<id>/       scratch clones, deleted when output is copied out
-  artifacts/<id>/        what is being served
-  logs/<id>/<build>.log  build output
+  docpreview.db                  previews, jobs, builds, comments
+  vault.age                      secrets
+  workspaces/<id>/<sha12>/       scratch clones, one per commit, siblings pruned best-effort
+  artifacts/<id>/<build-id>/     what is being served, one directory per build
+  logs/<id>/<build>.log          build output
+  cache/<id>/{npm,yarn,pnpm}/    package manager caches, when cache_dir is unset
 ```
 
 Everything except the vault is keyed by preview ID, and all of it is reconstructible: the workspaces from git,
-the artifacts by rebuilding, the logs not at all — but a lost log costs nothing durable.
+the artifacts by rebuilding, the caches by refetching, the logs not at all — but a lost log costs nothing durable.
+
+The two per-build directories are keyed differently and that is not an oversight. A workspace is named by the
+**commit** (`buildDirName(pr.HeadSHA)`, `internal/pipeline/clone.go:82`), so that two builds of *different* commits
+never share a directory — a supersede's loser is still unwinding while the winner clones, and sharing one let the
+loser's cleanup delete files under the winner. Rebuilding the *same* commit reuses the name and wipes it first, since
+a leftover tree would leave deleted pages in the preview. An artifact
+directory is named by the **build id**, which carries a timestamp as well, because one commit rebuilt twice is two
+outcomes and the history has to be able to serve either.
+
+The cache root is `build.cache_dir` when set and `<data_dir>/cache` otherwise (`config.CacheRoot`), because that
+one is the directory an operator moves to a disk with room. It is keyed on the preview for the same reason
+everything above is, and one more: a preview ID is a hex digest, so nothing arriving from a webhook is ever joined
+onto that path — see [03-build-pipeline.md](03-build-pipeline.md).
 
 ## `previews`
 
@@ -79,6 +93,7 @@ the age of its last *finished* build — so a job enqueued seconds ago rendered 
 | `state` | `building`, `ready` or `failed` |
 | `reason` | failure summary, already scrubbed |
 | `started_at`, `finished_at` | unix millis; `finished_at` is 0 while the build runs |
+| `name`, `url` | this build's own share, empty when it never had one |
 
 One row per build attempt (`internal/store/store.go:76`). It exists because `previews` cannot express this:
 that table holds the **current** state of a preview and is overwritten on every rebuild, so the history of what
@@ -104,6 +119,41 @@ Only the three states above are recorded. `queued` is in `jobs` and nowhere else
 reaches `saveBuild` — the dashboard's picker renders both anyway, because a row it cannot label is better than a
 row it hides.
 
+### `name` and `url`: a build's own share
+
+Per-build publishing gives each build a URL pinned to the commit it was built from, beside the branch share the
+pull request comment links to ([02-exposers.md](02-exposers.md)). Those two columns are what make it survive a
+restart, and they had to exist before the feature could ship for two separate reasons:
+
+1. **Startup reaps with an empty keep-set** and then republished *previews* only, so every build URL 404'd after a
+   restart while `builds.url` went on advertising it. `restoreBuildShares` (`internal/daemon/daemon.go:529`) reads
+   these rows and republishes each build's share from `artifacts/<preview>/<build>/`. Reported as "that should
+   still be there", and it should have been.
+2. **The hourly reap's keep-set is spelled in publication keys**, so it has to name each build share as well as
+   each preview, or the sweep deletes every build share minutes after it was published
+   (`daemon.go:1770`).
+
+`ClearBuildShare` (`internal/store/store.go:561`) is the third case: a build whose artifacts `keep_builds` has
+already pruned. Its share is gone and nothing can republish it, so the two columns are set to empty **and the row
+stays** — the history happened, and deleting it to express "the link is dead" would lose the outcome as well. An
+`UPDATE` of two columns rather than a `DELETE`. Leaving the URL in place would keep the dashboard offering a link
+to something no longer on disk, which is the same failure in slower motion.
+
+### The first schema migration
+
+`CREATE TABLE IF NOT EXISTS` does nothing at all to a table that already exists, so `name` and `url` appear only in
+databases created after they were added — every existing one silently lacks them and every query naming one fails.
+`migrate` (`internal/store/store.go:199`) is one list of `ALTER TABLE ... ADD COLUMN` statements applied on every
+`Open`, and both columns are declared **twice**: in `schema` for a new database and in `migrate` for an old one.
+
+There is no `schema_version` table, so each statement has to be idempotent by itself. `ADD COLUMN` is not, so
+"duplicate column name" is treated as the success it is — which means the check is on sqlite's error *text*, and a
+future release that rewords it would make these look failed. That is the accepted trade for having no versioning at
+the first migration that can be expressed additively; the version table is worth adding at the first one that
+cannot. Additive only: a column that has to change type or go away needs a real migration, and running one from
+here would run it again on every restart. `internal/store/migrate_test.go` opens an old-shaped database, asserts a
+pre-existing row is undisturbed, and opens it a second time to prove the migration is not a one-shot.
+
 ## Why JSON payloads rather than columns
 
 `model.PullRequest` is carried whole as JSON in `previews` and `jobs` rather than exploded into columns.
@@ -119,7 +169,9 @@ At startup, in this order:
 
 1. **Reap everything remote.** `exposer.Reap(ctx, nil)`. Nothing is serving yet — the process just started — so
    every share the exposer owns is an orphan.
-2. **Republish each recorded preview** from its artifacts on disk.
+2. **Republish each recorded preview** from its artifacts on disk, and then **each of its build shares** from
+   `builds.name` and `builds.url` (`restoreBuildShares`). A build whose artifacts are gone has its two share columns
+   cleared instead.
 
 That restores working URLs within a second or two of startup without re-cloning or re-running a single
 `npm install`. It is why a restart is cheap enough to do casually.
@@ -159,7 +211,50 @@ Each tick:
    row and its log file disappear together and the picker never offers an outcome whose log has gone. Deliberately
    not derived from the log files: a log can fail to open while the build still happened, and that build belongs
    in the history (`internal/store/store.go:334`).
-4. `exposer.Reap(ctx, keep)` with the current preview IDs.
+4. `exposer.Reap(ctx, keep)` with the current publication keys — every preview id, plus `<preview>/<build>` for
+   each build row that recorded a URL. If any part of that set cannot be read, the sweep is **skipped** rather than
+   run on what was read: an incomplete keep-set does not under-delete, it deletes live shares
+   (`internal/daemon/daemon.go:1770`).
+
+## What teardown removes, and what it leaves
+
+`Daemon.teardown` (`internal/daemon/daemon.go:880`) runs when a pull request closes, when `preview.ttl` expires, and
+from the dashboard. It holds the preview's commit lock for the whole of it, because a build already inside its
+publishing phase would otherwise finish and reinstall the preview that was just removed — leaving a live share and
+no database row.
+
+Removed, in this order:
+
+| | |
+|---|---|
+| the exposer's *names* | first, before the shares — see below |
+| the branch publication, and every build publication under `<preview>/` | |
+| `artifacts/<preview>/` | every build's output, not just the newest |
+| `workspaces/<preview>/` | |
+| the preview's cache directory | `PreviewCacheDir`, when a cache root is configured |
+| the build logs | `logs.Remove` |
+| the pull request comment | `client.Retract` |
+| the `previews` row | `DeletePreview` |
+
+**Names go before shares, and that ordering is deliberate.** On an exposer whose names are quota-bearing objects
+with their own lifetime — zrok, today — de-reserving first makes a crash mid-teardown self-healing, because the next
+startup's `Reap` deletes the share and the platform collects the non-reserved name with it. Reversed, a crash
+between the two leaks the name silently and forever. See [02-exposers.md](02-exposers.md).
+
+**Every step's error is collected, and none of them aborts the rest.** A failure to release a name or retract a
+comment must not strand the artifacts, the workspace and the cache as well.
+
+What it leaves: **the `builds` rows.** `DeletePreview` is one statement against `previews`
+(`internal/store/store.go:628`), and nothing removes the history — which is intended, since the history of what this
+branch did is still true. It disappears on `build.keep_logs` with its log files instead. The `comments` row goes
+too, but as a side effect of `Retract`, which on the local platform is a `DeleteComment` and on a hosted platform
+deletes the comment on the pull request and touches no table at all.
+
+A pending `jobs` row for the torn-down preview is *not* deleted here, and nothing else deletes one either — the only
+statement that removes a job is `Claim`. So a push landing just before a close leaves a job that a worker later
+claims and builds, which republishes a preview the teardown had removed. Unverified against a live pull request and
+recorded in `TODO.md` rather than fixed here, because the fix has to decide whether the answer is deleting the job or
+re-checking the pull request's state in the commit phase.
 
 ## Path safety
 
@@ -182,3 +277,8 @@ would make it fail if the mux's normalization changed — which would be a false
 6. A preview ID from a URL cannot escape its directory.
 7. A build row is written when the build starts, not only when it ends.
 8. Build rows and build logs are pruned on one window, so neither outlives the other.
+9. A column added to a table that has already shipped is declared **twice** — in `schema` and in `migrate` — or every
+   existing database silently lacks it and every query naming it fails.
+10. A build row outlives its share. A share that can no longer be republished has its `name` and `url` cleared, never
+    the row deleted.
+11. A reap runs on a complete keep-set or not at all.

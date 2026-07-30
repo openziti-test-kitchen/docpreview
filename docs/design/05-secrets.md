@@ -113,23 +113,34 @@ for every project the daemon serves. A single global map means every project's b
 tokens.
 
 So a project can own environment variables of its own, at
-`project/<platform>/<owner>/<repo>/<ENV>` in the same vault (`vault.ProjectSecretKey`). Four decisions in that:
+`project/<platform>/<owner>/<repo>/<ENV>` in the same vault (`vault.ProjectSecretKey`, `internal/vault/vault.go:87`).
+Four decisions in that:
 
 - **A key prefix, not a second store.** The vault is one flat encrypted map, and the key is the only structure it
-  has. A nested format would change the on-disk shape of every existing vault to express what a prefix already can.
+  has (`vault.ProjectPrefix`, `internal/vault/vault.go:74`). A nested format would change the on-disk shape of every
+  existing vault to express what a prefix already can.
 - **The slash is the separator, and that is load-bearing.** A global key is validated as letters, digits, dot, dash
   and underscore, so `PUT /api/secrets/{key}` cannot write into the namespace and a project's variables cannot
-  shadow `github.private_key`. Relaxing `validKey` removes the only thing keeping the scopes apart.
-- **Routed under the project**, at `PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}`, so the scope is
-  expressed by the URL and the vault key is composed server-side from path values already validated as a project
-  identity.
-- **Resolved per build, not cached.** `Daemon.SetProjectSecrets` takes a function. The vault may be locked at
-  startup, and a token added from the projects page then applies to the next build with no rearm and no restart —
-  which matters because the operator adding it is usually looking at the build that just failed without it.
+  shadow `github.private_key`. Relaxing `validKey` removes the only thing keeping the scopes apart —
+  `TestGlobalSecretKeyCannotReachTheProjectNamespace` is what stops that happening quietly.
+- **Routed under the project**, at `PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}` and the matching
+  `DELETE` (`internal/daemon/projects.go:79-80`), so the scope is expressed by the URL and the vault key is composed
+  server-side from path values already validated as a project identity. Both go through the same `gated` pair of
+  checks as a global credential write, for the reason in "Two gates" below: a project's variables are credentials in
+  the process that runs its build.
+- **Resolved per build, not cached.** `Daemon.SetProjectSecrets` takes a function, not a map
+  (`internal/daemon/daemon.go:66`). The vault may be locked at startup, and a token added from the projects page then
+  applies to the next build with no rearm and no restart — which matters because the operator adding it is usually
+  looking at the build that just failed without it. Listing a project's variables is a prefix scan of `Keys()`, which
+  is why the variable name is the *last* segment: an owner or a repository may contain a dot or a dash, so splitting
+  on those would be ambiguous.
 
-The name must match `[A-Z_][A-Z0-9_]*`. Stricter than a vault key, because this one is not a lookup key: it becomes
-a variable in a process running a build script, and a name with a dot or a dash is settable through `exec.Cmd` and
-unreadable from `sh` — so the operator would store a value the build could never see.
+The name must match `[A-Z_][A-Z0-9_]*` and be at most 128 characters (`validEnvName`,
+`internal/daemon/projects.go:429`). Stricter than a vault key, because this one is not a lookup key: it becomes a
+variable in a process running a build script, and a name with a dot or a dash is settable through `exec.Cmd` and
+unreadable from `sh` — so the operator would store a value the build could never see. Upper case is not a shell
+requirement; it is the convention every build script this exists for already follows, and refusing the alternative
+is cheaper than supporting two spellings of one name.
 
 **`Builder.WithSecrets` merges and rebuilds the redactor in one call**, and the two must never be separable. A
 builder copied with a larger secrets map and the base redactor injects a credential the scrubber was never told
@@ -238,8 +249,10 @@ That exists because working redaction and absent redaction are indistinguishable
 - **A secret straddling the 64 KiB flush boundary survives.** Lines longer than the cap are flushed in exact
   chunks rather than buffered without limit, and each chunk is scrubbed — but a secret spanning exactly that
   split is missed.
-- **Secrets are global.** One map, applied to every build. Per-project and per-provider scopes are wanted; see
-  `TODO.md`.
+- **`build.secrets` is still global.** One map from the server config, applied to every build. A project's *own*
+  variables are scoped — see "Scoped to a project" above — but anything in `build.secrets` reaches every build on
+  the daemon, so a credential that belongs to one repository belongs in that project's variables instead. A
+  per-provider scope is still wanted; see `TODO.md`.
 
 ## The admin surface
 

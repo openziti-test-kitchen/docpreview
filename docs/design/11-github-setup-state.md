@@ -1,6 +1,9 @@
 # Where the GitHub App work stands
 
-A working note, not a design document. Delete it when the smoke test passes.
+A working note, not a design document. **The smoke test has now passed**, so the only reason this file is still
+here is that it records the App's identity and the two-configuration arrangement, which nothing else does, and that
+five other documents cite it by section. Fold those two facts into a runbook and delete it; the plan for that is
+step 9 of [13-github-testing.md](13-github-testing.md).
 
 ## The goal
 
@@ -21,7 +24,7 @@ API, the fork refusal, and — once the exposer moves to zrok — share creation
 | App ID | `4420399` |
 | Permissions | Contents read, Pull requests read+write, Checks read+write, Metadata read |
 | Events | Pull request |
-| Webhook URL | still the placeholder `https://example.com/webhook/github` |
+| Webhook URL | `https://docpreview.shares.zrok.io/webhook/github`, served by `docpreview webhook-only` |
 
 **A dedicated config**, deliberately separate from the demo: `.docpreview/config.yml`, data in
 `.docpreview/data/`, listening on `127.0.0.1:8471`. The demo keeps `:8493`.
@@ -58,13 +61,24 @@ Verified: with the vault locked and `app_id` set, `serve` starts, `/healthz` is 
 `locked: true`, and `/webhook/github` is 501. `cmd/docpreview/rewire_test.go` covers the sequence — locked,
 one credential, both, unrelated key, no app ID.
 
-## Then
+## Then — all four done
 
-1. **A tunnel** so GitHub can reach `127.0.0.1:8471/webhook/github`. zrok is the obvious choice since it is
-   already a dependency and this would exercise it. Update the App's Webhook URL to match.
-2. **Install the App** on the test repository.
-3. **Open a pull request** touching `docs/`, then push three commits inside a minute to exercise supersede.
-4. **Switch `exposer.kind` to `zrok2`** so preview URLs are reachable by someone other than the operator.
+1. ~~**A tunnel** so GitHub can reach `127.0.0.1:8471/webhook/github`.~~ zrok, through `docpreview webhook-only`,
+   which creates its own named share over the SDK rather than shelling out to the rc8 CLI — that CLI cannot bind a
+   reserved name to a public share. The App's Webhook URL is `https://docpreview.shares.zrok.io/webhook/github`.
+2. ~~**Install the App** on the test repository.~~
+3. ~~**Open a pull request**, then push three commits inside a minute.~~
+4. ~~**Switch `exposer.kind` to `zrok2`.**~~
+
+What the run found, and it was all in the exposer rather than in the App path: a zrok name has to be registered
+before a share can bind it, and a frontend endpoint comes back as a bare hostname rather than a URL. Neither was
+reachable from the local git simulator, where nothing ever creates a share and no comment is ever rendered for a
+browser. Both are fixed and written up in [16-exposer-zrok.md](16-exposer-zrok.md). Nothing else in the App path
+changed as a result, which is the useful part of the answer.
+
+The running arrangement — three processes, in order, and the two config traps that cost an afternoon each — is in
+the root `CLAUDE.md`, which is where it belongs now that it is a thing somebody does rather than a thing somebody is
+planning.
 
 ## What this exercise has cost so far
 

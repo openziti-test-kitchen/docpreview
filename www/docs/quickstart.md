@@ -58,7 +58,10 @@ It does **not** ask for a GitHub App ID. Source control is the last thing you wi
 never will — see part 2.
 
 <details>
-<summary>What it writes, if you would rather hand-author it</summary>
+<summary>The parts of it that matter, if you would rather hand-author it</summary>
+
+Abridged — the real file carries a comment above nearly every key, and sections for the exposers you did not
+choose so that switching later is an edit rather than research.
 
 ```yaml
 listen: "127.0.0.1:8471"
@@ -79,11 +82,16 @@ github:
 build:
   driver: "local"
   timeout: 15m0s
+  keep_logs: 168h0m0s
 
 preview:
   ttl: 72h0m0s
   teardown_on_close: true
 ```
+
+Every field has a default and a missing file is not an error, so anything absent here is still set. `init` does
+not currently write `preview.keep_builds`, `build.cache_dir` or `dashboard_url`; add them by hand from
+[the server configuration reference](./reference/configuration.md) if you want them stated.
 
 </details>
 
@@ -120,7 +128,7 @@ docpreview preview -build -name my-first-preview ./www
 ```
 
 ```text
-  https://my-first-preview.share.zrok.io/
+  https://my-first-preview.shares.zrok.io/
 
   serving D:\repo\www\build
   Ctrl-C to stop.
@@ -315,13 +323,35 @@ Within a minute the pull request gets a comment:
 > | | |
 > |---|---|
 > | **Status** | ✅ Ready |
-> | **Preview** | https://docs-quickstart-test.share.zrok.io/ |
+> | **Preview** | https://docs-quickstart-test.shares.zrok.io/ |
 > | **Name** | `docs-quickstart-test` |
 > | **Commit** | `a1b2c3d` |
 > | **Built in** | 41s |
 > | **Updated** | 2026-07-27 14:22:07 UTC |
 
 Push again. The **same comment** updates — the timestamp and commit change, the URL does not.
+
+### 10. Open the dashboard
+
+```text
+http://127.0.0.1:8471/
+```
+
+Every preview, the activity feed, and each build's log, live. Two more pages — **Secrets** and **Projects** — are
+linked from it, but only when you open it on the machine running docpreview; from anywhere else the links are absent
+because the daemon would refuse the writes they lead to.
+
+The link in the comment is the **branch** URL and always serves the latest build. Every build also has its own URL,
+pinned to its commit, behind **Open build ↗** beside the build picker. See
+[every build gets its own URL](./reference/configuration.md#every-build-gets-its-own-url).
+
+:::note After a restart, wait for the log line
+
+A restart deletes every share and republishes from disk, at roughly 14 seconds per preview. Until it finishes every
+preview URL 404s and `/status` reports no activity. That is expected — see
+[troubleshooting](./troubleshooting.md#every-preview-404s-for-the-first-minute-after-a-restart).
+
+:::
 
 ## If your `baseUrl` is not `/`
 

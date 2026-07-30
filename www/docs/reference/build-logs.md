@@ -34,6 +34,11 @@ key. Store the actual secret separately:
 docpreview vault set algolia.write_key
 ```
 
+This is the server-wide form: every project gets these. For a credential that differs per repository — a token for
+each private source a documentation site assembles content from — put it on the
+[project](./projects.md#environment-variables-scoped-to-a-project) instead. Those are registered with the redactor the
+same way, and a project's value wins over a server-wide one of the same name.
+
 :::danger Never in `.docpreview.yml`
 
 `build.env` in a repository's own config takes literal values only, and there is no vault lookup there. A pull
@@ -142,6 +147,17 @@ and rendering it inline would let it be interpreted.
 A build in flight is never swept, however old its directory looks — otherwise a long build could have its own
 log deleted underneath it.
 
+:::note Logs and artifacts are retained on different counts
+
+Five logs per preview, against [`preview.keep_builds`](./configuration.md#preview) artifacts — ten by default. The two
+are independent on purpose, because they answer different questions: an artifact directory exists so an old commit's
+site can still be opened, and a log exists so a failure can be read. A failed build has a log and no artifacts at all.
+
+The visible consequence on the dashboard is a build you can open but whose log has gone, and a build whose log is there
+but which is no longer openable. Both are correct.
+
+:::
+
 ```yaml
 build:
   keep_logs: 168h
@@ -162,3 +178,4 @@ build. The failure shows in the activity feed, and the log is reachable by previ
 
 - [Security model](./security.md)
 - [Server configuration](./configuration.md)
+- [Projects](./projects.md) — per-repository environment variables, redacted the same way

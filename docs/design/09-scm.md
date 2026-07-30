@@ -49,19 +49,43 @@ The requirement was "update, don't duplicate". A twelve-commit pull request must
 | **Updated** | 2026-07-28 14:22 UTC · revision 6 |
 ```
 
-`scm.Marker(previewID)` is an HTML comment — invisible in rendered Markdown on GitHub, exact to match against.
-Upsert is: list the pull request's comments, find the one whose body `scm.HasMarker` recognises, `PATCH` it if found,
-`POST` if not.
+The marker is one line in the body, and it is the whole of how the comment gets edited instead of duplicated: there
+is no platform API for "the comment I made earlier", and storing comment IDs in the database means a restored backup
+or a fresh install starts spamming. So the comment identifies itself. Upsert is: list the pull request's comments,
+find the one whose body `scm.HasMarker` recognises, `PATCH` it if found, `POST` if not.
 
 The marker carries the preview ID rather than a fixed string, so two docpreview instances watching the same
-repository do not fight over one comment.
+repository — staging and production, say — do not fight over one comment.
 
-**Invisible is a property of the renderer, not of the syntax.** Bitbucket Cloud escapes raw HTML, so the same
-construction renders there as a visible line of literal text — observed on Vercel's own comments. `MarkerFor` takes a
-`MarkerStyle` for that reason, with `MarkerLinkRef` (`[docpreview]: #<id>`, a CommonMark link reference definition)
-as the form that renders to nothing on either host. `HasMarker` matches every style there has ever been and always
-must: forgetting one would post a duplicate comment on every open pull request at once. See
-[15-bitbucket.md](15-bitbucket.md).
+**Invisible is a property of the renderer, not of the syntax**, and that turned one function into three
+(`internal/scm/scm.go:152-221`):
+
+| | |
+|---|---|
+| `MarkerStyle` | which syntax, because the protocol is platform-neutral and the syntax is not |
+| `MarkerFor(id, style)` | renders one. `MarkerHTMLComment` is `<!-- docpreview:<id> -->`; `MarkerLinkRef` is `[docpreview]: #<id>` |
+| `HasMarker(body, id)` | matches **every style there has ever been**, which is what every caller must use |
+
+`scm.Marker(previewID)` remains, as the one-argument form meaning "the style GitHub wants" — every caller writing a
+comment today writes a GitHub one, and a platform needing the other reaches for `MarkerFor` rather than changing
+what `Marker` means.
+
+`MarkerLinkRef` exists because Bitbucket Cloud escapes raw HTML, so an HTML comment renders there as a visible
+paragraph of literal text at the bottom of the comment. Not a guess: Vercel's own integration ships
+`<!-- vercel-commit-author-required -->` and Bitbucket renders it as `<p>&lt;!-- … --&gt;</p>` on a public pull
+request, while their *other* comment uses a link reference definition and vanishes from the rendered HTML entirely.
+A CommonMark link reference definition is consumed as a definition and emits nothing, whether or not the renderer
+allows raw HTML. Its destination is `#`-prefixed so that a renderer which *does* resolve the label produces a
+same-page anchor rather than a request to somewhere. See [15-bitbucket.md](15-bitbucket.md).
+
+**A style may be added to `HasMarker` and none may ever be removed.** This is the load-bearing half of having two,
+and the reason introducing `MarkerLinkRef` was not simply "change the constant": a daemon upgraded across a style
+change finds comments it wrote in the old one, and a matcher that knew only the new style would post a second
+comment on every open pull request at once — the exact failure the marker exists to prevent. The comments live on
+somebody else's server and outlive every release of this program.
+`TestHasMarkerMatchesEveryStyleEverWritten` (`internal/scm/marker_test.go:16`) enumerates the styles for that
+reason, and `TestFindCommentMatchesEitherMarkerStyle` (`internal/scm/github/findcomment_test.go:49`) pins the same
+property one layer up, where the comment list actually comes from the API.
 
 The revision counter exists so a reviewer can tell "still says building" from "stuck". Demonstrated climbing
 3 → 6 on one comment.

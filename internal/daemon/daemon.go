@@ -617,6 +617,84 @@ func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg con
 	return cfg
 }
 
+// driverAllowed refuses the local driver unless the operator enabled it in writing.
+//
+// The refusal is here, at the last moment before a build, rather than at startup or in
+// config validation, because a project row can name the driver too. Validating only the
+// server config would let a project opt itself into running branch code on the host,
+// which is precisely the decision this is trying to keep in one place.
+//
+// A failed build with this message is a better outcome than a successful one that ran
+// the branch's postinstall scripts as the daemon's user. The message names the key,
+// because the operator's next question is what to do about it.
+func (d *Daemon) driverAllowed(driver string) error {
+	if driver != config.DriverLocal || d.cfg.Build.AllowLocalDriver {
+		return nil
+	}
+	return fmt.Errorf("the local build driver is not enabled: it runs this pull request's "+
+		"own build scripts on this host as the daemon's user, so it is off unless asked for. "+
+		"Install docker and leave build.driver at %q, or accept that and set "+
+		"build.allow_local_driver: true in the server config",
+		config.DriverDocker)
+}
+
+// confineToDriver drops the parts of a repository's own config that would execute
+// branch-authored code on this host.
+//
+// # What this does and does not buy
+//
+// Under `docker` it changes nothing: the container is the boundary, and honouring the
+// repository's build command there is the intended design.
+//
+// Under `local` it clears two fields that arrived in the pull request —
+// `build.command` and `detect.script`. `www/docs/reference/repo-config.md` promised
+// exactly this for the command and **nothing implemented it**: `buildLocal` ran the
+// value through `cmd /c` on the host, so anyone who could push a branch to a watched
+// repository could run a command on the machine holding the GitHub App private key and
+// every project's tokens. The detect script was worse, because it ran on the host under
+// *either* driver, before any of this was consulted.
+//
+// **It does not make the local driver safe, and nothing can.** That driver runs
+// `npm install` and `npm run build` in the branch's own tree: every dependency's
+// postinstall script and whatever `scripts.build` says are branch-authored code
+// executing as the daemon's user, by design, before this function is reachable. The
+// only real isolation is the container, which is why the default driver is `docker`
+// and why the fallback to `local` is logged as loudly as it is. What this closes is the
+// narrower channel — a repository with no dependencies at all, running an arbitrary
+// command line — and it makes the documented promise true.
+//
+// A project-supplied command still runs. That value is the operator's, cannot be
+// edited by a contributor, and is the whole reason a project row outranks the branch.
+func (d *Daemon) confineToDriver(
+	ctx context.Context, pr model.PullRequest, cfg config.RepoConfig, driver string,
+) config.RepoConfig {
+	if driver == config.DriverDocker {
+		return cfg
+	}
+
+	// What the operator stated, which survives. A lookup failure is treated as "no
+	// project", which is the conservative direction: it drops more, not less.
+	var project store.Project
+	if p, err := d.store.ProjectFor(ctx,
+		string(pr.Repo.Platform), pr.Repo.Owner, pr.Repo.Name); err == nil {
+		project = p
+	}
+
+	if project.BuildCommand == "" && cfg.Build.Command != config.DefaultBuildCommand {
+		d.log.Warn("ignoring the build command from this branch because the local driver "+
+			"would run it on this host; set it on the project instead",
+			"pr", pr.String(), "driver", driver)
+		cfg.Build.Command = config.DefaultBuildCommand
+	}
+	if project.DetectScript == "" && cfg.Detect.Script != "" {
+		d.log.Warn("ignoring the detect script from this branch because the local driver "+
+			"would run it on this host; path matching decides instead",
+			"pr", pr.String(), "script", cfg.Detect.Script)
+		cfg.Detect.Script = ""
+	}
+	return cfg
+}
+
 // projectDriver returns the build driver and image for a pull request.
 //
 // Per-project, falling back to the server default. A project that runs a command
@@ -1207,6 +1285,14 @@ func (d *Daemon) runPipeline(
 	// contributor, so where the two disagree the row is the trustworthy one.
 	repoCfg = d.applyProject(ctx, pr, repoCfg)
 
+	// Resolved here rather than beside the builder below, because the driver decides
+	// what the *detector* is allowed to run and the detector runs first.
+	driver, image := d.projectDriver(ctx, pr)
+	if err := d.driverAllowed(driver); err != nil {
+		return out, pipeline.Decision{}, err
+	}
+	repoCfg = d.confineToDriver(ctx, pr, repoCfg, driver)
+
 	changed, err := client.ChangedFiles(ctx, pr)
 	if err != nil {
 		return out, pipeline.Decision{}, err
@@ -1238,7 +1324,6 @@ func (d *Daemon) runPipeline(
 	// One builder for the whole build, with this project's driver applied. Taken
 	// once and reused below, so a rotation mid-build cannot leave the log scrubbed
 	// by one redactor and the environment set by another.
-	driver, image := d.projectDriver(ctx, pr)
 	builder := d.currentBuilder().WithDriver(driver, image).WithSecrets(d.projectSecrets(pr))
 
 	buildID := logBuildID(pr.HeadSHA)
@@ -1587,8 +1672,73 @@ func (d *Daemon) pruneArtifacts(previewID, keep string) {
 			d.log.Debug("leaving old artifacts in place", "dir", victim, "error", err)
 			continue
 		}
+		d.retireBuildShare(previewID, name)
 		d.log.Info("pruned old build artifacts",
 			"preview", previewID, "build", name, "keep_builds", limit)
+	}
+}
+
+// retireBuildShare withdraws a pruned build's own share, forgets its URL, and gives
+// its name back.
+//
+// Without this, pruning deleted directories and nothing else. What was left was a live
+// share serving a build whose files were gone — a URL the dashboard still offered and
+// which answered 404 for whatever the exposer does with a missing root — plus a
+// reserved name against the account's quota. Neither was recoverable by the hourly
+// sweep, because `Reap`'s keep-set is built from builds with a recorded `url` and the
+// row still had one: the leak protected itself.
+//
+// Three steps, in this order, and the order is the same reasoning as teardown's. The
+// name is released first, so a crash between steps leaves a de-reserved name whose
+// share the next startup collects. The share is withdrawn second. The row is cleared
+// last, because a row with no URL is what stops `Reap` protecting the share, and doing
+// that before the withdraw would let the sweep race the withdraw for it.
+//
+// Every failure is a warning. A build's artifacts are already gone by the time this
+// runs, and the build that triggered the prune succeeded — turning a tidy-up failure
+// into a failed build would be the wrong trade.
+func (d *Daemon) retireBuildShare(previewID, buildID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	d.mu.Lock()
+	pub := d.liveBuilds[buildKey(previewID, buildID)]
+	delete(d.liveBuilds, buildKey(previewID, buildID))
+	d.mu.Unlock()
+
+	// The name comes from the publication when the share is live, and from the row when
+	// it is not — a build restored after a restart, or one whose publish failed, still
+	// holds a name.
+	name := ""
+	if pub != nil {
+		name = pub.Name
+	}
+	if name == "" {
+		if builds, err := d.store.BuildsFor(ctx, previewID); err == nil {
+			for _, b := range builds {
+				if b.BuildID == buildID {
+					name = b.Name
+					break
+				}
+			}
+		}
+	}
+	if releaser, ok := d.exposer.(expose.NameReleaser); ok && name != "" {
+		if err := releaser.ReleaseName(ctx, name); err != nil {
+			d.log.Warn("could not release a pruned build's name; it stays against the "+
+				"account's limit", "preview", previewID, "build", buildID,
+				"name", name, "error", err)
+		}
+	}
+	if pub != nil {
+		if err := pub.Close(); err != nil {
+			d.log.Warn("withdrawing a pruned build's share",
+				"preview", previewID, "build", buildID, "error", err)
+		}
+	}
+	if err := d.store.ClearBuildShare(ctx, previewID, buildID); err != nil {
+		d.log.Warn("clearing a pruned build's recorded share",
+			"preview", previewID, "build", buildID, "error", err)
 	}
 }
 
@@ -1665,9 +1815,15 @@ func (d *Daemon) report(ctx context.Context, r scm.Report) {
 	// than at each call site because this is the one funnel every report passes
 	// through, and a report that reached a platform without it would tell
 	// somebody a build failed and not where to look.
+	//
+	// The dashboard, with the preview in the fragment — not `/logs/<preview>`, which
+	// this used to be and which is a JSON array. The only link in a failure comment
+	// handed a reviewer a raw payload, and a fragment is the right half of the URL to
+	// put it in: the daemon never sees it, so it cannot leak into a log, and the page
+	// opens that preview's log pane on arrival.
 	if r.State == scm.StateFailed && r.DetailURL == "" {
 		if base := strings.TrimRight(d.cfg.DashboardURL, "/"); base != "" {
-			r.DetailURL = fmt.Sprintf("%s/logs/%s", base, r.PreviewID)
+			r.DetailURL = fmt.Sprintf("%s/#preview=%s", base, r.PreviewID)
 		}
 	}
 

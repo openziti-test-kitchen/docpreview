@@ -45,13 +45,19 @@ const state = () => ({
   secrets_available: true,
   vault_locked: false,
   global_secrets: ["SHARED_TOKEN"],
-  defaults: {driver: "local", image: "node:24-bookworm-slim"},
+  // docker present, local not enabled: the shipped arrangement, and the one where the
+  // form has to disable a choice rather than offer it.
+  defaults: {
+    driver: "docker", image: "node:24-bookworm-slim",
+    docker_available: true, allow_local_driver: false,
+    images: ["node:24-bookworm-slim", "node:22-bookworm-slim"],
+  },
   projects: [
     {
       platform: "github", owner: "netfoundry", repo: "unified-doc", enabled: true,
       driver: "docker", build_dir: "www", build_command: "npm run build",
       build_output: "build", base_url: "/", detect_script: "", image: "",
-      notes: "the big one",
+      notes: "the big one", display_name: "Unified Doc", avatar: "",
       secrets: ["BB_REPO_TOKEN_ONPREM", "GH_ZITI_CI_REPO_ACCESS_PAT"],
     },
     {
@@ -168,6 +174,43 @@ console.log("\nproject cards");
   ok("a deferring, disabled project explains itself");
 }
 
+console.log("\nidentity: badge, name, platform label");
+{
+  const cards = $$(".proj");
+  // A monogram derived from the name, so ten projects are distinguishable with nothing
+  // configured. "Unified Doc" -> UD.
+  const badge = cards[0].querySelector(".ava");
+  if (!badge) fail("no badge on a project card");
+  else if (badge.textContent.trim() !== "UD") {
+    fail(`badge reads ${JSON.stringify(badge.textContent)}, want the initials UD`);
+  } else ok("a name with two words gives initials");
+
+  // One word gives its first two characters: customer-connect-docs -> CU is wrong,
+  // CD is right, because the hyphens are word breaks.
+  const second = cards[1].querySelector(".ava");
+  if (second && second.textContent.trim() !== "CC") {
+    fail(`hyphenated name gave ${JSON.stringify(second.textContent)}, want CC`);
+  } else ok("a hyphenated name is treated as words");
+
+  // The badge must not be an <img>: a remote avatar would announce every project on
+  // the page to whoever hosts the image.
+  if (cards[0].querySelector("img")) fail("the badge fetches a remote image");
+
+  // A display name is shown, with the real identity still visible beside it, because
+  // owner/repo is what a webhook is matched against.
+  const head = cards[0].querySelector(".proj-head").textContent;
+  if (!head.includes("Unified Doc")) fail("the display name is not shown");
+  if (!head.includes("netfoundry/unified-doc")) {
+    fail("the real owner/repo is hidden behind the display name");
+  }
+  // `local` is the git simulator. The stored value stays `local`; what is read says
+  // what it is.
+  if (!$$(".proj-head .flag").some(f => f.textContent.trim() === "bitbucket")) {
+    fail("the platform chip is missing");
+  }
+  ok("display name shown with owner/repo beside it");
+}
+
 console.log("\nthe add form is closed until asked for");
 {
   if ($("#p-owner")) fail("the add form is open before anything asked for it");
@@ -184,6 +227,77 @@ console.log("\nthe add form is closed until asked for");
     if ($("#p-owner")) fail("Cancel left the form open");
     else ok("Cancel closes it");
   }
+}
+
+console.log("\nthe new-project form");
+{
+  await click($("#p-new"));
+
+  // Columnar: every field is its own row of label + control, not seven across.
+  const rows = $$(".grid-form .field");
+  if (rows.length < 10) fail(`${rows.length} field rows, want one per field`);
+  const stacked = rows.every(r => r.querySelector("label") && r.children.length >= 2);
+  if (!stacked) fail("a field row has no label beside its control");
+  else ok(`${rows.length} fields, one per row`);
+
+  // Paste a URL, get the three identity fields. Each form is what somebody actually
+  // has on a clipboard.
+  const cases = [
+    ["https://github.com/acme/docs", "github", "acme", "docs"],
+    ["https://github.com/acme/docs/pull/4/files", "github", "acme", "docs"],
+    ["git@bitbucket.org:netfoundry/customer-connect-docs.git", "bitbucket", "netfoundry",
+     "customer-connect-docs"],
+    ["https://bitbucket.org/netfoundry/platform-doc/src/main/docs", "bitbucket",
+     "netfoundry", "platform-doc"],
+  ];
+  for (const [url, platform, owner, repo] of cases) {
+    const el = $("#p-url");
+    el.value = url;
+    el.dispatchEvent(new win.Event("input", {bubbles: true}));
+    await settle();
+    const got = [$("#p-platform").value, $("#p-owner").value, $("#p-repo").value];
+    if (got.join("/") !== [platform, owner, repo].join("/")) {
+      fail(`${url} -> ${got.join("/")}, want ${platform}/${owner}/${repo}`);
+    }
+  }
+  ok(`${cases.length} URL forms parsed into platform/owner/repo`);
+
+  // An unrecognised host must leave the fields alone rather than clearing them: a
+  // half-typed value would otherwise wipe what was already correct.
+  $("#p-owner").value = "acme";
+  const el = $("#p-url");
+  el.value = "https://git.example.com/acme/docs";
+  el.dispatchEvent(new win.Event("input", {bubbles: true}));
+  await settle();
+  if ($("#p-owner").value !== "acme") fail("an unknown host cleared the owner field");
+
+  // The driver select must not offer what the daemon will refuse. docker is available
+  // and local is not enabled in this fixture.
+  const opts = [...$("#p-driver").options];
+  const local = opts.find(o => o.value === "local");
+  const docker = opts.find(o => o.value === "docker");
+  if (!local?.disabled) fail("local is offered although this daemon has not enabled it");
+  if (!local.textContent.includes("not enabled")) {
+    fail(`the local option does not say why: ${JSON.stringify(local.textContent)}`);
+  }
+  if (docker?.disabled) fail("docker is disabled although the probe found it");
+  ok("the driver select disables what would be refused");
+
+  // The image field suggests without constraining.
+  const image = $("#p-image");
+  if (image.getAttribute("list") !== "known-images") fail("the image field offers no suggestions");
+  if ($$("#known-images option").length < 2) fail("the suggestion list is empty");
+  if (image.tagName !== "INPUT") fail("the image field is a closed list, not pick-or-type");
+  ok("image is pick-or-type");
+
+  // Notes is a textarea with a cap, not a one-line input.
+  const notes = $("#p-notes");
+  if (notes.tagName !== "TEXTAREA") fail("notes is still a single-line input");
+  else if (notes.getAttribute("maxlength") !== "5000") {
+    fail(`notes maxlength = ${notes.getAttribute("maxlength")}, want 5000`);
+  } else ok("notes is a capped textarea");
+
+  await click(btn("Cancel"));
 }
 
 console.log("\nsecrets panel");

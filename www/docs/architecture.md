@@ -111,6 +111,11 @@ Each preview gets its own share, its own name and its own listener, and each is 
 than by name. `Exposer.Reap` deletes anything carrying docpreview's target prefix that the database no longer
 recognises — at startup, where by definition everything is an orphan, and on every sweep tick thereafter.
 
+**Each build gets one too.** The branch name with the short commit appended, keyed on preview ID plus build ID, so a
+reviewer can open the site as it was at a particular commit rather than only as it is now. Publishing it is best
+effort: a failure there leaves the branch URL and the comment untouched. `preview.keep_builds` bounds how many are
+kept — see [the reference](reference/configuration.md#every-build-gets-its-own-url).
+
 ## The queue
 
 sqlite, with **at most one pending job per pull request**. A newer push replaces the pending job rather than
@@ -124,16 +129,47 @@ Claiming a job is `DELETE ... RETURNING`, which is atomic in sqlite, so two work
 A build lost to a crash stays lost — recovered by the next push — rather than leaving a row stuck in
 `running` forever, which is the failure mode that makes people write heartbeat systems.
 
+## Identity: finding the comment again
+
+There is no platform API for "the comment I made earlier". Storing comment IDs in the database means a restored
+backup or a fresh install starts posting duplicates, so the comment identifies **itself**: a marker in its body,
+carrying the preview ID. List the comments, find ours, edit it.
+
+The preview ID is in the marker so two docpreview instances watching one repository — staging and production, say —
+do not fight over a single comment.
+
+The marker renders to nothing, and *how* it does that is not platform-neutral:
+
+| Style | Text | Used by |
+|---|---|---|
+| HTML comment | `<!-- docpreview:9f2a1c4b7e01 -->` | GitHub, whose renderer honours raw HTML |
+| Link reference | `[docpreview]: #9f2a1c4b7e01` | Platforms that escape raw HTML, where the first would render as a visible paragraph of literal text |
+
+It is the first line of the body, so a truncated comment still identifies itself.
+
+Matching accepts **both styles, always**. A daemon upgraded across a style change finds comments it wrote in the old
+one, and a matcher that knew only the new style would post a second comment on every open pull request at once —
+which is the exact failure the marker exists to prevent. A style can be added; none can ever be removed.
+
 ## Restart behaviour
 
 On startup docpreview:
 
 1. Reaps **every** remote share it owns. Nothing was serving them; the process that created them is gone.
-2. Reads its preview table and republishes each one **from the artifacts already on disk**.
+2. Reads its preview table and republishes each one **from the artifacts already on disk** — the branch share
+   first, then each retained build's own share.
 
-Step 2 is why a restart takes seconds rather than re-cloning and re-running twenty `npm install`s. If the
-republished URL differs from the recorded one, the comment is updated — a comment pointing at a dead URL is
-worse than no comment.
+Step 2 is why a restart does not re-clone and re-run twenty `npm install`s. If the republished URL differs from the
+recorded one, the comment is updated — a comment pointing at a dead URL is worse than no comment.
+
+The order cannot be relaxed. Reversed, step 1 deletes what step 2 just restored. The consequence is a window in
+which every preview URL 404s, and under zrok it is not a short one: each publication is a round trip to the
+controller at roughly 14 seconds, run serially. Three previews is about a minute. That is
+[expected behaviour, not a fault](./troubleshooting.md#every-preview-404s-for-the-first-minute-after-a-restart).
+
+It also means **one daemon per exposer account**. "Every share it owns" is identified by the zrok environment on
+this host plus docpreview's own target tag, and nothing distinguishes two instances sharing an account — so each
+restart of one deletes the other's live previews.
 
 ## Everything is best-effort in the right direction
 

@@ -13,10 +13,22 @@ docpreview preview   [-build] [-base-url PATH] [-name LABEL] <dir>
 docpreview serve     [-config FILE] [-log-level LEVEL]
 docpreview doctor    [-config FILE]
 docpreview sim       <subcommand>
-docpreview webhook-only  [-zrok-name NAME] [-listen ADDR] [-upstream URL] [-path PATH]
+docpreview webhook-only    [-zrok-name NAME] [-listen ADDR] [-upstream URL] [-path PATH]
+docpreview dashboard-only  [-zrok-name NAME] [-listen ADDR] [-upstream URL]
 docpreview webhook-check -url URL [-config FILE] [-timeout D]
 docpreview vault     <subcommand>
 ```
+
+:::note `-config` is not universal
+
+`webhook-only` and `dashboard-only` take **`-zrok-name`, not `-config`**. Neither reads the config file or opens
+the vault — a reverse proxy that forwarded one path needs neither, and holding a second copy of the webhook secret
+in a second process is the thing `webhook-only` exists to avoid. Passing `-config` to either one exits `2` with a
+usage dump, which reads as a broken command rather than as the design it is.
+
+`vault keygen` has no `-config` either: it mints a key and writes no vault.
+
+:::
 
 Source control is **optional**. `github.app_id: 0` means "not wired up yet", which is the state everyone is in
 for their first ten minutes and the permanent state of anyone using Bitbucket. `init`, `doctor`, and `preview`
@@ -31,7 +43,7 @@ docpreview preview -build ./www
 ```
 
 ```text
-  https://www.share.zrok.io/
+  https://www.shares.zrok.io/
 
   serving D:\repo\www\build
   Ctrl-C to stop.
@@ -310,9 +322,55 @@ level=INFO msg=listening listeners="tcp 127.0.0.1:8471, ziti service docpreview-
 ```
 
 Then it reconciles: reaps every remote share it owns (nothing was serving them) and republishes each recorded
-preview from the artifacts already on disk. A restart takes seconds, not twenty `npm install`s.
+preview — and each retained build — from the artifacts already on disk. No re-cloning and no `npm install`.
+
+:::warning Every preview URL 404s until that finishes
+
+Reap has to come first, or it deletes what it just restored. So there is a window with the shares gone and not yet
+recreated, and under zrok each publication is a round trip to the controller at roughly **14 seconds**, run
+serially. Three previews is about a minute; thirty open pull requests is about seven.
+
+Inside that window `/status` answers `200` with an empty event list, because the activity feed is re-hydrated from
+the database after recovery finishes. It looks exactly like data loss. Wait for:
+
+```text
+level=INFO msg=recovered previews_restored=3 build_shares_restored=11 jobs_pending=0
+```
+
+See [troubleshooting](../troubleshooting.md#every-preview-404s-for-the-first-minute-after-a-restart).
+
+:::
+
+Because "every share it owns" is identified by this host's zrok environment plus docpreview's target tag, **two
+daemons sharing one exposer account delete each other's live previews** on every restart. Give a second instance its
+own account.
 
 `SIGINT` or `SIGTERM` drains in-flight work and withdraws every publication.
+
+### The dashboard's three pages
+
+One embedded HTML document, served at three paths and switched on the path. Splitting it would mean two copies of the
+styles and the fetch helper to keep in step.
+
+| Path | |
+|---|---|
+| `/` | Previews, the activity feed, and the build log viewer. Live over an `EventSource`. |
+| `/secrets` | The credential surface, and nothing else. No stream — nothing on it changes on its own, and an open stream per idle tab is a connection held for nothing. |
+| `/projects` | [Projects](./projects.md) and their environment variables. No stream either. |
+
+**The links to the last two appear only for a local request.** The page asks `/api/admin`, which runs the same
+locality check the write endpoints run, and draws **Projects**, **Secrets** and **Clear caches** only on an outright
+yes. The server decides, not the page: a `Host`-header test in the browser would be worthless, because `Host` is
+whatever the client typed. The pages themselves are still reachable if you type the path — read-only, with a banner
+saying why.
+
+:::note A tab left open across a restart is running the code it loaded
+
+There is no cache busting on that document, so a rebuilt daemon does not reach an open tab. Three false bug reports
+came out of one afternoon of this. The page now notices the daemon instance changed and offers a reload rather than
+reloading under you. **If something on the page contradicts the code, reload before diagnosing.**
+
+:::
 
 ### Endpoints
 
@@ -322,9 +380,14 @@ preview from the artifacts already on disk. A restart takes seconds, not twenty 
 | `POST` | `/webhook/local` | The local platform. No signature — see [Local platform](../local-platform.md). |
 | `POST` | `/webhook/bitbucket` | Returns `501` until Bitbucket is wired up. |
 | `GET` | `/` | The dashboard. |
-| `GET` | `/secrets` | Credential management. Its own page rather than a panel on the dashboard: a URL can be bookmarked and named in a runbook, and a distinct path is something a proxy or a later authentication layer can gate. |
+| `GET` | `/secrets` | Credential management. Its own page rather than a panel on the dashboard: a URL can be bookmarked and named in a runbook, and a distinct path is something a proxy or a later authentication layer can gate. Registered only when a credential surface is wired, so a daemon without one answers `404` rather than serving an empty page. |
+| `GET` | `/projects` | [Projects](./projects.md) and their environment variables. The third page, same embedded document, switched on the path. |
+| `GET` | `/api/admin` | Which of the two admin pages this request would be allowed to write to. The dashboard asks before drawing the **Projects**, **Secrets** and **Clear caches** controls, so the server decides and the page never offers an action that would `403`. |
 | `GET` | `/api/secrets` | What that page reads: names, whether the vault is unlocked, and whether this daemon may be written to at all. Never a value. |
 | `PUT` `DELETE` `POST` | `/api/secrets/…` | Store, delete, unlock, generate. Refused unless every listener is loopback *and* the request arrived from this machine carrying no forwarding header. Loopback is not local: a tunnel makes the first true while the caller is on the internet, which is what [`webhook-only`](#webhook-only) exists for. |
+| `GET` `PUT` `DELETE` | `/api/projects/…` | Project rows and their environment variables. Same two gates as `/api/secrets`, for a stronger reason: a project row decides what command runs on the build host. |
+| `DELETE` | `/api/cache` | Empty every preview's package cache. Same gates. |
+| `DELETE` | `/api/cache/{preview}` | Empty one preview's. Keyed on a preview rather than a project, but served by the projects admin so there is one gate rather than two. |
 | `GET` | `/events` | Server-sent events: the whole status payload on every change. |
 | `GET` | `/logs/{preview}/stream` | Server-sent events: one build log, live or replayed. |
 | `GET` | `/logs/{preview}` | The builds recorded for one preview. |
@@ -345,7 +408,7 @@ preview from the artifacts already on disk. A restart takes seconds, not twenty 
       "number": 42,
       "branch": "feature/new-guide",
       "name": "feature-new-guide",
-      "url": "https://feature-new-guide.share.zrok.io/",
+      "url": "https://feature-new-guide.shares.zrok.io/",
       "state": "ready",
       "updated_at": "2026-07-27T14:22:07Z"
     }
@@ -440,6 +503,68 @@ The `405` earns its place because the first thing anyone does with a webhook URL
 a browser sends `GET` — so the useful answer is "right URL, wrong method". It leaks nothing already hidden: a
 `POST` to the real path answers `401` and a `POST` anywhere else answers `404`, so the path is distinguishable to
 anyone probing properly regardless.
+
+## `dashboard-only`
+
+The same shape as `webhook-only`, for the other direction: it publishes the **read-only** dashboard and forwards
+nothing else.
+
+```text
+docpreview dashboard-only [-zrok-name NAME] [-zrok-namespace NS] [-listen ADDR]
+                          [-upstream URL] [-log-level LEVEL]
+```
+
+```powershell
+docpreview dashboard-only -zrok-name docpreview-dash
+```
+
+Two commands rather than one with a mode flag, because they are published at different names and stopped
+independently. Sharing one process would mean taking the webhook down to stop showing somebody the dashboard.
+
+### What it forwards
+
+An allowlist, `GET` only, compiled in — there is no `-path`:
+
+```text
+/                                   the dashboard
+/status                             the JSON the page renders
+/events                             the live status stream
+/pr  /pr/                           the local platform's pull request page
+/logs/{preview}                     the build log index for one preview
+/logs/{preview}/stream              a live build log
+/logs/{preview}/download            the whole log
+/logs/{preview}/download/{build}    one build's log
+```
+
+An allowlist rather than a denylist, because the failure mode of forgetting to add a route to a denylist is that
+the new route is public.
+
+`/secrets`, `/projects`, `/api/secrets`, `/api/projects`, `/api/cache` and `/api/admin` are absent and therefore
+`404` through this proxy. That is the first of two layers: this proxy sets `X-Forwarded-For`, and the daemon refuses
+every write from a forwarded request regardless. The dashboard's own **Projects** and **Secrets** links come from
+`/api/admin`, so through this proxy the fetch 404s and the links are simply not drawn.
+
+:::danger There is no authentication here
+
+What this publishes is every open documentation pull request across every repository the App is installed on:
+branch names, commit SHAs, build durations, and the full build log of each. On a public repository all of that is
+public already. On a private one it is not. Put `--basic-auth` on the zrok share — which works in a browser, in a
+way it cannot for a webhook.
+
+:::
+
+### Flags
+
+| Flag | Default | |
+|---|---|---|
+| `-zrok-name` | | Serve over a named public zrok share and bind no local port. |
+| `-zrok-namespace` | the environment's default | Namespace for `-zrok-name`. Required if the environment has none. |
+| `-listen` | `127.0.0.1:8482` | Where to accept tunnelled requests. Unused with `-zrok-name`. Note the port differs from `webhook-only`'s `8481`, so both can run at once. |
+| `-upstream` | `http://127.0.0.1:8471` | The daemon to forward to. Non-loopback is refused, for the same reason as `webhook-only`. |
+| `-log-level` | `info` | |
+
+There is no `-config`. The name must already exist — `zrok2 create name docpreview-dash` — and an abandoned share
+still holding it is reclaimed and recreated, exactly as in [`webhook-only`](#webhook-only).
 
 ## `webhook-check`
 
@@ -746,5 +871,8 @@ docpreview vault delete frontdoor.api_token
 
 | Code | |
 |---|---|
-| `0` | Success. |
-| `1` | Anything else, with the reason on stderr. |
+| `0` | Success. Also what `-h` on a subcommand exits with, after printing that subcommand's flags. |
+| `1` | The command ran and failed, with the reason on stderr. |
+| `2` | The command line itself was wrong — an unknown flag, or a flag a subcommand does not have. Go's flag package prints the usage and exits; docpreview never sees it. |
+
+`unknown command` is `1`, not `2`: the binary got that far and answered.

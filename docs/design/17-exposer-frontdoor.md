@@ -36,7 +36,7 @@ body := shareRequest{
 
 `internal/expose/frontdoor.go:163`.
 
-**One port per preview, not one shared port.** `serve` listens on `net.JoinHostPort(l.host, "0")` every time it
+**One port per publication, not one shared port.** `serve` listens on `net.JoinHostPort(l.host, "0")` every time it
 is called (`internal/expose/local.go:215`), and `Publish` calls it once per publish with no reuse. A hundred
 open documentation pull requests means a hundred listeners and a hundred `http.Server` goroutines — precisely
 the arrangement the `local` exposer was rewritten to escape (`internal/expose/local.go:27`). Under Frontdoor
@@ -44,6 +44,13 @@ that cost is not optional: the agent has an address, not a handler, so there is 
 also not, at this scale, a problem worth engineering around; ephemeral port ranges are tens of thousands wide
 and the goroutines are idle. It is worth *knowing*, because it is the reason `frontdoor` is the one exposer
 whose resource use grows with the number of open pull requests.
+
+**Per-build shares multiply that, and the multiplier is the push rate rather than the pull request count.** A
+preview now publishes once for the branch and once per build kept, so a hundred pull requests at `keep_builds: 10`
+is up to eleven hundred listeners, shares and goroutines rather than a hundred — and each one is a remote share on a
+paid tenant as well as a local port. Nothing enforces a ceiling on the Frontdoor side today. The disk caps in
+`TODO.md` are written for zrok's free tier and explicitly should not be inherited here, but *some* bound on live
+shares per tenant is the thing this exposer needs that the others do not.
 
 ### What the bound address must be, and what that costs
 
@@ -178,10 +185,12 @@ for exactly this consistency argument in the sibling case where the database wri
 ## Reap, orphans, and two daemons in one tenant
 
 `Reap(ctx, keep)` lists shares, skips anything whose `Tag` lacks the `docpreview:` prefix, skips anything whose
-preview ID is in `keep`, and deletes the rest (`internal/expose/frontdoor.go:284`). The prefix is what stops it
-deleting a share an operator made by hand (`internal/expose/zrok.go:23`). At startup `keep` is nil, so
-everything tagged is an orphan by definition (`internal/expose/expose.go:114`, `internal/daemon/daemon.go:375`);
-on the hourly tick `keep` is the set of preview IDs the database holds (`internal/daemon/daemon.go:1012`).
+publication key is in `keep`, and deletes the rest (`internal/expose/frontdoor.go:284`). The tag is
+`docpreview:` + `Spec.Key()`, so a preview's branch share and each of its build shares tag differently — see
+[02-exposers.md](02-exposers.md). The prefix is what stops it deleting a share an operator made by hand
+(`internal/expose/zrok.go:24-32`). At startup `keep` is nil, so everything tagged is an orphan by definition
+(`internal/daemon/daemon.go:463`); on the hourly tick `keep` is every preview id the database holds plus
+`<preview>/<build>` for each build row with a recorded URL (`internal/daemon/daemon.go:1770`).
 
 A hard kill leaves the remote shares behind and the local ports with the process. The ports are free the instant
 it dies; the shares survive until the next startup's `Reap(ctx, nil)` collects them — which is why that call is

@@ -27,6 +27,7 @@ import (
 	"github.com/netfoundry/docpreview/internal/daemon"
 	"github.com/netfoundry/docpreview/internal/expose"
 	"github.com/netfoundry/docpreview/internal/model"
+	"github.com/netfoundry/docpreview/internal/pipeline"
 	"github.com/netfoundry/docpreview/internal/scm"
 	"github.com/netfoundry/docpreview/internal/scm/github"
 	"github.com/netfoundry/docpreview/internal/scm/local"
@@ -88,6 +89,16 @@ Usage:
   docpreview serve   [-config FILE]       Run the webhook daemon
   docpreview doctor  [-config FILE]       Check the configuration and exit
   docpreview vault   <subcommand>         Manage stored credentials
+
+Reaching a loopback daemon from the internet. All three take -zrok-name, never
+-config, and each publishes one thing rather than the whole daemon:
+
+  docpreview webhook-only   -zrok-name N   Publish POST /webhook/* and nothing else
+  docpreview dashboard-only -zrok-name N   Publish the dashboard, read-only
+  docpreview webhook-check  [-config FILE] Send one signed ping and report the answer
+
+Sharing the daemon itself would publish /api/secrets, whose write gate only asks
+whether the daemon's own listeners are loopback — and they are.
 
 Publish one directory, no source control at all:
 
@@ -404,6 +415,34 @@ func cmdServe(args []string) error {
 		return err
 	}
 
+	// Probe once, at startup, and say so in the log either way. Which driver runs is
+	// the difference between a pull request's build scripts executing in a container
+	// and executing on this host, and an operator should be able to answer "which one
+	// am I getting?" from the log rather than from a build.
+	dockerOK, dockerWhy := pipeline.ProbeDocker(ctx)
+	if dockerOK {
+		w.log.Info("docker is available", "server_version", dockerWhy)
+	} else {
+		w.log.Warn("docker is not available, so no build can be isolated from this host",
+			"reason", dockerWhy)
+	}
+
+	// No silent downgrade. Falling back to the local driver here would run branch
+	// code on the host because a daemon failed to start, which is the one thing
+	// build.allow_local_driver exists to make impossible — so builds fail instead,
+	// with driverAllowed's message, and the operator decides.
+	if !dockerOK && w.cfg.Build.Driver == config.DriverDocker {
+		if w.cfg.Build.AllowLocalDriver {
+			w.log.Warn("no docker, and the local driver is enabled; builds will run on this host",
+				"fix", "start docker, or set build.driver: local to stop seeing this warning")
+		} else {
+			w.log.Error("no usable build driver: docker is unavailable and the local driver "+
+				"is not enabled, so every build will fail",
+				"fix", "start docker, or set build.allow_local_driver: true and accept that "+
+					"pull request build scripts then run on this host")
+		}
+	}
+
 	d := daemon.New(w.cfg, w.store, w.exposer, w.clients, w.log).WithBuildSecrets(secrets)
 
 	// The setup page can change the vault while the daemon is serving, so it
@@ -458,7 +497,11 @@ func cmdServe(args []string) error {
 
 	ingress = daemon.NewIngress(d, w.clients, w.store, w.log).
 		WithSecrets(admin).
-		WithProjects(daemon.NewProjectsAdmin(w.store, w.cfg, w.log).WithVault(admin.Vault))
+		WithProjects(daemon.NewProjectsAdmin(w.store, w.cfg, w.log).
+			WithVault(admin.Vault).
+			// So the form can grey out a driver that would fail rather than offering
+			// it and letting the operator discover the refusal from a failed build.
+			WithDocker(dockerOK, dockerWhy))
 
 	listeners, err := daemon.Open(w.cfg.Listeners, w.log)
 	if err != nil {

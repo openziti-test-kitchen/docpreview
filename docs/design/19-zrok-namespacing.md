@@ -118,22 +118,31 @@ the flip belongs immediately before the delete and nowhere earlier.
 Both are worth having. `deleteShareName` is still needed for a reaper that cleans up what previous processes left
 behind, because those names are already reserved and no share deletion will ever touch them.
 
-### Plugging the leak
+### Plugging the leak — landed
 
-Per-build shares become viable. The leak is real today — teardown calls `sdk.DeleteShare` and nothing else, so
-`internal/expose/zrok.go` accumulates one name per distinct `spec.Name` ever published — but it is a missing call,
-not a missing capability. The fix has a shape:
+Per-build shares became viable. The leak was real: teardown called `sdk.DeleteShare` and nothing else, so
+`internal/expose/zrok.go` accumulated one name per distinct `spec.Name` ever published — a missing call, not a
+missing capability. What shipped is `Zrok.ReleaseName` (`zrok.go:464`) plus the optional `expose.NameReleaser`
+interface, called from `Daemon.releaseNames` (`internal/daemon/daemon.go:980`). It de-reserves and then deletes, in
+that order, which is the self-healing strategy from the table above; a 409 from the delete means a share is still
+bound and is the expected path, and both `NotFound` cases are treated as the success they are.
 
-1. `close(entry)` deletes the share (it already does), and only then deletes `entry.name`.
+**The third point below was the trap, and it is the reason the fix is not where this section first put it.** The
+original shape had `close(entry)` delete the share and then the name. That is wrong:
+
+1. ~~`close(entry)` deletes the share, and only then deletes `entry.name`.~~ **No.** Three callers reach `close` and
+   only one is a teardown.
 2. Treat `*share.DeleteShareNameNotFound` as success. Log a 409 with its payload, because it means the order broke.
-3. **Do not delete the name on the supersede path.** `withdrawEntry` runs when a second push replaces a preview,
-   and the whole reason the name outlives the share is that the reviewer's bookmark must survive a rebuild. A
-   teardown that deletes the name on every rebuild churns the URL and defeats `name_template`.
+   Kept, except that a 409 turned out to be routine rather than an ordering mistake.
+3. **Do not delete the name on the supersede path.** `withdrawEntry` runs when a second push replaces a preview, and
+   the whole reason the name outlives the share is that the reviewer's bookmark must survive a rebuild. A teardown
+   that deletes the name on every rebuild churns the URL and defeats `name_template`.
 
-That third point is the trap. There are two teardowns wearing one method: "this preview is finished" (delete the
-name) and "this preview is being rebuilt" (keep it). `close` cannot tell them apart today, and the difference is
-now load-bearing. Whatever plugs the leak has to split them, or the URL stability that `Publish`'s comment block
-argues for is lost.
+There were two teardowns wearing one method: "this preview is finished" (release the name) and "this preview is
+being rebuilt" (keep it). `close` could not tell them apart, and the difference is load-bearing — releasing there
+would have silently rehosted every rebuilt preview at a new address while the pull request comment advertised the
+old one. So the split went one layer up instead of into `close`: the daemon decides, once, in teardown, and
+`close` is documented as never touching a name. `TestRebuildMustNotReleaseTheName` is what stops that being undone.
 
 `Reap` has the same asymmetry. It deletes orphaned shares found on the controller but knows nothing about names,
 and once a share is deleted the name it held is invisible to `ListShares` — so orphaned names cannot be found that
@@ -184,17 +193,17 @@ every share docpreview makes — is counted against `shares` only, never against
 accounting lives entirely on the name. This is the mechanical reason the task's framing is right: **the name is the
 quota-bearing object**, and a leaked name is a consumed slot with nothing to show for it.
 
-### The failure this creates in docpreview today
+### The failure this created in docpreview — fixed
 
 `createShareName` returns **409 with the payload `"names limit reached; cannot reserve additional names"`** when
 `CanReserveName` says no (`controller/createShareName.go:52-55`). That is the same HTTP status, and therefore the
 same generated Go type `*share.CreateShareNameConflict`, that the handler returns for "name already exists".
 
-`isNameAlreadyExists` in `internal/expose/zrok.go` matches on that type and returns success. So **hitting the name
-limit is currently indistinguishable from the name already existing, and `ensureName` reports success for it.**
-The publish then fails one call later inside `CreateShare` with an error that says nothing about limits, and the
-operator gets "creating zrok share … failed" with no fix in it. The comment on `isNameAlreadyExists` already
-concedes it cannot distinguish two cases; there are in fact four:
+`isNameAlreadyExists` in `internal/expose/zrok.go` matched on that type alone and returned success. So **hitting the
+name limit was indistinguishable from the name already existing, and `ensureName` reported success for it.** The
+publish then failed one call later inside `CreateShare` with an error that said nothing about limits, and the
+operator got "creating zrok share … failed" with no fix in it. Its comment conceded it could not distinguish two
+cases; there are in fact five:
 
 | Situation | Status | Payload |
 |---|---|---|
@@ -205,9 +214,17 @@ concedes it cannot distinguish two cases; there are in fact four:
 | name fails the DNS or profanity screen | 409 | `'…' is not a valid share name; failed profanity or DNS check` |
 
 Three of the five carry a payload and two do not. **Payload presence is the discriminator**, and it is the only one
-available. `ensureName` should treat an empty-payload 409 as success and a non-empty-payload 409 as an error that
-propagates the payload verbatim — the payload is written to be shown to a human, and it names the fix, which is
-what this codebase's error convention demands. Today all five are swallowed.
+available. `isNameAlreadyExists` now requires `conflict.Payload == ""` (`internal/expose/zrok.go:427`), so an
+empty-payload 409 is the success case and every other 409 propagates with the controller's own payload in it — that
+text is written to be shown to a human and it names the fix, which is what this codebase's error convention demands.
+`TestQuotaConflictIsNotAnExistingName` uses the controller's strings as fixtures.
+
+It still cannot tell a name this account owns from one another account holds, because nothing can: the body is empty
+for both. Treating both as success is safe, because the `CreateShare` that follows binds the name and fails on its own
+if it is not ours — one call later, with its own error, which is the one an operator can act on.
+
+Per-build shares are what made this urgent rather than theoretical: one name per commit reaches a name limit far
+sooner than one per branch does.
 
 ### What would have to be measured against a live account
 
@@ -327,13 +344,14 @@ the generated share token with `reserved = false`, which is the ephemeral case a
 
 Docpreview's `name_template` output is not validated against this regex anywhere. A template producing an uppercase
 repository name, an underscore, or a two-character branch name yields a 409 whose payload says "failed profanity or
-DNS check" — and that payload is currently discarded by `isNameAlreadyExists`, so the operator sees the downstream
-`CreateShare` failure instead. Validating the rendered name locally, before the API call, would name the fix at the
-point the operator can act on it.
+DNS check". That payload used to be discarded by `isNameAlreadyExists`, so the operator saw the downstream
+`CreateShare` failure instead; it now propagates. Validating the rendered name locally, before the API call, would
+still be better — it names the fix at the point the operator can act on it, which is the template rather than the
+controller.
 
 ## What it means for one-share-per-build
 
-Per-build shares are viable. The three things that had to be true are:
+Per-build shares are viable, and have since shipped. The three things that had to be true were:
 
 - **Names can be deleted.** Yes, two ways, and the de-reserve path is self-healing.
 - **No rate limit stands in the way.** Confirmed: the controller has no creation rate limiter at all.
@@ -342,9 +360,11 @@ Per-build shares are viable. The three things that had to be true are:
   the number of *live* previews, not the number of builds ever run, which is the property that makes per-build
   shares safe regardless of what the ceiling turns out to be.
 
-The leak is the only hard blocker, and it is a missing call. What it changes about the code is not the call but the
-teardown taxonomy: `close(entry)` currently means both "finished" and "being rebuilt", and only one of those may
-delete the name. Conflating them either leaks names or churns preview URLs, and both failures are silent.
+The leak was the only hard blocker, and it was a missing call. What it changed about the code was not the call but the
+teardown taxonomy: `close(entry)` meant both "finished" and "being rebuilt", and only one of those may release the
+name. Conflating them either leaks names or churns preview URLs, and both failures are silent. Both per-build shares
+and the release path have since landed, with the decision moved out of `close` and into the daemon — see the
+"Plugging the leak" section above and [02-exposers.md](02-exposers.md).
 
 ## What I could not verify
 
@@ -368,18 +388,30 @@ delete the name. Conflating them either leaks names or churns preview URLs, and 
 
 ## Order to build it in
 
-1. **Split the two teardowns** in `internal/expose/zrok.go`. `withdrawEntry` on supersede must not touch the name;
-   `Close`/final withdraw must. Nothing else here is safe until this distinction exists.
-2. **Fix `isNameAlreadyExists`** to key on an empty payload rather than the status type, and propagate a non-empty
-   payload verbatim. This is worth doing first regardless, because it is what makes every later failure legible.
-3. **De-reserve then delete** on the final teardown. Two calls, ordered, both idempotent-ish.
-4. **Validate the rendered `name_template` output** against `^[a-z0-9-]{3,63}$` before calling the API, with an
-   error that names the template as the thing to change.
-5. **Extend `Reap` to names**, using `ListNamesForNamespace`, deleting reserved docpreview-shaped names with no live
-   share. This is the only way to recover what earlier versions already leaked. It needs an ownership marker in the
-   name itself, because unlike a share a name has no `Target` field to stamp — which is the same instance-identity
-   problem `internal/expose/CLAUDE.md` already records for shares.
-6. Only then consider per-build shares.
+Done:
+
+1. ~~**Split the two teardowns.**~~ Not inside `internal/expose/zrok.go` in the end: `close` never touches a name at
+   all, and the "this preview is finished" decision moved up to `Daemon.releaseNames` behind the optional
+   `expose.NameReleaser`. `TestRebuildMustNotReleaseTheName` guards it.
+2. ~~**Fix `isNameAlreadyExists`**~~ to key on an empty payload rather than the status type. It was worth doing first
+   for the reason predicted here — it is what makes every later failure legible.
+3. ~~**De-reserve then delete** on the final teardown.~~ `Zrok.ReleaseName`.
+4. ~~Only then consider per-build shares.~~ Shipped; see [02-exposers.md](02-exposers.md).
+
+What is left:
+
+5. **Validate the rendered `name_template` output** against `^[a-z0-9-]{3,63}$` before calling the API, with an
+   error that names the template as the thing to change. Now that a non-empty 409 payload propagates, the operator at
+   least sees "failed profanity or DNS check" — but from the API rather than from the config that caused it.
+6. **Extend `Reap` to names**, using `ListNamesForNamespace`, deleting reserved docpreview-shaped names with no live
+   share. This is the only way to recover what earlier versions already leaked, and teardown cannot reach those: they
+   belong to previews whose rows are long gone. It needs an ownership marker in the name itself, because unlike a
+   share a name has no `Target` field to stamp — which is the same instance-identity problem
+   `internal/expose/CLAUDE.md` already records for shares. Filed as `docpreview names prune` in
+   [16-exposer-zrok.md](16-exposer-zrok.md)'s build order.
+7. **Probe the actual name ceiling** on a throwaway account, per section 2. Steady state is now the number of *live*
+   previews rather than the number of builds ever run, which is what makes the unknown ceiling tolerable rather than
+   a blocker — but "tolerable" is not "measured".
 
 ## Sources
 
