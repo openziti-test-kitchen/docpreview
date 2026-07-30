@@ -80,8 +80,9 @@ type Server struct {
 	DashboardURL string `yaml:"dashboard_url"`
 
 	Exposer ExposerConfig  `yaml:"exposer"`
-	GitHub  GitHubConfig   `yaml:"github"`
-	Local   LocalSCMConfig `yaml:"local"`
+	GitHub    GitHubConfig    `yaml:"github"`
+	Bitbucket BitbucketConfig `yaml:"bitbucket"`
+	Local     LocalSCMConfig  `yaml:"local"`
 	Build   BuildDefaults  `yaml:"build"`
 	Preview PreviewConfig  `yaml:"preview"`
 	Vault   VaultConfig    `yaml:"vault"`
@@ -386,6 +387,42 @@ type FrontdoorConfig struct {
 type GitHubConfig struct {
 	AppID   int64  `yaml:"app_id"`
 	APIBase string `yaml:"api_base"`
+}
+
+// Bitbucket auth modes.
+const (
+	// BitbucketAuthAccessToken is a repository, project or workspace access token,
+	// sent as a bearer. The recommendation, and the default.
+	BitbucketAuthAccessToken = "access_token"
+
+	// BitbucketAuthAPIToken is an Atlassian account email plus an API token, sent
+	// as basic auth. The fallback: it carries everything the human it belongs to
+	// can see, across every workspace and Jira and Confluence too, and every
+	// comment is attributed to that person.
+	BitbucketAuthAPIToken = "api_token"
+)
+
+// BitbucketAPIBase is where authenticated REST calls must go. Since 4 May 2026
+// Bitbucket requires api.bitbucket.org with a bearer token per RFC 6750, and a call
+// to bitbucket.org/api answers 403 with an unhelpful body.
+const BitbucketAPIBase = "https://api.bitbucket.org"
+
+// BitbucketConfig configures the Bitbucket Cloud client.
+//
+// Enabled rather than inferred from a vault key being present. A vault mid-setup
+// holds a subset of everything, so a client that switched itself on when a
+// credential appeared would start answering webhooks at a moment nobody chose.
+type BitbucketConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	APIBase string `yaml:"api_base"`
+
+	// Auth is "access_token" (recommended) or "api_token".
+	//
+	// Never inferred from which keys happen to be stored. A vault mid-setup contains
+	// a subset of everything, and a client that silently picked the wider credential
+	// because the narrower one was not stored yet is the kind of magic that gets
+	// discovered during an incident.
+	Auth string `yaml:"auth"`
 }
 
 // BuildDefaults are the fallbacks applied when a repository does not ship its

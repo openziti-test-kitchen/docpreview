@@ -55,9 +55,23 @@ const MasterKeyEnv = "DOCPREVIEW_MASTER_KEY"
 const (
 	KeyGitHubPrivateKey  = "github.private_key"
 	KeyGitHubWebhookSec  = "github.webhook_secret"
+	// KeyBitbucketAccessToken is the recommended Bitbucket credential: a
+	// repository, project or workspace access token. Scoped to one resource,
+	// revocable on its own, and attributed to a synthetic bot address rather
+	// than to a person.
+	//
+	// Added after the two below, which were reserved first and name the *fallback*
+	// mode — an operator following the older names would have stored the wider
+	// credential by default.
+	KeyBitbucketAccessToken = "bitbucket.access_token"
+
+	// KeyBitbucketEmail and KeyBitbucketAPIToken are the api_token fallback. The
+	// email is not itself a secret but is half an Authorization header and half a
+	// clone URL, so it lives here with its partner.
 	KeyBitbucketEmail    = "bitbucket.email"
 	KeyBitbucketAPIToken = "bitbucket.api_token"
-	KeyBitbucketHookSec  = "bitbucket.webhook_secret"
+
+	KeyBitbucketHookSec = "bitbucket.webhook_secret"
 	KeyFrontdoorToken    = "frontdoor.api_token"
 )
 

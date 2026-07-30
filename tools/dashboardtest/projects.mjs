@@ -123,6 +123,14 @@ const click = async el => {
   el.dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
   await settle();
 };
+// Expanding a <details> the way a click on its summary does. jsdom does not implement the
+// summary click that flips `open`, so the property is set and the event the page listens
+// for is dispatched by hand.
+const openSecrets = async d => {
+  d.open = true;
+  d.dispatchEvent(new win.Event("toggle"));
+  await settle();
+};
 // Typing, not assignment: the page listens for input, and a bare `.value =` exercises
 // none of it — the kind of stub that makes a harness agree with itself.
 const type = async (el, v) => {
@@ -274,7 +282,12 @@ console.log("\nthe new-project form");
   await click($("#p-new"));
 
   // Columnar: every field is its own row of label + control, not seven across.
-  const rows = $$(".grid-form .field");
+  //
+  // Everything except the variables accordions, whose Name and Value fields use the same
+  // markup. Unscoped, this counted two per project card, so the number grew with the
+  // fixture rather than with the form being tested — and scoping to `.panel` misses the
+  // new-project form, which is not inside one.
+  const rows = $$(".grid-form .field").filter(f => !f.closest("[data-secrets]"));
   if (rows.length < 10) fail(`${rows.length} field rows, want one per field`);
   const stacked = rows.every(r => r.querySelector("label") && r.children.length >= 2);
   if (!stacked) fail("a field row has no label beside its control");
@@ -374,29 +387,63 @@ console.log("\nthe new-project form");
 
 console.log("\nsecrets panel");
 {
-  const secretsBtn = $$(".pcard [data-tab=secrets]")[0];
-  if (!secretsBtn) {
-    fail("no Secrets control on a project card");
+  // An accordion in the card, not a `Secrets` button beside `Edit`. As a button it made
+  // a project's tokens a mode the card switched into, mutually exclusive with the form —
+  // so checking a variable meant leaving whatever was being edited.
+  const sec = $$(".pcard [data-secrets]")[0];
+  if (!sec) {
+    fail("no environment-variables section on a project card");
   } else {
-    if (!secretsBtn.textContent.includes("(2)")) {
-      fail(`the Secrets control does not count them: ${secretsBtn.textContent.trim()}`);
+    if (sec.open) fail("the variables section starts expanded");
+    const summary = sec.querySelector("summary").textContent;
+    // The collapsed summary has to distinguish "none of its own" from "none at all":
+    // only one of those means a build is about to fail for a missing token.
+    if (!/2 of its own/.test(summary) || !/1 inherited/.test(summary)) {
+      fail(`the summary does not count them: ${JSON.stringify(summary.trim())}`);
     }
-    await click(secretsBtn);
+    await openSecrets(sec);
 
-    const own = $$(".pcard .env:not(.inherited)").map(e => e.textContent.replace("✕", "").trim());
+    // One row per variable, in the credential page's shape. It was a strip of chips with
+    // an ✕, which meant the only thing you could do to an existing variable was delete
+    // it — replacing a rotated token was delete-then-retype-the-name.
+    const rows = $$(".pcard [data-secret]");
+    const own = rows.filter(r => !r.dataset.inherited).map(r => r.dataset.secret);
     if (own.length !== 2 || !own.includes("BB_REPO_TOKEN_ONPREM")) {
       fail(`the panel lists ${JSON.stringify(own)}`);
     }
-    // Inherited names are shown greyed rather than omitted: "no variables" and "none
-    // of its own" look identical otherwise, and only one means a build will fail.
-    const inherited = $$(".pcard .env.inherited").map(e => e.textContent.trim());
+    // Inherited names are listed rather than omitted: "no variables" and "none of its
+    // own" look identical otherwise, and only one means a build will fail.
+    const inherited = rows.filter(r => r.dataset.inherited).map(r => r.dataset.secret);
     if (!inherited.includes("SHARED_TOKEN")) {
-      fail(`the server-wide variables are not shown as inherited: ${JSON.stringify(inherited)}`);
+      fail(`the server-wide variables are not listed as inherited: ${JSON.stringify(inherited)}`);
     }
     ok(`2 own variables, ${inherited.length} inherited`);
 
-    // No value may appear anywhere in the panel, because nothing can read one back.
-    if ($$(".pcard .env input").length) fail("a value input sits inside the variable list");
+    // Every row can replace its value in place, and only a project's own can be deleted:
+    // there is nothing project-scoped to delete for an inherited name.
+    const ownRow = rows.find(r => r.dataset.secret === "BB_REPO_TOKEN_ONPREM");
+    if (!ownRow.querySelector("[data-set-secret]") || !ownRow.querySelector("[data-del-secret]")) {
+      fail("a project's own variable has no Save and Delete");
+    } else {
+      ok("replace and delete on each row");
+    }
+    const inhRow = rows.find(r => r.dataset.inherited);
+    if (inhRow.querySelector("[data-del-secret]")) {
+      fail("an inherited variable offers Delete, which would delete nothing");
+    }
+    if (!inhRow.querySelector("[data-set-secret]")) {
+      fail("an inherited variable cannot be overridden, which is the point of listing it");
+    }
+
+    // No value is ever rendered: nothing can read one back, so every field starts empty
+    // and masked. A populated box would be a lie about what is stored.
+    const filled = rows.flatMap(r => [...r.querySelectorAll("input")])
+      .filter(i => i.type !== "password" || i.value !== "");
+    if (filled.length) {
+      fail(`${filled.length} variable field(s) are unmasked or prefilled`);
+    } else {
+      ok("every field is masked and empty");
+    }
 
     // The value being typed is masked, and the name field carries no placeholder — a
     // greyed-out example in the name box reads as a value already entered.
@@ -502,9 +549,9 @@ console.log("\nadding a project queues its open pull requests");
 
 console.log("\nadding a variable");
 {
-  // Reopen the panel: the sections above left the page elsewhere, and a harness that
+  // Reopen the section: the sections above left the page elsewhere, and a harness that
   // depends on the previous section's leftover state breaks the moment one is inserted.
-  if (!$(".pcard .env")) await click($$(".pcard [data-tab=secrets]")[0]);
+  if (!$(".pcard .env")) await openSecrets($$(".pcard [data-secrets]")[0]);
   const key = "github/netfoundry/unified-doc";
   doc.getElementById(`s-env-${key}`).value = "BB_REPO_TOKEN_FRONTDOOR";
   doc.getElementById(`s-val-${key}`).value = "a-token-value";
@@ -520,15 +567,21 @@ console.log("\nadding a variable");
     else if (put.body?.value !== "a-token-value") fail("the value did not go with it");
     else ok(`PUT ${put.url}`);
   }
-  // The panel stays open across the refresh: the operator is usually adding several,
-  // and a panel that closed after each would be a click per token.
-  if (!$(".pcard .panel")) fail("the panel closed after adding a variable");
+  // The section stays open across the refresh: the operator is usually adding several,
+  // and one that closed after each would be a click per token. This is what the
+  // out-of-DOM open-state set is for — the page rebuilds its markup on every save.
+  const after = $$(".pcard [data-secrets]").find(d => d.dataset.secrets === key);
+  if (!after || !after.open) {
+    fail("the variables section collapsed after adding one");
+  } else {
+    ok("still expanded, ready for the next");
+  }
 }
 
 console.log("\nremoving a variable");
 {
   calls.length = 0;
-  await click($(".pcard .env button[data-del-secret]"));
+  await click($(".pcard [data-secret] [data-del-secret]"));
   const del = calls.find(c => c.method === "DELETE");
   if (!del) fail("Remove sent no request");
   else if (!del.url.endsWith("/secrets/BB_REPO_TOKEN_ONPREM")) fail(`DELETE ${del.url}`);
@@ -558,7 +611,7 @@ console.log("\ndisabling a project");
 console.log("\na failure is reported where it can be seen");
 {
   nextFails = "the vault is locked; unlock it at /secrets first";
-  await click($$(".pcard [data-tab=secrets]")[0]);
+  await openSecrets($$(".pcard [data-secrets]")[0]);
   const key = "github/netfoundry/unified-doc";
   doc.getElementById(`s-env-${key}`).value = "BB_REPO_TOKEN_ONPREM";
   doc.getElementById(`s-val-${key}`).value = "a-token-value";

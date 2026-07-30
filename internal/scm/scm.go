@@ -10,6 +10,9 @@ package scm
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -93,6 +96,37 @@ type Report struct {
 // signature on any other platform answered 400, which tells a caller probing for
 // a valid secret that its guess was structurally fine.
 var ErrBadSignature = errors.New("webhook signature verification failed")
+
+// VerifyHMACSHA256 checks header, of the form "sha256=<hex>", against the
+// HMAC-SHA256 of body keyed by secret.
+//
+// Here rather than in each platform's package because this was written twice
+// already — byte for byte, in the github and local clients — and Bitbucket would
+// have been the third place somebody could accidentally write `==` instead of
+// hmac.Equal. Both hosted platforms spell the *value* the same way; what they
+// disagree about is the header *name*, which stays the caller's business:
+// GitHub's `X-Hub-Signature` is a legacy SHA-1 digest while Bitbucket's
+// `X-Hub-Signature` is SHA-256, so a shared "find the signature header" helper
+// would be the bug this one avoids.
+//
+// A method other than sha256 is a verification failure, not an unknown to wave
+// through — Atlassian reserves the right to send something else, and an
+// accepted-but-unverified delivery is a build trigger.
+func VerifyHMACSHA256(secret, body []byte, header string) bool {
+	const prefix = "sha256="
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	want, err := hex.DecodeString(strings.TrimPrefix(header, prefix))
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(body)
+	// Constant time: a byte-at-a-time comparison leaks the expected digest to a
+	// caller willing to make a few thousand requests.
+	return hmac.Equal(mac.Sum(nil), want)
+}
 
 // Client is everything docpreview needs from one source-control platform.
 type Client interface {

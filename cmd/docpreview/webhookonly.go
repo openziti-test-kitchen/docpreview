@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -53,7 +55,12 @@ func cmdWebhookOnly(args []string) error {
 	fs := flag.NewFlagSet("webhook-only", flag.ExitOnError)
 	listen := fs.String("listen", "127.0.0.1:8481", "address to accept tunnelled requests on")
 	upstream := fs.String("upstream", "http://127.0.0.1:8471", "the docpreview daemon to forward to")
-	path := fs.String("path", "/webhook/github", "the single path to forward")
+	// Repeatable. One share can carry every platform's endpoint, which matters
+	// because a zrok name is a quota-bearing object and a second share means a second
+	// name, a second reap to get wrong, and a second URL to keep in step.
+	var paths pathList
+	fs.Var(&paths, "path",
+		"a path to forward; repeat for more than one (default /webhook/github)")
 	zrokName := fs.String("zrok-name", "",
 		"serve over a named public zrok share instead of a local port, e.g. -zrok-name docpreview")
 	zrokNamespace := fs.String("zrok-namespace", "",
@@ -101,26 +108,32 @@ func cmdWebhookOnly(args []string) error {
 
 	mux := http.NewServeMux()
 
-	// One route, method included in the pattern, so a GET to the same path is a
-	// 405 from the mux rather than something forwarded.
-	mux.HandleFunc("POST "+*path, func(w http.ResponseWriter, r *http.Request) {
-		log.Info("forwarding webhook", "remote", r.RemoteAddr, "delivery", r.Header.Get("X-GitHub-Delivery"))
-		proxy.ServeHTTP(w, r)
-	})
+	for _, p := range paths.values() {
+		// One route per path, method included in the pattern, so a GET to the same
+		// path is a 405 from the mux rather than something forwarded.
+		mux.HandleFunc("POST "+p, func(w http.ResponseWriter, r *http.Request) {
+			// Both delivery headers, because neither platform sends the other's and
+			// an empty field is cheaper than two log lines.
+			log.Info("forwarding webhook", "remote", r.RemoteAddr, "path", r.URL.Path,
+				"delivery", r.Header.Get("X-GitHub-Delivery"),
+				"request_uuid", r.Header.Get("X-Request-UUID"))
+			proxy.ServeHTTP(w, r)
+		})
 
-	// A GET on the webhook path gets 405 and a sentence, not a bare 404.
-	//
-	// The first thing anyone does with a webhook URL is paste it into a browser to
-	// check it, and a browser sends GET — so the useful answer is "right URL,
-	// wrong method". This leaks nothing that is not already discoverable: a POST
-	// to the real path answers 401 and a POST to anything else answers 404, so the
-	// path is distinguishable to anyone probing properly regardless.
-	mux.HandleFunc("GET "+*path, func(w http.ResponseWriter, r *http.Request) {
-		log.Debug("refused a GET on the webhook path", "remote", r.RemoteAddr)
-		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "this endpoint accepts signed POST deliveries only; "+
-			"there is nothing here to open in a browser", http.StatusMethodNotAllowed)
-	})
+		// A GET on a webhook path gets 405 and a sentence, not a bare 404.
+		//
+		// The first thing anyone does with a webhook URL is paste it into a browser to
+		// check it, and a browser sends GET — so the useful answer is "right URL,
+		// wrong method". This leaks nothing that is not already discoverable: a POST
+		// to the real path answers 401 and a POST to anything else answers 404, so the
+		// path is distinguishable to anyone probing properly regardless.
+		mux.HandleFunc("GET "+p, func(w http.ResponseWriter, r *http.Request) {
+			log.Debug("refused a GET on a webhook path", "remote", r.RemoteAddr, "path", r.URL.Path)
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "this endpoint accepts signed POST deliveries only; "+
+				"there is nothing here to open in a browser", http.StatusMethodNotAllowed)
+		})
+	}
 
 	// Everything else, including "/", answers 404 and says nothing about what is
 	// behind it. A tunnel URL gets scanned; there is no reason to confirm that a
@@ -158,8 +171,13 @@ func cmdWebhookOnly(args []string) error {
 		}
 		defer cleanup()
 
-		log.Info("webhook-only serving over zrok", "url", url, "forwards", "POST "+*path, "to", target.String())
-		log.Info("this is the webhook URL to give GitHub", "webhook", url+*path)
+		log.Info("webhook-only serving over zrok", "url", url,
+			"forwards", paths.describe(), "to", target.String())
+		// One line per path. This is the line an operator copies, so it says which
+		// platform each URL is for rather than making them work it out from the path.
+		for _, p := range paths.values() {
+			log.Info("this is the webhook URL to configure", "platform", platformOf(p), "webhook", url+p)
+		}
 
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			return err
@@ -173,7 +191,7 @@ func cmdWebhookOnly(args []string) error {
 	}
 
 	log.Info("webhook-only proxy listening",
-		"listen", ln.Addr().String(), "forwards", "POST "+*path, "to", target.String())
+		"listen", ln.Addr().String(), "forwards", paths.describe(), "to", target.String())
 	log.Info("point the tunnel here, not at the daemon",
 		"share", fmt.Sprintf("zrok2 share public --headless -b proxy http://%s", ln.Addr().String()))
 
@@ -337,6 +355,67 @@ func endpointLabelMatches(endpoints []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// pathList collects a repeatable -path flag.
+//
+// A flag.Value rather than a comma-separated string, because these are URL paths and
+// a separator inside a value is a parsing decision waiting to be got wrong.
+type pathList struct {
+	paths []string
+}
+
+func (p *pathList) String() string {
+	if p == nil || len(p.paths) == 0 {
+		return "/webhook/github"
+	}
+	return strings.Join(p.paths, ",")
+}
+
+func (p *pathList) Set(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return errors.New("a -path cannot be empty")
+	}
+	if !strings.HasPrefix(v, "/") {
+		return fmt.Errorf("-path %q must start with a slash", v)
+	}
+	// Duplicates are refused rather than deduplicated: registering the same pattern
+	// twice on a ServeMux panics, and a flag repeated by accident should say so
+	// rather than being quietly tidied up.
+	if slices.Contains(p.paths, v) {
+		return fmt.Errorf("-path %q was given twice", v)
+	}
+	p.paths = append(p.paths, v)
+	return nil
+}
+
+// values returns the paths, defaulting when none were given. The default lives here
+// rather than in the flag so that repeating -path *replaces* it instead of adding to
+// it — an operator forwarding only Bitbucket must not silently also publish GitHub's
+// endpoint.
+func (p *pathList) values() []string {
+	if len(p.paths) == 0 {
+		return []string{"/webhook/github"}
+	}
+	return p.paths
+}
+
+func (p *pathList) describe() string {
+	out := make([]string, 0, len(p.values()))
+	for _, v := range p.values() {
+		out = append(out, "POST "+v)
+	}
+	return strings.Join(out, ", ")
+}
+
+// platformOf names the platform a webhook path belongs to, for the log line an
+// operator copies the URL out of.
+func platformOf(path string) string {
+	if i := strings.LastIndex(path, "/"); i >= 0 && i < len(path)-1 {
+		return path[i+1:]
+	}
+	return "unknown"
 }
 
 func isLoopbackHost(host string) bool {

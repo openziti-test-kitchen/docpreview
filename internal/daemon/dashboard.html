@@ -143,10 +143,132 @@ input.control::placeholder { color: var(--muted) }
   padding: 0.6rem 0; border-top: 1px solid var(--hairline);
 }
 .sec:first-of-type { border-top: 0 }
+/* A collapsible group, drawn as a previews row.
+   These are the same gesture — a caret, a bold label, quieter detail beside it, click to
+   expand — so they are the same shape. The values below are `.item`/`.head`/`.who`'s,
+   copied rather than shared because those are built from a grid of five columns for a
+   preview's counts and pills, and this has two things in it. Copying three numbers is
+   cheaper than making one rule serve both and having a change to a preview row silently
+   move the credential page.
+
+   <details> rather than a button and a hidden div, because the element already has the
+   open/closed semantics, the keyboard behaviour and the accessible state. */
+.secbox {
+  border: 1px solid var(--ring); border-radius: 10px;
+  background: var(--surface); overflow: hidden;
+  margin-bottom: 1rem;
+}
+/* The stripe belongs to the whole group, not to its header.
+   On the summary it stopped at the header's bottom edge, so an expanded section's rows
+   hung off a three-pixel mark that had already ended — the colour said "this is a group"
+   and then abandoned the group's contents. */
+.secgroup-box {
+  border-top: 1px solid var(--hairline);
+  border-left: 3px solid var(--edge, var(--idle));
+}
+.secgroup-box:first-of-type { border-top: 0 }
+
+/* A colour each, and they are not arbitrary: green is what the rows inside Build
+   variables already use for their "set" and "build var" chips, so the stripe agrees with
+   them. Credentials take the amber that means "handle carefully" elsewhere on this page,
+   and the dead keys take the same grey as an idle preview. */
+.secgroup-box[data-group="daemon"] { --edge: var(--serious) }
+.secgroup-box[data-group="build"]  { --edge: var(--good) }
+.secgroup-box[data-group="unused"] { --edge: var(--idle) }
+
+/* Expanded, the whole section is washed with its own colour so the rows read as
+   belonging to the heading above them rather than as a list that happens to follow it.
+   Six percent: enough to group them, light enough that the row hairlines still show.
+
+   The plain declaration first is the fallback. color-mix is unsupported in older
+   engines, and an unparsed value drops its own declaration only — so this degrades to
+   the flat raised surface instead of to nothing. */
+.secgroup-box[open] {
+  background: var(--raised);
+  background: color-mix(in srgb, var(--edge) 6%, var(--surface));
+}
+.secgroup-box > summary {
+  cursor: pointer; list-style: none;
+  /* .head's own geometry: a 1.1rem caret column, then the label, then the badge. */
+  display: grid; grid-template-columns: 1.1rem minmax(0, 1fr) auto;
+  align-items: center; gap: 0.75rem;
+  padding: 0.62rem 0.9rem;
+}
+.secgroup-box > summary::-webkit-details-marker { display: none }
+/* ▶ (U+25B6), not ▸ (U+25B8). The second one is named "black right-pointing SMALL
+   triangle" and renders about half the size at the same font-size — which read as a
+   shrunken caret next to the previews rows using the first. The size below is shared
+   with .caret so the two lists keep matching. */
+.secgroup-box > summary::before {
+  content: "▶"; color: var(--muted); font-size: 0.85rem;
+  transition: transform 0.12s ease;
+}
+.secgroup-box[open] > summary::before { transform: rotate(90deg) }
+@media (prefers-reduced-motion: reduce) {
+  .secgroup-box > summary::before { transition: none }
+}
+.secgroup-box > summary:hover { background: var(--raised) }
+/* A shade stronger than the section it heads, so the header still reads as the header
+   once everything below it is tinted too. */
+.secgroup-box[open] > summary {
+  background: var(--raised);
+  background: color-mix(in srgb, var(--edge) 13%, var(--surface));
+  border-bottom: 1px solid var(--hairline);
+}
+/* Same weight and size as `.who .proj`. */
+.secgroup { font-weight: 600; font-size: 0.9rem; color: var(--ink) }
+/* The count reads like a branch label does — monospace, quieter than the name. Anything
+   *missing* uses the .flag off chip instead, which is loud on purpose. */
+.secgroup-n {
+  font: 12.5px/1.4 ui-monospace, Consolas, monospace; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Inside the expanded group, indented to the label column so the rows line up under the
+   name rather than under the caret. */
+.secgroup-why {
+  font-size: 0.76rem; color: var(--muted);
+  margin: 0 0 0.5rem; padding: 0 0.9rem 0 2.75rem; max-width: 52rem;
+}
+.secgroup-box .sec { padding: 0.6rem 0.9rem 0.6rem 2.75rem }
+
+/* The same control inside a project card. The card already provides the surrounding
+   border and padding, so this one drops the outer margin and sits flush at the bottom of
+   the card rather than floating in the middle of it. */
+.pcard-secrets { margin: 0.7rem 0 0 }
+.pcard-secrets-body { padding: 0 0.9rem 0.8rem 2.75rem }
+/* The chips and the add-form inside it are their own layout, so the .sec grid does not
+   apply — but the indent should still line up with the summary's label. */
+.pcard-secrets-body .grid-form { max-width: 44rem }
+/* The first row inside a group loses its top border: the summary above it is already a
+   separator, and two hairlines a line apart read as an empty row. */
+.secgroup-box .sec:first-of-type { border-top: 0 }
 .sec .name { font-weight: 600; font-size: 0.85rem }
 .sec .key { font: 11.5px/1.5 ui-monospace, Consolas, monospace; color: var(--muted) }
 .sec .hint { font-size: 0.76rem; color: var(--muted); margin-top: 0.15rem }
-.sec textarea, .sec input[type=password] {
+/* The new-entry row: two labelled boxes on one line.
+   Stacked, with a label over each, one entry was four lines tall and the Save button in
+   the next grid cell lined up with the first label instead of with anything it acts on.
+   Everything on one baseline fixes the height and the alignment together. */
+.newline { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap }
+.newline .lab {
+  flex: none; font-size: 0.7rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+/* The name is bounded — a variable name is short — and the value takes what is left. */
+.newline .nm { flex: 0 1 14rem; min-width: 8rem }
+/* The value field and its expand button travel together, in every place a value is
+   entered: the new-entry row and each existing variable's replace box. */
+.valwrap { display: flex; align-items: flex-start; gap: 0.3rem; flex: 1 1 12rem; min-width: 0 }
+.valwrap input, .valwrap textarea { flex: 1 1 auto; min-width: 0 }
+/* Square-ish, so it reads as a control on the field rather than another action beside
+   Save and Delete. */
+.btn.icon {
+  flex: none; padding: 0.2rem 0.4rem; line-height: 1.1;
+  font-size: 0.8rem;
+}
+/* type=text is in the list because the new-entry row's Name box is one. Without it that
+   field rendered as a bare browser input beside a styled value box. */
+.sec textarea, .sec input[type=password], .sec input[type=text] {
   font: 12.5px/1.5 ui-monospace, Consolas, monospace;
   width: 100%; background: var(--raised); color: var(--ink);
   border: 1px solid var(--ring); border-radius: 6px; padding: 0.4rem 0.5rem;
@@ -701,7 +823,9 @@ input.control::placeholder { color: var(--muted) }
 .head:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
 .item.open .row { background: var(--raised) }
 
-.caret { color: var(--muted); transition: transform 0.12s ease; font-size: 0.7rem }
+/* 0.85rem, matching the credential page's group caret. At 0.7rem this was a mark you
+   had to look for to find the control it belongs to. */
+.caret { color: var(--muted); transition: transform 0.12s ease; font-size: 0.85rem }
 .item.open .caret { transform: rotate(90deg) }
 @media (prefers-reduced-motion: reduce) { .caret { transition: none } }
 
@@ -2754,6 +2878,70 @@ async function api(method, path, body) {
   return data;
 }
 
+/* Which secret group is expanded — at most one, and none to begin with.
+
+   An accordion rather than independent toggles: these are three lists of the same shape,
+   and the question being answered is always "which kind am I looking at". Two open at
+   once puts a credential and a build variable back on one screen, which is the thing the
+   grouping exists to stop.
+
+   Held outside renderSetup because the panel rebuilds its markup on every save, so state
+   in the DOM does not survive an action taken inside it — collapse a group, save a token,
+   and it springs open again.
+
+   Not `<details name="...">`, which is the native accordion: it is recent enough that the
+   jsdom harness does not implement it, so the behaviour would be untestable here and
+   silently absent in an older browser. Nine lines of JavaScript work everywhere. */
+let secOpen = null;
+
+/* toggleExpand swaps a one-line value box for a multi-line one, and back.
+
+   A PEM is thirty lines and does not fit in an input, and the credential page already
+   special-cases `private_key` into a textarea by name — which only works for the keys this
+   code knows about. This is the same affordance for every value field, including a
+   project's own variables, where a certificate or a key is just as plausible.
+
+   The element is replaced rather than a second one being rendered hidden beside it: two
+   boxes for one value means deciding which is authoritative on every read, and the save
+   handlers would each have to know. Replacing keeps one field with one id.
+
+   An expanded box is **not masked**, because there is no multi-line masked control — a
+   textarea has no type=password. The button says so, and it is the reason expanding is a
+   deliberate action rather than the default. */
+function toggleExpand(id, btn) {
+  const el = document.getElementById(id);
+  if (!el) return;
+
+  const wasArea = el.tagName === "TEXTAREA";
+  const next = document.createElement(wasArea ? "input" : "textarea");
+  next.id = id;
+  next.className = el.className;
+  next.value = el.value;
+  next.autocomplete = "off";
+  next.spellcheck = false;
+  if (el.placeholder) next.placeholder = el.placeholder;
+  if (wasArea) {
+    next.type = "password";
+  } else {
+    next.rows = 8;
+  }
+  el.replaceWith(next);
+
+  btn.textContent = wasArea ? "⤢" : "⤡";
+  btn.title = wasArea
+    ? "Expand for a multi-line value. Note that an expanded box is not masked."
+    : "Collapse, and mask it again";
+  next.focus();
+}
+
+// wireExpanders is called by both pages: the control is the same on each, and the value
+// fields it applies to are rendered by three different functions.
+function wireExpanders(root) {
+  for (const b of root.querySelectorAll("[data-expand]")) {
+    b.onclick = () => toggleExpand(b.dataset.expand, b);
+  }
+}
+
 async function loadSetup() {
   try {
     renderSetup(await api("GET", "/api/secrets"));
@@ -2787,7 +2975,7 @@ function renderSetup(s) {
   // be refused.
   const ro = !s.can_write;
 
-  const rows = s.entries.map(e => {
+  const oneRow = e => {
     const flag = e.set
       ? `<span class="flag on">set</span>`
       : e.required ? `<span class="flag off">missing</span>`
@@ -2813,16 +3001,119 @@ function renderSetup(s) {
            redacted from every log. A project can override it.">build var</span>`
       : "";
 
-    return `<div class="sec">
+    // The vault key, only when it says something the label does not.
+    //
+    // A known credential has both — "GitHub App private key" over `github.private_key` —
+    // and the key is what `docpreview vault set` takes, so it is worth the line. A build
+    // variable's label *is* its key, and rendering both printed
+    // GH_ZITI_CI_REPO_ACCESS_PAT twice, one line under the other, on every row.
+    const key = e.label === e.key ? "" : `<div class="key">${esc(e.key)}</div>`;
+
+    // data-key regardless, so the harness can assert which group a key landed in without
+    // depending on whether that key is currently displayed.
+    return `<div class="sec" data-key="${esc(e.key)}">
       <div>
         <div class="name">${esc(e.label)} ${flag} ${injected}</div>
-        <div class="key">${esc(e.key)}</div>
+        ${key}
         ${e.hint ? `<div class="hint">${esc(e.hint)}</div>` : ""}
       </div>
       <div>${field}</div>
       <div class="act">${acts}</div>
     </div>`;
+  };
+
+  /* Two lists, not one, and the split is a security boundary rather than a tidiness
+     preference.
+
+     The daemon's own credentials — a GitHub App private key, a Bitbucket access token,
+     a webhook secret — are never given to a build. Everything in the second group is
+     handed to every build as an environment variable, where the pull request's own
+     script decides what to do with it. One flat list put those two kinds of thing three
+     rows apart with nothing to say which was which.
+
+     A group with no entries renders nothing at all: an empty "Build variables" heading
+     on a fresh install is a section somebody looks for content in. */
+  /* Which sections are open, remembered across renders.
+     The panel rebuilds its innerHTML on every save, so a <details open> attribute is
+     reset by any action taken inside it — collapse a section, save a token two sections
+     down, and it springs open again. Holding the state outside the markup is what makes
+     the control stick. */
+  const GROUPS = [
+    ["daemon", "Platform and exposer credentials",
+     "Used by docpreview itself to verify webhooks, clone, and comment. " +
+     "Never given to a build."],
+    ["build", "Build variables",
+     "Injected into every build as environment variables and redacted from every log. " +
+     "A project can override any of them with its own value."],
+    ["unused", "Nothing reads these",
+     "Stored, but no build and no part of this daemon looks at them."],
+  ];
+
+  /* Adding a value goes inside Build variables, as its last row.
+     It used to sit below the card under its own heading, which put the form for creating
+     a build variable outside the section that lists them — and made the page's last
+     control belong to nothing. Its name field decides which group the result lands in,
+     so the section that explains that rule is where it belongs.
+
+     Rendered even when that group is empty, which is a fresh install: a group that
+     vanished for having no entries would leave nowhere to add the first one. */
+  const addRow = ro ? "" : `
+    <div class="sec">
+      <div><div class="name">New entry</div></div>
+      <div class="newline">
+        <!-- Labels beside the boxes, not above them, and both boxes on one line.
+             Stacked with a label over each, one entry was four lines tall and the Save
+             button in the next grid cell sat level with the first label rather than with
+             anything it acts on. Inline labels put everything on one baseline.
+
+             Labelled rather than explained: the paragraph that used to be here said what
+             an UPPER_CASE name does and what happens to anything else — true, and already
+             stated under the group heading two lines above.
+
+             No placeholder on the name. A greyed-out example there reads as a value
+             already filled in, and this is the field where getting it wrong is silent:
+             the build looks for a variable that is not there. -->
+        <label class="lab" for="new-key">Name</label>
+        <input class="nm" type="text" id="new-key" autocomplete="off" spellcheck="false">
+        <label class="lab" for="new-val">Value</label>
+        <span class="valwrap">
+          <input type="password" id="new-val" autocomplete="off">
+          <button class="btn icon" data-expand="new-val"
+            title="Expand for a multi-line value — a PEM will not fit on one line. Note that an expanded box is not masked.">⤢</button>
+        </span>
+      </div>
+      <div class="act"><button class="btn" id="new-save">Save</button></div>
+    </div>`;
+
+  const rows = GROUPS.map(([group, title, why]) => {
+    // Anything the server did not label lands in the daemon group, which is the
+    // conservative default: a mislabelled build variable shown under credentials is
+    // confusing, and a credential shown under build variables is misleading.
+    const mine = s.entries.filter(e => (e.group || "daemon") === group);
+    const extra = group === "build" ? addRow : "";
+    if (!mine.length && !extra) return "";
+
+    // The summary carries what a collapsed section is hiding, which is what makes
+    // collapsed-by-default safe: a missing credential is the one fact this page exists to
+    // show, so the count of them is in the heading and visible without opening anything.
+    const missing = mine.filter(e => !e.set && e.required).length;
+    const badge = missing
+      ? `<span class="flag off">${missing} missing</span>`
+      : `<span class="secgroup-n">${mine.length}</span>`;
+
+    const open = secOpen === group;
+    return `<details class="secgroup-box" data-group="${esc(group)}"${open ? " open" : ""}>
+      <summary><span class="secgroup">${esc(title)}</span> ${badge}</summary>
+      <div class="secgroup-why">${esc(why)}</div>
+      ${mine.map(oneRow).join("")}
+      ${extra}
+    </details>`;
   }).join("");
+
+  // One bordered card holding the three sections, like the previews list holds its rows.
+  // Without it the group stripes float against the page background and the two lists stop
+  // looking like the same control.
+  const groups = rows ? `<div class="secbox">${rows}</div>` : "";
 
   // A minted value, shown exactly once. It is rendered above everything else
   // and consumed on render, so the next redraw loses it — which is the point:
@@ -2846,37 +3137,16 @@ function renderSetup(s) {
     ? `<div class="notice warn"><strong>Read-only from here.</strong> ${esc(s.read_only_why || "")}
        <p>Open the dashboard on the machine running docpreview, or use
        <code>docpreview vault set &lt;key&gt;</code> there.</p></div>`
+    // Shorter than it was: what each group is for now sits under its own heading, so
+    // repeating it here made the same paragraph appear twice on one screen.
     : `<div class="notice ok">Values are written to the age-encrypted vault. Nothing here reads one
        back — the only time a secret is visible is the moment you generate it. Changing a build
-       secret re-arms the log redactor immediately.
-       <p>An entry marked <span class="flag on">build var</span> is injected into every build
-       as that variable and redacted from every log; a project can override it with its own.
-       That is what an <code>UPPER_CASE</code> name means here.</p></div>`;
+       variable re-arms the log redactor immediately.</div>`;
 
   el.innerHTML = `
     ${once}
     ${banner}
-    ${rows}
-    ${ro ? "" : `<div class="sec">
-      <div><div class="name">Add another</div>
-        <!-- What the name decides, since it decides everything here: a shell-shaped name
-             is injected into every build under that name, and anything else is a key only
-             the daemon's own config can reach. That rule used to be invisible, and six
-             tokens were stored in the belief that storing them was enough. -->
-        <div class="hint">An <code>UPPER_CASE</code> name is injected into every build as
-          that variable. Anything else is only read if <code>build.secrets</code> names
-          it.</div></div>
-      <div>
-        <!-- No placeholder. A greyed-out example in the *name* box reads as a value
-             already filled in, and this is the field where getting it wrong is silent:
-             the build looks for a variable that is not there and falls back to whatever
-             its script does without one. -->
-        <input type="text" id="new-key" autocomplete="off" spellcheck="false"
-               aria-label="Name" style="width:100%;margin-bottom:0.35rem">
-        <input type="password" id="new-val" autocomplete="off" aria-label="Value">
-      </div>
-      <div class="act"><button class="btn" id="new-save">Save</button></div>
-    </div>`}`;
+    ${groups}`;
 
   const copy = document.getElementById("once-copy");
   if (copy) {
@@ -2890,6 +3160,29 @@ function renderSetup(s) {
       // fallback that always works.
       try { await navigator.clipboard.writeText(field.value); copy.textContent = "Copied"; }
       catch { copy.textContent = "Press Ctrl+C"; }
+    };
+  }
+
+  // Accordion: opening one closes the rest, and the choice is remembered.
+  //
+  // Closing the siblings directly rather than re-rendering, because a re-render inside a
+  // toggle handler would replace the element that fired it — and would throw away
+  // whatever had been typed into a field in another section.
+  wireExpanders(el);
+
+  for (const d of el.querySelectorAll(".secgroup-box")) {
+    d.ontoggle = () => {
+      if (!d.open) {
+        // Only clear the remembered group if this is still the open one. A close
+        // triggered by the loop below arrives after the new group was recorded, and
+        // clearing then would collapse the section that was just opened.
+        if (secOpen === d.dataset.group) secOpen = null;
+        return;
+      }
+      secOpen = d.dataset.group;
+      for (const other of el.querySelectorAll(".secgroup-box")) {
+        if (other !== d) other.open = false;
+      }
     };
   }
 
@@ -3215,9 +3508,6 @@ function projectCard(p, s, ro) {
       <span class="grow"></span>
       ${ro ? "" : `<button class="btn" data-tab="build" data-key="${esc(key)}"
           aria-pressed="${open === "build"}">Edit</button>
-        <button class="btn" data-tab="secrets" data-key="${esc(key)}"
-          aria-pressed="${open === "secrets"}">Secrets${
-            p.secrets.length ? ` (${p.secrets.length})` : ""}</button>
         <!-- Queues a build for every open pull request on this repository, which is the
              same thing adding a project does. It exists because the answer to "I changed
              the image, now what" was to wait for somebody to push. -->
@@ -3228,7 +3518,7 @@ function projectCard(p, s, ro) {
     ${projectFacts(p)}
     ${p.notes ? `<div class="hint pcard-notes">${esc(p.notes)}</div>` : ""}
     ${open === "build" ? `<div class="panel">${projectForm(s, p)}</div>` : ""}
-    ${open === "secrets" ? `<div class="panel">${secretsPanel(p, s)}</div>` : ""}
+    ${secretsSection(p, s)}
   </div>`;
 }
 
@@ -3376,6 +3666,50 @@ function projectFacts(p) {
 // Names only, never values — the same rule as the credential page, and for the same
 // reason: this payload is readable from anywhere the dashboard is, while writing it
 // is loopback-only.
+/* Which projects have their variables expanded, by key.
+
+   A set rather than a single value: this is a list of projects, and collapsing the one
+   you were reading in order to look at another one's tokens is a worse trade here than on
+   the credential page, where the three sections are three views of the same thing.
+
+   Outside the render because the page rebuilds its markup on every save — the same reason
+   the credential page holds its accordion state outside the DOM. */
+const projSecretsOpen = new Set();
+
+/* secretsSection is the project's own environment variables, as an accordion.
+
+   It was a `Secrets` button beside `Edit`, which made a project's tokens a *mode* the
+   card had to be switched into — and the two modes were mutually exclusive, so checking
+   a variable meant leaving the form. Same styling as the credential page's groups, and
+   the same green stripe, because these are the same kind of thing: values injected into
+   a build. A reader who has seen one page knows what this is. */
+function secretsSection(p, s) {
+  const key = projectKey(p);
+  const own = (p.secrets || []).length;
+  const inherited = (s.global_secrets || []).filter(g => !(p.secrets || []).includes(g)).length;
+
+  // What the collapsed summary has to carry: a project with none of its own but several
+  // inherited is not the same as a project with nothing, and only one of those means a
+  // build is about to fail for a missing token.
+  const count = own
+    ? `${own} of its own${inherited ? `, ${inherited} inherited` : ""}`
+    : inherited ? `${inherited} inherited` : "none";
+
+  return `<div class="secbox pcard-secrets">
+    <details class="secgroup-box" data-group="build" data-secrets="${esc(key)}"${
+      projSecretsOpen.has(key) ? " open" : ""}>
+      <summary>
+        <span class="secgroup">Environment variables</span>
+        <span class="secgroup-n">${esc(count)}</span>
+      </summary>
+      <div class="secgroup-why">Injected into every build of this repository and redacted
+        from every build log. This is how a build clones another private repository — the
+        value is a token, the name is whatever the build script looks for.</div>
+      <div class="pcard-secrets-body">${secretsPanel(p, s)}</div>
+    </details>
+  </div>`;
+}
+
 function secretsPanel(p, s) {
   if (!s.secrets_available) {
     return `<div class="notice">This daemon has no credential store wired, so a project
@@ -3387,41 +3721,77 @@ function secretsPanel(p, s) {
   }
 
   const key = projectKey(p);
-  const mine = (p.secrets || []).map(env =>
-    `<span class="env">${esc(env)}<button title="Remove ${esc(env)}"
-      data-del-secret="${esc(env)}" data-key="${esc(key)}">✕</button></span>`).join("");
 
-  // Inherited names are shown greyed rather than omitted, because "this project has
-  // no variables" and "this project has none of its own" look identical otherwise
-  // and only one of them means a build is about to fail for a missing token.
-  const inherited = (s.global_secrets || []).filter(g => !(p.secrets || []).includes(g)).map(g =>
-    `<span class="env inherited" title="from the server config, every project gets it">${
-      esc(g)}</span>`).join("");
+  /* One row per variable, in the credential page's shape: name and chips on the left, a
+     masked field in the middle, its actions on the right.
 
-  return `<h3>Environment variables for this project</h3>
-    <div class="hint">Injected into every build of this repository and redacted from every
-      build log. This is how a build clones another private repository — the value is a
-      token, the name is whatever the build script looks for.</div>
-    ${mine || inherited ? `<div class="envs">${mine}${inherited}</div>`
-      : `<div class="hint">None yet.</div>`}
-    <div class="grid-form" style="margin-top:0.6rem">
-      <div class="field">
-        <label for="s-env-${esc(key)}">Name</label>
-        <!-- No placeholder. A greyed-out BB_REPO_TOKEN_ONPREM in the box read as a
-             value already entered, and the field it names is the one where getting it
-             wrong is silent: the build looks for a variable that is not there. -->
-        <input class="control" id="s-env-${esc(key)}" autocomplete="off" spellcheck="false">
+     This was a row of chips with an ✕ and a two-field form below it, which meant the only
+     thing you could do to an existing variable was delete it — replacing a rotated token
+     was delete-then-retype-the-name. The row layout gets replace, delete and the name in
+     one line each, and matches /secrets so the two pages are one control.
+
+     No value is ever rendered. The field is always empty and always a password input:
+     nothing can read a value back, so a box that showed one would be lying. */
+  const row = (env, own) => {
+    const id = `pv-${key}-${env}`;
+    const chips = own
+      ? `<span class="flag on">set</span><span class="flag on">build var</span>`
+      // Inherited names are listed rather than omitted, because "this project has no
+      // variables" and "this project has none of its own" look identical otherwise and
+      // only one of them means a build is about to fail for a missing token.
+      : `<span class="flag opt">inherited</span>`;
+
+    return `<div class="sec" data-secret="${esc(env)}"${own ? "" : ` data-inherited="1"`}>
+      <div>
+        <div class="name">${esc(env)} ${chips}</div>
+        ${own ? "" : `<div class="hint">From the server config, so every project gets it.
+          Saving a value here overrides it for this project only.</div>`}
       </div>
-      <div class="field">
-        <label for="s-val-${esc(key)}">Value</label>
-        <input class="control" id="s-val-${esc(key)}" type="password" autocomplete="off">
-        <div class="why">Masked here, never returned by the API, and replaced with
-          asterisks in every build log. Nothing can read it back — removing it means
-          finding the token again wherever it came from.</div>
+      <div class="valwrap">
+        <input type="password" id="${esc(id)}" autocomplete="off"
+          placeholder="${own ? "paste to replace" : "paste to override"}">
+        <button class="btn icon" data-expand="${esc(id)}"
+          title="Expand for a multi-line value. Note that an expanded box is not masked.">⤢</button>
       </div>
-    </div>
-    <div class="act" style="margin-top:0.5rem">
-      <button class="btn" data-add-secret="${esc(key)}">Add variable</button>
+      <div class="act">
+        <button class="btn" data-set-secret="${esc(env)}" data-key="${esc(key)}"
+          data-field="${esc(id)}">Save</button>
+        ${own ? `<button class="btn" data-del-secret="${esc(env)}"
+          data-key="${esc(key)}">Delete</button>` : ""}
+      </div>
+    </div>`;
+  };
+
+  const own = (p.secrets || []).map(env => row(env, true)).join("");
+  const inherited = (s.global_secrets || [])
+    .filter(g => !(p.secrets || []).includes(g))
+    .map(g => row(g, false)).join("");
+
+  // No heading and no lead paragraph: the accordion summary above is the heading, and
+  // the sentence explaining what these are lives beside it. Both were here first, and
+  // together they repeated themselves twice inside one card.
+  return `${own}${inherited}
+    <div class="sec">
+      <div><div class="name">New entry</div></div>
+      <div class="newline">
+        <!-- One line, inline labels, matching the credential page. What these are for is
+             stated once, in the accordion summary above.
+
+             No placeholder on the name: a greyed-out BB_REPO_TOKEN_ONPREM read as a value
+             already entered, and this is the field where getting it wrong is silent — the
+             build looks for a variable that is not there. -->
+        <label class="lab" for="s-env-${esc(key)}">Name</label>
+        <input class="nm" id="s-env-${esc(key)}" autocomplete="off" spellcheck="false">
+        <label class="lab" for="s-val-${esc(key)}">Value</label>
+        <span class="valwrap">
+          <input id="s-val-${esc(key)}" type="password" autocomplete="off">
+          <button class="btn icon" data-expand="s-val-${esc(key)}"
+            title="Expand for a multi-line value — a PEM will not fit on one line. Note that an expanded box is not masked.">⤢</button>
+        </span>
+      </div>
+      <div class="act">
+        <button class="btn" data-add-secret="${esc(key)}">Add variable</button>
+      </div>
     </div>`;
 }
 
@@ -3889,6 +4259,18 @@ function wireProjectHandlers(s) {
     };
   }
 
+  // The variables accordion, remembered per project. Not an accordion across cards:
+  // collapsing the project you were reading in order to look at another one's tokens is
+  // a worse trade here than on the credential page.
+  wireExpanders(el);
+
+  for (const d of el.querySelectorAll("[data-secrets]")) {
+    d.ontoggle = () => {
+      if (d.open) projSecretsOpen.add(d.dataset.secrets);
+      else projSecretsOpen.delete(d.dataset.secrets);
+    };
+  }
+
   for (const b of el.querySelectorAll("[data-save]")) {
     b.onclick = async () => {
       const key = b.dataset.save;
@@ -4019,6 +4401,27 @@ function wireProjectHandlers(s) {
       const env = val(`s-env-${key}`), value = val(`s-val-${key}`);
       if (!env || !value) {
         alert("a name and a value are both required");
+        return;
+      }
+      await runProject(b, async () =>
+        api("PUT", `${projectPath(key)}/secrets/${encodeURIComponent(env)}`, {value}));
+    };
+  }
+
+  // Replacing one variable's value, or overriding an inherited one. Same PUT as adding:
+  // the endpoint is an upsert, so a name that already exists is a replacement and one
+  // that does not is a new project-scoped variable — which is exactly what overriding a
+  // server-wide value is.
+  for (const b of el.querySelectorAll("[data-set-secret]")) {
+    b.onclick = async () => {
+      const env = b.dataset.setSecret, key = b.dataset.key;
+      const field = document.getElementById(b.dataset.field);
+      const value = field ? field.value : "";
+      if (!value) {
+        // Not a toast: an empty box is not a failed request, it is a button pressed
+        // before anything was typed, and the answer belongs beside the box.
+        alert(`Paste a value for ${env} first. Nothing can read the current one back, so ` +
+          `there is nothing to edit — a save replaces it outright.`);
         return;
       }
       await runProject(b, async () =>

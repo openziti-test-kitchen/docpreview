@@ -179,6 +179,25 @@ type secretsState struct {
 	Entries   []secretView `json:"entries"`
 }
 
+// Secret groups, which are a security boundary and not a display preference.
+//
+// GroupDaemon holds what docpreview uses to talk to a platform or an exposer: a
+// GitHub App private key, a Bitbucket access token, a webhook secret. **None of them
+// ever reaches a build.** GroupBuild is the opposite — every one of those is injected
+// into every build as an environment variable and is readable by whatever the pull
+// request's own build script chooses to do.
+//
+// One flat list put a GitHub App private key three rows above a Docusaurus API key
+// with nothing between them, which is how six tokens came to be stored in the belief
+// that storing them was enough. The rule that separates them is
+// vault.IsBuildEnvKey: shell-shaped names are build variables, dotted names are the
+// daemon's own.
+const (
+	GroupDaemon = "daemon"
+	GroupBuild  = "build"
+	GroupUnused = "unused"
+)
+
 // secretView is one row: what it is for, and whether it is set.
 type secretView struct {
 	Key      string `json:"key"`
@@ -188,6 +207,11 @@ type secretView struct {
 	Required bool   `json:"required"`
 	// EnvVar is set for build secrets: the variable this value is injected as.
 	EnvVar string `json:"env_var,omitempty"`
+
+	// Group is which section this row belongs in. See the constants above: the
+	// distinction is what reads the value, which is why it comes from the server
+	// rather than being guessed at from the key's shape by the page.
+	Group string `json:"group"`
 }
 
 // snapshot describes the vault for the given request.
@@ -235,7 +259,7 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 	for _, k := range knownKeys() {
 		st.Entries = append(st.Entries, secretView{
 			Key: k.key, Set: have[k.key], Label: k.label, Hint: k.hint,
-			Required: k.required(a.cfg),
+			Required: k.required(a.cfg), Group: GroupDaemon,
 		})
 		delete(have, k.key)
 	}
@@ -251,7 +275,8 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 		key := a.cfg.Build.Secrets[env]
 		st.Entries = append(st.Entries, secretView{
 			Key: key, Set: have[key], Label: env, Required: true, EnvVar: env,
-			Hint: "injected into every build as " + env + ", and redacted from every log",
+			Group: GroupBuild,
+			Hint:  "injected into every build as " + env + ", and redacted from every log",
 		})
 		delete(have, key)
 	}
@@ -269,7 +294,7 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 	}
 	sort.Strings(rest)
 	for _, k := range rest {
-		view := secretView{Key: k, Set: true, Label: k}
+		view := secretView{Key: k, Set: true, Label: k, Group: GroupBuild}
 		if vault.IsBuildEnvKey(k) {
 			// EnvVar alone. The page turns this into a one-word chip and states the rule
 			// once above the list: as a per-row sentence it wrapped to three lines on every
@@ -277,7 +302,10 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 			view.EnvVar = k
 		} else {
 			// Not shell-shaped, not mapped by build.secrets, and not one of the known
-			// keys: nothing reads it. Better said than left looking configured.
+			// keys: nothing reads it. Better said than left looking configured — and
+			// its own section, because a dead key listed among live ones is the thing
+			// somebody skims past.
+			view.Group = GroupUnused
 			view.Hint = "nothing on this daemon reads this key. A build variable has to be " +
 				"named like one — upper case, digits and underscore."
 		}
@@ -302,8 +330,33 @@ func knownKeys() []knownKey {
 		{vault.KeyFrontdoorToken, "Frontdoor API token",
 			"only for exposer.kind: frontdoor",
 			func(c config.Server) bool { return c.Exposer.Kind == "frontdoor" }},
+
+		// Bitbucket. Listed even when it is not enabled, so the Generate button for
+		// the webhook secret exists before the operator has committed to the config —
+		// the secret has to be generated *first* and pasted into Bitbucket's form,
+		// and a key that is not listed has no button.
+		{vault.KeyBitbucketHookSec, "Bitbucket webhook secret",
+			"generate it here, then paste the same value into Repository settings → Webhooks",
+			usingBitbucket},
+		{vault.KeyBitbucketAccessToken, "Bitbucket access token",
+			"a repository, project or workspace access token — scopes: repository, pullrequest:write",
+			func(c config.Server) bool {
+				return usingBitbucket(c) && c.Bitbucket.Auth != config.BitbucketAuthAPIToken
+			}},
+		{vault.KeyBitbucketEmail, "Bitbucket account email",
+			"only for bitbucket.auth: api_token — the account the API token belongs to",
+			func(c config.Server) bool {
+				return usingBitbucket(c) && c.Bitbucket.Auth == config.BitbucketAuthAPIToken
+			}},
+		{vault.KeyBitbucketAPIToken, "Bitbucket API token",
+			"only for bitbucket.auth: api_token",
+			func(c config.Server) bool {
+				return usingBitbucket(c) && c.Bitbucket.Auth == config.BitbucketAuthAPIToken
+			}},
 	}
 }
+
+func usingBitbucket(c config.Server) bool { return c.Bitbucket.Enabled }
 
 // Handler routes the secrets API.
 //
