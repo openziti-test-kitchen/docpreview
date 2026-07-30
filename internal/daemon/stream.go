@@ -271,20 +271,27 @@ func (i *Ingress) streamLog(w http.ResponseWriter, r *http.Request) {
 		}
 		sse.event("done", map[string]any{"build_id": meta.BuildID, "live": false})
 
-		// Then wait, rather than ending the connection.
+		// Then wait — but only when a build is actually coming.
 		//
-		// This is what makes Rebuild show its own build. The stream used to return here,
-		// so a build starting a moment later — which is exactly what happens when somebody
-		// presses Rebuild, since the job is queued first and claimed by a worker a second
-		// or two afterwards — had nobody listening. The pane sat on the previous build's log
-		// under a banner saying nothing was running, until the row was collapsed and
-		// reopened.
+		// This is what makes Rebuild show its own build. The stream used to return here, so
+		// a build starting a moment later — which is exactly what Rebuild does, since the
+		// job is queued first and claimed by a worker a second or two afterwards — had
+		// nobody listening. The pane sat on the previous build's log under a banner saying
+		// nothing was running, until the row was collapsed and reopened.
 		//
-		// Fixed here rather than in the page, because the page cannot win this race: it
-		// connects, learns "not live", and has no way to know when that stops being true
-		// except by reconnecting on a guess. The server knows precisely.
-		var found *buildlog.Writer
-		if found = i.awaitLive(ctx, previewID); found == nil {
+		// Fixed here rather than in the page, because the page cannot win that race: it
+		// connects, learns "not live", and cannot know when that stops being true except by
+		// reconnecting on a guess. The server knows precisely.
+		//
+		// Conditional on Expecting, because closing is right for the other case: a tab
+		// opening the log of yesterday's failure must not hold a connection open for a
+		// build that is never going to happen. `TestStreamLogReplaysAFinishedBuild` is that
+		// case, and it caught this change waiting unconditionally.
+		if !i.daemon.Expecting(ctx, previewID) {
+			return
+		}
+		found := i.awaitLive(ctx, previewID)
+		if found == nil {
 			return // the client went away, or the context ended
 		}
 		live = found
@@ -457,6 +464,14 @@ func (i *Ingress) listLogs(w http.ResponseWriter, r *http.Request) {
 		// created. It is what lets the picker offer an Open per build instead of one
 		// Open per row pointing at whatever is newest.
 		URL string `json:"url,omitempty"`
+
+		// Seconds the build took, zero while it is running or when it never finished.
+		//
+		// Computed from the row's own timestamps rather than stored: both are already
+		// there, and a third field recording their difference is a third thing to keep
+		// in step. Seconds because the picker renders "2m14s" from it and nothing here
+		// cares about milliseconds.
+		Seconds int `json:"seconds,omitempty"`
 	}
 	out := make([]logView, 0, len(metas))
 	for _, m := range metas {
@@ -466,6 +481,11 @@ func (i *Ingress) listLogs(w http.ResponseWriter, r *http.Request) {
 		// needed here.
 		if b, ok := outcomes[m.BuildID]; ok {
 			v.State, v.Reason, v.URL = b.State, b.Reason, b.URL
+			if !b.FinishedAt.IsZero() && !b.StartedAt.IsZero() {
+				if d := b.FinishedAt.Sub(b.StartedAt); d > 0 {
+					v.Seconds = int(d.Seconds())
+				}
+			}
 		}
 		out = append(out, v)
 	}

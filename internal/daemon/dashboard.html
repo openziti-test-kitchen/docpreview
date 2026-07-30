@@ -348,11 +348,23 @@ input.control::placeholder { color: var(--muted) }
    page already means a build that is not going to finish, which is what this makes. */
 .btn.danger { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 40%, var(--ring)) }
 .btn.danger:hover { border-color: var(--critical) }
-/* Arrives with the render that follows a save. No animation on the way in: it appears
-   where the form was, which is where the eye already is. */
-.flash-note { animation: fadeout 6s ease-in forwards }
-@keyframes fadeout { 0%, 80% { opacity: 1 } 100% { opacity: 0 } }
-@media (prefers-reduced-motion: reduce) { .flash-note { animation: none } }
+/* Toasts. Fixed, so nothing in the document moves when one appears — a banner that pushes
+   a list down is its own small confusion, and the list is what somebody is reading. */
+#toasts {
+  position: fixed; z-index: 60; top: 0.9rem; right: 0.9rem;
+  display: flex; flex-direction: column; gap: 0.4rem; pointer-events: none;
+}
+.toast {
+  background: var(--ink); color: var(--plane);
+  font-size: 0.82rem; font-weight: 500;
+  padding: 0.5rem 0.75rem; border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  max-width: 22rem;
+  animation: toastin 140ms ease-out, fadeout 5s ease-in forwards;
+}
+@keyframes toastin { from { opacity: 0; transform: translateY(-0.4rem) } to { opacity: 1 } }
+@keyframes fadeout { 0%, 82% { opacity: 1 } 100% { opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none } }
 /* Column 2, like .why. Without this it was a third child of a two-column grid, so it
    wrapped into the *label* column of the next row — docker's error rendered where a
    field name belongs, in 0.74rem, which is how "errors:" ended up looking like a
@@ -431,8 +443,11 @@ input.control::placeholder { color: var(--muted) }
      misaligned one. */
   min-width: 5.6rem;
   justify-content: center;
+  gap: 0.3rem;
   font-variant-numeric: tabular-nums;
 }
+.row .go.pr svg { flex: none; opacity: 0.75 }
+.row .go.pr:hover svg { opacity: 1 }
 .row .go.pr:hover { color: var(--ink-2) }
 /* An anchor with no href is not a link, which is the wanted state before a
    build has produced anything. Styling follows from that fact rather than from
@@ -942,6 +957,17 @@ const ago = iso => {
 };
 const clock = iso => new Date(iso).toLocaleTimeString([], {hour12: false});
 
+/* secs renders a duration. Minutes and seconds rather than a bare count, because the
+   numbers that matter here are a warm install at 40s and a cold one at 6m20s, and "380s"
+   makes the reader do the division. */
+const secs = n => {
+  n = Math.max(0, Math.round(Number(n) || 0));
+  if (n < 60) return `${n}s`;
+  const m = Math.floor(n / 60);
+  const s = n % 60;
+  return s ? `${m}m${s}s` : `${m}m`;
+};
+
 const project = p => String(p.repo || "").split("/").pop() || "unknown";
 
 
@@ -979,6 +1005,9 @@ const ui = {
   status: {},
   logSource: null,
   logFor: null,       // preview id the open stream belongs to
+  // The preview timestamp a reconnect was last done for, so it happens once per transition.
+  // See updateBody.
+  reconnectedAt: null,
 };
 
 // Inline SVG rather than an icon font or an emoji. A font is a network request
@@ -1387,12 +1416,32 @@ function updateRowPR(a, p) {
     a.hidden = true;
     return;
   }
+  const platform = String(p.repo).split(":")[0];
   a.hidden = false;
   a.href = url;
   a.target = "_blank";
   a.rel = "noreferrer";
-  a.textContent = `#${p.number} ↗`;
-  a.title = `Open pull request #${p.number} on ${String(p.repo).split(":")[0]}`;
+  // The platform's own mark, so which host a pull request is on is readable without
+  // parsing the URL — which matters the moment one dashboard watches both.
+  a.innerHTML = `${platformIcon(platform)}<span>#${p.number}</span>`;
+  a.title = `Open pull request #${p.number} on ${platform}`;
+}
+
+/* Inline SVG, one path each, currentColor.
+
+   Not an icon font and not an image: this page fetches nothing from the internet, and a
+   remote logo would announce every open dashboard to whoever hosts it. Both marks are the
+   official simple-icons paths, which are the shapes people recognise at 14px — a generic
+   "link" glyph would carry none of the information this is for. */
+const ICON_GITHUB = `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"
+  fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7 0-.7 0-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a12.4 12.4 0 0 1 6 0C16.4 3 17.4 3.3 17.4 3.3c.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>`;
+const ICON_BITBUCKET = `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"
+  fill="currentColor"><path d="M.8 1.1A.8.8 0 0 0 0 2l3.3 19.8c.1.5.5.8 1 .8h15.7c.4 0 .7-.3.8-.7l3.2-19.9a.8.8 0 0 0-.8-.9zm13.6 14.3H9.7L8.4 8.6h7.2z"/></svg>`;
+
+function platformIcon(platform) {
+  if (platform === "github") return ICON_GITHUB;
+  if (platform === "bitbucket") return ICON_BITBUCKET;
+  return "";
 }
 
 // The preview link belongs on the row, not inside the expanded panel: opening
@@ -1587,13 +1636,21 @@ function updateBody(item, g) {
   // Cancel, only while this preview is actually building. The state comes from the same
   // status payload the row is drawn from, so the button appears and disappears with the
   // row's own pill rather than on its own schedule.
-  // No reconnect-on-transition here, deliberately.
+  // Reconnect when this preview starts building under a pane showing something else.
   //
-  // Three attempts at making the page notice a build starting under it all failed the same
-  // way: the stream says live-or-replay once, at connect, and the page cannot know when
-  // that stopped being true except by reconnecting on a guess. It is now the server's job —
-  // /logs/{preview}/stream replays history and then *waits* for a build rather than closing
-  // (see Ingress.awaitLive), so the same connection announces the new build itself.
+  // The server does the load-bearing half: a stream opened while a build is queued waits
+  // and announces it (Ingress.awaitLive), which is the Rebuild case and is deterministic.
+  // This covers the other one — a *push* arriving while somebody has a finished build's
+  // log open, where the stream closed at connect because nothing was coming yet.
+  //
+  // Guarded by the preview's own updated_at so it fires once per transition rather than on
+  // every status tick: openLog's start event may arrive after the next tick, and a
+  // condition that stayed true would reconnect in a loop.
+  if (p.state === "building" && ui.logFor === p.preview_id && !ui.build[p.preview_id] &&
+      ui.banner?.kind !== "live" && ui.reconnectedAt !== p.updated_at) {
+    ui.reconnectedAt = p.updated_at;
+    openLog(p.preview_id);
+  }
   //
   // Queued counts as cancellable. A queued build has no context to cancel, so the daemon
   // takes it out of the queue instead — and a queue that cannot be emptied is the case
@@ -1883,9 +1940,13 @@ function updateBuildPicker(previewID) {
   // while it runs, so reading it as a file would show a truncated copy that never
   // updates.
   const current = ui.build[previewID] || "";
+  // How long each build took, beside its outcome. The relative age answers "when", and
+  // "how long" is the other half of the question anybody asks after watching a package
+  // install for four minutes — and it is the number that shows a cache going cold.
   sel.innerHTML = builds.map((b, i) =>
     `<option value="${i === 0 ? "" : esc(b.build_id)}">` +
     `${buildIcon(b)} ${esc(buildLabel(b))} · ${esc(b.build_id)} · ${ago(b.mod_time)} ago` +
+    `${b.seconds ? ` · took ${esc(secs(b.seconds))}` : ""}` +
     `</option>`).join("");
   sel.value = current;
 
@@ -2793,6 +2854,30 @@ let formDirty = false;
    in another panel. */
 let projFlash = "";
 
+/* toast says something happened, over the page rather than in it.
+
+   An inline notice was the first attempt and it was too easy to miss: it landed where the
+   form had been, which is where the form no longer is, so the eye had already moved. This
+   sits in a fixed corner, outside the document flow, so nothing below it shifts — a banner
+   that pushes a list down is its own small confusion.
+
+   Detached from any render. The element removes itself on a timer, because clearing it by
+   re-rendering would throw away whatever somebody had started typing in another panel. */
+function toast(text) {
+  let host = document.getElementById("toasts");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "toasts";
+    document.body.appendChild(host);
+  }
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.textContent = text;
+  host.appendChild(t);
+  // Long enough to read a sentence, and it does not block anything while it is there.
+  setTimeout(() => t.remove(), 5000);
+}
+
 // confirmDiscard asks before throwing away unsaved edits, and returns whether to go on.
 function confirmDiscard() {
   if (!formDirty) return true;
@@ -2837,14 +2922,8 @@ function renderProjectsPage(s) {
 
   // Read once and cleared, so it cannot reappear on an unrelated render.
   if (projFlash) {
-    const n = document.createElement("div");
-    n.className = "notice ok flash-note";
-    n.textContent = projFlash;
+    toast(projFlash);
     projFlash = "";
-    el.prepend(n);
-    // Long enough to read, short enough not to become furniture. Removed from the DOM
-    // rather than by a re-render, which would discard typing elsewhere on the page.
-    setTimeout(() => n.remove(), 6000);
   }
 
   // Wired unconditionally: with no write access there are no buttons to wire, and a

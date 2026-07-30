@@ -420,10 +420,13 @@ console.log("\nsaving an edit closes the form and says so");
   if ($(".pcard .panel")) {
     fail("the form is still open after saving, which looks identical to nothing happening");
   }
-  const note = $("#projects-body .notice.ok");
+  // A toast, over the page. An inline notice landed where the form used to be — which is
+  // where the eye has already stopped looking — so a successful save read as nothing
+  // happening.
+  const note = $("#toasts .toast");
   if (!note || !note.textContent.includes("Saved")) {
     fail(`no confirmation after saving: ${JSON.stringify(note?.textContent || null)}`);
-  } else ok(`closed, and said ${JSON.stringify(note.textContent.trim())}`);
+  } else ok(`closed, and toasted ${JSON.stringify(note.textContent.trim())}`);
 
   // An edit must not scan: the pull requests are already known to the daemon, and
   // re-queueing every one of them on every settings tweak would rebuild the world.
@@ -444,9 +447,9 @@ console.log("\nBuild now");
   } else ok(`POST ${scan.url}`);
 
   // And it says what happened, since queueing is invisible from this page.
-  const note = $("#projects-body .notice.ok");
-  if (!note) fail("Build now reported nothing");
-  else ok(`said ${JSON.stringify(note.textContent.trim().slice(0, 48))}`);
+  const notes = $$("#toasts .toast");
+  if (!notes.length) fail("Build now reported nothing");
+  else ok(`toasted ${JSON.stringify(notes[notes.length - 1].textContent.trim().slice(0, 48))}`);
 }
 
 console.log("\nunsaved edits are not thrown away silently");

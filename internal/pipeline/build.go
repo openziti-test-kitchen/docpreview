@@ -213,6 +213,24 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 	default:
 		out, err = b.buildLocal(ctx, ws, buildDir, cfg, sink)
 	}
+
+	// The elapsed time, in the log, on both paths.
+	//
+	// The comment carries a duration and the dashboard shows a relative age, and neither
+	// answers "how long did this take" while you are reading the output — which is the
+	// question anybody has after watching a package install for four minutes. Written to the
+	// sink as well as the buffer, so a live tail gets it too.
+	//
+	// Before the error is wrapped: a failed build's duration is the more interesting one,
+	// since the whole point is finding out what took the time.
+	if sink != nil {
+		verb := "finished"
+		if err != nil {
+			verb = "failed after"
+		}
+		fmt.Fprintf(sink, "\n$ build %s %s\n", verb, time.Since(started).Round(time.Second))
+	}
+
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("build timed out after %s:\n%s", timeout, out)

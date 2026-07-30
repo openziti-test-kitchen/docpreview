@@ -1066,6 +1066,39 @@ func (d *Daemon) CancelBuild(ctx context.Context, previewID string) bool {
 	return true
 }
 
+// Expecting reports whether a build is running or queued for a preview.
+//
+// It exists for the log stream, which has to decide between two right answers. A preview
+// with nothing coming should replay its last log and close, so a tab opening yesterday's
+// failure is not holding a connection open for a build that will never happen. A preview
+// with a build queued should keep the connection and announce that build when it starts,
+// because the alternative is what Rebuild used to do: connect, learn "nothing is running",
+// and have no way to find out that changed.
+//
+// Queued as well as running, and that is the case it was written for: Rebuild enqueues, and
+// a worker claims the job a second or two later.
+func (d *Daemon) Expecting(ctx context.Context, previewID string) bool {
+	d.mu.Lock()
+	_, running := d.running[previewID]
+	d.mu.Unlock()
+	if running {
+		return true
+	}
+
+	jobs, err := d.store.PendingJobs(ctx)
+	if err != nil {
+		// Unknown, so assume not: holding a connection open on a failed lookup is the
+		// worse of the two mistakes.
+		return false
+	}
+	for _, j := range jobs {
+		if j.PR.PreviewID() == previewID {
+			return true
+		}
+	}
+	return false
+}
+
 // RebuildPreview queues a build of a preview's recorded commit again.
 //
 // The commit that is already on the row, not whatever the branch has moved to since. "Build
