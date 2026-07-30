@@ -45,6 +45,30 @@ func (r Repo) Slug() string { return r.Owner + "/" + r.Name }
 // String renders the repository as "platform:owner/name".
 func (r Repo) String() string { return string(r.Platform) + ":" + r.Slug() }
 
+// WebURL is where a human reads this pull request.
+//
+// Composed rather than carried, because the two hosted platforms disagree about the path
+// and neither sends a usable one everywhere: GitHub's webhook has `html_url` but a
+// project scan does not, and a preview restored from the database has neither. The owner,
+// the repository and the number are the three facts every path already has.
+//
+// Empty for the local platform, which has no web anything — the git simulator is bare
+// repositories in a directory. A caller renders a link only when this is non-empty, which
+// is the same rule the preview URL follows.
+func (pr PullRequest) WebURL() string {
+	switch pr.Repo.Platform {
+	case PlatformGitHub:
+		return fmt.Sprintf("https://github.com/%s/%s/pull/%d", pr.Repo.Owner, pr.Repo.Name, pr.Number)
+	case PlatformBitbucket:
+		// Bitbucket's is `pull-requests`, plural and hyphenated. Getting this wrong
+		// produces a 404 that looks like a deleted pull request.
+		return fmt.Sprintf("https://bitbucket.org/%s/%s/pull-requests/%d",
+			pr.Repo.Owner, pr.Repo.Name, pr.Number)
+	default:
+		return ""
+	}
+}
+
 // PullRequest is the unit of work. Every build, preview, and comment is scoped
 // to exactly one of these.
 type PullRequest struct {

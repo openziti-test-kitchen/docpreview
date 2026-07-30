@@ -400,7 +400,11 @@ func exists(path string) bool {
 func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir string, cfg config.RepoConfig, sink io.Writer) (string, error) {
 	image := b.defaults.Image
 	if image == "" {
-		image = "node:24-bookworm-slim"
+		// The same default as config.DefaultImage, and it has to stay that way: this
+		// branch is reached by a Builder constructed without defaults, which is every
+		// test and any future caller that forgets. It used to be the -slim variant, so a
+		// build reaching here had no git and failed on the first clone.
+		image = config.DefaultImage
 	}
 
 	source, err := hostMountPath(ws.Dir)

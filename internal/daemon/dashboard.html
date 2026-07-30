@@ -1427,6 +1427,13 @@ function updateBody(item, g) {
              the selection immediately above it. -->
         <a class="btn" data-role="open-build" target="_blank" rel="noreferrer">Open build ↗</a>
         <span class="grow"></span>
+        <!-- The pull request itself. Here rather than on the row, because the row's head
+             is a <button> and an anchor cannot nest inside one — and because this is
+             where somebody reading a failed build wants it: the next thing they do is go
+             and say so on the pull request.
+
+             Absent for the local platform, which has no web interface at all. -->
+        <a class="btn" data-role="open-pr" target="_blank" rel="noreferrer" hidden></a>
       </div>
       <div class="logstate"></div>
       <div class="termwrap">
@@ -1526,6 +1533,18 @@ function updateBody(item, g) {
   const p = g.current;
   body.querySelector('[data-role="download"]').href =
     `/logs/${encodeURIComponent(p.preview_id)}/download`;
+
+  // The pull request. Hidden rather than greyed when there is none, because "no web
+  // interface" is a property of the platform and not a state the reader can change —
+  // a permanently dead control is furniture.
+  const prLink = body.querySelector('[data-role="open-pr"]');
+  const prURL = safeURL(p.pr_url);
+  prLink.hidden = !prURL;
+  if (prURL) {
+    prLink.href = prURL;
+    prLink.textContent = `#${p.number} ↗`;
+    prLink.title = `Open pull request #${p.number} on ${p.repo.split(":")[0]}`;
+  }
 
 
   // The preview link lives on the row, not here. See updateGoLink.
@@ -2721,6 +2740,11 @@ function projectCard(p, s, ro) {
         <button class="btn" data-tab="secrets" data-key="${esc(key)}"
           aria-pressed="${open === "secrets"}">Secrets${
             p.secrets.length ? ` (${p.secrets.length})` : ""}</button>
+        <!-- Queues a build for every open pull request on this repository, which is the
+             same thing adding a project does. It exists because the answer to "I changed
+             the image, now what" was to wait for somebody to push. -->
+        <button class="btn" data-build="${esc(key)}"
+          title="Queue a build for every open pull request">Build now</button>
         <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
     </div>
     ${projectFacts(p)}
@@ -3470,6 +3494,23 @@ function wireProjectHandlers(s) {
           build_output: p.build_output, base_url: p.base_url,
           detect_script: p.detect_script, image: p.image, notes: p.notes,
         }));
+    };
+  }
+
+  for (const b of el.querySelectorAll("[data-build]")) {
+    b.onclick = async () => {
+      const key = b.dataset.build;
+      await runProject(b, async () => {
+        const scan = await api("POST", `${projectPath(key)}/scan`);
+        // The count is the whole answer: 3 says it worked, 0 with an error says the App
+        // is not installed there, 0 without one says the repository has nothing open.
+        projFlash = scan.error
+          ? `Nothing queued: ${scan.error}`
+          : scan.queued
+            ? `Queued ${scan.queued} build${scan.queued === 1 ? "" : "s"} — watch the dashboard.`
+            : "That repository has no open pull requests, so there is nothing to build.";
+        return api("GET", "/api/projects");
+      });
     };
   }
 

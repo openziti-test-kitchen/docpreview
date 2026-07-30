@@ -432,6 +432,23 @@ console.log("\nsaving an edit closes the form and says so");
   }
 }
 
+console.log("\nBuild now");
+{
+  calls.length = 0;
+  await click(btn("Build now"));
+  const scan = calls.find(c => c.method === "POST" && c.url.endsWith("/scan"));
+  if (!scan) {
+    fail("Build now sent no scan");
+  } else if (scan.url !== "/api/projects/github/netfoundry/unified-doc/scan") {
+    fail(`Build now scanned ${scan.url}`);
+  } else ok(`POST ${scan.url}`);
+
+  // And it says what happened, since queueing is invisible from this page.
+  const note = $("#projects-body .notice.ok");
+  if (!note) fail("Build now reported nothing");
+  else ok(`said ${JSON.stringify(note.textContent.trim().slice(0, 48))}`);
+}
+
 console.log("\nunsaved edits are not thrown away silently");
 {
   // Open a project's settings and type into it.

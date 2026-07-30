@@ -504,6 +504,11 @@ const (
 	DriverLocal  = "local"
 
 	DefaultBuildCommand = "npm run build"
+
+	// DefaultImage needs node *and* git: a documentation build that assembles several
+	// repositories clones them from inside the container. The -slim images have no git,
+	// which made the shipped default fail on the first clone with "git: not found".
+	DefaultImage = "node:24-bookworm"
 )
 
 // DefaultServer returns a Server with every field populated to a sane value.
@@ -546,8 +551,14 @@ func DefaultServer() Server {
 			// this host. The default used to be local, which meant every install that
 			// never touched this key was running branch-authored build scripts as the
 			// daemon's user. See AllowLocalDriver.
-			Driver:   DriverDocker,
-			Image:    "node:24-bookworm-slim",
+			Driver: DriverDocker,
+			// Not the -slim variant, which was the default and has no git in it. A
+			// documentation site that assembles content from other repositories clones
+			// them from inside the container, and that failed on the first clone with
+			// "git: not found" — a default that cannot run the thing this program exists
+			// to run. The full image is about twice the size, pulled once, and the
+			// operator who wants the smaller one can say so.
+			Image:    DefaultImage,
 			Timeout:  15 * time.Minute,
 			KeepLogs: 7 * 24 * time.Hour,
 		},

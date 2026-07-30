@@ -2054,6 +2054,14 @@ type StatusPreview struct {
 	State     string    `json:"state"`
 	Reason    string    `json:"reason,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// PRURL is where a human reads the pull request this preview is for.
+	//
+	// Composed here rather than stored, because it is a function of the platform, the
+	// repository and the number — all three already in the row — and storing it would be
+	// a fourth copy to keep in step. Empty for the local platform, which has no web
+	// interface at all; the page renders a link only when it is set.
+	PRURL string `json:"pr_url,omitempty"`
 }
 
 // Status summarizes the daemon's state.
@@ -2130,6 +2138,7 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 			State:     string(p.State),
 			Reason:    p.Reason,
 			UpdatedAt: p.UpdatedAt,
+			PRURL:     p.PR.WebURL(),
 		}
 
 		// Building wins over queued: a push that supersedes a running build
@@ -2168,6 +2177,7 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 			Branch:    b.pr.Branch,
 			State:     string(scm.StateBuilding),
 			UpdatedAt: b.started,
+			PRURL:     b.pr.WebURL(),
 		})
 	}
 	for _, j := range queued {
@@ -2186,6 +2196,7 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 			// now" on every poll, which hides a job that has been stuck in the
 			// queue — the one thing this row exists to reveal.
 			UpdatedAt: j.EnqueuedAt,
+			PRURL:     j.PR.WebURL(),
 		})
 	}
 

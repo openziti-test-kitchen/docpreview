@@ -294,10 +294,15 @@ func validAvatar(a string) string {
 // names the image.
 func knownImages() []string {
 	return []string{
+		// The default first, and it is the full image rather than -slim because a build
+		// that clones another repository needs git and the slim ones do not have it.
+		config.DefaultImage,
+		"node:22-bookworm",
+		"node:20-bookworm",
+		// Smaller, and only usable by a build that clones nothing. The picker annotates
+		// them rather than hiding them: it is a real choice, with a condition on it.
 		"node:24-bookworm-slim",
-		"node:24-bookworm",
 		"node:22-bookworm-slim",
-		"node:20-bookworm-slim",
 		"node:24-alpine",
 		"mcr.microsoft.com/devcontainers/javascript-node:24",
 		"registry.access.redhat.com/ubi9/nodejs-22",
