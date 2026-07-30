@@ -143,9 +143,39 @@ console.log("operations chrome");
   if ($("#projects").hidden) fail("the projects panel is hidden on its own page");
 }
 
+console.log("\nno class collides with the operations dashboard");
+{
+  // One document serves three pages, so a class named for one of them styles all
+  // three. `.proj` was the project name inside a previews row before it was a card on
+  // this page, and claiming it drew a bordered, padded box around the project name on
+  // the dashboard — a page nobody looks at while editing the projects CSS. The second
+  // time this stylesheet was bitten that way; `.row .go` carries the first note.
+  //
+  // Checked by rendering the *previews* markup this page's rules could reach, and
+  // asking whether any of them decorated it.
+  const probe = win.document.createElement("div");
+  probe.className = "list";
+  probe.innerHTML = `<div class="item"><div class="row"><button class="head">
+    <span class="who"><span class="proj">docpreview</span>
+    <span class="branch">round-4</span></span></button></div></div>`;
+  win.document.body.append(probe);
+
+  const name = probe.querySelector(".proj");
+  const cs = win.getComputedStyle(name);
+  for (const [prop, bad] of [["borderTopWidth", "0px"], ["paddingLeft", "0px"]]) {
+    const got = cs[prop];
+    if (got && got !== bad && got !== "") {
+      fail(`a previews-row .proj has ${prop} = ${got}; a projects-page rule is ` +
+        `styling the operations dashboard`);
+    }
+  }
+  probe.remove();
+  ok("previews-row classes are untouched by this page's CSS");
+}
+
 console.log("\nproject cards");
 {
-  const cards = $$(".proj");
+  const cards = $$(".pcard");
   if (cards.length !== 2) fail(`${cards.length} cards, want 2`);
 
   const first = cards[0];
@@ -170,13 +200,13 @@ console.log("\nproject cards");
   if (!cards[1].textContent.includes("entirely from the repository")) {
     fail("a project that defers everything renders no explanation");
   }
-  if (!cards[1].classList.contains("proj-off")) fail("a disabled project is not marked");
+  if (!cards[1].classList.contains("pcard-off")) fail("a disabled project is not marked");
   ok("a deferring, disabled project explains itself");
 }
 
 console.log("\nidentity: badge, name, platform label");
 {
-  const cards = $$(".proj");
+  const cards = $$(".pcard");
   // A monogram derived from the name, so ten projects are distinguishable with nothing
   // configured. "Unified Doc" -> UD.
   const badge = cards[0].querySelector(".ava");
@@ -198,14 +228,14 @@ console.log("\nidentity: badge, name, platform label");
 
   // A display name is shown, with the real identity still visible beside it, because
   // owner/repo is what a webhook is matched against.
-  const head = cards[0].querySelector(".proj-head").textContent;
+  const head = cards[0].querySelector(".pcard-head").textContent;
   if (!head.includes("Unified Doc")) fail("the display name is not shown");
   if (!head.includes("netfoundry/unified-doc")) {
     fail("the real owner/repo is hidden behind the display name");
   }
   // `local` is the git simulator. The stored value stays `local`; what is read says
   // what it is.
-  if (!$$(".proj-head .flag").some(f => f.textContent.trim() === "bitbucket")) {
+  if (!$$(".pcard-head .flag").some(f => f.textContent.trim() === "bitbucket")) {
     fail("the platform chip is missing");
   }
   ok("display name shown with owner/repo beside it");
@@ -302,7 +332,7 @@ console.log("\nthe new-project form");
 
 console.log("\nsecrets panel");
 {
-  const secretsBtn = $$(".proj [data-tab=secrets]")[0];
+  const secretsBtn = $$(".pcard [data-tab=secrets]")[0];
   if (!secretsBtn) {
     fail("no Secrets control on a project card");
   } else {
@@ -311,20 +341,20 @@ console.log("\nsecrets panel");
     }
     await click(secretsBtn);
 
-    const own = $$(".proj .env:not(.inherited)").map(e => e.textContent.replace("✕", "").trim());
+    const own = $$(".pcard .env:not(.inherited)").map(e => e.textContent.replace("✕", "").trim());
     if (own.length !== 2 || !own.includes("BB_REPO_TOKEN_ONPREM")) {
       fail(`the panel lists ${JSON.stringify(own)}`);
     }
     // Inherited names are shown greyed rather than omitted: "no variables" and "none
     // of its own" look identical otherwise, and only one means a build will fail.
-    const inherited = $$(".proj .env.inherited").map(e => e.textContent.trim());
+    const inherited = $$(".pcard .env.inherited").map(e => e.textContent.trim());
     if (!inherited.includes("SHARED_TOKEN")) {
       fail(`the server-wide variables are not shown as inherited: ${JSON.stringify(inherited)}`);
     }
     ok(`2 own variables, ${inherited.length} inherited`);
 
     // No value may appear anywhere in the panel, because nothing can read one back.
-    if ($$(".proj .env input").length) fail("a value input sits inside the variable list");
+    if ($$(".pcard .env input").length) fail("a value input sits inside the variable list");
   }
 }
 
@@ -347,13 +377,13 @@ console.log("\nadding a variable");
   }
   // The panel stays open across the refresh: the operator is usually adding several,
   // and a panel that closed after each would be a click per token.
-  if (!$(".proj .panel")) fail("the panel closed after adding a variable");
+  if (!$(".pcard .panel")) fail("the panel closed after adding a variable");
 }
 
 console.log("\nremoving a variable");
 {
   calls.length = 0;
-  await click($(".proj .env button[data-del-secret]"));
+  await click($(".pcard .env button[data-del-secret]"));
   const del = calls.find(c => c.method === "DELETE");
   if (!del) fail("Remove sent no request");
   else if (!del.url.endsWith("/secrets/BB_REPO_TOKEN_ONPREM")) fail(`DELETE ${del.url}`);
@@ -362,7 +392,7 @@ console.log("\nremoving a variable");
 
 console.log("\ndisabling a project");
 {
-  await click($$(".proj [data-tab=build]")[0]);
+  await click($$(".pcard [data-tab=build]")[0]);
   calls.length = 0;
   const toggle = btn("Disable");
   if (!toggle) {
@@ -383,7 +413,7 @@ console.log("\ndisabling a project");
 console.log("\na failure is reported where it can be seen");
 {
   nextFails = "the vault is locked; unlock it at /secrets first";
-  await click($$(".proj [data-tab=secrets]")[0]);
+  await click($$(".pcard [data-tab=secrets]")[0]);
   const key = "github/netfoundry/unified-doc";
   doc.getElementById(`s-env-${key}`).value = "BB_REPO_TOKEN_ONPREM";
   doc.getElementById(`s-val-${key}`).value = "a-token-value";

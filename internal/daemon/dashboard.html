@@ -180,15 +180,22 @@ input.control::placeholder { color: var(--muted) }
    three-column .sec grid squeezed them into a column narrow enough that a
    `·`-joined line wrapped mid-value — `output:` ending one line and `build`
    starting the next, which reads as a field called build. */
-.proj {
+/* `pcard`, not `proj`, and that is not a style preference. `.proj` is already the
+   project name inside a previews row (`renderRow`), so a `.proj` rule here put a
+   bordered, padded box around the project name on the operations dashboard — a page
+   this CSS was not written for and nobody was looking at while writing it.
+
+   Second time this stylesheet has been bitten by a generic class name; see the note on
+   `.row .go` above. One document, one namespace, no scoping by accident. */
+.pcard {
   border: 1px solid var(--ring); border-radius: 8px; background: var(--surface);
   padding: 0.7rem 0.85rem; margin-bottom: 0.6rem;
 }
-.proj-head { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap }
-.proj-head .name { font-weight: 600; font-size: 0.9rem }
-.proj-head .sub { font: 11.5px/1.5 ui-monospace, Consolas, monospace; color: var(--muted) }
-.proj-head .grow { flex: 1 }
-.proj-off { opacity: 0.6 }
+.pcard-head { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap }
+.pcard-head .name { font-weight: 600; font-size: 0.9rem }
+.pcard-head .sub { font: 11.5px/1.5 ui-monospace, Consolas, monospace; color: var(--muted) }
+.pcard-head .grow { flex: 1 }
+.pcard-off { opacity: 0.6 }
 
 /* A badge, not a fetched image. Two characters or an emoji, on a colour derived from
    the name so it is stable without being stored. */
@@ -2341,8 +2348,8 @@ function projectCard(p, s, ro) {
   const open = projOpen.key === key ? projOpen.tab : null;
   const dockered = p.driver === "docker" || (!p.driver && s.defaults.driver === "docker");
 
-  return `<div class="proj${p.enabled ? "" : " proj-off"}" data-card="${esc(key)}">
-    <div class="proj-head">
+  return `<div class="pcard${p.enabled ? "" : " pcard-off"}" data-card="${esc(key)}">
+    <div class="pcard-head">
       ${avatarHTML(p)}
       <span class="name">${esc(projectLabel(p))}</span>
       ${p.display_name ? `<span class="sub">${esc(p.owner)}/${esc(p.repo)}</span>` : ""}
@@ -2359,7 +2366,7 @@ function projectCard(p, s, ro) {
         <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
     </div>
     ${projectFacts(p)}
-    ${p.notes ? `<div class="hint">${esc(p.notes)}</div>` : ""}
+    ${p.notes ? `<div class="hint pcard-notes">${esc(p.notes)}</div>` : ""}
     ${open === "build" ? `<div class="panel">${projectForm(s, p)}</div>` : ""}
     ${open === "secrets" ? `<div class="panel">${secretsPanel(p, s)}</div>` : ""}
   </div>`;
