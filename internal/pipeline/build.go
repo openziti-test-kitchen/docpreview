@@ -420,7 +420,16 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	var log bytes.Buffer
 	out := tee(&log, sink)
 
-	args, err := b.createArgs(ws.PR, cfg, source, containerDir, buildDir, image)
+	// The environment goes in a file, not in the command line. See writeEnvFile: an
+	// injected token in argv is readable by any local process for as long as
+	// `docker create` runs.
+	envFile, envArgs, cleanupEnv, err := b.writeEnvFile(ws.PR, cfg)
+	if err != nil {
+		return "", err
+	}
+	defer cleanupEnv()
+
+	args, err := b.createArgs(ws.PR, cfg, source, containerDir, buildDir, image, envFile, envArgs)
 	if err != nil {
 		return "", err
 	}
@@ -477,7 +486,7 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 // in any log, which makes this the part of the driver most worth pinning.
 func (b *Builder) createArgs(
 	pr model.PullRequest, cfg config.RepoConfig,
-	source, containerDir, buildDir, image string,
+	source, containerDir, buildDir, image, envFile string, envArgs []string,
 ) ([]string, error) {
 	caches, err := b.cacheMounts(pr)
 	if err != nil {
@@ -519,11 +528,92 @@ func (b *Builder) createArgs(
 	// After the caches, so a repository that names one of these variables in its
 	// own config wins — which is the general rule for build env here, and the
 	// escape hatch if a manager needs a cache somewhere else.
-	for _, kv := range b.buildEnv(pr, cfg, nil) {
-		args = append(args, "--env", kv)
+	if envFile != "" {
+		args = append(args, "--env-file", envFile)
 	}
+	// Whatever could not go in the file. See writeEnvFile: docker's env-file format has
+	// no way to express a value containing a newline.
+	args = append(args, envArgs...)
 	return append(args, image, "sh", "-lc",
 		installCommand(buildDir)+" && "+cfg.Build.Command), nil
+}
+
+// writeEnvFile puts the build's environment in a private file and returns its path.
+//
+// # Why not --env
+//
+// `docker create --env NAME=value` puts every value in the command line, and a command
+// line is world-readable: `ps` on Linux, Process Explorer or `Get-CimInstance
+// Win32_Process` on Windows, for as long as the process runs. Any local account could read
+// every injected token at the moment a build started. Redaction does not help — it scrubs
+// what this program *writes*, and this was the operating system publishing it.
+//
+// The file is created with 0600 in the system temp directory and deleted as soon as
+// `docker create` returns, which is the only moment docker reads it. Not inside the
+// workspace: that directory is bind-mounted into the container and is a git tree somebody
+// could commit, and a credential in a build output is worse than one in a process list.
+//
+// # The one thing the format cannot carry
+//
+// docker's env-file takes a value literally to the end of the line, so there is no way to
+// express a newline. A multi-line value — someone injecting a PEM as a build secret —
+// therefore still goes through --env, and is logged as the exposure it is rather than
+// silently mangled into one broken line.
+func (b *Builder) writeEnvFile(pr model.PullRequest, cfg config.RepoConfig) (
+	path string, args []string, cleanup func(), err error,
+) {
+	cleanup = func() {}
+
+	env := b.buildEnv(pr, cfg, nil)
+	var lines []string
+	for _, kv := range env {
+		if strings.ContainsAny(kv, "\n\r") {
+			name, _, _ := strings.Cut(kv, "=")
+			// Named, not valued. The name is the operator's own; the value is the thing
+			// this whole function exists to keep out of a process list.
+			b.log.Warn("a multi-line build variable goes on the docker command line, "+
+				"where any local process can read it while the build starts",
+				"variable", name)
+			args = append(args, "--env", kv)
+			continue
+		}
+		lines = append(lines, kv)
+	}
+	if len(lines) == 0 {
+		return "", args, cleanup, nil
+	}
+
+	f, err := os.CreateTemp("", "docpreview-env-*")
+	if err != nil {
+		return "", nil, cleanup, fmt.Errorf("creating the build environment file: %w", err)
+	}
+	path = f.Name()
+	cleanup = func() {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			b.log.Warn("removing the build environment file", "path", path, "error", err)
+		}
+	}
+
+	// Before writing, not after: a file that is briefly world-readable is a file that was
+	// world-readable. CreateTemp is already 0600 on Unix; on Windows the mode is
+	// advisory and the temp directory's ACL is what protects it, which is the same
+	// carve-out the vault documents for its own permission check.
+	if err := f.Chmod(0o600); err != nil && runtime.GOOS != "windows" {
+		f.Close()
+		cleanup()
+		return "", nil, func() {}, fmt.Errorf("securing the build environment file: %w", err)
+	}
+
+	if _, err := f.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		f.Close()
+		cleanup()
+		return "", nil, func() {}, fmt.Errorf("writing the build environment file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", nil, func() {}, fmt.Errorf("closing the build environment file: %w", err)
+	}
+	return path, args, cleanup, nil
 }
 
 // tee returns a writer feeding both the in-memory log and the live sink.

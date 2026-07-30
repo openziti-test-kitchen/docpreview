@@ -460,7 +460,19 @@ func cmdServe(args []string) error {
 		if v == nil {
 			return
 		}
-		next := make(map[string]string, len(w.cfg.Build.Secrets))
+		next := map[string]string{}
+		// Every shell-shaped key, injected under its own name. The same rule startup
+		// uses, and it has to be the same rule: a token stored from the page would
+		// otherwise apply only after a restart, which is the trap this whole callback
+		// exists to avoid.
+		for _, key := range v.Keys() {
+			if !vault.IsBuildEnvKey(key) {
+				continue
+			}
+			if s, err := v.Get(key); err == nil {
+				next[key] = s.RevealString()
+			}
+		}
 		for env, key := range w.cfg.Build.Secrets {
 			s, err := v.Get(key)
 			if err != nil {
@@ -1041,17 +1053,49 @@ func openVault(configPath string) (*vault.Vault, error) {
 //
 // The vault is opened only when there is something to look up, so a server
 // with no build secrets still starts without a passphrase.
+// buildSecrets resolves the environment every build gets.
+//
+// Two sources, and the second is the one somebody can reach from a browser:
+//
+//   - `build.secrets` in the config, mapping an environment variable name to a vault key
+//     whose name is something else. Still supported, and still fails startup when the key
+//     is missing, because a configured credential that is absent is a misconfiguration.
+//   - **Every vault entry whose key is already shell-shaped**, injected under its own
+//     name. This is what makes the credential page mean something: a token stored there
+//     reaches every build without also editing a YAML file on the host.
+//
+// The second exists because the first, alone, made the dashboard lie. Storing
+// BB_REPO_TOKEN_ONPREM from the page did nothing at all — the page said "set", and the
+// next build behaved exactly as if it were absent, with no error anywhere to explain it.
+//
+// A project's own variables override these by name; see Daemon.SetProjectSecrets.
 func buildSecrets(w *wiring) (map[string]string, error) {
-	if len(w.cfg.Build.Secrets) == 0 {
-		return nil, nil
-	}
-
 	v, err := w.Vault()
 	if err != nil {
+		if len(w.cfg.Build.Secrets) == 0 {
+			// No vault and nothing configured to need one. A daemon serving a directory
+			// on loopback needs no credentials at all, and demanding one here would make
+			// the simplest setup the one that does not start.
+			return nil, nil
+		}
 		return nil, fmt.Errorf("build.secrets is set, so the vault must open: %w", err)
 	}
 
-	out := make(map[string]string, len(w.cfg.Build.Secrets))
+	out := map[string]string{}
+
+	// Shell-shaped keys first, so an explicit build.secrets mapping wins over a bare key
+	// of the same name — the config file is the deliberate statement.
+	for _, key := range v.Keys() {
+		if !vault.IsBuildEnvKey(key) {
+			continue
+		}
+		s, err := v.Get(key)
+		if err != nil {
+			continue
+		}
+		out[key] = s.RevealString()
+	}
+
 	for env, key := range w.cfg.Build.Secrets {
 		s, err := v.Get(key)
 		if err != nil {

@@ -89,7 +89,9 @@ func createArgsFor(t *testing.T, buildDir string) []string {
 	args, err := b.createArgs(
 		model.PullRequest{Repo: model.Repo{Platform: model.PlatformGitHub,
 			Owner: "acme", Name: "docs"}, Number: 1},
-		cfg, "/mnt/d/ws", containerDir, t.TempDir(), "node:24-bookworm-slim")
+		// No env file: these tests assert the two mount arguments, and the environment
+		// has its own tests. An empty path means no --env-file argument at all.
+		cfg, "/mnt/d/ws", containerDir, t.TempDir(), "node:24-bookworm-slim", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

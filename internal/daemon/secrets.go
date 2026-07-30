@@ -256,14 +256,31 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 		delete(have, key)
 	}
 
-	// Then whatever else is in there.
+	// Then whatever else is in there, and each one says what it is for.
+	//
+	// A shell-shaped key is injected into every build under its own name — that is the
+	// rule vault.IsBuildEnvKey states, and saying so here is not decoration. Without it
+	// this list was a set of names with no indication whether any of them did anything,
+	// which is exactly how six tokens came to be stored in the belief that storing them
+	// was enough.
 	var rest []string
 	for k := range have {
 		rest = append(rest, k)
 	}
 	sort.Strings(rest)
 	for _, k := range rest {
-		st.Entries = append(st.Entries, secretView{Key: k, Set: true, Label: k})
+		view := secretView{Key: k, Set: true, Label: k}
+		if vault.IsBuildEnvKey(k) {
+			view.EnvVar = k
+			view.Hint = "injected into every build as " + k +
+				", and redacted from every log. A project can override it with its own."
+		} else {
+			// Not shell-shaped, not mapped by build.secrets, and not one of the known
+			// keys: nothing reads it. Better said than left looking configured.
+			view.Hint = "nothing on this daemon reads this key. A build variable has to be " +
+				"named like one — upper case, digits and underscore."
+		}
+		st.Entries = append(st.Entries, view)
 	}
 
 	return st

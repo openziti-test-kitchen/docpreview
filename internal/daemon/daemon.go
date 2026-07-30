@@ -2019,6 +2019,28 @@ type Status struct {
 	Running  int             `json:"running"`
 	Previews []StatusPreview `json:"previews"`
 	Events   []Event         `json:"events"`
+
+	// Projects is every configured project, as a label and a badge.
+	//
+	// Here rather than fetched from /api/projects, for two reasons. The dashboard-only
+	// share allowlists a handful of read paths, and the project switcher has to work
+	// through it — a picker that renders unlabelled rows for a remote viewer is a
+	// different page for no reason. And it is one payload the page already polls
+	// instead of a second request whose failure mode is a list that fills in late.
+	//
+	// Labels and badges only. Nothing here says what a project builds, and nothing
+	// here is a secret.
+	Projects []StatusProject `json:"projects"`
+}
+
+// StatusProject is what the project switcher needs to draw one row.
+//
+// Key is `<platform>:<owner>/<repo>`, matching StatusPreview.Repo, so the page can join
+// the two without parsing either.
+type StatusProject struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Avatar string `json:"avatar,omitempty"`
 }
 
 // StatusPreview is one preview in the status payload.
@@ -2063,6 +2085,23 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 		Pending:  pending,
 		Running:  len(running),
 		Events:   d.markOpenable(d.events.recent(60)),
+	}
+
+	// Best effort. The switcher degrades to repository names, which is what it showed
+	// before projects had labels at all — and a status endpoint that fails because a
+	// cosmetic lookup failed would take the whole dashboard down with it.
+	if projects, err := d.store.ListProjects(ctx); err == nil {
+		for _, p := range projects {
+			label := p.DisplayName
+			if label == "" {
+				label = p.Repo
+			}
+			out.Projects = append(out.Projects, StatusProject{
+				Key: p.Key(), Label: label, Avatar: p.Avatar,
+			})
+		}
+	} else {
+		d.log.Warn("listing projects for the status payload", "error", err)
 	}
 
 	// The stored rows are the committed history: a preview is written when a

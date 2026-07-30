@@ -50,7 +50,10 @@ const state = () => ({
   defaults: {
     driver: "docker", image: "node:24-bookworm-slim",
     docker_available: true, allow_local_driver: false,
-    images: ["node:24-bookworm-slim", "node:22-bookworm-slim"],
+    // The shape the daemon actually sends (knownImages), including the two entries the
+    // rows annotate: a -slim one with no git, and an alpine one whose musl breaks
+    // dependencies shipping prebuilt binaries.
+    images: ["node:24-bookworm-slim", "node:24-bookworm", "node:24-alpine"],
   },
   projects: [
     {
@@ -120,6 +123,13 @@ const click = async el => {
   el.dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
   await settle();
 };
+// Typing, not assignment: the page listens for input, and a bare `.value =` exercises
+// none of it — the kind of stub that makes a harness agree with itself.
+const type = async (el, v) => {
+  el.value = v;
+  el.dispatchEvent(new win.Event("input", {bubbles: true}));
+  await settle();
+};
 const btn = text => $$("#projects-body .btn, #projects-body button")
   .find(b => b.textContent.trim().startsWith(text));
 
@@ -128,7 +138,7 @@ console.log("operations chrome");
   // The bug that made half the page noise. `hidden` is set by the page; whether it
   // takes effect is a question about the stylesheet, so it is asked of the computed
   // style rather than of the property.
-  for (const sel of [".wrap", "#counters", "#project", "#search"]) {
+  for (const sel of [".wrap", "#counters", "#projpick", "#search"]) {
     const el = $(sel);
     if (!el.hidden) {
       fail(`${sel} is not marked hidden on /projects`);
@@ -313,12 +323,44 @@ console.log("\nthe new-project form");
   if (docker?.disabled) fail("docker is disabled although the probe found it");
   ok("the driver select disables what would be refused");
 
-  // The image field suggests without constraining.
+  // The image field is a search box over the known images, and still free text — a
+  // private registry mirror is the normal answer in an enterprise and must not be
+  // refused by a closed list.
   const image = $("#p-image");
-  if (image.getAttribute("list") !== "known-images") fail("the image field offers no suggestions");
-  if ($$("#known-images option").length < 2) fail("the suggestion list is empty");
   if (image.tagName !== "INPUT") fail("the image field is a closed list, not pick-or-type");
-  ok("image is pick-or-type");
+  const panel = $("#p-image-panel");
+  if (!panel) {
+    fail("the image field has no suggestion panel");
+  } else {
+    if (!panel.hidden) fail("the image panel is open before the field was touched");
+    image.dispatchEvent(new win.Event("focus", {bubbles: true}));
+    await settle();
+    if (panel.hidden) fail("focusing the image field did not open the list");
+    const all = $$("#p-image-panel [data-image]").filter(r => !r.hidden);
+    if (all.length < 2) fail(`${all.length} images offered`);
+
+    // The field filters its own list, which is the point of it being one field.
+    await type(image, "alpine");
+    const shown = $$("#p-image-panel [data-image]").filter(r => !r.hidden);
+    if (!shown.length || shown.some(r => !r.dataset.image.includes("alpine"))) {
+      fail(`filtering by "alpine" gave ${JSON.stringify(shown.map(r => r.dataset.image))}`);
+    }
+    // Each row says the one thing worth knowing about that image.
+    if (!shown[0].textContent.includes("musl")) fail("an alpine row does not mention musl");
+
+    // A value that matches nothing is legal, and the panel gets out of the way.
+    await type(image, "registry.internal/ours:1");
+    if (!$("#p-image-panel").hidden) fail("the panel stayed open over a custom value");
+
+    // Clicking a row sets the field.
+    image.dispatchEvent(new win.Event("focus", {bubbles: true}));
+    await type(image, "bookworm");
+    const row = $$("#p-image-panel [data-image]").find(r => !r.hidden);
+    await click(row);
+    if (image.value !== row.dataset.image) {
+      fail(`clicking a row set ${JSON.stringify(image.value)}`);
+    } else ok(`pick-or-type: filtered, clicked, field reads ${image.value}`);
+  }
 
   // Notes is a textarea with a cap, not a one-line input.
   const notes = $("#p-notes");

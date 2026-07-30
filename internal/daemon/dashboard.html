@@ -174,6 +174,65 @@ input.control::placeholder { color: var(--muted) }
 .notice code { font: 12px/1.5 ui-monospace, Consolas, monospace }
 .notice p { margin: 0.4rem 0 0 }
 
+/* ── Project switcher ───────────────────────────────────────────────────────
+   A trigger and a panel, rather than a <select>: a select shows one line, cannot be
+   typed into, and cannot carry a badge, so a dozen near-identical repository names
+   become a scrolling menu nobody can aim at. */
+.picker { position: relative }
+.pick-trigger {
+  display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer;
+  max-width: 16rem;
+}
+.pick-trigger .pick-label {
+  display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0;
+}
+.pick-trigger .pick-label > span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pick-trigger .pick-caret { color: var(--muted); flex: none }
+.pick-trigger .ava { width: 1.1rem; height: 1.1rem; border-radius: 4px; font-size: 0.6rem }
+
+.pick-panel {
+  position: absolute; z-index: 40; top: calc(100% + 0.3rem); left: 0;
+  width: 20rem; max-width: 90vw;
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
+  overflow: hidden;
+}
+.pick-search { display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--hairline) }
+.pick-search input {
+  flex: 1; min-width: 0; font: inherit; font-size: 0.85rem;
+  background: transparent; color: var(--ink); border: 0; outline: none;
+}
+.pick-search kbd {
+  font: 10px/1.6 ui-monospace, Consolas, monospace; color: var(--muted);
+  border: 1px solid var(--ring); border-radius: 4px; padding: 0 0.25rem;
+}
+/* Bounded, because the list is as long as somebody's project count and the panel
+   floats over the page. */
+.pick-list { max-height: 18rem; overflow: auto; padding: 0.25rem }
+.pick-row {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  padding: 0.4rem 0.45rem; border: 0; border-radius: 6px;
+  background: transparent; color: var(--ink); font: inherit; font-size: 0.85rem;
+  text-align: left; cursor: pointer; text-decoration: none;
+}
+.pick-row:hover, .pick-row.here { background: var(--raised) }
+.pick-row.here { font-weight: 600 }
+.pick-row .count { margin-left: auto; color: var(--muted); font-size: 0.75rem }
+.pick-row.add { border-top: 1px solid var(--hairline); border-radius: 0; margin-top: 0.25rem;
+  padding-top: 0.5rem; color: var(--ink-2) }
+.pick-empty { padding: 0.7rem 0.5rem; color: var(--muted); font-size: 0.8rem }
+
+/* The image field is the same panel, anchored under a text box that is also the filter.
+   Full width of the field rather than a fixed 20rem, because image references are long
+   and truncating the thing you are choosing between defeats the point. */
+.imgpick { display: block }
+.imgpick .pick-panel { width: 100%; top: calc(100% - 1.4rem) }
+.imgpick .pick-row { font: 12px/1.5 ui-monospace, Consolas, monospace }
+.imgpick .pick-row .count { font-family: inherit; font-size: 11px }
+
 /* ── Projects ───────────────────────────────────────────────────────────── */
 
 /* One card per project, because a project is a block of related facts and the
@@ -391,7 +450,9 @@ input.control::placeholder { color: var(--muted) }
 
   /* Full width, each on its own line. Side by side at this width they were two
      truncated controls instead of one usable one. */
-  select#project, input#search { width: 100%; max-width: none }
+  #projpick, .pick-trigger, input#search { width: 100%; max-width: none }
+  /* The panel is anchored to the trigger, which is now full width, so it can be too. */
+  .pick-panel { width: 100% }
 
   /* The counters scroll rather than wrap. Wrapping reflowed the header every time
      a build changed state, which moved everything under it while being read. */
@@ -552,6 +613,24 @@ pre.term {
   white-space: pre-wrap; word-break: break-word;
 }
 pre.term.tall { height: 34rem }
+
+/* A pane with nothing to show does not get a 15rem black rectangle.
+
+   A skipped build is the common case and the one that looked broken: the row said
+   Skipped, a 0.72rem grey line said "no build log", and below it sat an empty terminal
+   the size of the screen. Three signals, none of them the one that matters — *why* it was
+   skipped, which the daemon knew all along and put in the pull request comment.
+
+   Auto height and a light background, because this is prose rather than output. */
+pre.term.empty {
+  height: auto; min-height: 0; padding: 1.1rem 1rem;
+  background: var(--raised); color: var(--ink-2);
+  font: inherit; font-size: 0.84rem; white-space: normal;
+  border: 1px solid var(--hairline);
+}
+pre.term.empty strong { color: var(--ink); display: block; margin-bottom: 0.25rem }
+pre.term.empty .reason { color: var(--ink-2) }
+pre.term.empty .why { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 0.45rem }
 
 /* The copy button floats over the log rather than sitting in the toolbar.
    Reaching for it happens while reading the scrollback, so that is where it
@@ -722,7 +801,28 @@ footer {
     </div>
     <div class="seg" id="counters"></div>
     <span class="grow"></span>
-    <select class="control" id="project" aria-label="Project"></select>
+    <!-- The project scope is a searchable list, not a <select>.
+
+         A select shows one line at a time, cannot be typed into, and cannot carry a
+         badge — so at a dozen projects it becomes a scrolling menu of near-identical
+         repository names. This is the shape Vercel uses for the same problem: a trigger
+         showing the current scope, and a panel with a filter, the projects with their
+         badges, and a way to add one. -->
+    <div class="picker" id="projpick">
+      <button class="control pick-trigger" id="projpick-btn" aria-haspopup="listbox"
+        aria-expanded="false">
+        <span class="pick-label">All projects</span>
+        <span class="pick-caret" aria-hidden="true">⌄</span>
+      </button>
+      <div class="pick-panel" id="projpick-panel" hidden>
+        <div class="pick-search">
+          <input type="search" id="projpick-find" placeholder="Find project…"
+            aria-label="Find project" autocomplete="off">
+          <kbd>Esc</kbd>
+        </div>
+        <div class="pick-list" id="projpick-list" role="listbox"></div>
+      </div>
+    </div>
     <input class="control" id="search" type="search" placeholder="branch, PR, project…" aria-label="Filter">
     <!-- The admin links appear only for a request the daemon accepts writes from,
          and it answers that question itself: /api/admin is gated by the same
@@ -958,10 +1058,27 @@ function renderCounters() {
   }
 }
 
-/* ── Project selector ─────────────────────────────────────────────────────
-   A select, not chips. Chips are better at three projects and unusable at
-   three hundred; the browser already knows how to render a long list, scroll
-   it, and type-ahead it. */
+/* ── Project switcher ─────────────────────────────────────────────────────
+   A trigger plus a filtered list, which is the shape this problem has: at a dozen
+   projects a <select> is a scrolling menu of near-identical repository names, with no
+   room for a badge and no way to type at it.
+
+   Two sources join here. The previews say which projects have activity and how much;
+   the status payload's `projects` say what each is called and what badge it carries. A
+   project with no previews yet still appears, because "I added it and it is not in the
+   list" is the question this page was answering wrongly an hour ago. */
+
+// projectMeta maps a project name to its label and badge, from status.projects.
+function projectMeta() {
+  const out = new Map();
+  for (const p of (ui.status?.projects || [])) {
+    // The key is `<platform>:<owner>/<repo>`; the previews group by the repository name
+    // alone, which is what `project()` returns.
+    const repo = String(p.key || "").split("/").pop();
+    if (repo) out.set(repo, p);
+  }
+  return out;
+}
 
 function renderProjects() {
   const counts = new Map();
@@ -969,19 +1086,118 @@ function renderProjects() {
     const k = project(p);
     counts.set(k, (counts.get(k) || 0) + 1);
   }
+  const meta = projectMeta();
+  // Every configured project, not only those with previews.
+  for (const k of meta.keys()) if (!counts.has(k)) counts.set(k, 0);
+
   const names = [...counts.keys()].sort();
+  const label = document.querySelector("#projpick-btn .pick-label");
+  const current = names.includes(ui.project) ? ui.project : "";
 
-  // Rebuilding a select closes its open dropdown and loses the keyboard
-  // position, so only touch it when the set of projects actually changed.
-  const sig = names.map(n => `${n}:${counts.get(n)}`).join("|");
-  const el = document.getElementById("project");
-  if (el.dataset.sig === sig) return;
-  el.dataset.sig = sig;
+  // The trigger shows the scope, with its badge when it has one.
+  const m = current ? meta.get(current) : null;
+  label.innerHTML = current
+    ? `${m ? badgeHTML(m, current) : ""}<span>${esc(m?.label || current)}</span>`
+    : `<span>All projects (${ui.previews.length})</span>`;
+  label.classList.toggle("with-ava", Boolean(m));
 
-  el.innerHTML =
-    `<option value="">All projects (${ui.previews.length})</option>` +
-    names.map(n => `<option value="${esc(n)}">${esc(n)} (${counts.get(n)})</option>`).join("");
-  el.value = names.includes(ui.project) ? ui.project : "";
+  // The list is rebuilt only when something in it changed, so an open panel keeps its
+  // filter text and its scroll position across a status tick.
+  const sig = names.map(n => `${n}:${counts.get(n)}:${meta.get(n)?.avatar ? 1 : 0}`)
+    .join("|") + `|${current}|${ui.previews.length}`;
+  const list = document.getElementById("projpick-list");
+  if (list.dataset.sig === sig) return;
+  list.dataset.sig = sig;
+  list.dataset.names = JSON.stringify(names);
+
+  const rows = [
+    `<button class="pick-row${current === "" ? " here" : ""}" data-pick-project=""
+      role="option" aria-selected="${current === ""}">
+      <span>All projects</span><span class="count">${ui.previews.length}</span></button>`,
+  ];
+  for (const n of names) {
+    const pm = meta.get(n);
+    rows.push(`<button class="pick-row${current === n ? " here" : ""}"
+      data-pick-project="${esc(n)}" role="option" aria-selected="${current === n}">
+      ${badgeHTML(pm, n)}<span>${esc(pm?.label || n)}</span>
+      <span class="count">${counts.get(n) || ""}</span></button>`);
+  }
+  // The way to add one, where Vercel puts it and for the same reason: the moment you
+  // discover a project is missing is while looking for it.
+  rows.push(`<a class="pick-row add" href="/projects">+ New project</a>`);
+
+  list.innerHTML = rows.join("");
+  for (const b of list.querySelectorAll("[data-pick-project]")) {
+    b.onclick = () => {
+      ui.project = b.dataset.pickProject;
+      closePicker();
+      render();
+    };
+  }
+}
+
+// badgeHTML draws a project's badge for the switcher: the uploaded image when there is
+// one, otherwise initials on a hue derived from the name — the same derivation the
+// projects page uses, so a project looks the same in both places.
+function badgeHTML(meta, name) {
+  const avatar = meta?.avatar || "";
+  if (avatar.startsWith("data:image/")) {
+    return `<span class="ava ava-img"><img src="${esc(avatar)}" alt="" width="14" height="14"></span>`;
+  }
+  const label = avatar || monogram(meta?.label || name);
+  let h = 0;
+  for (const ch of (meta?.key || name)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `<span class="ava" style="background:hsl(${h} 62% 88%);border-color:hsl(${h} 40% 74%)"
+    aria-hidden="true">${esc(label)}</span>`;
+}
+
+function openPicker() {
+  document.getElementById("projpick-panel").hidden = false;
+  document.getElementById("projpick-btn").setAttribute("aria-expanded", "true");
+  const find = document.getElementById("projpick-find");
+  find.value = "";
+  filterPicker("");
+  find.focus();
+}
+
+function closePicker() {
+  document.getElementById("projpick-panel").hidden = true;
+  document.getElementById("projpick-btn").setAttribute("aria-expanded", "false");
+}
+
+// filterPicker hides rows that do not match, matching on both the label and the
+// repository name — somebody typing "customer" should find a project called "Customer
+// Connect" and somebody typing the repository name should find it too.
+function filterPicker(q) {
+  const needle = q.trim().toLowerCase();
+  const list = document.getElementById("projpick-list");
+  let shown = 0;
+  for (const row of list.querySelectorAll("[data-pick-project]")) {
+    const hay = `${row.textContent} ${row.dataset.pickProject}`.toLowerCase();
+    const hit = !needle || hay.includes(needle);
+    row.hidden = !hit;
+    if (hit) shown++;
+  }
+  // "All projects" is not a match anybody means when they have typed something. Only
+  // decremented when it was actually counted: unconditionally, a filter matching nothing
+  // took the count to -1, which is truthy, so the "no match" message never appeared.
+  const all = list.querySelector('[data-pick-project=""]');
+  if (needle && all && !all.hidden) {
+    all.hidden = true;
+    shown--;
+  }
+
+  let empty = list.querySelector(".pick-empty");
+  if (!shown) {
+    if (!empty) {
+      empty = document.createElement("div");
+      empty.className = "pick-empty";
+      list.prepend(empty);
+    }
+    empty.textContent = `No project matches “${q.trim()}”.`;
+  } else if (empty) {
+    empty.remove();
+  }
 }
 
 /* ── Accordion ────────────────────────────────────────────────────────────
@@ -1384,6 +1600,53 @@ function banner(kind, text) {
   }
 }
 
+// explainEmptyPane puts the reason there is nothing to read where the log would be.
+//
+// The alternative, which is what this replaces, is a banner in 0.72rem grey above an
+// empty black terminal — and for a skipped build that is every signal except the useful
+// one. The daemon already knows why it skipped; it tells the pull request. This shows the
+// same sentence to whoever is looking at the dashboard instead.
+//
+// Also called for a log retention pruned, which is a different fact and says so: the
+// build happened, its output is simply not kept any more.
+function explainEmptyPane(previewID, commit, kind) {
+  const t = term();
+  if (!t) return;
+
+  // The reason travels on the activity entry for that commit, and on the preview row
+  // for its newest build. Prefer the entry: it is the one the reader clicked.
+  const ev = (ui.events || []).find(e =>
+    e.preview_id === previewID && e.commit === commit && e.message);
+  const p = (ui.previews || []).find(x => x.preview_id === previewID);
+  const why = ev?.message || (p && p.commit === commit ? p.reason : "") || "";
+
+  const heads = {
+    skipped: "This build was skipped, so there is no log.",
+    queued: "Queued. Nothing has run yet.",
+    building: "Building. Output will appear here as it is written.",
+  };
+  const head = heads[kind] || `No build log was kept for ${commit}.`;
+  const tail = heads[kind]
+    ? ""
+    : `<span class="why">Logs are kept for <code>build.keep_logs</code>, which is shorter
+       than the history in the activity rail — so an entry can outlive what it produced.</span>`;
+
+  t.className = "term empty";
+  // The reason is its own block. Concatenated onto the heading it read as one run-on
+  // sentence: "This build was skipped, so there is no log.no documentation changes".
+  t.innerHTML = `<strong>${esc(head)}</strong>` +
+    (why ? `<div class="reason">${esc(why)}</div>` : "") + tail;
+  ui.buffer = "";
+}
+
+// resetPane puts the terminal back to being a terminal.
+function resetPane() {
+  const t = term();
+  if (!t) return;
+  t.className = "term" + (ui.tall ? " tall" : "");
+  t.innerHTML = "";
+}
+
 function toggle(name) {
   if (ui.open === name) {
     // Collapsing releases the pin, so reopening later lands on whatever is
@@ -1557,8 +1820,10 @@ function openLog(previewID) {
   ui.buffer = "";
   banner("none", "connecting…");
 
-  const t = term();
-  if (t) t.innerHTML = "";
+  // Back to being a terminal. Without this, opening a preview that has output after one
+  // that had none leaves the pane in its prose styling and the first lines arrive in the
+  // wrong font on the wrong background.
+  resetPane();
 
   const src = new EventSource(`/logs/${encodeURIComponent(previewID)}/stream`);
   ui.logSource = src;
@@ -1583,11 +1848,13 @@ function openLog(previewID) {
     try { d = JSON.parse(e.data) || {}; } catch {}
 
     if (d.reason) {
-      // "no build log" and "log unreadable" arrive with no start event, so the
-      // banner is still whatever the last preview left. Say what happened here
-      // rather than in the terminal, and leave the pane empty — an empty
-      // black box under an explanation is clearer than the words alone in it.
+      // "no build log" and "log unreadable" arrive with no start event, so the banner is
+      // still whatever the last preview left. Both the banner and the pane say it: the
+      // banner is 0.72rem grey, and on its own above an empty black terminal it reads as
+      // a page that failed to load rather than as an answer.
       banner("none", d.reason);
+      const p = (ui.previews || []).find(x => x.preview_id === previewID);
+      explainEmptyPane(previewID, p?.commit || "", p?.state === "skipped" ? "skipped" : "");
     } else if (!d.live) {
       appendLog("\n— end of log —");
     } else {
@@ -1654,6 +1921,13 @@ function appendLog(text) {
 
   const t = term();
   if (!t) return;
+  // A line arriving into a pane that is currently an explanation — a build that was
+  // skipped and is now being rebuilt — turns it back into a terminal first, or the output
+  // lands under prose in the wrong font.
+  if (t.classList.contains("empty")) {
+    resetPane();
+    ui.buffer = html;
+  }
   t.insertAdjacentHTML("beforeend", html);
 
   if (!ui.follow) return;
@@ -1975,11 +2249,12 @@ async function selectBuildForCommit(previewID, commit, kind) {
     // rather than left alone: leaving the previous build on screen under a banner
     // about a different one is the most confusing of the three options.
     if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
-    const t = term();
-    if (t) t.innerHTML = "";
-    ui.buffer = "";
-    banner("none", `no build log was kept for ${commit}` +
-      (kind === "skipped" ? " — it was skipped, so nothing was built" : ""));
+    // The explanation goes in the pane, not only in the banner above an empty black
+    // rectangle 15rem tall. For a skipped build the banner said "no build log", which is
+    // true and is not the fact anybody wants.
+    explainEmptyPane(previewID, commit, kind);
+    banner("none", kind === "skipped" ? "skipped — nothing was built"
+      : `no log kept for ${commit}`);
     return;
   }
 
@@ -2496,6 +2771,45 @@ function avatarHTML(p) {
     aria-hidden="true">${esc(label)}</span>`;
 }
 
+// imagePicker is the container image field: a text box that is also a search box, over a
+// list of the images known to work here.
+//
+// A <datalist> was the first attempt and it is not this. Its dropdown is the browser's,
+// which means no descriptions, no styling, no way to say which one is the default, and on
+// some browsers no way to see the list at all without typing a character that matches. The
+// list is short and opinionated, and the interesting part is *why* one entry differs from
+// another — which needs a row you can put a sentence in.
+//
+// Free text is preserved on purpose: the value is whatever the operator types, and a
+// private registry mirror is the normal answer in an enterprise. The list is a shortcut,
+// never a constraint.
+function imagePicker(elID, value, s) {
+  const images = s.defaults.images || [];
+  return `<span class="picker imgpick">
+    <input class="control" id="${elID}" value="${value}"
+      placeholder="${esc(s.defaults.image)}" autocomplete="off" spellcheck="false"
+      aria-expanded="false" aria-haspopup="listbox">
+    <div class="pick-panel" id="${elID}-panel" hidden>
+      <div class="pick-list" role="listbox">
+        ${images.map(i => `<button type="button" class="pick-row" data-image="${esc(i)}"
+          role="option">
+          <span>${esc(i)}</span>
+          ${i === s.defaults.image ? `<span class="count">default</span>` : ""}
+          ${imageNote(i) ? `<span class="count">${esc(imageNote(i))}</span>` : ""}
+        </button>`).join("")}
+      </div>
+    </div>
+    <div class="imgcheck" id="${elID}-check"></div>
+  </span>`;
+}
+
+// imageNote is the one thing worth knowing about an image beyond its name.
+function imageNote(image) {
+  if (image.includes("-slim")) return "no git";
+  if (image.includes("alpine")) return "musl";
+  return "";
+}
+
 // avatarField is a short input for two characters and a textarea for an inlined image.
 //
 // Two controls rather than one, because a 2.4 KB data URI in a 5rem input is a field
@@ -2737,11 +3051,11 @@ function projectForm(s, p) {
       <div class="field-head">Build <span class="field-note">— blank means the
         repository decides</span></div>
       ${field("driver", "Driver", driverSelect(s, p, id("driver")), driverWhy(s))}
-      ${field("image", "Container image", `<input class="control" id="${id("image")}"
-        list="known-images" value="${v("image")}" placeholder="${esc(s.defaults.image)}">
-        <div class="imgcheck" id="${id("image")}-check"></div>`,
-        "Pick one or type your own — a private mirror is a normal answer. Needs node; " +
-        "alpine's musl breaks dependencies that ship prebuilt binaries.")}
+      ${field("image", "Container image", imagePicker(id("image"), v("image"), s),
+        "Pick one or type your own — a private mirror is a normal answer. Needs node and " +
+        "<code>git</code> if the build clones other repositories, which the " +
+        "<code>-slim</code> images do not have; alpine's musl breaks dependencies that " +
+        "ship prebuilt binaries.")}
       ${field("dir", "Build directory", text("dir", "www"),
         "Where <code>package.json</code> lives, relative to the repository root. Blank " +
         "means the root.")}
@@ -2763,8 +3077,6 @@ function projectForm(s, p) {
         maxlength="5000" placeholder="Why this project is set up the way it is. Nothing
         reads this but the next person.">${v("notes")}</textarea>`)}
     </div>
-    <datalist id="known-images">${(s.defaults.images || []).map(i =>
-      `<option value="${esc(i)}"></option>`).join("")}</datalist>
     <div class="act formact">
       <!-- Primary, so which button commits is not a reading exercise. Cancel is beside
            it and says what it discards, because "Cancel" alone on a form somebody has
@@ -2949,9 +3261,64 @@ function wireImageCheck(root) {
       }
     };
 
-    input.oninput = () => { clearTimeout(timer); timer = setTimeout(check, 600); };
+    // The input is also the filter over the known-image list, which is why the panel
+    // opens on focus rather than behind a separate control: there is one field, and
+    // typing in it both narrows the list and sets the value.
+    const panel = document.getElementById(`${input.id}-panel`);
+    const showPanel = on => {
+      if (!panel) return;
+      panel.hidden = !on;
+      input.setAttribute("aria-expanded", String(on));
+    };
+    const filterImages = () => {
+      if (!panel) return;
+      const needle = input.value.trim().toLowerCase();
+      let shown = 0;
+      for (const row of panel.querySelectorAll("[data-image]")) {
+        const hit = !needle || row.dataset.image.toLowerCase().includes(needle);
+        row.hidden = !hit;
+        if (hit) shown++;
+      }
+      // Nothing matching is not an error here — the value is free text and a private
+      // mirror will match nothing. The panel simply gets out of the way.
+      showPanel(shown > 0);
+    };
+
+    input.onfocus = () => filterImages();
+    input.oninput = () => {
+      filterImages();
+      clearTimeout(timer);
+      timer = setTimeout(check, 600);
+    };
     input.onchange = () => { clearTimeout(timer); check(); };
-    input.onblur = () => { clearTimeout(timer); check(); };
+    input.onblur = () => {
+      clearTimeout(timer);
+      check();
+      // Late enough for a click on a row to land first. A panel that closes on blur
+      // closes before the click it was opened for.
+      setTimeout(() => showPanel(false), 150);
+    };
+    input.onkeydown = e => {
+      if (e.key === "Escape") showPanel(false);
+      if (e.key === "Enter" && panel && !panel.hidden) {
+        const first = [...panel.querySelectorAll("[data-image]")].find(r => !r.hidden);
+        if (first) {
+          e.preventDefault();
+          first.click();
+        }
+      }
+    };
+
+    for (const row of panel?.querySelectorAll("[data-image]") || []) {
+      row.onclick = () => {
+        input.value = row.dataset.image;
+        formDirty = true;
+        showPanel(false);
+        clearTimeout(timer);
+        check();
+      };
+    }
+
     if (input.value.trim()) check();
   }
 }
@@ -3197,7 +3564,38 @@ function openFromFragment() {
   reveal(m[1], p.commit, null, p.state);
 }
 
-document.getElementById("project").onchange = e => { ui.project = e.target.value; render(); };
+/* The switcher's own events.
+
+   Bound once, here, rather than in renderProjects: that runs on every status tick, and
+   rebinding a handler per tick is how a click ends up firing twice. */
+document.getElementById("projpick-btn").onclick = () => {
+  const open = !document.getElementById("projpick-panel").hidden;
+  if (open) closePicker(); else openPicker();
+};
+
+document.getElementById("projpick-find").oninput = e => filterPicker(e.target.value);
+
+document.getElementById("projpick-find").onkeydown = e => {
+  if (e.key === "Escape") {
+    closePicker();
+    document.getElementById("projpick-btn").focus();
+    return;
+  }
+  // Enter takes the first row still visible, so filtering and choosing is one gesture
+  // for somebody who knows what they are looking for.
+  if (e.key === "Enter") {
+    const first = [...document.querySelectorAll("#projpick-list [data-pick-project]")]
+      .find(r => !r.hidden);
+    if (first) first.click();
+  }
+};
+
+// Anywhere else closes it. A panel that floats over the page and stays open after a
+// click somewhere else is a panel covering whatever you were trying to reach.
+document.addEventListener("click", e => {
+  if (document.getElementById("projpick-panel").hidden) return;
+  if (!e.target.closest("#projpick")) closePicker();
+});
 
 let searchTimer = null;
 document.getElementById("search").oninput = e => {
@@ -3230,7 +3628,7 @@ function connect() {
 function hideOperationsChrome(label) {
   document.querySelector(".wrap").hidden = true;
   document.getElementById("counters").hidden = true;
-  document.getElementById("project").hidden = true;
+  document.getElementById("projpick").hidden = true;
   document.getElementById("search").hidden = true;
   document.getElementById("conn").textContent = label;
 }

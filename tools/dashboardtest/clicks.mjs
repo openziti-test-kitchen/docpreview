@@ -267,11 +267,18 @@ for (const row of clickable) {
   const noLog = !["queued", "building"].includes(row.dataset.kind) &&
     !(ui.builds[row.dataset.id] || []).some(b => b.build_id.endsWith("-" + row.dataset.commit));
   if (noLog) {
-    if (!after.banner.includes("no build log")) {
+    // The banner names the situation, and the *pane* explains it. It used to say
+    // "no build log" above an empty black rectangle 15rem tall, which for a skipped
+    // build is every signal except the one anybody wants: why it skipped. So the
+    // assertion is now the opposite of what it was — an empty pane is the failure.
+    if (!/skipped|no log/i.test(after.banner)) {
       fail(`"${what}" has no log, but the banner says "${after.banner}"`);
     }
-    if (after.log !== "(empty)") {
-      fail(`"${what}" has no log, but the pane shows "${after.log}"`);
+    if (after.log === "(empty)") {
+      fail(`"${what}" has no log and the pane is blank; it should say why`);
+    }
+    if (row.dataset.kind === "skipped" && !/skipped/i.test(after.log)) {
+      fail(`a skipped build's pane does not say so: "${after.log}"`);
     }
     // The remaining assertions are about a build that exists.
     win.eval("render()");
