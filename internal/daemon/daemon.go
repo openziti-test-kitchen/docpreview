@@ -109,6 +109,15 @@ type Daemon struct {
 	// stage would render a count against the wrong phase.
 	startup atomic.Pointer[StartupProgress]
 
+	// namePrefix is what every published name starts with, so two installations can share
+	// one exposer account. The config file's value, unless an operator has overridden it
+	// from the dashboard.
+	//
+	// Held here rather than read from the store per build, because `previewName` is on the
+	// build path and this changes about once in the life of an installation. Atomic because
+	// the dashboard writes it while builds read it.
+	namePrefix atomic.Pointer[string]
+
 	// removeCacheVolumes deletes a preview's docker cache volumes. A field because it
 	// shells out to docker: a test running the real one spends a subprocess per teardown,
 	// and the version of this that deleted volumes by name deleted live ones. Defaulted in
@@ -471,6 +480,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// — the reap, every republish, and the history load — rather than the republish loop
 	// alone, which is the part that happens to be instrumented.
 	bootStarted := time.Now()
+	// Before recovery, because recovery republishes and every name it renders has to carry
+	// the prefix an operator chose — not the config file's, which may be what they changed
+	// it away from.
+	d.loadNamePrefix(ctx)
 	if err := d.recover(ctx); err != nil {
 		d.starting.Store(false)
 		return err
@@ -2729,15 +2742,74 @@ func (d *Daemon) unpublish(previewID string) {
 	}
 }
 
+// NamePrefix is what every published name starts with.
+//
+// The stored override if an operator set one, the config file's value otherwise. Loaded at
+// startup and updated by SetNamePrefix rather than read per build: this is on the build path
+// and it changes about once in the life of an installation.
+func (d *Daemon) NamePrefix() string {
+	if p := d.namePrefix.Load(); p != nil {
+		return *p
+	}
+	return model.NamePrefix(d.cfg.Exposer.Prefix)
+}
+
+// SetNamePrefix changes the prefix and records it, so it survives a restart.
+//
+// It does **not** rename anything already published. Every live preview keeps the name it
+// was created with until its next build, so an installation that has been running under one
+// prefix and is given another serves a mix — which is the honest outcome and the reason the
+// dashboard says so beside the field. Renaming in place would mean withdrawing and
+// recreating every share, which is minutes of 404s and a comment on every open pull request
+// pointing at a URL that has moved.
+func (d *Daemon) SetNamePrefix(ctx context.Context, prefix string) error {
+	prefix = model.NamePrefix(prefix)
+	if why := model.ValidPrefix(prefix); why != "" {
+		return errors.New(why)
+	}
+	if err := d.store.SetSetting(ctx, store.SettingNamePrefix, prefix); err != nil {
+		return err
+	}
+	d.namePrefix.Store(&prefix)
+	d.log.Info("name prefix changed", "prefix", prefix,
+		"note", "existing previews keep their names until rebuilt")
+	return nil
+}
+
+// loadNamePrefix reads the stored override at startup.
+//
+// A missing row means "never set", which falls back to the config file. A row holding the
+// empty string means an operator deliberately cleared it, which is not the same thing and
+// must not silently re-inherit the file's value.
+func (d *Daemon) loadNamePrefix(ctx context.Context) {
+	v, ok, err := d.store.Setting(ctx, store.SettingNamePrefix)
+	if err != nil {
+		// Not fatal: the config file's value is a working answer, and refusing to start
+		// over a cosmetic setting would be the wrong trade.
+		d.log.Warn("reading the stored name prefix; using the config file's",
+			"error", err, "prefix", model.NamePrefix(d.cfg.Exposer.Prefix))
+		return
+	}
+	if !ok {
+		return
+	}
+	v = model.NamePrefix(v)
+	d.namePrefix.Store(&v)
+}
+
 // previewName renders the configured name template for the active exposer.
 func (d *Daemon) previewName(pr model.PullRequest) (string, error) {
+	// The prefix belongs to the exposer, not to the template: it applies whichever template
+	// is in play, and an operator who has to remember to write it into three templates will
+	// one day write it into two.
+	p := d.NamePrefix()
 	switch d.cfg.Exposer.Kind {
 	case "frontdoor":
-		return expose.RenderName(d.cfg.Exposer.Frontdoor.NameTemplate, pr)
+		return expose.RenderName(d.cfg.Exposer.Frontdoor.NameTemplate, pr, p)
 	case "ziti":
-		return expose.RenderName(d.cfg.Exposer.Ziti.NameTemplate, pr)
+		return expose.RenderName(d.cfg.Exposer.Ziti.NameTemplate, pr, p)
 	default:
-		return expose.RenderName(d.cfg.Exposer.Zrok.NameTemplate, pr)
+		return expose.RenderName(d.cfg.Exposer.Zrok.NameTemplate, pr, p)
 	}
 }
 

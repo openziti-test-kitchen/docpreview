@@ -179,6 +179,13 @@ func (i *Ingress) Handler() http.Handler {
 		// Cancelling a build, for the same reason: one gate, already written.
 		mux.Handle("/api/builds/", i.projects.Handler())
 
+		// Installation-wide settings — today the name prefix, which decides the public
+		// hostname of every preview. Same gate for the same reason as the rest of this
+		// list, and mounted here rather than only registered inside the admin's own mux:
+		// this is where a path becomes reachable, and a route the admin declares but the
+		// ingress does not forward answers 404 while looking perfectly wired.
+		mux.Handle("/api/settings/", i.projects.Handler())
+
 		// Its own address, for the same reasons /secrets has one: it can be linked
 		// from a runbook, and a proxy or a future authentication layer can gate one
 		// path where it cannot gate a panel inside "/".

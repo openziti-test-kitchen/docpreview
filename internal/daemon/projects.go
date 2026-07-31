@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -79,6 +78,11 @@ type ProjectsAdmin struct {
 	// A function rather than the daemon, like every other one of these, so this admin
 	// depends on the store and the config only.
 	brancher func(ctx context.Context, repo model.Repo, branch string) (string, error)
+
+	// prefix reads and writes the per-installation name prefix. Two functions rather than
+	// one accessor, because the read is on every page load and the write is gated.
+	readPrefix func() string
+	setPrefix  func(ctx context.Context, prefix string) error
 
 	// scmChecker verifies that a project's source-control credential reaches its
 	// repository, returning what it found. Nil for a daemon with no platform that can be
@@ -156,6 +160,14 @@ func (a *ProjectsAdmin) WithBrancher(fn func(context.Context, model.Repo, string
 	return a
 }
 
+// WithNamePrefix installs the read and write of the per-installation name prefix.
+func (a *ProjectsAdmin) WithNamePrefix(read func() string,
+	set func(context.Context, string) error,
+) *ProjectsAdmin {
+	a.readPrefix, a.setPrefix = read, set
+	return a
+}
+
 // WithSCMChecker installs the credential test behind the projects page's Test button.
 func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (string, error)) *ProjectsAdmin {
 	a.scmChecker = fn
@@ -166,6 +178,15 @@ func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (str
 func (a *ProjectsAdmin) WithDocker(ok bool, why string) *ProjectsAdmin {
 	a.dockerOK, a.dockerWhy = ok, why
 	return a
+}
+
+// namePrefix is the installation's prefix, or empty on a daemon that has no reader wired —
+// which is every test that builds this admin directly.
+func (a *ProjectsAdmin) namePrefix() string {
+	if a.readPrefix == nil {
+		return ""
+	}
+	return a.readPrefix()
 }
 
 func (a *ProjectsAdmin) openVault() *vault.Vault {
@@ -221,6 +242,12 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// platform to ask what its default branch is called.
 	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/branch", a.gated(a.branch))
 
+	// The installation's name prefix. Not under /api/projects/{...} because it belongs to
+	// the daemon rather than to a project, but served by this admin so it inherits the same
+	// two gates — it decides the public hostname of every preview, which is not a thing a
+	// remote caller may change.
+	mux.HandleFunc("PUT /api/settings/prefix", a.gated(a.setNamePrefix))
+
 	// Checking an image runs a docker command with an operator-supplied argument and
 	// makes a registry round trip, so it is gated like every other write even though it
 	// changes nothing here. Unauthenticated, it would be a way to make this host probe
@@ -242,25 +269,12 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 // rather than restating it: on a loopback-only daemon the boundary is the one that
 // already protects the binary, and anyone who can reach 127.0.0.1 can edit the
 // database directly.
+// One rule, one implementation, shared with the credential surface — see
+// listenersAllowAdmin. A project row decides what command runs on the build host and the
+// vault decides which credentials it runs with; guarding them differently would mean
+// guarding the weaker of the two.
 func (a *ProjectsAdmin) available() (bool, string) {
-	if len(a.cfg.Listeners) == 0 {
-		return false, "no listeners"
-	}
-	for _, l := range a.cfg.Listeners {
-		if l.Ziti != nil {
-			return false, "a ziti listener is configured; the admin surface does not yet " +
-				"check the dialing identity, so changing what a build runs is refused"
-		}
-		host, _, err := net.SplitHostPort(l.TCP)
-		if err != nil {
-			return false, "unparseable listener " + l.TCP
-		}
-		if !isLoopback(host) {
-			return false, fmt.Sprintf("the ingress listens on %s; projects can only be edited "+
-				"from a loopback-only daemon", l.TCP)
-		}
-	}
-	return true, ""
+	return listenersAllowAdmin(a.cfg.Listeners, "projects")
 }
 
 func (a *ProjectsAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
@@ -401,6 +415,14 @@ type projectDefaults struct {
 	// blank, which would change what every existing project builds.
 	Framework string `json:"framework,omitempty"`
 
+	// Prefix is what every preview hostname this installation publishes starts with.
+	//
+	// On this page because it is the setting that lets two installations share one exposer
+	// account, and the moment somebody needs it is the moment they are standing up the
+	// second one — not a moment when they want to edit a YAML file on a host they have just
+	// built. Empty means no prefix, which is every existing installation.
+	Prefix string `json:"prefix"`
+
 	// Images are the container images this project knows work, offered as suggestions
 	// beside a free-text field rather than as a closed list: the set of images that
 	// can run a Docusaurus build is not ours to bound, and a private registry mirror
@@ -539,6 +561,7 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 			Frameworks: config.Frameworks(),
 			Framework:  config.FrameworkDefault,
 			Images:     knownImages(),
+			Prefix:     a.namePrefix(),
 		},
 		SecretsAvailable: a.vault != nil,
 		VaultLocked:      v == nil,
@@ -982,6 +1005,39 @@ func (a *ProjectsAdmin) link(w http.ResponseWriter, r *http.Request) {
 	}
 	a.log.Info("linked a pull request", "project", p.Key(), "number", body.Number)
 	writeJSON(w, http.StatusOK, map[string]any{"queued": true, "number": body.Number})
+}
+
+// setNamePrefix changes what every published name starts with.
+//
+// Stored in the database rather than written back into config.yml, because that file is
+// hand-written and its comments are the most valuable thing in it — a daemon that rewrote it
+// to save one string would delete them.
+func (a *ProjectsAdmin) setNamePrefix(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Prefix string `json:"prefix"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if a.setPrefix == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot change the name prefix"})
+		return
+	}
+	// Refused rather than sanitized, and refused here as well as at config load: this is
+	// reachable without a browser, and a prefix that is not a hostname label produces names
+	// the exposer rejects one build at a time.
+	if err := a.setPrefix(r.Context(), body.Prefix); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	st, err := a.snapshot(r.Context(), r)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
 }
 
 // branch builds a preview of a branch, with no pull request behind it.
