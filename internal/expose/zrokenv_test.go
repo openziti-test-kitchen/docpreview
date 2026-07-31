@@ -3,6 +3,7 @@ package expose
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/openziti/zrok/v2/environment"
@@ -173,6 +174,56 @@ func TestEnrolmentRefusesTheImpossibleCases(t *testing.T) {
 	// Nothing enrolled, so there is nothing to disable — and no call to make.
 	if err := ZrokDisable(t.Context()); err == nil {
 		t.Error("ZrokDisable on an environment that is not enabled was attempted")
+	}
+}
+
+// An environment enrolled against the zrok v1 service must be refused, not published through.
+//
+// The versions are not interchangeable: v1 has no namespaces and no reserved names, and a reserved
+// name in a namespace is the entire mechanism a preview's stable URL depends on. Enrolled against
+// v1 everything reads as configured — there is an account, a directory, an endpoint — and the first
+// publish fails with a 404 from a path that does not exist, which looks like a deleted environment
+// and sends the operator to re-enrol against the same wrong service.
+//
+// Only zrok.io hosts are judged. A self-hosted v2 controller can be at any address, and guessing
+// would refuse a working setup.
+func TestTheV1ServiceIsRefusedAndSelfHostedIsNot(t *testing.T) {
+	for _, tc := range []struct {
+		endpoint string
+		refused  bool
+	}{
+		{"https://api-v2.zrok.io", false},
+		{"https://api-v2.zrok.io/", false},
+		{"https://api.zrok.io", true},
+		{"https://api.zrok.io/api/v1", true},
+		{"https://zrok.io", true},
+		// Self-hosted, so nothing is claimed either way.
+		{"https://zrok.internal.example", false},
+		{"https://previews.acme.com/api/v2", false},
+		{"", false},
+	} {
+		got := zrokUnsupported(latestRootForTest{}, tc.endpoint)
+		if (got != "") != tc.refused {
+			t.Errorf("zrokUnsupported(%q) = %q, refused=%v want %v",
+				tc.endpoint, got, got != "", tc.refused)
+		}
+		if tc.refused && !strings.Contains(got, "v2") {
+			t.Errorf("the refusal for %q does not say v2 is needed: %q", tc.endpoint, got)
+		}
+	}
+}
+
+// An environment directory written by an older zrok is refused on its own, whatever endpoint it
+// names — the on-disk format is the other way to be on the wrong version.
+func TestAnOlderEnvironmentDirectoryIsRefused(t *testing.T) {
+	why := zrokUnsupported(oldRootForTest{}, "https://api-v2.zrok.io")
+	if why == "" {
+		t.Fatal("an environment directory from an older zrok was accepted")
+	}
+	// The version is in the message, because "cannot use this" without saying which version
+	// found is a message that cannot be acted on.
+	if !strings.Contains(why, "v0.1") {
+		t.Errorf("the refusal does not name the version found: %q", why)
 	}
 }
 

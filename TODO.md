@@ -248,9 +248,35 @@ demoted to a fallback and locked-boot the default. See
 
 ## Planned but not built
 
-Seven design documents, 12–18, each ending with the order to build it in. See
+Eight design documents, 12–19 and 21, each ending with the order to build it in. See
 [docs/design/README.md](docs/design/README.md). What follows is only the work those plans surfaced as urgent —
 the plans themselves hold the reasoning.
+
+### Several exposers at once, and one per project
+
+**Planned, nothing built.** [21-multi-exposer.md](docs/design/21-multi-exposer.md) holds the design; the summary is
+that a preview has exactly one publication today and that assumption is written into the two store rows, the
+`Publication` type, the daemon's single `exposer` field, the pull request comment, and the reap.
+
+Asked for after the exposer panel landed and made the singular visible: four sections with an `Enable` button each
+reads as four independent switches, and enabling `local` therefore turned zrok off — which is a surprising way to
+find out that a preview has one URL.
+
+- [ ] **A publications table, keyed `(preview_id, build_id, exposer)`**, replacing the URL columns on `previews` and
+      `builds`. The migration runs against a live database with 29 publications in it, and losing them loses the URL
+      in every open pull request comment, so it is tested against a copy first.
+- [ ] **A per-exposer reap keep-set, with a two-exposer test written before the fan-out is used.** An exposer reaping
+      with a keep-set built from another exposer's publications deletes every live share it owns. Same footgun as two
+      daemons on one account, from inside one daemon, and just as silent — deleting a share you believe you own is a
+      normal thing to do.
+- [ ] **One comment row per publication**, labelled and in a stable order. Unlabelled, a reviewer clicks an overlay
+      or `127.0.0.1` URL and reports a broken preview; unordered, every status change reshuffles the rows and the
+      edit history becomes noise.
+- [ ] **A per-project exposer list**, on the projects page. Not settable from `.docpreview.yml`, for the reason no
+      project field is: the file arrives in the pull request, so its author would otherwise choose where their branch
+      gets published.
+- [ ] **Per-exposer name collision checks.** `Collides` and `releaseNames` treat names as one namespace, so two
+      previews rendering to one name in *different* exposers would be refused for no reason.
 
 ### Fixed by running it for real
 

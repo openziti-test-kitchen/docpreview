@@ -15,6 +15,73 @@ import (
 	"github.com/netfoundry/docpreview/internal/vault"
 )
 
+// applyStoredExposerSettings overlays the exposer settings held in the database onto the config.
+//
+// # Why any of this is in the database
+//
+// `config.yml` is hand-written and its comments are the part that survives being copied to another
+// machine six months later, so the daemon does not rewrite it. That left every exposer decision as
+// "edit a file and restart" — including the ones an operator makes while looking at a browser tab
+// with the values in it, which is exactly the case for a Frontdoor frontend id or a ziti service
+// name.
+//
+// # The precedence, and why this way round
+//
+// A stored value wins over the file. The file is what somebody wrote once; the setting is what they
+// changed last, from the dashboard, deliberately. The reverse would make the dashboard's fields
+// silently ineffective on any installation whose config happened to name the same key — which is
+// most of them, since `init` writes a fully commented file.
+//
+// Read once, here, before the exposer is constructed. Nothing re-reads them: swapping an exposer
+// under a running daemon would leave every published preview pointing at one that no longer owns it,
+// and the ziti identity is loaded at construction.
+func applyStoredExposerSettings(st *store.Store, cfg *config.Server, log *slog.Logger) error {
+	ctx := context.Background()
+
+	// One read per key, and a helper rather than four copies of the same three lines. Blank is
+	// "not set" throughout: a setting is written only when the operator filled the field in, so
+	// there is no way to express "deliberately empty" and no need for one — clearing a value is
+	// what the config file is for.
+	get := func(key string) (string, error) {
+		v, _, err := st.Setting(ctx, key)
+		if err != nil {
+			return "", fmt.Errorf("reading %s: %w", key, err)
+		}
+		return strings.TrimSpace(v), nil
+	}
+
+	for _, f := range []struct {
+		key   string
+		apply func(string)
+	}{
+		{store.SettingExposerKind, func(v string) {
+			if v != cfg.Exposer.Kind {
+				log.Info("using the exposer set from the dashboard",
+					"exposer", v, "config_says", cfg.Exposer.Kind)
+			}
+			cfg.Exposer.Kind = v
+		}},
+		{store.SettingZitiIdentityFile, func(v string) { cfg.Exposer.Ziti.IdentityFile = v }},
+		{store.SettingZitiService, func(v string) { cfg.Exposer.Ziti.Service = v }},
+		{store.SettingZitiDomain, func(v string) { cfg.Exposer.Ziti.Domain = v }},
+		{store.SettingFrontdoorAPIBase, func(v string) { cfg.Exposer.Frontdoor.APIBase = v }},
+		{store.SettingFrontdoorFrontend, func(v string) { cfg.Exposer.Frontdoor.Frontend = v }},
+		{store.SettingFrontdoorEnvZID, func(v string) { cfg.Exposer.Frontdoor.EnvZID = v }},
+		{store.SettingFrontdoorAgentHost, func(v string) {
+			cfg.Exposer.Frontdoor.AgentReachableHost = v
+		}},
+	} {
+		v, err := get(f.key)
+		if err != nil {
+			return err
+		}
+		if v != "" {
+			f.apply(v)
+		}
+	}
+	return nil
+}
+
 // applyZrokScope points this process at one of the two zrok environment directories.
 //
 // Called once from setup, before anything loads a zrok root. The rules, in order:
@@ -443,6 +510,14 @@ func cmdZrokDisable(args []string) error {
 
 	if err := useStoredOrProjectZrok(ctx, st, cfg); err != nil {
 		return err
+	}
+	// Only this installation's own. The machine's `~/.zrok2` is shared with the zrok CLI and
+	// with anything else on that account, so docpreview does not delete it — the same rule the
+	// dashboard enforces, and for the same reason: the blast radius is other people's work.
+	if expose.ZrokScopeInForce() == expose.ZrokSystem {
+		return errors.New("this installation uses the machine's zrok environment, which is " +
+			"shared with the zrok CLI and anything else on that account; docpreview will not " +
+			"remove it — run 'zrok2 disable' if that is what you want")
 	}
 	if err := expose.ZrokDisable(ctx); err != nil {
 		return err

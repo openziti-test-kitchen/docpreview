@@ -109,6 +109,16 @@ func (z *Zrok) Validate(ctx context.Context) error {
 			"installation is looking in")
 	}
 
+	// Refused before the round trip, because the round trip against the wrong version does not
+	// fail cleanly: a v1 controller answers the v2 paths with a 404 that reads as a deleted
+	// environment, which sends the operator to re-enrol against the same wrong service.
+	apiEndpointForCheck, _ := z.root.ApiEndpoint()
+	if why := zrokUnsupported(z.root, apiEndpointForCheck); why != "" {
+		return errors.New(why + "; 'docpreview zrok status' says which directory this " +
+			"installation reads, and 'docpreview zrok disable -yes' then a fresh enrolment " +
+			"moves it")
+	}
+
 	client, err := z.root.Client()
 	if err != nil {
 		return fmt.Errorf("building zrok client: %w", err)

@@ -10,12 +10,27 @@ An **exposer** turns a built preview into a URL somebody can open. It is the onl
 knows anything about how traffic reaches you, which is what makes the same binary work on a laptop, on a VM,
 and inside a corporate network with no inbound ports.
 
-Pick one in the server config:
+Pick **one**. Either on the *Exposer configuration* panel at `/secrets`, which stores the choice and applies it at
+the next restart, or in the server config:
 
 ```yaml
 exposer:
   kind: zrok2   # or: frontdoor, ziti, local
 ```
+
+A stored choice wins over the file, so a value set from the dashboard is the one in force. The config file is never
+rewritten — its comments are the part that survives being copied to another machine.
+
+:::note One exposer, one URL per preview
+
+`exposer.kind` is a single value: a preview is published one way and the pull request comment carries one link. So
+enabling an exposer turns off whichever one was on, and at the next restart every preview is republished at a new
+address and every open comment is rewritten to match. The dashboard asks before doing it.
+
+Publishing through several at once, and choosing per project, is designed but not built — see
+[docs/design/21-multi-exposer.md](https://github.com/netfoundry/docpreview/blob/main/docs/design/21-multi-exposer.md).
+
+:::
 
 | Kind | Reachable by | Public surface |
 |---|---|---|

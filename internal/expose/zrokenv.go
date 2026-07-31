@@ -121,6 +121,14 @@ type ZrokRootInfo struct {
 	// Why explains an unusable root, in the operator's terms. Empty when there is nothing
 	// wrong.
 	Why string `json:"why,omitempty"`
+
+	// Unsupported is set when the environment is enrolled and docpreview still cannot use it:
+	// an on-disk format from an older zrok, or an enrolment against the v1 service.
+	//
+	// Separate from Why, which is about a root that is not set up. This one is about a root
+	// that *is* set up and does not meet the requirement — the state that otherwise reads as
+	// working right up until the first publish fails.
+	Unsupported string `json:"unsupported,omitempty"`
 }
 
 // ZrokEnvState is both roots plus the decision between them.
@@ -210,7 +218,53 @@ func inspectOneZrokRoot(dir string) ZrokRootInfo {
 	if info.Exists && !info.Enabled {
 		info.Why = "the directory exists but no account is enrolled in it"
 	}
+	if info.Enabled {
+		info.Unsupported = zrokUnsupported(root, info.APIEndpoint)
+	}
 	return info
+}
+
+// zrokUnsupported reports why an enrolled environment still cannot be used, empty when it can.
+//
+// docpreview is built against the zrok **v2** SDK, and the two versions are not
+// interchangeable — a v1 controller has no namespaces and no reserved names, which is the whole
+// mechanism a preview's stable URL depends on. Enrolled against the wrong one, everything looks
+// configured and the first publish fails with a 404 from a path that does not exist.
+//
+// Two checks, because there are two ways to be on the wrong version:
+//
+//   - The on-disk format. `environment.IsLatest` compares the root's recorded version against the
+//     one this library writes. An older directory is a v1 enrolment, or a v2 one from before a
+//     format change.
+//   - The service. The hosted v1 API is `api.zrok.io` and the hosted v2 API is `api-v2.zrok.io`,
+//     so a `zrok.io` endpoint with no v2 marker is the v1 service. Only checked for `zrok.io`
+//     hosts: a self-hosted controller can be at any address and guessing at one would refuse a
+//     working setup.
+func zrokUnsupported(root env_core.Root, apiEndpoint string) string {
+	if !environment.IsLatest(root) {
+		v := "an older version"
+		if m := root.Metadata(); m != nil && m.V != "" {
+			v = "version " + m.V
+		}
+		return "this environment directory is " + v + ", which docpreview cannot use; " +
+			"docpreview needs a zrok v2 environment"
+	}
+	if apiEndpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(apiEndpoint)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "zrok.io" || strings.HasSuffix(host, ".zrok.io") {
+		if !strings.Contains(host, "v2") && !strings.Contains(u.Path, "v2") {
+			return "this is enrolled against the zrok v1 service (" + apiEndpoint + "). " +
+				"docpreview needs v2, which has the namespaces and reserved names a stable " +
+				"preview URL depends on — v1 has neither"
+		}
+	}
+	return ""
 }
 
 // UseZrokRoot points this process at one of the two environments.

@@ -363,6 +363,16 @@ func setup(configPath, logLevel string) (*wiring, error) {
 		vaultPath: cfg.VaultPath(),
 	}
 
+	// Exposer settings the dashboard can change without rewriting the config file.
+	//
+	// Applied before the exposer is built, and to w.cfg as well, since everything downstream
+	// reads that copy.
+	if err := applyStoredExposerSettings(st, &cfg, log); err != nil {
+		w.Close()
+		return nil, err
+	}
+	w.cfg = cfg
+
 	// Which zrok environment directory this process uses, decided before anything loads one.
 	//
 	// zrok's root directory is a process-wide global read by every LoadRoot, so this must happen
@@ -710,7 +720,29 @@ func cmdServe(args []string) error {
 				return v, nil
 			}
 			return nil, vault.ErrLocked
-		}))
+		}).
+			// So a pasted Frontdoor token can be checked against the tenant before it is
+			// switched to, rather than discovered wrong by the first build that clones for
+			// twenty seconds and then cannot publish. Built here because assembling an exposer
+			// is wiring's job and the daemon package knows nothing about how one is made.
+			WithExposerTester(func(ctx context.Context, kind string) error {
+				probe := w.cfg
+				probe.Exposer.Kind = kind
+				ex, err := buildExposer(w, probe, w.log)
+				if err != nil {
+					return err
+				}
+				if c, ok := ex.(io.Closer); ok {
+					defer c.Close()
+				}
+				return ex.Validate(ctx)
+			}).
+			// So a ziti identity can be enrolled from a pasted JWT, which was the last thing on
+			// this panel that needed a second binary. The SDK does the same exchange
+			// `ziti edge enroll` does.
+			WithZitiEnroller(func(ctx context.Context, jwt, name string) (string, error) {
+				return enrollZitiIdentity(ctx, w.cfg, jwt, name)
+			}))
 
 	// The login gate. The hashes live in the database rather than the vault, because the page
 	// that unlocks the vault is behind this gate — so it is wired from the store and needs

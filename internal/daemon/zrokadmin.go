@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/user"
 	"strings"
 
 	"github.com/netfoundry/docpreview/internal/config"
@@ -49,6 +51,23 @@ type ZrokAdmin struct {
 	// locked when the daemon starts and the page that unlocks it is served by this daemon. A
 	// locked vault does not stop enrolment — it only means the account token cannot be kept.
 	vaultOf func() (*vault.Vault, error)
+
+	// scopeOf reports which zrok directory this process loaded.
+	//
+	// A field rather than a direct call to expose.ZrokScopeInForce, because that reads a
+	// process-wide global which is deliberately one-way: rebinding it under a running exposer
+	// would leave the daemon holding one environment while writing to another. One-way is right
+	// in production and untestable, so the seam is here — and the alternative was an exported
+	// reset hook, which is a production API existing only for tests.
+	scopeOf func() expose.ZrokScope
+
+	// testExposer checks one exposer's credential against the service it is for. Nil when the
+	// caller wired none, in which case the panel offers no test rather than a button that
+	// cannot answer.
+	testExposer func(ctx context.Context, kind string) error
+
+	// enrollZitiID turns a one-time enrolment JWT into an identity file, returning its path.
+	enrollZitiID func(ctx context.Context, jwt, name string) (string, error)
 }
 
 func NewZrokAdmin(cfg config.Server, st *store.Store, log *slog.Logger,
@@ -59,6 +78,7 @@ func NewZrokAdmin(cfg config.Server, st *store.Store, log *slog.Logger,
 		store:   st,
 		log:     log.With("component", "zrok"),
 		vaultOf: vaultOf,
+		scopeOf: expose.ZrokScopeInForce,
 	}
 }
 
@@ -76,7 +96,32 @@ func (a *ZrokAdmin) Handler() http.Handler {
 	mux.HandleFunc("POST /api/zrok/register", a.gated(a.register))
 	mux.HandleFunc("POST /api/zrok/enable", a.gated(a.enable))
 	mux.HandleFunc("POST /api/zrok/disable", a.gated(a.disable))
+
+	// The other exposers. Under /api/zrok because this is one panel and one gate — the routes
+	// were named before the panel grew from "zrok" to "how previews reach the internet", and
+	// renaming them would break the one thing an operator may have scripted.
+	mux.HandleFunc("POST /api/zrok/exposer", a.gated(a.setExposer))
+	mux.HandleFunc("POST /api/zrok/frontdoor", a.gated(a.setFrontdoor))
+	mux.HandleFunc("POST /api/zrok/frontdoor/test", a.gated(a.testFrontdoor))
+	mux.HandleFunc("POST /api/zrok/ziti/enroll", a.gated(a.enrollZiti))
 	return mux
+}
+
+// WithExposerTester lets the panel check a credential against the service it is for.
+//
+// A function rather than a call into expose, because building an exposer is wiring's job and this
+// package deliberately knows nothing about how one is assembled — the same reasoning that keeps
+// the SCM credential check on a callback.
+func (a *ZrokAdmin) WithExposerTester(f func(ctx context.Context, kind string) error) *ZrokAdmin {
+	a.testExposer = f
+	return a
+}
+
+// WithZitiEnroller installs the identity enrolment, which turns a one-time JWT into an identity
+// file on disk and returns where it wrote it.
+func (a *ZrokAdmin) WithZitiEnroller(f func(ctx context.Context, jwt, name string) (string, error)) *ZrokAdmin {
+	a.enrollZitiID = f
+	return a
 }
 
 // gated refuses a write that is neither local nor from an admin session.
@@ -101,6 +146,171 @@ func (a *ZrokAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// exposerInfo describes one exposer other than zrok: whether it is the one in use, whether what
+// it needs is present, and what to read.
+//
+// Deliberately thin. These three cannot be configured from a browser — a ziti identity is a file
+// produced by `ziti edge enroll`, a Frontdoor token is a vault entry, and `local` needs nothing —
+// so the panel reports rather than offers. Reporting is still worth doing: "which exposer is this
+// daemon using, and is it ready" was previously answerable only from `doctor`.
+type exposerInfo struct {
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+
+	// InUse is whether exposer.kind names this one.
+	InUse bool `json:"in_use"`
+
+	// Ready is whether it could publish: the credential or the identity it needs is present.
+	// Meaningless for `local`, which needs nothing, so Needs is empty there.
+	Ready bool `json:"ready"`
+
+	// Needs names the missing piece, empty when nothing is missing.
+	Needs string `json:"needs,omitempty"`
+
+	// What it is, in one sentence.
+	What string `json:"what"`
+
+	// Doc is where to read more, as a path in the repository rather than a URL.
+	//
+	// Not a link, deliberately: the documentation site is not served by this daemon, so an
+	// href would 404 from the one page it appears on. A path can be opened in an editor or
+	// found on GitHub, which is what somebody configuring an exposer is doing anyway.
+	Doc string `json:"doc,omitempty"`
+
+	// Setup is what the page can offer for this exposer, empty when nothing can be done from a
+	// browser. One of "frontdoor" or "ziti"; `local` needs nothing configured at all.
+	Setup string `json:"setup,omitempty"`
+
+	// Detail is what is configured, for the ones that have something to report — the Frontdoor
+	// tenant, the ziti service and identity path. Never a credential.
+	Detail string `json:"detail,omitempty"`
+}
+
+// otherExposers describes the three that are not zrok.
+//
+// The readiness checks are the cheap half of what `doctor` does — is the credential there, is the
+// identity file there — and deliberately not the network half. A panel that dialled a controller
+// on every page load would be a page that takes seconds to render and reports transient failures
+// as configuration errors.
+func (a *ZrokAdmin) otherExposers() []exposerInfo {
+	kind := a.cfg.Exposer.Kind
+
+	// Frontdoor needs five things and the credential is only one of them. Reported as the
+	// *first* missing one rather than a list: a panel that names five gaps at once reads as a
+	// wall, and they are filled in in this order anyway.
+	fd := a.cfg.Exposer.Frontdoor
+	frontdoorHasToken := false
+	if v, err := a.vaultOf(); err == nil {
+		if _, err := v.Get(vault.KeyFrontdoorToken); err == nil {
+			frontdoorHasToken = true
+		}
+	}
+	frontdoorNeeds := ""
+	switch {
+	case !frontdoorHasToken:
+		frontdoorNeeds = "the API token"
+	case fd.APIBase == "":
+		frontdoorNeeds = "the gateway URL, including the Frontdoor id"
+	case fd.Frontend == "":
+		frontdoorNeeds = "the frontend id"
+	case fd.EnvZID == "":
+		frontdoorNeeds = "the agent's ziti identity id"
+	case fd.AgentReachableHost == "":
+		frontdoorNeeds = "the address the agent can reach this daemon on"
+	}
+	frontdoorReady := frontdoorNeeds == ""
+
+	z := a.cfg.Exposer.Ziti
+	zitiNeeds := ""
+	switch {
+	case z.IdentityFile == "":
+		zitiNeeds = "exposer.ziti.identity_file — an identity from `ziti edge enroll`"
+	case z.Service == "":
+		zitiNeeds = "exposer.ziti.service — the wildcard service to bind"
+	case fileMissing(z.IdentityFile):
+		zitiNeeds = "the identity file named in the config is not on disk: " + z.IdentityFile
+	}
+
+	frontdoorDetail := ""
+	if fd.APIBase != "" {
+		frontdoorDetail = fd.APIBase
+		if fd.Frontend != "" {
+			frontdoorDetail += ", frontend " + fd.Frontend
+		}
+	}
+
+	zitiDetail := ""
+	if z.Service != "" {
+		zitiDetail = "service " + z.Service
+		if z.Domain != "" {
+			zitiDetail += ", domain " + z.Domain
+		}
+	}
+
+	return []exposerInfo{
+		{
+			Kind: "frontdoor", Label: "NetFoundry Frontdoor",
+			InUse: kind == "frontdoor",
+			Ready: frontdoorReady, Needs: frontdoorNeeds,
+			What: "Public preview URLs through a NetFoundry Frontdoor tenant. The agent dials " +
+				"out, so this one binds a real local TCP port.",
+			Doc:    "www/docs/runbooks/frontdoor.md",
+			Setup:  "frontdoor",
+			Detail: frontdoorDetail,
+		},
+		{
+			Kind: "ziti", Label: "OpenZiti",
+			InUse: kind == "ziti",
+			Ready: zitiNeeds == "", Needs: zitiNeeds,
+			What: "Previews reachable only through a tunneler with an enrolled identity. " +
+				"Nothing is on the internet, and there is no clickable link in a pull request.",
+			// No runbook of its own; the exposer comparison is where it is explained, and
+			// `docpreview configure ziti` is what provisions a whole network.
+			Doc:    "www/docs/exposers.md",
+			Setup:  "ziti",
+			Detail: zitiDetail,
+		},
+		{
+			Kind: "local", Label: "This daemon only",
+			InUse: kind == "local",
+			// Ready unconditionally: it serves previews from the listener this page arrived
+			// on, so if you are reading this it works.
+			Ready: true,
+			What: "Previews served from the daemon's own listener, under /preview/. No account " +
+				"and no tunnel — and no URL that works from anywhere else.",
+			// Nothing to set up. Its only setting is being the exposer, which every section
+			// offers through the same control.
+		},
+	}
+}
+
+// fileMissing reports whether a configured path is absent, treating an unreadable path as absent
+// too: either way the exposer cannot start.
+func fileMissing(path string) bool {
+	if path == "" {
+		return true
+	}
+	_, err := os.Stat(path)
+	return err != nil
+}
+
+// exposerFrontdoor and exposerZiti are the settable, non-secret parts of those two exposers.
+type exposerFrontdoor struct {
+	APIBase   string `json:"api_base,omitempty"`
+	Frontend  string `json:"frontend,omitempty"`
+	EnvZID    string `json:"env_z_id,omitempty"`
+	AgentHost string `json:"agent_reachable_host,omitempty"`
+
+	// HasToken says whether the credential is stored, without saying anything about it.
+	HasToken bool `json:"has_token"`
+}
+
+type exposerZiti struct {
+	IdentityFile string `json:"identity_file,omitempty"`
+	Service      string `json:"service,omitempty"`
+	Domain       string `json:"domain,omitempty"`
+}
+
 // zrokState is what the panel renders.
 type zrokState struct {
 	Available bool   `json:"available"`
@@ -122,6 +332,15 @@ type zrokState struct {
 
 	MustChoose bool `json:"must_choose"`
 
+	// RunAs is the account this daemon runs as, which is what makes the machine-wide
+	// environment the machine-wide environment.
+	//
+	// "This machine" was the wrong noun and it mattered: `~/.zrok2` is per *user*. A daemon
+	// under a service account with its own home directory reports nothing enrolled while
+	// `zrok2 overview` in the operator's own terminal shows a working environment, and both
+	// statements are true. So the panel names the account.
+	RunAs string `json:"run_as,omitempty"`
+
 	// Enrolled is whether *either* root has an account. It is what the panel switches on: with
 	// one enrolled there is nothing to sign up for, which is the rule this surface enforces.
 	Enrolled bool `json:"enrolled"`
@@ -133,10 +352,38 @@ type zrokState struct {
 	// VaultLocked explains why HasAccountToken cannot be answered.
 	VaultLocked bool `json:"vault_locked"`
 
-	// ExposerKind is the configured exposer, so the panel can say that an enrolled environment
-	// is not being used — `exposer.kind: local` with zrok enrolled is a working setup that
-	// publishes nothing through it.
+	// ExposerKind is the exposer this process is actually publishing with.
+	//
+	// The one loaded at startup, not the one most recently chosen. Those differ for as long as it
+	// takes somebody to restart, and the difference is the whole reason the next field exists:
+	// pressing Enable and seeing nothing move reads as a button that does nothing.
 	ExposerKind string `json:"exposer_kind"`
+
+	// ExposerStored is the exposer recorded from the dashboard, empty when the config file is
+	// still deciding.
+	//
+	// Reported separately so the panel can say "enabled at the next restart" rather than either
+	// lying about the current state or appearing inert. Exactly the shape the zrok directory
+	// choice needed, arriving from the other direction.
+	ExposerStored string `json:"exposer_stored,omitempty"`
+
+	// Frontdoor and Ziti are the non-secret half of those exposers' configuration, so the forms
+	// on the panel can show what is already set rather than presenting five empty boxes on a
+	// working installation.
+	//
+	// No credential in either. Frontdoor's API token is a vault entry and never leaves it; what
+	// is here is a gateway URL, two ids and an address, all of which the operator reads off a
+	// console and none of which is a secret.
+	Frontdoor exposerFrontdoor `json:"frontdoor"`
+	Ziti      exposerZiti      `json:"ziti"`
+
+	// Others is every exposer this daemon is not using, and what each would need.
+	//
+	// Here because the panel is "exposer configuration" rather than "zrok": the question an
+	// operator arrives with is how previews get out, and a page that only ever mentions zrok
+	// answers that for one of four choices. Only zrok can be configured from here — the rest
+	// report what they need and where the runbook is, which is more than the page said before.
+	Others []exposerInfo `json:"others"`
 
 	// DefaultAPIEndpoint is the hosted service, shown as the placeholder on the signup form so
 	// nobody has to know it.
@@ -150,7 +397,27 @@ func (a *ZrokAdmin) snapshot(r *http.Request) (zrokState, error) {
 		Reason:             why,
 		ExposerKind:        a.cfg.Exposer.Kind,
 		DefaultAPIEndpoint: expose.DefaultZrokAPIEndpoint,
+		Others:             a.otherExposers(),
 	}
+
+	if stored, _, err := a.store.Setting(r.Context(), store.SettingExposerKind); err == nil {
+		st.ExposerStored = strings.TrimSpace(stored)
+	}
+
+	fd := a.cfg.Exposer.Frontdoor
+	st.Frontdoor = exposerFrontdoor{
+		APIBase:   fd.APIBase,
+		Frontend:  fd.Frontend,
+		EnvZID:    fd.EnvZID,
+		AgentHost: fd.AgentReachableHost,
+	}
+	if v, err := a.vaultOf(); err == nil {
+		if _, err := v.Get(vault.KeyFrontdoorToken); err == nil {
+			st.Frontdoor.HasToken = true
+		}
+	}
+	z := a.cfg.Exposer.Ziti
+	st.Ziti = exposerZiti{IdentityFile: z.IdentityFile, Service: z.Service, Domain: z.Domain}
 	st.CanWrite, st.ReadOnlyWhy = isLocalRequest(r)
 	if !ok {
 		st.CanWrite = false
@@ -162,7 +429,10 @@ func (a *ZrokAdmin) snapshot(r *http.Request) (zrokState, error) {
 		return st, err
 	}
 	st.Stored = stored
-	st.InForce = expose.ZrokScopeInForce()
+	st.InForce = a.scopeOf()
+	if u, err := user.Current(); err == nil {
+		st.RunAs = u.Username
+	}
 
 	state, err := expose.InspectZrokRoots(a.cfg.ZrokDir(), stored)
 	if err != nil {
@@ -243,7 +513,7 @@ func (a *ZrokAdmin) use(w http.ResponseWriter, r *http.Request) {
 	a.log.Info("zrok environment choice recorded", "scope", scope)
 
 	note := fmt.Sprintf("Using the %s zrok environment from the next restart.", scope)
-	if expose.ZrokScopeInForce() == scope {
+	if a.scopeOf() == scope {
 		note = fmt.Sprintf("Using the %s zrok environment.", scope)
 	}
 	a.render(w, r, http.StatusOK, note)
@@ -366,8 +636,24 @@ func (a *ZrokAdmin) enable(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, http.StatusOK, "This host is enrolled.")
 }
 
-// disable removes this host's environment from the account.
+// disable removes this installation's own zrok environment from the account.
+//
+// **Only this installation's.** The machine-wide `~/.zrok2` belongs to the zrok CLI and to
+// whatever else that account is used for — a share somebody left running, another tool, a
+// colleague's scripts. Deleting it from a documentation-preview dashboard would take those with
+// it, and nobody would think to look here for the cause. `zrok2 disable` is the tool for that,
+// run by the person who knows what depends on it.
+//
+// Enforced here and not only hidden on the page, because a hidden button is a preference and this
+// is a rule: the request is refused whatever sends it.
 func (a *ZrokAdmin) disable(w http.ResponseWriter, r *http.Request) {
+	if a.scopeOf() == expose.ZrokSystem {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "this daemon is using the machine's zrok environment, which is shared " +
+				"with the zrok CLI and with anything else on that account. docpreview will " +
+				"not remove it — run 'zrok2 disable' if that is what you want"})
+		return
+	}
 	if err := expose.ZrokDisable(r.Context()); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -378,6 +664,200 @@ func (a *ZrokAdmin) disable(w http.ResponseWriter, r *http.Request) {
 		"the URLs come back unchanged.")
 }
 
+// setExposer records which exposer this daemon should use.
+//
+// Stored rather than written into the config file, which is hand-written and whose comments are the
+// part that survives being copied to another machine. Read once at startup, because the exposer is
+// built during wiring and swapping one under a running daemon would leave every published preview
+// pointing at an exposer that no longer owns it.
+//
+// It refuses an exposer that cannot work. Recording one that has no credential produces a daemon
+// that will not start, and the page that would fix it is served by that daemon — the boot-order
+// trap this codebase keeps rediscovering, arriving this time through a dropdown.
+func (a *ZrokAdmin) setExposer(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read the request"})
+		return
+	}
+	kind := strings.ToLower(strings.TrimSpace(body.Kind))
+
+	switch kind {
+	case "zrok2":
+		st, err := a.snapshot(r)
+		if err == nil && !st.Enrolled {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "no zrok environment is enrolled yet, so this daemon would not start; " +
+					"set one up first"})
+			return
+		}
+	case "frontdoor", "ziti":
+		for _, o := range a.otherExposers() {
+			if o.Kind == kind && o.Needs != "" {
+				writeJSON(w, http.StatusConflict, map[string]string{
+					"error": kind + " needs " + o.Needs + "; this daemon would not start"})
+				return
+			}
+		}
+	case "local":
+		// Nothing to check. It serves previews from the listener this request arrived on.
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("%q is not an exposer: zrok2, frontdoor, ziti or local", body.Kind)})
+		return
+	}
+
+	if err := a.store.SetSetting(r.Context(), store.SettingExposerKind, kind); err != nil {
+		a.log.Error("recording the exposer", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "could not record it: " + err.Error()})
+		return
+	}
+	a.log.Info("exposer recorded from the dashboard", "exposer", kind, "was", a.cfg.Exposer.Kind)
+
+	note := "Previews will be published with " + kind + " from the next restart."
+	if kind == a.cfg.Exposer.Kind {
+		note = "Already publishing with " + kind + "."
+	}
+	a.render(w, r, http.StatusOK, note)
+}
+
+// setFrontdoor stores the Frontdoor API token.
+//
+// A field here as well as under Secrets, because the operator setting up an exposer is on this
+// panel and sending them to a different one for the credential it needs is how a setup flow loses
+// people. It is the same vault entry either way.
+func (a *ZrokAdmin) setFrontdoor(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token     string `json:"token"`
+		APIBase   string `json:"api_base"`
+		Frontend  string `json:"frontend"`
+		EnvZID    string `json:"env_z_id"`
+		AgentHost string `json:"agent_reachable_host"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read the request"})
+		return
+	}
+
+	// The token, when one was typed. Blank means "leave what is there", which is what makes the
+	// form re-submittable to correct one of the other four without re-pasting a credential.
+	if token := strings.TrimSpace(body.Token); token != "" {
+		v, err := a.vaultOf()
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "the vault is locked, so the token cannot be stored; unlock it above"})
+			return
+		}
+		if err := v.Set(vault.KeyFrontdoorToken, vault.NewSecretString(token)); err != nil {
+			a.log.Error("storing the Frontdoor token", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		a.log.Info("Frontdoor API token stored from the dashboard")
+	}
+
+	// The four settings. Written individually rather than as a blob so that clearing one is
+	// possible and a partial form does not wipe the rest.
+	for key, val := range map[string]string{
+		store.SettingFrontdoorAPIBase:   strings.TrimSpace(body.APIBase),
+		store.SettingFrontdoorFrontend:  strings.TrimSpace(body.Frontend),
+		store.SettingFrontdoorEnvZID:    strings.TrimSpace(body.EnvZID),
+		store.SettingFrontdoorAgentHost: strings.TrimSpace(body.AgentHost),
+	} {
+		if val == "" {
+			continue
+		}
+		if err := a.store.SetSetting(r.Context(), key, val); err != nil {
+			a.log.Error("recording a Frontdoor setting", "key", key, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "could not record " + key + ": " + err.Error()})
+			return
+		}
+	}
+
+	a.render(w, r, http.StatusOK, "Saved. These take effect at the next restart — test the "+
+		"token first, since a Frontdoor that refuses it stops every publish.")
+}
+
+// testFrontdoor asks the Frontdoor tenant whether the stored token works.
+//
+// Worth a round trip where the zrok panel deliberately avoids one: this is a button somebody
+// pressed, not a page load, and the alternative to answering now is discovering the token is wrong
+// from a build that clones for twenty seconds and then fails to publish.
+func (a *ZrokAdmin) testFrontdoor(w http.ResponseWriter, r *http.Request) {
+	if a.testExposer == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot test an exposer credential"})
+		return
+	}
+	if err := a.testExposer(r.Context(), "frontdoor"); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	a.render(w, r, http.StatusOK, "Frontdoor accepted the token.")
+}
+
+// enrollZiti turns a one-time enrolment JWT into an identity file.
+//
+// The equivalent of `ziti edge enroll`, through the ziti SDK rather than a second binary. The token
+// is one-time in the strict sense: the controller consumes it, and the private key generated during
+// enrolment exists only in the file this writes. So a failure after the controller has accepted it
+// is unrecoverable, which is why the file is written before anything else is reported.
+func (a *ZrokAdmin) enrollZiti(w http.ResponseWriter, r *http.Request) {
+	if a.enrollZitiID == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot enrol a ziti identity"})
+		return
+	}
+	var body struct {
+		JWT     string `json:"jwt"`
+		Name    string `json:"name"`
+		Service string `json:"service"`
+		Domain  string `json:"domain"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read the request"})
+		return
+	}
+	if strings.TrimSpace(body.JWT) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "no enrolment token; paste the JWT from `ziti edge create identity`"})
+		return
+	}
+
+	path, err := a.enrollZitiID(r.Context(), body.JWT, strings.TrimSpace(body.Name))
+	if err != nil {
+		a.log.Warn("ziti enrolment failed", "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	a.log.Info("ziti identity enrolled from the dashboard", "file", path)
+
+	// The service and domain are config, not credentials, and they are what the exposer needs
+	// besides the identity. Stored so the enrolment is a complete act rather than one that ends
+	// in "now edit config.yml".
+	for key, val := range map[string]string{
+		store.SettingZitiIdentityFile: path,
+		store.SettingZitiService:      strings.TrimSpace(body.Service),
+		store.SettingZitiDomain:       strings.TrimSpace(body.Domain),
+	} {
+		if val == "" {
+			continue
+		}
+		if err := a.store.SetSetting(r.Context(), key, val); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "the identity enrolled but " + key + " could not be recorded: " + err.Error()})
+			return
+		}
+	}
+
+	a.render(w, r, http.StatusOK, "The identity is enrolled at "+path+
+		". Select OpenZiti as the exposer, then restart.")
+}
+
 // enrol enables the root this process is using and records that choice.
 func (a *ZrokAdmin) enrol(ctx context.Context, token vault.Secret, description string) error {
 	if description == "" {
@@ -386,7 +866,7 @@ func (a *ZrokAdmin) enrol(ctx context.Context, token vault.Secret, description s
 	if err := expose.ZrokEnable(ctx, token, description); err != nil {
 		return err
 	}
-	scope := expose.ZrokScopeInForce()
+	scope := a.scopeOf()
 	if scope == "" {
 		// Nothing called UseZrokRoot, which for the daemon cannot happen — setup does it before
 		// the exposer exists. Recorded as the project root rather than left blank, because a

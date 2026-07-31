@@ -855,6 +855,39 @@ const SettingNamePrefix = "exposer.prefix"
 // internal/expose/zrokenv.go.
 const SettingZrokScope = "exposer.zrok.scope"
 
+// SettingExposerKind overrides `exposer.kind` from the config file.
+//
+// Here rather than only in the config for the same reason the name prefix is: `config.yml` is
+// hand-written and its comments are the part that survives being copied to another machine six
+// months later, so the daemon does not rewrite it. Which left "switch to Frontdoor" as an
+// instruction to edit a file and restart, on a page whose whole purpose is not needing to.
+//
+// Read once at startup, because the exposer is constructed during wiring and swapping one under a
+// running daemon would leave published previews pointing at an exposer that no longer owns them.
+// Empty means the config file decides, which is every installation that has never touched this.
+const SettingExposerKind = "exposer.kind"
+
+// The ziti exposer's three settings, for the same reason: enrolling an identity from the dashboard
+// has to be a complete act, and it is not if it ends in "now edit config.yml and restart".
+//
+// A stored value wins over the config file, and empty means the file decides.
+const (
+	SettingZitiIdentityFile = "exposer.ziti.identity_file"
+	SettingZitiService      = "exposer.ziti.service"
+	SettingZitiDomain       = "exposer.ziti.domain"
+)
+
+// Frontdoor's four, on the same terms. None of them is a credential — the API token is in the
+// vault — and all four are values an operator copies out of the Frontdoor console, which is a
+// browser tab. Asking them to put those in a YAML file and restart, while a browser tab is open on
+// this page, is the gap these close.
+const (
+	SettingFrontdoorAPIBase   = "exposer.frontdoor.api_base"
+	SettingFrontdoorFrontend  = "exposer.frontdoor.frontend"
+	SettingFrontdoorEnvZID    = "exposer.frontdoor.env_z_id"
+	SettingFrontdoorAgentHost = "exposer.frontdoor.agent_reachable_host"
+)
+
 // Setting reads one setting, reporting whether it was set at all.
 //
 // The boolean matters: an operator who deliberately cleared the prefix has set it to the
