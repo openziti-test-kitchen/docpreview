@@ -41,8 +41,15 @@ exposer:
     oauth_email_domains: []
 
   frontdoor:
-    api_base: https://gateway.production.netfoundry.io/frontdoor
-    frontend: public
+    # The instance id belongs in the path. Frontdoor's routes are unversioned and
+    # carry tenancy in this segment, so an api_base without it 404s every call.
+    api_base: https://gateway.production.netfoundry.io/frontdoor/<frontdoorId>
+    # A frontend ID, not a name. "public" is a name and matches no frontend, which
+    # creates a share that serves nothing.
+    frontend: bMTHPrtQ
+    # The enrolled Frontdoor agent's ziti identity. Required on every share; without
+    # it every publish is refused, and startup says so.
+    env_z_id: ijcrWb-ZOq
     agent_reachable_host: 127.0.0.1
     name_template: "{{.Repo.Name}}-{{.Name}}"
 

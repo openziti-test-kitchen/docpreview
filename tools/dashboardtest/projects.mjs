@@ -91,6 +91,14 @@ const state = () => ({
       // nothing shows is indistinguishable from a build system that stopped noticing a
       // pull request.
       ignored: [{number: 20, branch: "feature/pricing", created_at: "2026-07-30T18:26:23Z"}],
+      // A branch preview that exists and works. `master` rather than `main`, because the
+      // name comes from the platform and a page that hardcoded one would pass with `main`.
+      branch: {
+        name: "master", preview_id: "b400e0aa1234", state: "ready",
+        url: "https://customer-connect-docs-master.shares.zrok.io/",
+        commit: "cf9f37d25cf7515f8c7e531afbe97cc6ee4238f3",
+        updated_at: "2026-07-30T18:26:23Z",
+      },
     },
   ],
 });
@@ -1221,6 +1229,74 @@ console.log("\nunlinked pull requests are listed, and can be linked back");
         if ($(".modal .picklist")) fail("the picker stayed open after choosing");
       }
     }
+  }
+}
+
+console.log("\nthe default branch's preview is on the card");
+{
+  const cards = $$(".pcard");
+  // The project that has one: a link to it, its branch, and its state.
+  const strip = cards[1].querySelector(".pcard-branch");
+  if (!strip) {
+    fail("a project with a branch preview does not show it");
+  } else {
+    const text = strip.textContent.replace(/\s+/g, " ").trim();
+    if (!text.includes("master")) {
+      fail(`the strip does not name the branch: ${JSON.stringify(text)}`);
+    } else ok(`reads ${JSON.stringify(text.slice(0, 40))}`);
+
+    // The name comes from the platform, so a page that assumed "main" would be wrong on
+    // every repository that never renamed.
+    if (text.includes("main")) fail("the page invented the branch name main");
+
+    const open = strip.querySelector('a[href^="https://"]');
+    if (!open) fail("no link to the branch preview");
+    else if (open.href !== "https://customer-connect-docs-master.shares.zrok.io/") {
+      fail(`the link goes to ${open.href}`);
+    } else ok("links to the published URL");
+  }
+
+  // The project that has none says so and offers to start one, rather than leaving a blank
+  // that reads as a broken feature.
+  const none = cards[0].querySelector(".pcard-branch.none");
+  if (!none) {
+    fail("a project with no branch preview says nothing about it");
+  } else if (!none.querySelector("[data-branch]")) {
+    fail("nothing offers to build the default branch");
+  } else ok("offers to build it where there is none");
+
+  // And the button posts to the branch route, with no branch named — the server reads the
+  // repository's default, which is the whole point of not asking here.
+  calls.length = 0;
+  const start = cards[0].querySelector("[data-branch]");
+  await click(start);
+  const post = calls.find(c => c.method === "POST" && c.url.endsWith("/branch"));
+  if (!post) fail(`Build the default branch posted nothing: ${JSON.stringify(calls)}`);
+  else if (post.url !== "/api/projects/github/netfoundry/unified-doc/branch") {
+    fail(`it posted to ${post.url}`);
+  } else if (post.body && post.body.branch) {
+    fail(`it named a branch (${post.body.branch}); the server decides`);
+  } else ok("POST /api/projects/github/netfoundry/unified-doc/branch");
+}
+
+console.log("\na note from the server is toasted, not swallowed");
+{
+  // A project saves even when its default-branch preview could not be started — the row is
+  // correct and only that one action failed. The page has to say so: a save that silently
+  // did nine tenths of the job is the failure this exists to prevent.
+  const el = doc.getElementById("projects-body");
+  win.eval(`renderProjectsPage(${JSON.stringify({
+    can_write: true, secrets_available: true, vault_locked: false,
+    global_secrets: [], defaults: {driver: "docker", images: []}, projects: [],
+    note: "no github client is configured on this daemon",
+  })})`);
+  await settle();
+  const t = [...doc.querySelectorAll("#toasts .toast")]
+    .find(x => x.textContent.includes("no github client"));
+  if (!t) fail("the server's note was dropped");
+  else ok("toasted the note");
+  if (el && el.querySelector(".notice.bad")) {
+    fail("the note was also left in the page, which is what stacked up");
   }
 }
 

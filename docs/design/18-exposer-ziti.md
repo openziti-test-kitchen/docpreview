@@ -131,6 +131,28 @@ to get it wrong. **Not recommended, and not because of cost — because the inpu
 Keep the wildcard service, and make `route` verify that the connection it is serving belongs to an identity
 allowed to be there — then log it, and enforce whatever policy exists.
 
+**Step 1 of this is built, 31 July 2026.** `zitiConnContext` puts the dialing identity on the request context and
+`route` logs it: Debug per request, Info the first time a given identity reaches a given preview, and the 404 line
+now names who asked. Four offline tests cover it, including one that drives a real `http.Server.Serve` loop rather
+than calling the hook directly — which is the part worth testing, since the question is whether `http.Server`
+passes the conn the listener returned.
+
+Two things the spike established that this document did not know:
+
+**There is a gate that can silently disable it.** The hosting side only records the dialer when
+`ziti.ListenOptions.DoNotSaveDialerIdentity` is false. `DefaultListenOptions()` leaves it false and
+`Context.Listen(name)` uses those defaults, so the existing call already gets the identity — but anything that
+switches to `ListenWithOptions` and sets that flag would blind this feature with no error anywhere.
+
+**Logging is not authorization, and the secrets-surface refusal cannot be lifted yet.** Two reasons, and the first
+is structural: the hook is on the *exposer's* server, while `internal/daemon/secrets.go` refuses based on the
+*ingress* listener — a different server, a different service, a different identity. The same five lines have to go
+there too. The second is that the refusal's stated reason is that the surface does not *check* the identity, and an
+identity that arrives and is logged is still not one compared against an allowed set. That needs a list of admin
+identities and a comparison that **fails closed on an empty id**, because empty is what both a non-overlay
+connection and a router that never sent the header produce. The plumbing is no longer the blocker; the policy input
+is.
+
 The API is real and vendored. `edge.ServiceConn`, which `edge.Conn` embeds, carries:
 
 ```go

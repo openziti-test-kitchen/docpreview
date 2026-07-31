@@ -367,6 +367,53 @@ written so that the answers land in `shareRequest`, `shareResponse` and `Frontdo
 9. **Then switch a real repository's `exposer.kind` to `frontdoor`** and push three commits in a minute, which
    is the same smoke test [11-github-setup-state.md](11-github-setup-state.md) reserves for zrok.
 
+## What the documentation actually says — read 31 July 2026
+
+The section below this one was written as inference. Most of it has now been checked against Frontdoor's published
+documentation, and the wire format in the code was **wrong in four places at once**. Corrected in
+`internal/expose/frontdoor.go`; recorded here so the next reader knows which claims are observed and which are
+still guesses.
+
+| | The code had | The documentation says |
+|---|---|---|
+| Route | `POST {api_base}/shares` | `POST /frontdoor/{frontdoorId}/shares` — unversioned paths, tenancy in the id segment |
+| Target | `targetUrl` | `target` |
+| Frontend | `frontend`, a name | `frontendIds`, an array of **ids** (`bMTHPrtQ`) |
+| Type | absent | `"type":"http"`, required |
+| Agent | absent | **`envZId` required** — the hosting agent's ziti identity |
+| Listing | `_embedded.shares` | `{"content":[…],"pageable":…}` for `application/json`; paginated, default page size 20 |
+| Auth | a static bearer from the vault | a bearer from an OAuth2 client-credentials exchange, so it **expires** |
+| Ownership | a `tag` field | **no tag, label, description or metadata field exists on a share** |
+
+The documented create call, verbatim:
+
+```json
+{"type":"http","name":"publicdemo","envZId":"ijcrWb-ZOq",
+ "frontendIds":["bMTHPrtQ"],"target":"http://backend.svc.cluster.local:8080"}
+```
+
+Three consequences worth carrying forward:
+
+**The URL is derived from the name**, not assigned — a standard frontend serves a share at
+`https://{share-name}.shares.netfoundry.io`. That answers the open question this document asked: a restart that
+recreates a share produces the same URL, so it is quiet rather than a comment-churn event. It also lowers the value
+of implementing `Adopter` here considerably, which was previously assumed to be as important as it is for zrok.
+
+**Per-share access policy does exist** — `authProviderId`, `oauthEmailDomains`,
+`oauthAuthorizationCheckInterval` — so the "previews are as public as the frontend is" section above is a statement
+about what docpreview asserts, not about what Frontdoor can do.
+
+**Ownership tagging is unimplementable as designed.** With no tag field, `Reap` cannot recognise its own work and
+deletes nothing, which fails safe and leaks one share per preview per restart. The only free-form field that
+round-trips is `name`, so ownership has to move into the name — which changes every public hostname and the
+`name_template` contract. That is a design decision, not a field rename, and it is the largest thing still open.
+`Reap` now logs an error when a share it created returns without its tag, which turns this from a silent leak into
+a message on first contact.
+
+Pagination, retries, a listing that refuses to decode as empty, and the collision check running before rather than
+after the self-withdraw were all fixed in the same pass. The last of those was a live bug: a refused publish had
+already deleted the preview's own share.
+
 ## Not verified
 
 Everything in this section is inference or recollection, not something read out of this repository.
