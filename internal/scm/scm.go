@@ -211,6 +211,27 @@ type PullRequestLister interface {
 	OpenPullRequests(ctx context.Context, repo model.Repo) ([]model.PullRequest, error)
 }
 
+// BranchResolver is implemented by clients that can name a repository's default branch and
+// the commit at its tip.
+//
+// Optional, like the two above, and needed for branch previews: the permanent preview of
+// `main` cannot be built without knowing what "main" is called here and what it currently
+// points at. Neither is guessable. A repository's default branch is `master` often enough
+// that assuming `main` would silently build nothing on it, and a build needs a commit —
+// passing an empty HeadSHA makes the clone take whatever the branch happens to be at, which
+// is a different commit from the one the preview would claim to be showing.
+//
+// Both are returned together because both come from the same one or two API calls, and a
+// caller that has one without the other cannot do anything with it.
+type BranchResolver interface {
+	// DefaultBranch names the repository's default branch and the commit at its tip.
+	DefaultBranch(ctx context.Context, repo model.Repo) (branch, commit string, err error)
+
+	// BranchTip is the same question for a branch the caller already knows the name of,
+	// so rebuilding a branch preview does not have to assume the tip has not moved.
+	BranchTip(ctx context.Context, repo model.Repo, branch string) (commit string, err error)
+}
+
 // MarkerStyle selects how the self-identifying marker is embedded in a comment
 // body.
 //

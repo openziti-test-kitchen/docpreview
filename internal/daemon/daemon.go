@@ -519,6 +519,22 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}(i)
 	}
 
+	// Every project should have a preview of its default branch, so start the ones that do
+	// not.
+	//
+	// After the workers exist, because this enqueues builds and nothing would claim them
+	// otherwise; and in a goroutine, because it reaches the platform once per project and a
+	// slow API must not hold up the daemon that is now otherwise running.
+	//
+	// This is the backfill for projects that predate branch previews. New projects get theirs
+	// when they are created, so on a settled installation this finds nothing and costs one
+	// database read.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		d.backfillBranchPreviews(ctx)
+	}()
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -539,6 +555,64 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.log.Error("closing exposer", "error", err)
 	}
 	return nil
+}
+
+// backfillBranchPreviews gives every project a preview of its default branch.
+//
+// The promise a branch preview makes is that the URL always answers, and a promise that only
+// applies to projects added after the feature shipped is not one. So this runs at every
+// startup and builds what is missing.
+//
+// It is deliberately not a repair of anything else. A project whose branch preview exists but
+// failed is left alone: it has a row, somebody can see the failure on its card, and rebuilding
+// it on every restart would hide a build that is broken behind one that keeps being retried.
+// Only the absence of a preview is treated as something to fix.
+//
+// Errors are logged per project and never fatal. A platform that cannot be reached at startup
+// is the ordinary case for a daemon that boots before its network, and the next restart — or
+// the button on the card — tries again.
+func (d *Daemon) backfillBranchPreviews(ctx context.Context) {
+	projects, err := d.store.ListProjects(ctx)
+	if err != nil {
+		d.log.Warn("listing projects to backfill branch previews", "error", err)
+		return
+	}
+	previews, err := d.store.ListPreviews(ctx)
+	if err != nil {
+		d.log.Warn("listing previews to backfill branch previews", "error", err)
+		return
+	}
+
+	// One pass over the previews rather than a lookup per project: this runs at every
+	// startup, and a query per project on an installation with fifty of them is fifty
+	// queries to answer one question.
+	has := map[model.Repo]bool{}
+	for _, p := range previews {
+		if p.PR.IsBranch() {
+			has[p.PR.Repo] = true
+		}
+	}
+
+	for _, p := range projects {
+		if !p.Enabled {
+			continue
+		}
+		repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
+		if has[repo] {
+			continue
+		}
+		// Cancellation means the daemon is shutting down, not that this project is fine.
+		if ctx.Err() != nil {
+			return
+		}
+		branch, err := d.BuildBranch(ctx, repo, "")
+		if err != nil {
+			d.log.Warn("could not start a branch preview for a project that has none",
+				"project", repo.String(), "error", err)
+			continue
+		}
+		d.log.Info("backfilled a branch preview", "project", repo.String(), "branch", branch)
+	}
 }
 
 // recover reconciles the world with the database at startup.
@@ -696,7 +770,12 @@ func (d *Daemon) recover(ctx context.Context) error {
 					}
 					return
 				}
+				// The row still says `ready` and still carries the URL the last
+				// successful build published, and nothing is bound to that address
+				// now — so the dashboard offers a link that 502s and the pull
+				// request comment advertises the same one. Both read this row.
 				d.log.Error("restoring preview", "preview", p.PreviewID, "error", err)
+				d.markUnpublished(ctx, p, err)
 				return
 			}
 
@@ -1273,6 +1352,55 @@ func (d *Daemon) republish(ctx context.Context, p store.Preview) error {
 	return nil
 }
 
+// markUnpublished records that a preview recovery could not restore is not being served.
+//
+// Seen live on 2026-07-30: a preview that had built perfectly failed to restore when
+// `CreateShare` timed out, and `/status` went on reporting `state: ready` with a URL that
+// answered 502 for the rest of the day. `restoreBuildShares` already forgets a build's URL
+// when it cannot republish it, for exactly this reason; the preview path did not.
+//
+// Three things, and each closes one of the three surfaces that were lying:
+//
+//   - The row loses its URL and gains `failed` plus a reason. The dashboard's Open button
+//     is decided by the presence of a URL rather than by the state — a rebuild does not
+//     withdraw the live share, so a state test would grey the button on every rebuild —
+//     which means clearing the URL is the only thing that greys it here.
+//   - A failed report, so the comment stops offering the link. Nothing else would send
+//     one: the row is not rebuilt until somebody pushes or presses Rebuild, and until then
+//     the comment is the copy of this state that a reviewer is actually looking at.
+//   - A banner line, matching the "failed <name>" a build share leaves, so the operator
+//     watching startup sees which preview did not come back.
+//
+// Not a deletion, which is what the artifact failures a few lines above get. Those cannot
+// be served at all; this one can — the artifacts are on disk and match their base URL, and
+// the failure is one controller round trip that the next attempt may well win. Deleting
+// the row would take the preview off the page that holds the Rebuild button while its
+// comment still pointed at the dead URL.
+//
+// Best effort, and deliberately not fatal to recovery: the preview it describes is already
+// not being served, and a startup that gives up here restores nothing after it.
+func (d *Daemon) markUnpublished(ctx context.Context, p store.Preview, cause error) {
+	// Scrubbed and one line, as every other reason written to a row is: this is rendered
+	// on a dashboard that can be shared read-only, and a publish failure's error text
+	// carries hostnames and API detail.
+	reason := d.scrub(firstLine(cause.Error())) + " — nothing is served at the previous " +
+		"URL; press Rebuild to build this preview again"
+
+	if err := d.store.FailPreview(ctx, p.PreviewID, reason); err != nil {
+		d.log.Error("recording that a preview could not be republished; its row still "+
+			"advertises a URL that is not served", "preview", p.PreviewID, "error", err)
+	}
+	d.addStartupItem("failed " + p.Name)
+
+	// The commit is the one on the row, so this report is ranked against the `ready` the
+	// build published — a fresh process has no mark for it, so nothing drops it, and a
+	// terminal state ties rather than losing. See staleReport.
+	d.report(ctx, scm.Report{
+		PR: p.PR, PreviewID: p.PreviewID, State: scm.StateFailed,
+		Reason: reason, Commit: p.Commit, UpdatedAt: time.Now(),
+	})
+}
+
 // Handle processes a normalized webhook event.
 func (d *Daemon) Handle(ctx context.Context, ev scm.Event) error {
 	switch ev.Kind {
@@ -1419,6 +1547,22 @@ func (d *Daemon) RebuildPreview(ctx context.Context, previewID string) (bool, er
 			continue
 		}
 		pr := p.PR
+
+		// A branch preview rebuilds at the branch's *current* tip, not the commit on the
+		// row — the opposite of the rule below, and for the same reason it exists.
+		//
+		// "Build this again" means the recorded commit for a pull request, because that is
+		// the thing under review. A branch preview is not under review: it is a claim about
+		// what `main` looks like now, so rebuilding it at a commit that `main` has since
+		// moved past would republish a stale site and call it current. That is the one
+		// promise this preview makes.
+		if pr.IsBranch() {
+			if _, err := d.BuildBranch(ctx, pr.Repo, pr.Branch); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+
 		// ListPreviews already copies the stored commit into HeadSHA; stated here because
 		// a build with an empty HeadSHA silently builds the branch tip instead, which is
 		// the thing this function exists not to do.
@@ -1531,6 +1675,60 @@ func (d *Daemon) UnlinkPreview(ctx context.Context, previewID string) (bool, err
 		return true, nil
 	}
 	return false, nil
+}
+
+// BuildBranch queues a build of a branch, with no pull request behind it.
+//
+// This is what makes a project's default branch permanently previewable. An empty branch
+// means "whatever this repository calls its default", which is read from the platform
+// rather than assumed: a repository on `master` would otherwise get a preview of a branch
+// that does not exist, failing at the clone with git's own message about a missing ref —
+// accurate, and about the wrong thing.
+//
+// Reports the branch it built, so the caller can say which one without asking again.
+//
+// The commit is resolved here rather than left empty. A clone with no commit takes whatever
+// the branch happens to point at when git runs, which is a different fact from the one the
+// preview will claim to be showing — and the build id, the log filename and the per-build
+// share are all named after it.
+func (d *Daemon) BuildBranch(ctx context.Context, repo model.Repo, branch string) (string, error) {
+	client, ok := d.client(repo.Platform)
+	if !ok {
+		return "", fmt.Errorf("no %s client is configured on this daemon "+
+			"(store its credentials on /secrets)", repo.Platform)
+	}
+	resolver, ok := client.(scm.BranchResolver)
+	if !ok {
+		return "", fmt.Errorf("the %s client cannot name a branch's head commit", repo.Platform)
+	}
+
+	var commit string
+	var err error
+	if branch == "" {
+		branch, commit, err = resolver.DefaultBranch(ctx, repo)
+	} else {
+		commit, err = resolver.BranchTip(ctx, repo, branch)
+	}
+	if err != nil {
+		return "", err
+	}
+
+	// Number 0 is what makes this a branch preview — see model.PullRequest.IsBranch. Every
+	// consequence follows from it rather than from a flag threaded through the build path.
+	pr := model.PullRequest{
+		Repo:    repo,
+		Branch:  branch,
+		HeadSHA: commit,
+		// The base branch is itself. Nothing reads it for a branch build — the changed-file
+		// gate is skipped — but leaving it empty would put a blank where a log line expects
+		// a ref.
+		BaseBranch: branch,
+	}
+	d.log.Info("building a branch preview", "pr", pr.String(), "sha", commit)
+	if err := d.handleBuild(ctx, scm.Event{Kind: scm.EventBuild, PR: pr}); err != nil {
+		return "", err
+	}
+	return branch, nil
 }
 
 // LinkPR builds one pull request by number, whether or not it was unlinked.
@@ -1678,6 +1876,28 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	d.mu.Unlock()
 
 	var errs []error
+	// The queued build goes with the running one, and for the same reason.
+	//
+	// Claim used to be the only statement that removed a `jobs` row, so a push landing
+	// moments before a close left a job behind — and a worker claimed it minutes later,
+	// built it, wrote the rows back and published a share for a preview that had been
+	// deliberately removed. Unlinking a pull request is a button an operator presses to
+	// make the work stop, so a teardown that leaves the work queued has not done what it
+	// said. Cancelling the in-flight build above and dropping the queued one here are the
+	// two halves of one act.
+	//
+	// Collected rather than logged: a surviving job resurrects everything the rest of this
+	// function is removing, which makes it the one step whose failure the caller has to
+	// hear about.
+	//
+	// One race is left and is narrow: a worker that has claimed the job but not yet
+	// registered it in `d.running` is visible in neither place. The commit lock is what
+	// bounds it — that build cannot publish until this teardown returns — and closing it
+	// properly means the commit phase re-reading the pull request's state, which is the
+	// half of this that needs an API call it does not make today.
+	if _, err := d.store.Dequeue(ctx, previewID); err != nil {
+		errs = append(errs, fmt.Errorf("removing the queued build: %w", err))
+	}
 	// Before the shares go, not after: on an exposer whose names are objects with a
 	// quota, releasing first is what makes a crash mid-teardown recoverable. See
 	// releaseNames.
@@ -1720,7 +1940,11 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	if err := d.logs.Remove(previewID); err != nil {
 		errs = append(errs, fmt.Errorf("removing build logs: %w", err))
 	}
-	if client, ok := d.client(pr.Repo.Platform); ok {
+	// No comment to retract for a branch preview, and asking for one is worse than
+	// pointless: Retract finds its comment by marker on pull request `Number`, so on a
+	// branch preview it would go looking on pull request 0 — a 404 logged as a teardown
+	// failure, for a comment that never existed.
+	if client, ok := d.client(pr.Repo.Platform); ok && !pr.IsBranch() {
 		if err := client.Retract(ctx, pr); err != nil {
 			errs = append(errs, fmt.Errorf("retracting comment: %w", err))
 		}
@@ -1994,17 +2218,35 @@ func (d *Daemon) runPipeline(
 	}
 	repoCfg = d.confineToDriver(ctx, pr, repoCfg, driver)
 
-	changed, err := client.ChangedFiles(ctx, pr)
-	if err != nil {
-		return out, pipeline.Decision{}, err
+	// A branch preview is built unconditionally, and the detector is not consulted.
+	//
+	// The gate exists to answer "did this pull request touch the documentation", and it
+	// answers it from the diff against the merge base. A branch has no such diff: there is
+	// no pull request to ask the platform about, and `ChangedFiles` on number 0 would ask a
+	// question with no meaning. Worse, an empty file list is exactly what the detector reads
+	// as "nothing to build" — so the permanent preview of `main` would skip every build and
+	// never publish anything.
+	//
+	// Building every time is also the behaviour this preview is for. It is the current state
+	// of the branch; a commit that changed no documentation still moved the branch, and a
+	// preview that silently lags behind it is worse than one rebuilt for nothing.
+	decision := pipeline.Decision{
+		Build:  true,
+		Reason: "Branch preview — every commit on this branch is built.",
 	}
+	if !pr.IsBranch() {
+		changed, err := client.ChangedFiles(ctx, pr)
+		if err != nil {
+			return out, pipeline.Decision{}, err
+		}
 
-	decision, err := d.detector.Detect(ctx, ws, repoCfg, changed)
-	if err != nil {
-		return out, decision, err
-	}
-	if !decision.Build {
-		return out, decision, nil
+		decision, err = d.detector.Detect(ctx, ws, repoCfg, changed)
+		if err != nil {
+			return out, decision, err
+		}
+		if !decision.Build {
+			return out, decision, nil
+		}
 	}
 
 	// The name has to be settled before the build, not at publish. Under a
@@ -2522,6 +2764,19 @@ func (d *Daemon) report(ctx context.Context, r scm.Report) {
 	// happening even when the platform that asked for it is unreachable.
 	d.record(r, reportMessage(r))
 
+	// A branch preview stops here: recorded for the dashboard, never sent to the platform.
+	//
+	// There is nothing to send it to. A branch has no pull request, so an upsert would have
+	// to invent one — and the failure mode if it tried is worse than nothing: `findComment`
+	// looks for the marker on pull request `Number`, which is 0, and what a platform does
+	// with a comment on pull request 0 is not a thing worth discovering in production.
+	//
+	// The check is here rather than at the call sites because this is the funnel every
+	// report passes through. There are five callers and a sixth is a matter of time.
+	if r.PR.IsBranch() {
+		return
+	}
+
 	client, ok := d.client(r.PR.Repo.Platform)
 	if !ok {
 		return
@@ -2624,6 +2879,18 @@ func (d *Daemon) reaper(ctx context.Context) {
 			continue
 		}
 		for _, p := range expired {
+			// A branch preview does not expire, and this is the only place that could have
+			// expired it.
+			//
+			// The TTL exists because a pull request's preview outlives its usefulness — the
+			// pull request is merged or abandoned and nobody closes it properly. A branch
+			// preview has no such end: `main` is still `main` after a quiet fortnight, and
+			// the whole promise of this preview is that its URL always answers. A repository
+			// with no commits for longer than the TTL would otherwise have its permanent
+			// preview quietly deleted, which is the one thing it must not do.
+			if p.PR.IsBranch() {
+				continue
+			}
 			d.log.Info("reaping expired preview", "preview", p.PreviewID, "age", time.Since(p.UpdatedAt))
 			if err := d.teardown(ctx, p.PR, p.PreviewID); err != nil {
 				d.log.Error("reaping preview", "preview", p.PreviewID, "error", err)
@@ -2892,14 +3159,14 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 	d.mu.Unlock()
 
 	out := Status{
-		Exposer:  d.exposer.Kind(),
-		Instance: d.instance,
+		Exposer:     d.exposer.Kind(),
+		Instance:    d.instance,
 		Starting:    d.starting.Load(),
 		Startup:     d.startup.Load(),
 		LastStartup: d.lastStartup.Load(),
-		Pending:  pending,
-		Running:  len(running),
-		Events:   d.markOpenable(d.events.recent(60)),
+		Pending:     pending,
+		Running:     len(running),
+		Events:      d.markOpenable(d.events.recent(60)),
 	}
 
 	// Best effort. The switcher degrades to repository names, which is what it showed

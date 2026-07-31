@@ -12,13 +12,28 @@
 //     Git resolves an abbreviation, so the clone and the build work and nothing
 //     visibly fails — while every comparison against a full hash silently
 //     disagrees. Resolved to the full SHA at parse time; see resolveCommit.
+//
 //   - The signature header is `X-Hub-Signature`, which on GitHub is the *legacy
 //     SHA-1* header. Same name, different algorithm, so the two clients must
 //     never share a "find the signature header" helper.
+//
 //   - There is no installation token. Whatever CloneURL returns is as long-lived
-//     as the stored credential, which is why the token is registered with the
-//     redactor by the caller and why a repository access token is recommended
-//     over an account API token.
+//     as the stored credential, which is why a repository access token is
+//     recommended over an account API token: the blast radius of a leak is one
+//     repository rather than an account.
+//
+//     **Two different mechanisms keep it out of the open, and this comment used to
+//     name the wrong one.** It is *not* registered with `internal/redact`, the
+//     value-based redactor compiled from `build.secrets` — that one only ever sees
+//     shell-shaped keys (`vault.IsBuildEnvKey`), and every credential here is
+//     dotted, so it is excluded by construction and deliberately never reaches a
+//     build. What actually covers it is `pipeline.scrub`, which strips RFC 3986
+//     userinfo from git's own output, plus `vault.Secret`'s redacting String,
+//     Format, GoString and MarshalJSON.
+//
+//     The distinction matters for anything added later: a new code path that
+//     printed CloneURL's result on the assumption that "the redactor has this
+//     value" would be a real leak, because the redactor does not.
 package bitbucket
 
 import (
@@ -760,6 +775,56 @@ func (c *Client) OpenPullRequests(ctx context.Context, repo model.Repo) ([]model
 		path = next
 	}
 	return out, nil
+}
+
+// DefaultBranch names the repository's main branch and the commit at its tip.
+//
+// Bitbucket calls it `mainbranch`, not `default_branch`, and reports only its name — so the
+// tip is a second call, as it is on GitHub.
+func (c *Client) DefaultBranch(ctx context.Context, repo model.Repo) (string, string, error) {
+	var out struct {
+		MainBranch *struct {
+			Name string `json:"name"`
+		} `json:"mainbranch"`
+	}
+	path := fmt.Sprintf("/2.0/repositories/%s/%s", repo.Owner, repo.Name)
+	if err := c.do(ctx, repo.Owner, repo.Name, http.MethodGet, path, nil, &out); err != nil {
+		return "", "", fmt.Errorf("reading %s: %w", repo.String(), err)
+	}
+	// Null for a repository with no commits, rather than absent — so this is a nil check
+	// and not an empty-string one.
+	if out.MainBranch == nil || out.MainBranch.Name == "" {
+		return "", "", fmt.Errorf("%s reports no main branch; is it empty?", repo.String())
+	}
+
+	commit, err := c.BranchTip(ctx, repo, out.MainBranch.Name)
+	if err != nil {
+		return "", "", err
+	}
+	return out.MainBranch.Name, commit, nil
+}
+
+// BranchTip is the commit a branch currently points at.
+//
+// The hash here is already 40 characters — `refs/branches` reports the full one, unlike the
+// 12-character abbreviation in a webhook payload — so nothing needs resolving.
+func (c *Client) BranchTip(ctx context.Context, repo model.Repo, branch string) (string, error) {
+	var out struct {
+		Target struct {
+			Hash string `json:"hash"`
+		} `json:"target"`
+	}
+	// Escaped: a branch name contains slashes often enough that `feature/pricing` would
+	// otherwise address a path one segment deeper and 404.
+	path := fmt.Sprintf("/2.0/repositories/%s/%s/refs/branches/%s",
+		repo.Owner, repo.Name, url.PathEscape(branch))
+	if err := c.do(ctx, repo.Owner, repo.Name, http.MethodGet, path, nil, &out); err != nil {
+		return "", fmt.Errorf("reading branch %s on %s: %w", branch, repo.String(), err)
+	}
+	if out.Target.Hash == "" {
+		return "", fmt.Errorf("branch %s on %s reports no commit", branch, repo.String())
+	}
+	return out.Target.Hash, nil
 }
 
 // pullRequestFrom converts an API pull request object, resolving its abbreviated

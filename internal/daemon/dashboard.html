@@ -654,6 +654,24 @@ input.control::placeholder { color: var(--muted) }
 .pcard-head .grow { flex: 1 }
 .pcard-off { opacity: 0.6 }
 
+/* The default branch's permanent preview, first thing under the card's header.
+   Carries the state colour on its left edge like a previews row, because it is one. */
+.pcard-branch {
+  display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;
+  margin: 0.5rem 0 0.1rem; padding: 0.35rem 0.55rem;
+  border: 1px solid var(--ring); border-radius: 7px;
+  border-left: 3px solid var(--edge, var(--idle));
+  background: var(--raised);
+}
+.pcard-branch .grow { flex: 1 }
+.pcard-branch .bname {
+  font: 12.5px/1.5 ui-monospace, Consolas, monospace; font-weight: 650;
+}
+.pcard-branch .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--edge, var(--idle)) }
+/* Nothing built yet is a quieter thing than a failure: no colour, because there is no state
+   to report — only an offer. */
+.pcard-branch.none { border-left-color: var(--hairline); background: none }
+
 /* The strip that appears only when a project is skipping something. One line: a count and
    the way in. Tinted, because its presence is the signal — a project in this state is not
    building everything it looks like it is building. */
@@ -1479,19 +1497,24 @@ const safeURL = u => /^https?:\/\//i.test(String(u ?? "")) ? String(u) : "";
 const clock = iso => new Date(iso).toLocaleTimeString([], {hour12: false});
 
 /* stamp is when something finished, written as a time that does not move.
-   A finished build used to render its relative age, which under a minute counts up
-   once a second — so a preview that had been ready for forty seconds looked like it
-   was still being timed, beside a status line that said it took 1m 9s. Two numbers
-   moving at once, one of them meaningless. The wall-clock time answers "when" and
-   never changes, and the duration beside it answers "how long". The date is added
-   only when it is not today, since most of what is on this page is. */
+
+   A finished build used to render its relative age, which under a minute counts up once a
+   second — so a preview that had been ready for forty seconds looked like it was still being
+   timed, beside a status line that said it took 1m 9s. Two numbers moving at once, one of
+   them meaningless. The wall-clock time answers "when" and never changes, and the duration
+   beside it answers "how long".
+
+   Always dated, and always the same width. The first version dropped the date for anything
+   built today, on the reasoning that most of the page is — but these sit in a right-aligned
+   column, so one row reading "07:03:07" beside others reading "Jul 30 15:33:07" made that
+   row's whole line shift. A column of timestamps has to be one width or it is not a column.
+   Day padded for the same reason: "Jul 3" and "Jul 30" are different widths. */
 const stamp = iso => {
   const d = new Date(iso);
   if (isNaN(d)) return "";
-  const time = d.toLocaleTimeString([], {hour12: false});
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return time;
-  return `${d.toLocaleDateString([], {month: "short", day: "numeric"})} ${time}`;
+  const month = d.toLocaleDateString([], {month: "short"});
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${month} ${day} ${d.toLocaleTimeString([], {hour12: false})}`;
 };
 
 /* LIVE_STATES are the ones where the timestamp is a stopwatch rather than an age.
@@ -2176,12 +2199,31 @@ function updateBody(item, g) {
 
     // Choosing a build stops following. A reader who has deliberately gone back
     // to an earlier build does not want the live one scrolling in over it.
-    body.querySelector('[data-role="build"]').onchange = e => {
+    // The live entry is the exception, and showBuild is where that is decided:
+    // selecting the build that is running means "tail it", so that branch turns
+    // following back on rather than inheriting the pause from the stored build
+    // that was on screen a moment ago.
+    const buildPick = body.querySelector('[data-role="build"]');
+    buildPick.onchange = e => {
       const buildID = e.target.value;
       ui.build[g.current.preview_id] = buildID;
       showBuild(g.current.preview_id, buildID);
       updateOpenBuild(g.current.preview_id, buildID);
     };
+    // Catch the picker up the moment the dropdown is released.
+    //
+    // updateBuildPicker refuses to rewrite this select while it has focus, because
+    // rewriting one closes its open list under the pointer with no visible cause. The
+    // cost is that a build which starts while the reader is holding the dropdown open
+    // is missing from the list they are reading — they watch the build on the row,
+    // look in the dropdown, and it is not there. Reloading the page was the only way
+    // out, which is how this was reported. A blur re-render fixes it as they let go,
+    // which is when they look; the one-second tick would do it eventually, and
+    // "eventually" is what made it look broken.
+    // render() rather than loadBuilds(id): the same round trip happens inside
+    // updateBody, and going through render keeps this from depending on which preview
+    // the closure captured when the row was first drawn.
+    buildPick.onblur = () => render();
     body.querySelector(".term").addEventListener("scroll", () => {
       if (ui.autoScrolling) return;
       setFollow(atBottom());
@@ -2516,6 +2558,30 @@ function closeLog() {
   ui.buffer = "";
 }
 
+// liveBuild reports whether a build id names the build that is running right now.
+//
+// The picker's empty value is the ordinary way to say "follow the live stream", and
+// index 0 taking that value is what makes it work. This asks the same question of an
+// id, because every path into showBuild that resolves a build to its id can hand
+// over the running one — and answering that with a download is answering with a file
+// the build is still appending to. It shows the log as far as it had got and then
+// never changes again, which is indistinguishable from a stream that died.
+//
+// Deliberately not "stream whenever something is running". `/logs/{preview}/stream`
+// serves whichever build is *current*, not the build asked for, so following it for
+// any other id would put one build's output on screen under another build's label —
+// the exact confusion the per-build download exists to prevent. Only the newest
+// build can be the live one: buildlog.Store.List is newest-first by mtime and the
+// running build's log is the file being written to, so anything below index 0 is
+// finished by construction.
+//
+// The state comes from the list rather than from the preview's own state, because a
+// preview reads "building" for a build that superseded the one being looked at.
+function liveBuild(previewID, buildID) {
+  const builds = ui.builds[previewID] || [];
+  return !!buildID && builds[0]?.build_id === buildID && isLive(builds[0].state);
+}
+
 // Exactly one stream is open at a time — the one behind the expanded row.
 // Nothing is fetched for a collapsed project. Several at once would mean N
 // server-sent-event connections from one tab, and browsers cap concurrent
@@ -2527,7 +2593,22 @@ function closeLog() {
 // because a reader who deliberately went back to an earlier build does not want
 // the live one scrolling in over it.
 async function showBuild(previewID, buildID) {
-  if (!buildID) { openLog(previewID); return; }
+  if (!buildID || liveBuild(previewID, buildID)) {
+    // Following goes back on, and this branch is the one place it must.
+    //
+    // Every other route through this function is a reader stepping back to a build
+    // that has finished, which turns following off deliberately. Asking for the live
+    // build is the opposite request — "show me what is happening" — and it used to
+    // inherit the paused state left behind by whichever stored build was on screen
+    // before it. The stream opened, the lines arrived, and the viewport never moved:
+    // the log appeared to stop at the exact instant it was selected, with the rest
+    // piling up below the fold. That is the whole of "the black log is NOT
+    // updated/tailing properly", and it is why this is a separate concern from
+    // opening the stream at all — tools/dashboardtest/logtail.mjs asserts both.
+    setFollow(true);
+    openLog(previewID);
+    return;
+  }
 
   if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
   ui.logFor = previewID;
@@ -3923,6 +4004,12 @@ function renderProjectsPage(s) {
     projFlash = "";
   }
 
+  // Something the server did alongside the request that did not work — today only a
+  // default-branch preview it could not start when a project was created. The save itself
+  // succeeded, so this is a toast rather than an error: the project is saved, and the one
+  // thing that did not happen is still said out loud instead of being swallowed.
+  if (s.note) toast(s.note, "bad", s.note);
+
   // Wired unconditionally: with no write access there are no buttons to wire, and a
   // read-only page that skipped this would still have to know that.
   wireProjectHandlers(s);
@@ -3958,6 +4045,7 @@ function projectCard(p, s, ro) {
              button that invited it by hand did not earn its place on every card. -->
         <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
     </div>
+    ${branchStrip(p, ro)}
     ${projectFacts(p)}
     ${credentialWanted(p, s)}
     ${unlinkedSection(p, ro)}
@@ -4431,6 +4519,48 @@ function scmCredentialFields(s, p, id) {
       </div>` : ""}
     </div>
     </div>`;
+}
+
+/* branchStrip is the project's permanent preview of its default branch.
+
+   First thing on the card, above the settings, because it is the link somebody actually came
+   for: every other preview is about a pull request that will be merged and forgotten, and this
+   one is the current state of the documentation. It is created when the project is and is not
+   torn down by anything short of deleting the project.
+
+   Three states, and the absent one is why this is not simply a link. A project added before
+   the daemon could reach the platform has no branch preview at all, and an empty space there
+   is indistinguishable from a feature that is not working — so it says so and offers to start
+   one. */
+function branchStrip(p, ro) {
+  const b = p.branch;
+  const key = projectKey(p);
+  if (!b) {
+    if (ro) return "";
+    return `<div class="pcard-branch none">
+      <span class="hint">No preview of the default branch yet.</span>
+      <span class="grow"></span>
+      <button class="btn" data-branch="${esc(key)}"
+        title="Build this repository's default branch and keep it published">Build the default branch</button>
+    </div>`;
+  }
+
+  const st = state(b.state);
+  const live = safeURL(b.url);
+  return `<div class="pcard-branch" style="--edge:${st.color}">
+    <span class="dot${st.work ? " work" : ""}" style="--edge:${st.color}"></span>
+    <span class="bname">${esc(b.name)}</span>
+    <span class="hint">${esc(st.label.toLowerCase())}</span>
+    ${b.commit ? `<span class="took">${esc(b.commit.slice(0, 7))}</span>` : ""}
+    <span class="grow"></span>
+    ${live
+      // Only when there is one. A branch preview whose first build failed has a row and no
+      // URL, and a link to nothing is worse than the button beside it.
+      ? `<a class="btn" href="${esc(live)}" target="_blank" rel="noreferrer">Open ↗</a>`
+      : `<span class="hint">no URL yet</span>`}
+    ${ro ? "" : `<button class="btn" data-branch="${esc(key)}"
+      title="Build ${esc(b.name)} again at its current tip">Rebuild</button>`}
+  </div>`;
 }
 
 /* unlinkedSection says this project is skipping pull requests, and opens the picker.
@@ -5437,6 +5567,22 @@ function wireProjectHandlers(s) {
   // No handler for a Build open PRs button any more — the button is gone. The scan itself
   // is not: adding a project still runs it, which is where it earns its place, and the
   // route is unchanged for anything calling the API.
+
+  // The branch preview: build it, or build it again. One handler for both, because the
+  // request is identical — the server reads the repository's default branch either way, so
+  // "start one" and "rebuild it" differ only in what the button said.
+  for (const b of el.querySelectorAll("[data-branch]")) {
+    b.onclick = async () => {
+      const key = b.dataset.branch;
+      await runProject(b, async () => {
+        const r = await api("POST", `${projectPath(key)}/branch`, {});
+        projFlash = r.error
+          ? `Nothing queued: ${r.error}`
+          : `Building ${r.branch} — watch the dashboard.`;
+        return api("GET", "/api/projects");
+      });
+    };
+  }
 
   // Linking: pick one from the dialog, then post it. The route un-ignores the number and
   // queues the build in one call — "build this" and "stop skipping this" are the same

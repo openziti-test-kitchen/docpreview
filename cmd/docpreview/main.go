@@ -69,6 +69,8 @@ func run(args []string) error {
 		return cmdWebhookCheck(args[1:])
 	case "dashboard-only":
 		return cmdDashboardOnly(args[1:])
+	case "shares":
+		return cmdShares(args[1:])
 	case "vault":
 		return cmdVault(args[1:])
 	case "help", "-h", "--help":
@@ -90,6 +92,7 @@ Usage:
   docpreview sim     <subcommand>         Local git remotes that trigger builds
   docpreview serve   [-config FILE]       Run the webhook daemon
   docpreview doctor  [-config FILE]       Check the configuration and exit
+  docpreview shares  list [-json]         Audit the exposer account against the database
   docpreview vault   <subcommand>         Manage stored credentials
 
 Reaching a loopback daemon from the internet. All three take -zrok-name, never
@@ -119,6 +122,15 @@ Or feel the whole push-build-comment flow, still with no GitHub App:
   docpreview serve                # in another terminal
   git remote add preview <path>
   git push preview my-branch      # watch http://127.0.0.1:8471/pr
+
+What is this exposer account actually holding?
+
+  docpreview shares list                  Every share, cross-referenced with the database
+  docpreview shares list -json            The same report, for a monitoring check
+
+Read-only, and safe against a running daemon. An orphaned share and a recorded
+preview whose share has gone are opposite problems; Reap, inside the daemon, is
+the only thing that deletes either.
 
 Vault subcommands:
   docpreview vault keygen [-out FILE]     Mint a new master key
@@ -616,6 +628,10 @@ func cmdServe(args []string) error {
 			// removed. Without the ignore half, discovery finds it again on the next
 			// delivery or the next scan and the removal looks like it did nothing.
 			WithLinking(d.UnlinkPreview, d.LinkPR).
+			// So a new project has a URL within a minute instead of waiting for somebody
+			// to open a pull request. The preview of the default branch is permanent: no
+			// comment to post, no pull request to close it, and the TTL reaper skips it.
+			WithBrancher(d.BuildBranch).
 			// So the form can grey out a driver that would fail rather than offering
 			// it and letting the operator discover the refusal from a failed build.
 			// So a pasted token can be checked before it is discovered wrong by a build

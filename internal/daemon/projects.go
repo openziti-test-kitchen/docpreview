@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -70,6 +71,14 @@ type ProjectsAdmin struct {
 	// id to name it by.
 	unlinker func(ctx context.Context, previewID string) (bool, error)
 	linker   func(ctx context.Context, repo model.Repo, number int) error
+
+	// brancher builds a branch with no pull request behind it, returning the branch it
+	// built — which the caller does not necessarily know, since an empty branch means "this
+	// repository's default" and that is read from the platform rather than assumed.
+	//
+	// A function rather than the daemon, like every other one of these, so this admin
+	// depends on the store and the config only.
+	brancher func(ctx context.Context, repo model.Repo, branch string) (string, error)
 
 	// scmChecker verifies that a project's source-control credential reaches its
 	// repository, returning what it found. Nil for a daemon with no platform that can be
@@ -140,6 +149,13 @@ func (a *ProjectsAdmin) WithLinking(
 	return a
 }
 
+// WithBrancher installs the branch-preview build: the permanent preview of a project's
+// default branch, started when the project is created and rebuildable from its card.
+func (a *ProjectsAdmin) WithBrancher(fn func(context.Context, model.Repo, string) (string, error)) *ProjectsAdmin {
+	a.brancher = fn
+	return a
+}
+
 // WithSCMChecker installs the credential test behind the projects page's Test button.
 func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (string, error)) *ProjectsAdmin {
 	a.scmChecker = fn
@@ -199,6 +215,11 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// number, because a pull request nothing has built has no preview.
 	mux.HandleFunc("POST /api/builds/{preview}/unlink", a.gated(a.unlink))
 	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/link", a.gated(a.link))
+
+	// The branch preview. Fired automatically when a project is created; this route is for
+	// rebuilding it, and for a project that was added before the daemon could reach the
+	// platform to ask what its default branch is called.
+	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/branch", a.gated(a.branch))
 
 	// Checking an image runs a docker command with an operator-supplied argument and
 	// makes a registry round trip, so it is gated like every other write even though it
@@ -283,6 +304,14 @@ type projectsState struct {
 	// SecretsAvailable is false when no vault is wired at all, which is a different
 	// thing again: not locked, not empty, just not a feature on this daemon.
 	SecretsAvailable bool `json:"secrets_available"`
+
+	// Note is something that happened alongside the request and did not fail it — today,
+	// only a default-branch preview that could not be started when a project was created.
+	//
+	// Carried on the state rather than raised as an error because the project *was* saved:
+	// answering 500 would tell the operator their work was lost when it was not. The page
+	// toasts this, so the one thing that did not work is still said out loud.
+	Note string `json:"note,omitempty"`
 }
 
 // projectView is a project row plus the names of the secrets scoped to it.
@@ -310,6 +339,27 @@ type projectView struct {
 	// indistinguishable from a build system that has quietly stopped noticing a pull
 	// request, and this list is also the only place a mistaken unlink can be undone.
 	Ignored []store.IgnoredPR `json:"ignored,omitempty"`
+
+	// Branch is this project's permanent branch preview — the state of its default branch,
+	// which is the thing an operator looks at most and the one preview that is not about a
+	// review.
+	//
+	// Nil when there is none yet: a project added before the daemon could reach the platform,
+	// or one whose first build has not finished. The card offers to start it in that case,
+	// which is why the absence has to be distinguishable from a preview that exists and is
+	// failing.
+	Branch *branchView `json:"branch,omitempty"`
+}
+
+// branchView is the branch preview as the projects page needs it: enough to render a link
+// and say whether it works, and nothing else.
+type branchView struct {
+	Name      string `json:"name"`
+	PreviewID string `json:"preview_id"`
+	URL       string `json:"url,omitempty"`
+	State     string `json:"state"`
+	Commit    string `json:"commit,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 type projectDefaults struct {
@@ -437,10 +487,46 @@ func knownImages() []string {
 	}
 }
 
+// branchPreviewFor picks a repository's branch preview out of the preview list.
+//
+// Nil when there is none, which the card renders as an offer to start one rather than as an
+// empty space. A repository has at most one today — the default branch's — but the search is
+// written as "the first branch preview of this repository" rather than assuming that, since
+// building an arbitrary branch is the same code path and nothing stops a second one existing.
+//
+// Matched on IsBranch rather than on a branch name, because the name is whatever the platform
+// said its default was and this code does not get to assume it is called `main`.
+func branchPreviewFor(previews []store.Preview, repo model.Repo) *branchView {
+	for _, p := range previews {
+		if !p.PR.IsBranch() || p.PR.Repo != repo {
+			continue
+		}
+		return &branchView{
+			Name:      p.PR.Branch,
+			PreviewID: p.PreviewID,
+			URL:       p.URL,
+			State:     string(p.State),
+			Commit:    p.Commit,
+			UpdatedAt: p.UpdatedAt.Format(time.RFC3339),
+		}
+	}
+	return nil
+}
+
 func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projectsState, error) {
 	projects, err := a.store.ListProjects(ctx)
 	if err != nil {
 		return projectsState{}, err
+	}
+
+	// The branch preview lives in the previews table, not in the project row: it is a
+	// preview like any other, and duplicating its URL onto the project would give the page
+	// two sources for one fact that a failed republish could make disagree.
+	//
+	// A failure is not worth failing the page for — the cards render without the link.
+	previews, err := a.store.ListPreviews(ctx)
+	if err != nil {
+		a.log.Warn("listing previews for the branch links", "error", err)
 	}
 
 	v := a.openVault()
@@ -489,13 +575,13 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 		}
 		// A failure here is not worth failing the page for: the list is informational,
 		// and the enforcement that matters happens in the build path.
-		ignored, err := a.store.ListIgnored(r.Context(), model.Repo{
-			Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
-		})
+		repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
+		ignored, err := a.store.ListIgnored(r.Context(), repo)
 		if err != nil {
 			a.log.Warn("listing unlinked pull requests", "project", p.Key(), "error", err)
 		}
 		view.Ignored = ignored
+		view.Branch = branchPreviewFor(previews, repo)
 		st.Projects = append(st.Projects, view)
 	}
 
@@ -653,6 +739,16 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Was there a row here before? Asked before the upsert, because afterwards there
+	// always is.
+	//
+	// This is what distinguishes creating a project from editing one, and only the first
+	// should start a build. PUT is a whole-row upsert with no separate create, so without
+	// this every save of an existing project would queue another build of its default
+	// branch — a rebuild on every typo correction.
+	_, existing := a.store.ProjectFor(r.Context(), p.Platform, p.Owner, p.Repo)
+	isNew := errors.Is(existing, store.ErrNoProject)
+
 	if err := a.store.SaveProject(r.Context(), p); err != nil {
 		a.log.Error("saving project", "project", p.Key(), "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -665,10 +761,38 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 	a.log.Info("project saved", "project", p.Key(), "driver", p.Driver,
 		"command", p.BuildCommand, "enabled", p.Enabled)
 
+	// A new project gets a preview of its default branch, immediately.
+	//
+	// Here rather than in the page, so it happens however the project was created — a
+	// browser, a script, a restored configuration. Adding a project used to build only what
+	// was already under review, so a repository with no open pull requests produced nothing
+	// at all and the answer to "I added it, now what" was to wait for somebody to push.
+	//
+	// Inline rather than in a goroutine, and best-effort: it is two API calls and an enqueue,
+	// which is worth the wait on project creation, and a failure here must not fail the save
+	// — the project row is correct and the branch build can be asked for again from its card.
+	branchNote := ""
+	if isNew && p.Enabled && a.brancher != nil {
+		branch, err := a.brancher(r.Context(), model.Repo{
+			Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
+		}, "")
+		switch {
+		case err != nil:
+			a.log.Warn("could not start the default branch preview",
+				"project", p.Key(), "error", err)
+			branchNote = err.Error()
+		default:
+			a.log.Info("queued a default branch preview", "project", p.Key(), "branch", branch)
+		}
+	}
+
 	st, err := a.snapshot(r.Context(), r)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 		return
+	}
+	if branchNote != "" {
+		st.Note = branchNote
 	}
 	writeJSON(w, http.StatusOK, st)
 }
@@ -858,6 +982,48 @@ func (a *ProjectsAdmin) link(w http.ResponseWriter, r *http.Request) {
 	}
 	a.log.Info("linked a pull request", "project", p.Key(), "number", body.Number)
 	writeJSON(w, http.StatusOK, map[string]any{"queued": true, "number": body.Number})
+}
+
+// branch builds a preview of a branch, with no pull request behind it.
+//
+// An absent or empty `branch` means the repository's default, read from the platform. That
+// is the case this exists for: the operator wants "a preview of main that always works" and
+// does not necessarily know whether this repository calls it `main` or `master`.
+func (a *ProjectsAdmin) branch(w http.ResponseWriter, r *http.Request) {
+	p, bad := projectFromRequest(r)
+	if bad != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad})
+		return
+	}
+	// An empty body is legitimate and means the default branch, so a decode failure is only
+	// an error when there was something there to decode.
+	var body struct {
+		Branch string `json:"branch"`
+	}
+	if r.ContentLength > 0 {
+		if err := decodeJSON(r, &body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	if a.brancher == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot build a branch preview"})
+		return
+	}
+
+	repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
+	branch, err := a.brancher(r.Context(), repo, strings.TrimSpace(body.Branch))
+	if err != nil {
+		// 200 with an error, as scan and link do: the message is the operator's next step —
+		// an App not installed there, a credential that cannot read the repository, an empty
+		// repository with no default branch — and this is a button on a page that stays open.
+		a.log.Warn("building a branch preview", "project", p.Key(), "error", err)
+		writeJSON(w, http.StatusOK, map[string]any{"queued": false, "error": err.Error()})
+		return
+	}
+	a.log.Info("queued a branch preview", "project", p.Key(), "branch", branch)
+	writeJSON(w, http.StatusOK, map[string]any{"queued": true, "branch": branch})
 }
 
 // inspectImage answers whether a container image can be resolved, so the form can

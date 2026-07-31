@@ -139,9 +139,9 @@ func TestClearCacheRejectsAnythingButAPreviewID(t *testing.T) {
 		"..",
 		"%2e%2e",
 		"%2e%2e%2fnot-the-cache",
-		"19344c5ee369x",  // too long
-		"19344c5ee36",    // too short
-		"19344C5EE369",   // uppercase is not what PreviewID produces
+		"19344c5ee369x", // too long
+		"19344c5ee36",   // too short
+		"19344C5EE369",  // uppercase is not what PreviewID produces
 		"../not-the-cache",
 	} {
 		rec := clearCacheRequest(t, h, id, "127.0.0.1:54321")

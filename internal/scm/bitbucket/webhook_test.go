@@ -79,8 +79,8 @@ func commitResolver(full string) http.Handler {
 func delivery(sourceRepo string, id int) []byte {
 	body := map[string]any{
 		"pullrequest": map[string]any{
-			"id":     id,
-			"draft":  false,
+			"id":    id,
+			"draft": false,
 			"source": map[string]any{
 				"branch":     map[string]string{"name": "add-guide"},
 				"commit":     map[string]string{"hash": "a4fd6c9db194"},

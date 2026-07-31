@@ -337,6 +337,11 @@ type PendingJob struct {
 // context cancellation and touches nothing here; a queued one has no context to cancel, so
 // the only way to stop it is to take it out of the queue before a worker claims it.
 //
+// Teardown is the second caller, and the reason this is not only about a button. Claim used
+// to be the only statement that removed a job, so tearing a preview down left its queued
+// build behind for a worker to pick up minutes later — rebuilding, recording and
+// republishing a preview an operator had deliberately deleted. See Daemon.teardown.
+//
 // It reports what it did rather than returning nothing, because of the race with Claim: a
 // worker can take the job between the dashboard drawing the button and the click arriving,
 // and the caller has to tell "removed it" from "too late, it is running" so it can cancel
@@ -744,6 +749,37 @@ func (s *Store) SavePreview(ctx context.Context, p Preview) error {
 		p.Commit, string(p.State), p.Reason, p.UpdatedAt.UnixMilli())
 	if err != nil {
 		return fmt.Errorf("saving preview %s: %w", p.PreviewID, err)
+	}
+	return nil
+}
+
+// FailPreview empties a preview's URL and records why nothing is serving it.
+//
+// For the republish that fails at startup. The row is written by a build that succeeded,
+// so it says `ready` and carries the URL that build published — and after a failed
+// restore nothing is bound to that address, so `/status` offers a link that answers 502
+// and the pull request comment advertises the same one. Both read this row, which is why
+// emptying it is what fixes both. Seen live on 2026-07-30, when `CreateShare` timed out.
+//
+// An UPDATE rather than a delete, because the artifacts are still on disk and still
+// good: the failure is a controller round trip that may work on the next attempt, and a
+// deleted row takes the preview off the dashboard — off the page holding the Rebuild
+// button — while its comment still points at the dead URL.
+//
+// `name` is deliberately left alone. Teardown reads it to give the exposer's reserved
+// name back (`Daemon.releaseNames`), and on zrok that name is a quota-bearing object, so
+// clearing it here would leak one per failed restore with nothing left to name it.
+//
+// The sibling for a build is ClearBuildShare, which empties both columns and leaves the
+// state alone — a build row is history and its state is a fact about what happened,
+// where a preview row is a claim about what is being served right now.
+func (s *Store) FailPreview(ctx context.Context, previewID, reason string) error {
+	_, err := s.db.ExecContext(ctx, `
+        UPDATE previews SET url = '', state = ?, reason = ?, updated_at = ?
+        WHERE preview_id = ?`,
+		string(scm.StateFailed), reason, time.Now().UnixMilli(), previewID)
+	if err != nil {
+		return fmt.Errorf("recording the failed republish of preview %s: %w", previewID, err)
 	}
 	return nil
 }
