@@ -57,6 +57,10 @@ const sidebars: SidebarsConfig = {
     'runbooks/webhook-tunnel',
     'runbooks/zrok2',
     'runbooks/frontdoor',
+    // Deployment, after the pages about getting one instance working: nobody containerises
+    // or moves an installation they have not run yet.
+    'runbooks/container',
+    'runbooks/move-an-installation',
     'troubleshooting',
 
     // Understanding-oriented: read when deciding whether to use this, or before
