@@ -279,6 +279,13 @@ func (a *ProjectsAdmin) available() (bool, string) {
 
 func (a *ProjectsAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// An authenticated admin skips the listener check, for the reason spelled out on
+		// SecretsAdmin.gated: that check is a proxy for "we cannot tell who this is", and a
+		// session answers the question directly.
+		if roleOfContext(r.Context()) == RoleAdmin {
+			next(w, r)
+			return
+		}
 		if ok, why := a.available(); !ok {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": why})
 			return
@@ -614,7 +621,12 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 	}
 	sort.Strings(st.GlobalSecrets)
 
+	// The admin-session shortcut first, mirroring gated. Without it a logged-in admin on a
+	// daemon that listens on more than loopback would be shown a read-only page whose every
+	// button then worked, which is as misleading as the reverse.
 	switch ok, why := a.available(); {
+	case roleOfContext(r.Context()) == RoleAdmin:
+		st.CanWrite = true
 	case !ok:
 		st.ReadOnlyWhy = why
 	default:

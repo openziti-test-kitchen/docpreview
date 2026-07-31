@@ -1345,6 +1345,12 @@ footer {
 }
 .footlink:hover { color: var(--ink-2) }
 .footlink:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px }
+/* Who is signed in, and Sign out, in the top bar beside the admin links.
+   The form is inline because a <form> is a block and would otherwise drop the button onto a
+   line of its own for a control two words wide. */
+.session { display: inline-flex; align-items: center; gap: 0.4rem }
+.session form { display: inline; margin: 0 }
+.session .who { font-size: 0.72rem; color: var(--muted) }
 
 /* Last in the sheet, and !important, because `[hidden]` loses to any author rule
    that sets display — and .wrap sets grid. So `el.hidden = true` on it did nothing,
@@ -1401,6 +1407,22 @@ footer {
          gets nowhere. This is about not offering an operator a control that will
          answer 403. -->
     <span class="admin-nav" id="admin-nav" hidden></span>
+
+    <!-- Who is signed in, and the way out — in the header rather than the footer, where the
+         first version put it and where nobody found it. Somebody on a shared or borrowed
+         machine looking for "how do I sign out" looks at the top right.
+
+         A form, because logging out is a POST: a GET would let any page on the internet sign
+         an operator out with an <img> tag. Harmless as mischief, and the kind of thing that
+         costs an afternoon to diagnose.
+
+         Hidden when nothing is signed in, which is every installation with no viewer
+         password — a sign-out offered to somebody who never signed in is a control that does
+         nothing. -->
+    <span class="session" id="session" hidden>
+      <span class="who" id="session-role"></span>
+      <form method="post" action="/logout"><button class="control">Sign out</button></form>
+    </span>
 
   </div>
 </div>
@@ -1477,6 +1499,14 @@ footer {
        until they need them — and the label carries the duration, so the number the report
        exists to give is readable without opening it. -->
   <span id="boot-link" hidden> · <button class="footlink" id="boot-open"></button></span>
+  <!-- Who you are signed in as, and the way out. Hidden when no login was needed, which is
+       every installation that has set no viewer password.
+
+       A form rather than a link, because logging out is a POST: a GET would let any page on
+       the internet sign an operator out with an <img> tag. Harmless as mischief, and the kind
+       of thing that costs an afternoon to diagnose. -->
+  <!-- The sign-out is in the header, not here. This footer is where it started and where
+       nobody looked for it. -->
 </footer>
 
 <script>
@@ -1573,6 +1603,13 @@ const secs = n => {
 };
 
 const project = p => String(p.repo || "").split("/").pop() || "unknown";
+
+/* prLabel is what follows the project name: "#42", or "@main" for a branch preview.
+
+   Number 0 is a branch preview — see model.PullRequest.IsBranch — and rendering it as "#0" read
+   as a bug rather than as a branch, which is exactly what it was reported as. The Go side already
+   spells these "repo@main" in every log line; this is the same rule on the page. */
+const prLabel = p => p.number > 0 ? `#${p.number}` : `@${p.branch || "branch"}`;
 
 
 const ui = {
@@ -2653,6 +2690,7 @@ async function showBuild(previewID, buildID) {
   try {
     const res = await fetch(
       `/logs/${encodeURIComponent(previewID)}/download/${encodeURIComponent(buildID)}`);
+    if (toLoginIf(res)) return;
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     const text = await res.text();
     for (const line of text.split("\n")) appendLog(line);
@@ -2669,7 +2707,7 @@ async function showBuild(previewID, buildID) {
 async function loadBuilds(previewID) {
   try {
     const res = await fetch(`/logs/${encodeURIComponent(previewID)}`);
-    if (!res.ok) return;
+    if (toLoginIf(res) || !res.ok) return;
     const d = await res.json();
     ui.builds[previewID] = d.logs || [];
     updateBuildPicker(previewID);
@@ -3034,8 +3072,18 @@ function renderEvents() {
   const scoped = (ui.events || []).filter(e => {
     if (only && project(e) !== only) return false;
     if (!ui.query) return true;
-    return `${project(e)} ${e.branch} #${e.number}`.toLowerCase().includes(ui.query);
-  });
+    return `${project(e)} ${e.branch} ${prLabel(e)}`.toLowerCase().includes(ui.query);
+  })
+    // Sorted by time here, rather than trusting the order the daemon sent.
+    //
+    // The feed is a ring buffer and its order is *insertion*, which is the same thing as time
+    // only while every event arrives as it happens. It does not: the history is reloaded from
+    // the builds table at startup, and a startup scan then appends builds of its own — so a
+    // restart could put an event from 07:19 above one from 07:48, which is what was reported.
+    //
+    // Newest first, and collapse() below depends on that: it keeps the first entry it sees for
+    // an attempt, so "first" has to mean "newest" or a row would settle on a stale state.
+    .sort((a, b) => new Date(b.at) - new Date(a.at));
 
   document.getElementById("feed-scope").textContent = only ? only : "all projects";
   renderFeedFilters(scoped);
@@ -3083,7 +3131,11 @@ function renderEvents() {
     // matters still has it, and a failure's real detail was never here anyway — that
     // is the build log, which is what clicking the entry opens.
     const detail = [
-      e.branch ? `<code>${esc(e.branch)}</code>` : "",
+      // Not repeated when the label above already is the branch. A branch preview's
+      // label is "@main", so the row read "docusaurus-shared@main main · c251f11" — the
+      // same word twice, in a rail where width is the scarce thing. A pull request's
+      // label is "#21" and its branch is new information, so that one stays.
+      e.branch && e.branch !== prLabel(e).slice(1) ? `<code>${esc(e.branch)}</code>` : "",
       // The copy control sits on the commit rather than the row, because the commit
       // is what anybody wants out of here — a sha to paste into a terminal or a
       // message. Copying the whole row would give them the clock and the branch too
@@ -3101,7 +3153,7 @@ function renderEvents() {
         <div class="l1">
           <span class="dot"></span>
           <span class="k">${esc(s.label)}</span>
-          <span class="l2">${esc(project(e))}#${e.number}</span>
+          <span class="l2">${esc(project(e))}${esc(prLabel(e))}</span>
         </div>
         <div class="l2">${detail}</div>
       </div>`;
@@ -3309,6 +3361,7 @@ async function api(method, path, body) {
     headers: body ? {"Content-Type": "application/json"} : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (toLoginIf(res)) return {};
   const text = await res.text();
   let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch {}
@@ -5818,6 +5871,17 @@ function applyStatus(d) {
 
   document.getElementById("exposer").textContent = `exposer: ${d.exposer}`;
 
+  // The session, when there is one. The role comes from the payload because the cookie is
+  // HttpOnly and the page cannot read it — and a "sign out" offered to somebody who never
+  // signed in is a control that does nothing.
+  const session = document.getElementById("session");
+  if (session) {
+    session.hidden = !d.role;
+    if (d.role) {
+      document.getElementById("session-role").textContent = `signed in as ${d.role}`;
+    }
+  }
+
   // While the daemon is recovering there are no workers, so a queued build cannot start.
   // Said out loud, because "Queued" with nothing happening is indistinguishable from a
   // stuck queue — which is exactly how it was reported, twice, both times a minute after a
@@ -6098,7 +6162,46 @@ function connect() {
   // A dashboard that silently freezes is worse than one that admits it: the
   // numbers on screen would otherwise look current indefinitely. EventSource
   // reconnects by itself, so this only has to report.
-  src.onerror = () => { conn.textContent = "reconnecting…"; conn.className = "stale"; };
+  //
+  // Except when the reason it cannot connect is that the session ended. EventSource
+  // exposes no status code, so an expired cookie and a stopped daemon are the same
+  // event here — the page said "reconnecting…" forever while the answer was a 401 and
+  // the fix was to sign in. Which happens on every restart, since the cookie is signed
+  // with a per-process secret. So the error is probed once, and only a 401 redirects.
+  src.onerror = () => {
+    conn.textContent = "reconnecting…";
+    conn.className = "stale";
+    probeSession();
+  };
+}
+
+/* probeSession asks whether the stream failed because the session is gone.
+   Sent to /status rather than /readyz: /readyz answers without a login, so it can
+   never return the 401 this is looking for. */
+async function probeSession() {
+  try {
+    toLoginIf(await fetch("/status", {headers: {"Accept": "application/json"}}));
+  } catch {
+    // The daemon is unreachable, which is the other reason the stream failed and is
+    // not something a login fixes. Leave "reconnecting…" up.
+  }
+}
+
+/* toLoginIf sends the browser to the login page when the server says the session is
+   not good, and reports whether it did.
+
+   Every fetch on the page goes through this. Without it an expired session reads as a
+   broken dashboard: the panels render their last good state, an action fails with
+   "401 Unauthorized" in a corner, and nothing says the word "login". The server already
+   redirects a navigation — this is the same answer for the requests that are not one.
+
+   `next` is the path being viewed, not the path that 401'd: sending somebody back to
+   /events or /api/projects after signing in is a blank page or a JSON dump. */
+function toLoginIf(res) {
+  if (!res || res.status !== 401) return false;
+  const next = location.pathname + location.search;
+  location.href = "/login?next=" + encodeURIComponent(next);
+  return true;
 }
 
 // hideOperationsChrome strips the parts of the page that only make sense with a

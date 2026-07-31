@@ -48,6 +48,14 @@ type Ingress struct {
 	// projects is the project admin surface, on the same terms.
 	projects *ProjectsAdmin
 
+	// console is the login gate. Nil when no store was wired, in which case there is no
+	// login and the locality rules decide everything, exactly as before this existed.
+	console *console
+
+	// google resolves the OAuth application's credentials, per request because the vault may
+	// be locked at startup and unlocked later. Nil when no Google sign-in is wired.
+	google GoogleCredentials
+
 	// mu guards clients, which the setup page can add to after the daemon is
 	// already serving. See SetClient.
 	mu      sync.Mutex
@@ -89,6 +97,19 @@ func (i *Ingress) WithProjects(a *ProjectsAdmin) *Ingress {
 	return i
 }
 
+// WithLogin attaches the password gate, reading and writing its hashes in this store.
+//
+// Optional, so a caller that wires no store gets the previous behaviour rather than a daemon
+// that cannot be reached: no login, and the locality and identity rules deciding everything.
+func (i *Ingress) WithLogin(st *store.Store) (*Ingress, error) {
+	c, err := newConsole(st)
+	if err != nil {
+		return i, err
+	}
+	i.console = c
+	return i, nil
+}
+
 // NewIngress builds the HTTP surface.
 func NewIngress(d *Daemon, clients map[model.Platform]scm.Client, comments CommentReader, log *slog.Logger) *Ingress {
 	return &Ingress{
@@ -101,13 +122,37 @@ func NewIngress(d *Daemon, clients map[model.Platform]scm.Client, comments Comme
 	}
 }
 
-// Handler returns the configured mux.
+// Handler returns the configured mux, wrapped in the login gate.
 func (i *Ingress) Handler() http.Handler {
+	return i.requireLogin(i.routes())
+}
+
+// routes builds the mux itself.
+//
+// Separate from Handler so the middleware wraps *everything* by construction rather than by
+// each route remembering to ask. A route added later is protected without its author knowing
+// this exists, which is the only arrangement that stays true — the exemptions are a short list
+// in one function, see openPath.
+func (i *Ingress) routes() http.Handler {
 	mux := http.NewServeMux()
+
+	// The login form and the session it issues. Registered unconditionally: a daemon with no
+	// password serves a page saying so, which is a better answer to somebody who went looking
+	// for it than a 404.
+	mux.HandleFunc("GET /login", i.login)
+	mux.HandleFunc("POST /login", i.login)
+	mux.HandleFunc("POST /logout", i.logout)
+
+	// Google sign-in, which grants viewer and never admin. Both halves are GET because the
+	// browser is redirected into them.
+	mux.HandleFunc("GET /auth/google", i.googleStart)
+	mux.HandleFunc("GET /auth/google/callback", i.googleCallback)
+
 	mux.HandleFunc("POST /webhook/github", i.webhook(model.PlatformGitHub))
 	mux.HandleFunc("POST /webhook/bitbucket", i.webhook(model.PlatformBitbucket))
 	mux.HandleFunc("POST /webhook/local", i.webhook(model.PlatformLocal))
 	mux.HandleFunc("GET /healthz", i.healthz)
+	mux.HandleFunc("GET /readyz", i.readyz)
 	mux.HandleFunc("GET /status", i.status)
 
 	// The stand-in for a pull request page. On GitHub the comment lives on the
@@ -336,6 +381,79 @@ func (i *Ingress) healthz(w http.ResponseWriter, _ *http.Request) {
 	io.WriteString(w, "ok\n")
 }
 
+// readyStage is the recovery stage as /readyz reports it: named separately from
+// StartupProgress and copied field by field, so a field added there — Items was the one that
+// mattered — does not silently become public here.
+type readyStage struct {
+	Stage string `json:"stage"`
+	Note  string `json:"note"`
+	Done  int    `json:"done"`
+	Total int    `json:"total"`
+}
+
+// readyReport is the whole of what an unauthenticated caller may learn: how busy the daemon is,
+// and never what it is busy with.
+type readyReport struct {
+	Starting bool        `json:"starting"`
+	Startup  *readyStage `json:"startup,omitempty"`
+	Pending  int         `json:"pending"`
+	Running  int         `json:"running"`
+	Ready    int         `json:"ready"`
+
+	// Instance is the process start stamp, so a caller can tell the daemon it restarted from
+	// one that was already running and answered first.
+	Instance string `json:"instance"`
+}
+
+// readyz reports whether recovery has finished and whether the queue is quiet.
+//
+// It exists because `/status` is now behind the login, and the thing that waits for a restart is
+// a script, not a person: `Restart-Docpreview.ps1` and the demo harness both poll until the
+// daemon says it has recovered. Gating `/status` locked them out, and the symptom was a wait loop
+// that never returned — a restart that looked like a hang.
+//
+// The alternatives were worse. Handing the scripts a password puts one in a shell history and in
+// every runbook; leaving `/status` open contradicts the whole point of the gate, since that
+// payload enumerates every open documentation pull request across every project.
+//
+// So this is a separate, deliberately thin surface: counts and a stage name, and nothing that
+// identifies a repository, a branch, a pull request or a URL. A caller learns that the daemon is
+// busy, not what it is busy with. That is what makes it safe to leave open, and it is the rule to
+// check any addition here against.
+func (i *Ingress) readyz(w http.ResponseWriter, r *http.Request) {
+	st, err := i.daemon.Status(r.Context())
+	if err != nil {
+		i.log.Error("building readiness", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Counted here rather than returning the rows, because the count is the whole of what a
+	// waiting script needs and the rows are the part that must not be public.
+	ready := 0
+	for _, p := range st.Previews {
+		if p.State == "ready" && p.URL != "" {
+			ready++
+		}
+	}
+
+	// The stage, without its Items. Those read "adopted a-customer-connect-docs-feature-…",
+	// which names a repository and a branch — exactly what this endpoint must not say.
+	var stage *readyStage
+	if p := st.Startup; p != nil {
+		stage = &readyStage{Stage: p.Stage, Note: p.Note, Done: p.Done, Total: p.Total}
+	}
+
+	writeJSON(w, http.StatusOK, readyReport{
+		Starting: st.Starting,
+		Startup:  stage,
+		Pending:  st.Pending,
+		Running:  st.Running,
+		Ready:    ready,
+		Instance: st.Instance,
+	})
+}
+
 // status reports the live previews.
 //
 // This endpoint is bound to the ingress listener, which is loopback by default
@@ -350,6 +468,9 @@ func (i *Ingress) status(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// Whose session this is, which only the request knows. The page needs it to decide whether
+	// to offer a sign-out: the cookie is HttpOnly, so JavaScript cannot look.
+	st.Role = string(roleOfContext(r.Context()))
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

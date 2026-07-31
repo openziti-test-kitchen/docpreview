@@ -12,22 +12,26 @@ import {dirname, join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {JSDOM, VirtualConsole} from "jsdom";
 
+import {liveStatus} from "./live.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const daemon = process.env.DOCPREVIEW_URL || "http://127.0.0.1:8471";
 
-let base;
-try {
-  base = await (await fetch(`${daemon}/status`)).json();
-  console.log(`state: live, from ${daemon}\n`);
-} catch {
-  base = JSON.parse(readFileSync(join(here, "status.fixture.json"), "utf8"));
-  console.log("state: fixture\n");
-}
+// Through live.mjs because /status is behind the login now. A 401 body is valid JSON, so
+// the previous version handed the page an object with no previews and the error came out
+// of the page rather than out of here.
+const {status: base, source} = await liveStatus(daemon);
+console.log(`state: ${source}\n`);
 
 const vc = new VirtualConsole();
 vc.on("jsdomError", e => console.log("PAGE ERROR:", e.message));
 
-const dom = new JSDOM(readFileSync(join(here, "..", "..", "internal", "daemon", "dashboard.html"), "utf8"), {
+// Overridable, as in the other harnesses: an assertion that can only be run against the
+// current file cannot show that it would have failed before the change.
+const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
+  join(here, "..", "..", "internal", "daemon", "dashboard.html");
+
+const dom = new JSDOM(readFileSync(dashboard, "utf8"), {
   runScripts: "dangerously", url: `${daemon}/`, virtualConsole: vc,
   beforeParse(win) {
     win.EventSource = class { constructor() { this.readyState = 1; } close() {} addEventListener() {} };
@@ -107,10 +111,21 @@ const project = win.eval(`project(${JSON.stringify(base.previews[0])})`);
 console.log(`project name: ${project}\n`);
 
 let failures = 0;
+// "then building" wants **no** queued row, which is a reversal of what this harness
+// asserted when it was written.
+//
+// The feed now shows one row per attempt, carrying the state that attempt has reached:
+// queued, then building, then success or failed, in place. It used to append a row per
+// transition, which meant three rows for one build and a feed that was mostly its own
+// history — "i dont want n entries for queued, building, success|fail". So a queued row
+// surviving next to the building row for the same attempt is now the bug, not the fix.
+//
+// The queued-only and requeue cases still want one, because there is no later state for
+// that attempt to collapse into.
 for (const [name, status, wantQueued] of [
   ["baseline (as the daemon has it)", base, 0],
   ["queued only, no building yet", withQueuedOnly(base), 1],
-  ["then building", withBuilding(base), 1],
+  ["then building", withBuilding(base), 0],
   ["a finished commit queued again", withRequeueOfAFinishedCommit(base), 1],
 ]) {
   for (const open of [null, project]) {
@@ -126,7 +141,11 @@ for (const [name, status, wantQueued] of [
     }
     // The history must never shrink because something is in flight. That is the
     // reported symptom, and this is the assertion for it.
-    if (r.n < 15) {
+    //
+    // Collapsed only. Expanding a row scopes the feed to that one preview, so a handful
+    // of rows there is the feature working — asserting a floor on it made this harness
+    // report four failures on every run, whatever the page did.
+    if (!open && r.n < 15) {
       failures++;
       console.log(`   FAIL: only ${r.n} rows — the history collapsed`);
     }

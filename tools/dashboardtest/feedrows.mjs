@@ -173,6 +173,55 @@ console.log("\nthe row changes state in place");
   await apply(status);
 }
 
+console.log("\nrows are newest first, whatever order the daemon sent");
+{
+  // The feed is a ring buffer, so its own order is *insertion* — the same thing as time only
+  // while every event arrives as it happens. It does not: the history is reloaded from the
+  // builds table at startup and a startup scan appends builds of its own, which put an event
+  // from 07:19 above one from 07:48 on a real dashboard.
+  const shuffled = {
+    ...status,
+    events: [events[4], events[0], events[5], events[2]], // deliberately not time-ordered
+  };
+  await apply(shuffled);
+
+  const times = rows().map(r => r.querySelector(".t").textContent.trim());
+  const sorted = [...times].sort().reverse();
+  if (times.join(",") !== sorted.join(",")) {
+    fail(`rows are out of order: ${times.join(", ")}`);
+  } else ok(`newest first: ${times.join(", ")}`);
+
+  await apply(status);
+}
+
+console.log("\na branch preview is not written as #0");
+{
+  // Number 0 means "no pull request" — see model.PullRequest.IsBranch — and rendering it as
+  // "#0" reads as a bug rather than as a branch. That is exactly how it was reported.
+  const text = rowText().join(" ");
+  if (text.includes("#0")) {
+    fail(`a branch build renders as #0: ${JSON.stringify(text)}`);
+  } else ok("no #0 anywhere");
+  if (!text.includes("@main")) {
+    fail(`a branch build does not name its branch: ${JSON.stringify(text)}`);
+  } else ok("written as @main");
+
+  // And named once. The label is already the branch, so printing the branch again beside
+  // it read "docusaurus-shared@main main · c251f11" — the same word twice in the widest
+  // element of a 21rem rail. A pull request keeps its branch, because "#21" does not say
+  // what branch that is; asserted below so this does not turn into "drop it everywhere".
+  for (const row of rowText()) {
+    const m = /@(\S+)/.exec(row);
+    if (m && row.includes(`· ${m[1]}`)) {
+      fail(`a branch row names its branch twice: ${JSON.stringify(row)}`);
+    }
+  }
+  const pr = rowText().find(r => /#\d/.test(r));
+  if (pr && !/·/.test(pr)) {
+    fail(`a pull request row lost its branch: ${JSON.stringify(pr)}`);
+  } else ok("named once for a branch, still shown for a pull request");
+}
+
 console.log("\nthe message is not in the row");
 {
   // "ready in 24s" and "the build exited 1" were the widest thing in a 21rem rail and

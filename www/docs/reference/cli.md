@@ -401,6 +401,7 @@ reloading under you. **If something on the page contradicts the code, reload bef
 | `GET` | `/pr` | The stand-in pull request page, for the local platform. |
 | `GET` | `/preview/{name}/` | Previews, under the `local` exposer only. |
 | `GET` | `/healthz` | `ok`. |
+| `GET` | `/readyz` | JSON: whether recovery has finished, and how busy the daemon is. |
 | `GET` | `/status` | JSON: exposer, queue depth, live previews. |
 
 ```json
@@ -423,7 +424,26 @@ reloading under you. **If something on the page contradicts the code, reload bef
 ```
 
 `/status` carries no secrets, but it does enumerate every open documentation pull request. Think about that
-before sharing the ingress publicly alongside the webhook endpoint.
+before sharing the ingress publicly alongside the webhook endpoint. Once a console password is set it is behind
+the login with the rest of the dashboard, including from loopback.
+
+`/readyz` is the endpoint to poll instead, from a script or a supervisor. It answers without a login, and it says
+how busy the daemon is without saying what it is busy with — counts and a stage name, never a repository, branch or
+URL:
+
+```json
+{
+  "starting": false,
+  "pending": 0,
+  "running": 0,
+  "ready": 8,
+  "instance": "20260731-192655.448"
+}
+```
+
+While recovery is running it also carries `startup` with `stage`, `note`, `done` and `total`, which is what the
+restart script prints as it waits. `instance` is the process start stamp, so a caller can tell the daemon it just
+restarted from one that was already running.
 
 ## `webhook-only`
 

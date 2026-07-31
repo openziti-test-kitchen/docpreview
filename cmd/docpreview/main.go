@@ -71,6 +71,10 @@ func run(args []string) error {
 		return cmdDashboardOnly(args[1:])
 	case "shares":
 		return cmdShares(args[1:])
+	case "console":
+		return cmdConsole(args[1:])
+	case "settings":
+		return cmdSettings(args[1:])
 	case "vault":
 		return cmdVault(args[1:])
 	case "help", "-h", "--help":
@@ -93,6 +97,8 @@ Usage:
   docpreview serve   [-config FILE]       Run the webhook daemon
   docpreview doctor  [-config FILE]       Check the configuration and exit
   docpreview shares  list [-json]         Audit the exposer account against the database
+  docpreview console <subcommand>         The password on the admin surface
+  docpreview settings <subcommand>        Settings the daemon keeps in its database
   docpreview vault   <subcommand>         Manage stored credentials
 
 Reaching a loopback daemon from the internet. All three take -zrok-name, never
@@ -131,6 +137,26 @@ What is this exposer account actually holding?
 Read-only, and safe against a running daemon. An orphaned share and a recorded
 preview whose share has gone are opposite problems; Reap, inside the daemon, is
 the only thing that deletes either.
+
+The dashboard is open until a password is set. Set one and everything but the previews,
+the webhooks and the health endpoints asks for a login, including from loopback:
+
+  docpreview console password -role admin   Read a password from stdin and store its hash
+  docpreview console password -role viewer  The read-only password, for colleagues
+  docpreview console password -clear        Remove it
+  docpreview console oauth-domains D        Let a Google sign-in at domain D read it
+  docpreview console status                 What is set, and what this daemon listens on
+
+The hash lives in the database rather than the vault, because the page that unlocks the
+vault is behind this gate — a password inside it could not be checked in order to reach
+the form that opens it.
+
+Settings subcommands. These have a dashboard field each; the command is for scripts and
+for a host whose dashboard is not reachable yet:
+
+  docpreview settings prefix              Print the installation's hostname prefix
+  docpreview settings prefix P            Publish previews as P-<name>, read at startup
+  docpreview settings prefix -clear       Back to bare preview names
 
 Vault subcommands:
   docpreview vault keygen [-out FILE]     Mint a new master key
@@ -642,6 +668,33 @@ func cmdServe(args []string) error {
 			// that clones for twenty seconds and then fails to authenticate.
 			WithSCMChecker(d.CheckRepoCredential).
 			WithDocker(dockerOK, dockerWhy))
+
+	// The login gate. The hashes live in the database rather than the vault, because the page
+	// that unlocks the vault is behind this gate — so it is wired from the store and needs
+	// nothing unlocked to work.
+	if ingress, err = ingress.WithLogin(w.store); err != nil {
+		return err
+	}
+	// Google sign-in, which grants viewer and never admin.
+	//
+	// A closure over the vault rather than the values, for the reason every other credential
+	// here is deferred: the vault may be locked at startup and unlocked later without a
+	// restart. A locked vault means the login page offers the password field alone.
+	ingress = ingress.WithGoogleAuth(func() (string, string, bool) {
+		v := admin.Vault()
+		if v == nil {
+			return "", "", false
+		}
+		id, err := v.Get(vault.KeyGoogleClientID)
+		if err != nil {
+			return "", "", false
+		}
+		secret, err := v.Get(vault.KeyGoogleClientSecret)
+		if err != nil {
+			return "", "", false
+		}
+		return id.RevealString(), secret.RevealString(), true
+	})
 
 	listeners, err := daemon.Open(w.cfg.Listeners, w.log)
 	if err != nil {

@@ -183,12 +183,24 @@ func (i *Ingress) streamStatus(w http.ResponseWriter, r *http.Request) {
 		i.log.Error(msg, "error", err)
 	}
 
+	// The role, resolved once for the life of the connection.
+	//
+	// The dashboard reads its state from this stream, not from `/status` — which is polled only
+	// as a fallback — so a field set on the one and not the other is a field the page never
+	// sees. That is exactly what happened to `Role`: the sign-out control stayed hidden after a
+	// successful login because the payload carrying the role was the one nobody reads.
+	//
+	// Taken from the request context rather than re-derived per send: the session was decided
+	// when this connection was accepted, and a cookie cannot change mid-stream.
+	role := string(roleOfContext(r.Context()))
+
 	send := func() bool {
 		st, err := i.daemon.Status(ctx)
 		if err != nil {
 			logOnce("building status for a stream", err)
 			return true
 		}
+		st.Role = role
 		payload, err := json.Marshal(st)
 		if err != nil {
 			logOnce("encoding status for a stream", err)

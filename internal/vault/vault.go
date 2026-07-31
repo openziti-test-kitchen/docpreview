@@ -73,6 +73,19 @@ const (
 
 	KeyBitbucketHookSec = "bitbucket.webhook_secret"
 	KeyFrontdoorToken   = "frontdoor.api_token"
+
+	// The Google OAuth application, for signing in to the dashboard.
+	//
+	// The id is not a secret — it appears in the URL a browser is sent to — but it lives here
+	// with its partner because the pair is useless separated, and because an operator looking
+	// for "where do I put the Google credentials" should find one answer.
+	//
+	// A locked vault therefore means no Google sign-in, and the login page says so rather than
+	// showing a button that cannot work. Password login is unaffected, which is what keeps the
+	// unlock page reachable — the same ordering problem that decides where the password hashes
+	// live, arriving from the other direction.
+	KeyGoogleClientID     = "google.oauth_client_id"
+	KeyGoogleClientSecret = "google.oauth_client_secret"
 )
 
 // ProjectPrefix is the namespace every project-scoped secret lives under.

@@ -113,6 +113,24 @@ func NewSecretsAdmin(cfg config.Server, log *slog.Logger, rearm func(changed str
 // the identity was recorded by the accept path, in a context key this package alone can
 // write, and an unrecognised or absent identity is refused.
 func isLocalRequest(r *http.Request) (bool, string) {
+	// An admin session outranks everything below, and is the only one of the three checks that
+	// is authentication rather than a statement about the network. It is first because it is
+	// also the only one that can be true from another machine — which is the entire point of
+	// having a password, and the reason "managing credentials remotely is unsupported" is no
+	// longer the answer.
+	//
+	// A viewer session deliberately does not fall through to the locality checks: it is a
+	// positive statement that this caller is *not* an admin, so treating a viewer on the
+	// loopback interface as an admin would make logging in as a viewer a way to gain less than
+	// nothing. It is refused here with a reason the page can show.
+	switch roleOfContext(r.Context()) {
+	case RoleAdmin:
+		return true, ""
+	case RoleViewer:
+		return false, "this session is signed in as a viewer, which can read everything and " +
+			"change nothing; sign in with the admin password to make changes"
+	}
+
 	if caller, ok := overlayCallerFrom(r.Context()); ok {
 		if caller.MayWrite {
 			return true, ""
@@ -290,8 +308,13 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 	}
 
 	// Mirror what gated will actually decide, so the page never offers an action
-	// that is going to 403.
+	// that is going to 403. Including the admin-session shortcut: without it a
+	// logged-in admin on a non-loopback daemon would be told the page is read-only
+	// and then find every write succeed, which is the same lie in the other
+	// direction.
 	switch local, lwhy := isLocalRequest(r); {
+	case roleOfContext(r.Context()) == RoleAdmin:
+		st.CanWrite = true
 	case !ok:
 		st.CanWrite, st.ReadOnlyWhy = false, why
 	case !local:
@@ -531,6 +554,18 @@ func (a *SecretsAdmin) generate(w http.ResponseWriter, r *http.Request) {
 // cannot explain why it is read-only is worse than one that can.
 func (a *SecretsAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// An authenticated admin skips the listener check entirely, and that is the whole
+		// change a password buys.
+		//
+		// Available() asks a question about the *network* — is every listener loopback — which
+		// is the right question when the only evidence available is where a request came from.
+		// A session is evidence about *who* is asking, so a daemon listening on an address the
+		// world can reach is no longer a reason to refuse: that was a proxy for "we cannot
+		// tell who this is", and now we can.
+		if roleOfContext(r.Context()) == RoleAdmin {
+			next(w, r)
+			return
+		}
 		if ok, why := a.Available(); !ok {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": why})
 			return

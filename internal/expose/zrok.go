@@ -594,7 +594,19 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 // 4xx answers that must *not* be retried are typed. So an unrecognised error is not
 // retried, which is the safe default — a permission failure or a quota refusal retried
 // three times is three times the same refusal.
-func transient(err error) bool {
+func transient(err error) bool { return TransientZrok(err) }
+
+// TransientZrok is the same test, exported for the tunnel commands.
+//
+// `webhook-only` and `dashboard-only` create shares of their own through the same SDK against the
+// same controller, and had no retry at all: a controller that did not answer in time killed the
+// process outright, leaving the share record behind so the frontend answered 502 for a backend
+// that no longer existed. That happened three times in one afternoon before the output was being
+// captured to notice it.
+//
+// Exported rather than copied because "which failures are worth retrying" is a judgement that
+// must not exist twice — a second copy is one that will not learn the next symptom.
+func TransientZrok(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -612,6 +624,32 @@ func transient(err error) bool {
 		}
 	}
 	return false
+}
+
+// RetryZrok runs fn, trying again while it fails transiently.
+//
+// The package-level form of Zrok.retryTransient, for callers that hold no Zrok — the two tunnel
+// commands. Same backoff, same test, one implementation.
+//
+// ctx is honoured between attempts, so a shutdown does not sit through the wait.
+func RetryZrok(ctx context.Context, log *slog.Logger, what string, fn func() error) error {
+	err := fn()
+	for i, wait := range zrokBackoff {
+		if !TransientZrok(err) {
+			return err
+		}
+		if log != nil {
+			log.Warn("zrok call timed out, retrying", "call", what,
+				"attempt", i+1, "in", wait, "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(wait):
+		}
+		err = fn()
+	}
+	return err
 }
 
 // isNotFound recognises the controller's answer for a share that is not there.

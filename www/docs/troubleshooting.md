@@ -491,8 +491,8 @@ previews is about a minute. Thirty open pull requests is about seven minutes.
 Two things inside that window look like failures and are not:
 
 - **`share not found`, or a bare 404, from a preview URL.** The share has been deleted and not yet recreated.
-- **`/status` answers `200` with an empty event list.** The activity feed is re-hydrated from the database *after*
-  recovery finishes, so the history is not there yet. `previews` fills in as each one comes back.
+- **The dashboard shows an empty activity feed.** It is re-hydrated from the database *after* recovery finishes, so
+  the history is not there yet. Previews fill in as each one comes back, and `/readyz` reports the stage.
 
 The line that says it is over:
 
@@ -527,9 +527,12 @@ restart wiping the other. Give a second instance its own account.
 ## Everything looks fine and nothing happens
 
 ```powershell
-curl http://127.0.0.1:8471/status
+curl http://127.0.0.1:8471/readyz
 ```
 
 `pending` above zero with nothing progressing means the workers are stuck. Restart with `-log-level debug`.
 
-`pending` zero and no previews means no event ever arrived. Go back to step 1.
+`pending` zero and `ready` zero means no event ever arrived. Go back to step 1.
+
+`/readyz` rather than `/status` because it answers without a login. With a console password set, `/status` from a
+terminal returns `401 {"error":"not logged in"}` — which is the gate working, not a fault.

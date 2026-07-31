@@ -151,8 +151,11 @@ Startup reaps what it owns and republishes from the database. Watch it finish ra
 .\demo\Wait-Docpreview.ps1
 ```
 
-Then read `/status`. Every restored preview should be `ready` with a URL that answers. A preview whose URL 404s is
-one whose artifacts you chose not to bring in Step 3 — rebuild it from the dashboard.
+Then open the dashboard. Every restored preview should be `ready` with a URL that answers. A preview whose URL 404s
+is one whose artifacts you chose not to bring in Step 3 — rebuild it from the dashboard.
+
+The console passwords move with the database, so the login on the new machine is the one you already use. If you did
+not bring the database, set them again with `docpreview console password -role admin` and `-role viewer`.
 
 ## Afterwards
 

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -213,6 +214,102 @@ func TestClosingAPullRequestLeavesTheBranchPreview(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].PreviewID != branch.PreviewID() {
 		t.Errorf("after closing the pull request the surviving previews are %v, want only the branch", rows)
+	}
+}
+
+// A pull request with no preview is built at startup; one that already has a preview is not.
+//
+// This is what catches a missed delivery — the daemon stopped for a rebuild while somebody opened
+// a pull request, or the tunnel was down for the minute that mattered. Before it, the first sign
+// was a person asking why their link never appeared.
+func TestStartupBuildsOpenPullRequestsWithNoPreview(t *testing.T) {
+	client := &fakeClient{}
+	_, d, st := testIngress(t, client)
+	ctx := context.Background()
+
+	repo := model.Repo{Platform: model.PlatformGitHub, Owner: "acme", Name: "docs"}
+	built := model.PullRequest{Repo: repo, Number: 7, Branch: "already-built", HeadSHA: "aaa1111"}
+	missed := model.PullRequest{Repo: repo, Number: 21, Branch: "missed-delivery", HeadSHA: "bbb2222"}
+
+	if err := st.SaveProject(ctx, store.Project{
+		Platform: string(repo.Platform), Owner: repo.Owner, Repo: repo.Name, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// One of the two already has a preview.
+	if err := st.SavePreview(ctx, store.Preview{
+		PreviewID: built.PreviewID(), PR: built, Name: "already-built", State: "ready",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	client.openPRs = []model.PullRequest{built, missed}
+
+	d.backfillOpenPullRequests(ctx)
+
+	job, err := st.Claim(ctx)
+	if err != nil {
+		t.Fatalf("the scan queued nothing: %v", err)
+	}
+	if job.Number != missed.Number {
+		t.Errorf("queued #%d, want the one with no preview (#%d)", job.Number, missed.Number)
+	}
+	// And only that one. Queueing the built one as well would rebuild every open pull request
+	// on every restart, which on a busy repository is a stampede.
+	if _, err := st.Claim(ctx); !errors.Is(err, store.ErrNoJobs) {
+		t.Error("the scan queued a pull request that already had a preview")
+	}
+}
+
+// An unlinked pull request is not resurrected by the scan.
+//
+// The check lives in handleBuild and the scan goes through it, which is the whole reason it is
+// worth asserting: a scan that built what an operator had deliberately removed would undo the
+// unlink on every restart.
+func TestStartupDoesNotResurrectAnUnlinkedPullRequest(t *testing.T) {
+	client := &fakeClient{}
+	_, d, st := testIngress(t, client)
+	ctx := context.Background()
+
+	repo := model.Repo{Platform: model.PlatformGitHub, Owner: "acme", Name: "docs"}
+	pr := model.PullRequest{Repo: repo, Number: 20, Branch: "not-wanted", HeadSHA: "ccc3333"}
+
+	if err := st.SaveProject(ctx, store.Project{
+		Platform: string(repo.Platform), Owner: repo.Owner, Repo: repo.Name, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.IgnorePR(ctx, pr); err != nil {
+		t.Fatal(err)
+	}
+	client.openPRs = []model.PullRequest{pr}
+
+	d.backfillOpenPullRequests(ctx)
+
+	if _, err := st.Claim(ctx); !errors.Is(err, store.ErrNoJobs) {
+		t.Error("the startup scan rebuilt a pull request that had been unlinked")
+	}
+}
+
+// A disabled project is not scanned.
+func TestStartupSkipsADisabledProject(t *testing.T) {
+	client := &fakeClient{}
+	_, d, st := testIngress(t, client)
+	ctx := context.Background()
+
+	repo := model.Repo{Platform: model.PlatformGitHub, Owner: "acme", Name: "docs"}
+	if err := st.SaveProject(ctx, store.Project{
+		Platform: string(repo.Platform), Owner: repo.Owner, Repo: repo.Name, Enabled: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	client.openPRs = []model.PullRequest{
+		{Repo: repo, Number: 9, Branch: "whatever", HeadSHA: "ddd4444"},
+	}
+
+	d.backfillOpenPullRequests(ctx)
+
+	if _, err := st.Claim(ctx); !errors.Is(err, store.ErrNoJobs) {
+		t.Error("a disabled project was scanned and built")
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,6 +20,8 @@ import (
 	"github.com/openziti/zrok/v2/environment/env_core"
 	"github.com/openziti/zrok/v2/rest_client_zrok/metadata"
 	"github.com/openziti/zrok/v2/sdk/golang/sdk"
+
+	"github.com/netfoundry/docpreview/internal/expose"
 )
 
 // cmdWebhookOnly reverse-proxies exactly one route to the daemon and refuses
@@ -165,7 +168,10 @@ func cmdWebhookOnly(args []string) error {
 	// rc8 CLI cannot claim a reserved name for a public share at all. The SDK
 	// can, and internal/expose/zrok.go already does it the same way.
 	if *zrokName != "" {
-		ln, url, cleanup, err := zrokListener(*zrokName, *zrokNamespace, log)
+		// No frontend auth, and this is not an oversight: the caller is GitHub or Bitbucket,
+		// which hold no account with any OAuth provider. The endpoint's protection is the HMAC
+		// over the body, verified by the daemon with the secret from the vault.
+		ln, url, cleanup, err := zrokListener(*zrokName, *zrokNamespace, zrokFrontendAuth{}, log)
 		if err != nil {
 			return err
 		}
@@ -210,7 +216,29 @@ func cmdWebhookOnly(args []string) error {
 // The returned cleanup deletes the share but not the name. Deleting the share
 // releases the binding so the next run can claim it again; deleting the name
 // would throw away the stable URL that is the whole reason for this path.
-func zrokListener(name, namespace string, log *slog.Logger) (net.Listener, string, func(), error) {
+// zrokAuth optionally puts the zrok frontend's own OAuth in front of a share.
+//
+// It exists for the dashboard and deliberately not for previews. A preview URL is pasted into a
+// pull request for anyone reviewing to open; putting a sign-in in front of it defeats the point
+// of the tool. The dashboard is the opposite: it enumerates every open documentation pull
+// request across every project, and it is the thing worth gating.
+//
+// The check happens at zrok's frontend, so an unauthenticated request never reaches this
+// process. That is stronger than anything docpreview could do with a password — and it is why
+// the daemon's own login is the fallback for arrangements that have no such frontend, rather
+// than the primary.
+type zrokFrontendAuth struct {
+	// Provider is "google" or "github", empty for none.
+	Provider string
+
+	// EmailPatterns restricts who may pass, as globs against the address the provider
+	// reports: `*@example.com`. Empty with a provider set means any account the provider
+	// will authenticate, which is every Google account in existence — so the two are
+	// validated together by the caller.
+	EmailPatterns []string
+}
+
+func zrokListener(name, namespace string, auth zrokFrontendAuth, log *slog.Logger) (net.Listener, string, func(), error) {
 	root, err := environment.LoadRoot()
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("loading the zrok environment (is zrok2 enabled?): %w", err)
@@ -238,7 +266,32 @@ func zrokListener(name, namespace string, log *slog.Logger) (net.Listener, strin
 		PermissionMode: sdk.OpenPermissionMode,
 	}
 
-	shr, err := sdk.CreateShare(root, req)
+	// The frontend's own sign-in, when the caller asked for it. Three hours matches what the
+	// preview exposer uses: long enough not to interrupt somebody reading, short enough that
+	// removing a person from the identity provider takes effect the same working day.
+	if auth.Provider != "" {
+		req.OauthProvider = auth.Provider
+		req.OauthEmailAddressPatterns = auth.EmailPatterns
+		req.OauthRefreshInterval = 3 * time.Hour
+	}
+
+	// Retried, because the controller is a network service that does time out.
+	//
+	// This process used to die outright on "context deadline exceeded" from the create call,
+	// which is a bad failure and not a rare one: the zrok share record outlives the process
+	// holding it, so the frontend keeps routing to a backend that is gone and every visitor
+	// gets a 502 for a tunnel nobody can see is dead. It happened three times in one afternoon
+	// before the output was captured to notice why.
+	//
+	// context.Background() rather than a plumbed context because this runs during startup,
+	// before anything can be cancelled, and the whole budget is a few seconds.
+	var shr *sdk.Share
+	create := func() error {
+		var cerr error
+		shr, cerr = sdk.CreateShare(root, req)
+		return cerr
+	}
+	err = expose.RetryZrok(context.Background(), log, "create share "+name, create)
 	if err != nil {
 		// A name still held by a share from a previous run. This is the ordinary
 		// case rather than the exceptional one: the share is deleted on graceful
@@ -250,7 +303,7 @@ func zrokListener(name, namespace string, log *slog.Logger) (net.Listener, strin
 		// this account, and the only thing that can be holding it is our own
 		// abandoned share. internal/expose/zrok.go does the same for previews.
 		if reclaimed := reclaimZrokName(root, namespace, name, log); reclaimed {
-			shr, err = sdk.CreateShare(root, req)
+			err = expose.RetryZrok(context.Background(), log, "create share "+name, create)
 		}
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("creating the zrok share for name %q in namespace %q "+

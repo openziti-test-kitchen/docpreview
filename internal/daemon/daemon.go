@@ -546,6 +546,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go func() {
 		defer wg.Done()
 		d.backfillBranchPreviews(ctx)
+		// After the branch previews, in the same goroutine rather than a second one: both
+		// reach the platform once per project, and running them concurrently would double the
+		// API calls a restart makes for no gain in wall-clock that anybody is waiting on.
+		d.backfillOpenPullRequests(ctx)
 	}()
 
 	wg.Add(1)
@@ -568,6 +572,80 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.log.Error("closing exposer", "error", err)
 	}
 	return nil
+}
+
+// backfillOpenPullRequests builds the open pull requests that have no preview.
+//
+// It exists because a delivery can be missed, and when it is, nothing notices. The daemon was
+// stopped for a rebuild while somebody opened a pull request; the webhook was retried into a
+// closed port; the tunnel was down for the minute that mattered. The pull request then sits with
+// no comment and no preview, and the first sign of it is a person asking why their link never
+// appeared — which is exactly how `customer-connect-docs#21` was found.
+//
+// Only pull requests with **no preview at all**. A preview that exists and failed is left alone,
+// for the same reason a failed branch preview is: rebuilding it on every restart would hide a
+// build that is broken behind one that keeps being retried, and the dashboard already shows it.
+//
+// Unlinked pull requests are skipped without this having to know: `handleBuild` is where that
+// check lives, and this goes through it like everything else.
+//
+// One listing per project per startup, and it costs nothing on a settled installation — every
+// pull request already has a preview, so the answer is "nothing to do" after one API call.
+func (d *Daemon) backfillOpenPullRequests(ctx context.Context) {
+	projects, err := d.store.ListProjects(ctx)
+	if err != nil {
+		d.log.Warn("listing projects to scan for unbuilt pull requests", "error", err)
+		return
+	}
+	previews, err := d.store.ListPreviews(ctx)
+	if err != nil {
+		d.log.Warn("listing previews to scan for unbuilt pull requests", "error", err)
+		return
+	}
+
+	// One pass over the previews rather than a query per pull request. Keyed by preview id
+	// because that is what a pull request hashes to, and what a row is keyed on.
+	have := map[string]bool{}
+	for _, p := range previews {
+		have[p.PreviewID] = true
+	}
+
+	for _, p := range projects {
+		if !p.Enabled || ctx.Err() != nil {
+			continue
+		}
+		repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
+
+		client, ok := d.client(repo.Platform)
+		if !ok {
+			continue
+		}
+		lister, ok := client.(scm.PullRequestLister)
+		if !ok {
+			continue
+		}
+		prs, err := lister.OpenPullRequests(ctx, repo)
+		if err != nil {
+			// Not fatal, and not even worth an error: a platform unreachable at startup is the
+			// ordinary case for a daemon that boots before its network.
+			d.log.Warn("could not list open pull requests while scanning",
+				"project", repo.String(), "error", err)
+			continue
+		}
+
+		for _, pr := range prs {
+			if have[pr.PreviewID()] {
+				continue
+			}
+			if err := d.handleBuild(ctx, scm.Event{Kind: scm.EventBuild, PR: pr}); err != nil {
+				d.log.Warn("could not queue a pull request found with no preview",
+					"pr", pr.String(), "error", err)
+				continue
+			}
+			d.log.Info("queued a pull request that had no preview", "pr", pr.String(),
+				"note", "its webhook delivery was missed, or it was opened while the daemon was down")
+		}
+	}
 }
 
 // backfillBranchPreviews gives every project a preview of its default branch.
@@ -3026,6 +3104,15 @@ func (d *Daemon) reaper(ctx context.Context) {
 // Status is the payload of the status endpoint.
 type Status struct {
 	Exposer string `json:"exposer"`
+
+	// Role is how this caller is signed in: "admin", "viewer", or empty when no login was
+	// needed or none was presented.
+	//
+	// Filled in by the ingress rather than by the daemon, because it is a property of the
+	// request and everything else here is a property of the world. It is on this payload
+	// because the page cannot see the session cookie — it is HttpOnly, deliberately — so
+	// without being told, the dashboard has no way to know whether to offer a sign-out.
+	Role string `json:"role,omitempty"`
 
 	// Instance changes when the daemon restarts, which is how an open tab learns
 	// its JavaScript is older than the daemon answering it.

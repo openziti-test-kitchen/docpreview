@@ -488,6 +488,12 @@ revocation story**.
 - [ ] A real Ziti Desktop Edge import against a `configure ziti`-provisioned network. The SDK dial is the
       equivalent proof minus DNS and TUN, and ZDEW was confirmed manually in the earlier trial, but not
       against the provisioned objects.
+- [ ] **`clicks.mjs` reports three failures against live state, and they predate the login work** — confirmed by
+      running it against `git show HEAD:internal/daemon/dashboard.html` with the same payload, which fails the
+      same three ways plus two the working tree has since fixed. All three are the log pane losing its place when
+      a status tick re-renders underneath it: the picker jumps from `(live)` to a stored build, and the pane
+      switches to a different preview's stream. Reproduces only with several previews building at once, which is
+      why the fixture never showed it. Needs `DOCPREVIEW_PASSWORD` to see at all — see `tools/dashboardtest/live.mjs`.
 
 ## Namespace hygiene
 
