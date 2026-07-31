@@ -373,8 +373,18 @@ input.control::placeholder { color: var(--muted) }
 }
 .modal-x:hover { color: var(--ink); background: var(--raised) }
 .modal-x:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
-/* The button that opens it, above the list rather than after it. */
-.projadd { margin: 0 0 0.8rem }
+/* The button that opens it, above the list rather than after it. The installation's
+   hostname prefix shares the row: it is the other thing that belongs to the page rather
+   than to any card. */
+.projadd { margin: 0 0 0.8rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap }
+.projadd .grow { flex: 1 }
+/* Twelve characters is the cap, so the box is sized for twelve and no more — a field that
+   stretches invites a sentence. */
+.prefixbox {
+  width: 6rem; padding: 0.15rem 0.35rem; font: inherit;
+  border: 1px solid var(--ring); border-radius: 5px;
+  background: var(--surface); color: var(--ink);
+}
 /* The dialog's own title is the quiet part: "Ready" is not news. The number is. */
 .modal-card h3 {
   margin: 0; font-size: 0.72rem; font-weight: 600;
@@ -1643,9 +1653,26 @@ function matches(p) {
 // "Newest" is by state first, then time: a failure nobody has looked at is more
 // interesting than a build that went green a minute later, and a project whose
 // row says Ready while one of its branches is broken is a lie of omission.
+/* inList decides what the previews list is *for*.
+
+   Pull requests, and a branch preview only while it is doing something.
+
+   A branch preview is permanent by design — it is the state of `main`, and it is meant to
+   sit there answering. That makes it the one row nobody needs to look at: this list is a
+   worklist, and a row that is always green and always present is furniture. It has a link
+   on its project card, which is where somebody who wants `main` goes.
+
+   Kept while queued or building, and that exception is not a compromise — it is what stops
+   the removal creating a dead end. The log pane opens from a row, so with the row gone there
+   would be nowhere to watch a branch build happen and nowhere for an activity entry to
+   reveal. Live it appears, finished it steps out of the way.
+
+   Number 0 is the branch preview; see model.PullRequest.IsBranch. */
+const inList = p => p.number > 0 || isLive(p.state);
+
 function groups() {
   const by = new Map();
-  for (const p of ui.previews.filter(matches)) {
+  for (const p of ui.previews.filter(inList).filter(matches)) {
     const k = project(p);
     if (!by.has(k)) by.set(k, []);
     by.get(k).push(p);
@@ -1671,9 +1698,13 @@ function groups() {
 /* ── Counters ─────────────────────────────────────────────────────────── */
 
 function renderCounters() {
-  const by = k => ui.previews.filter(p => p.state === k).length;
+  // Counted over the same set the list shows, not over every preview. A counter that
+  // says four while the list holds three is the page arguing with itself, and the
+  // reader has no way to tell which half is wrong.
+  const counted = ui.previews.filter(inList);
+  const by = k => counted.filter(p => p.state === k).length;
   const cells = [
-    {label: "All",      n: ui.previews.length, key: null},
+    {label: "All",      n: counted.length,     key: null},
     {label: "Ready",    n: by("ready"),        key: "ready",    color: "var(--good)"},
     {label: "Building", n: by("building"),     key: "building", color: "var(--warning)"},
     {label: "Queued",   n: by("queued"),       key: "queued",   color: "var(--idle)"},
@@ -2960,18 +2991,33 @@ function renderFeedFilters(events) {
 // commit that had already finished lost the row saying the new attempt was waiting.
 // That row is the one thing somebody watching a rebuild is looking for.
 function collapse(events) {
-  const terminal = new Set(["ready", "failed", "skipped", "torn-down"]);
-
-  const settled = new Set();
+  // One row per attempt, showing where that attempt has got to. Not a history of
+  // every state it passed through.
+  //
+  // This used to drop only the *non-terminal* entries of a settled attempt, which
+  // left one row per terminal event — so a commit that failed and was then rebuilt
+  // successfully kept both, and the feed grew a row every time anything was
+  // re-attempted. Reported as "i don't want n entries for queued, building,
+  // success|fail": the row is supposed to change from queued to building to its
+  // outcome, in place.
+  //
+  // Newest wins, and the events arrive newest first, so the first entry seen for a
+  // key is the one kept. That is also what makes the row appear to change state:
+  // each poll replaces it with whatever is newest for the same attempt.
+  //
+  // Keyed by preview *and* commit, so two commits are two rows — which is the
+  // distinction a reader actually wants, "which push was this". What it gives up is
+  // the older outcomes of one commit rebuilt several times. Those are not lost: the
+  // build picker on the row lists every attempt with its own log, which is the
+  // surface built for that question. A feed that answered it too was answering it
+  // worse and costing every other row its place.
+  const seen = new Set();
   const out = [];
   for (const e of events) {
     const key = `${e.preview_id}|${e.commit}`;
-    if (terminal.has(e.kind)) {
-      settled.add(key);
-      out.push(e);
-      continue;
-    }
-    if (!settled.has(key)) out.push(e);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
   }
   return out;
 }
@@ -3026,11 +3072,16 @@ function renderEvents() {
     // the one thing a reader wants — which push was this — was the one thing the
     // feed had and did not show.
     //
-    // And the message is dropped when it only repeats the label: the daemon sends
-    // "ready" for a ready event, so the row said Ready twice and spent its second
-    // line saying nothing. A message that carries more than that — "ready in 24s",
-    // a skip reason, a failure — is kept.
-    const echo = e.message && e.message.toLowerCase() !== s.label.toLowerCase();
+    // The message is gone from the row.
+    //
+    // It was kept whenever it said more than the label — "ready in 24s", a skip
+    // reason, a failure summary — on the reasoning that those three are worth a
+    // line. In practice the useful ones are rare and the row paid for them on every
+    // entry: "nearly never useful", and it is the widest thing in a rail 21rem wide.
+    //
+    // Not deleted, moved: it is the row's tooltip, so the one entry in fifty where it
+    // matters still has it, and a failure's real detail was never here anyway — that
+    // is the build log, which is what clicking the entry opens.
     const detail = [
       e.branch ? `<code>${esc(e.branch)}</code>` : "",
       // The copy control sits on the commit rather than the row, because the commit
@@ -3042,7 +3093,7 @@ function renderEvents() {
              type="button" title="Copy ${esc(e.commit)}"
              aria-label="Copy commit ${esc(e.commit)}">${ICON_COPY}</button>`
         : "",
-    ].filter(Boolean).join(" · ") + (echo ? ` — ${esc(e.message)}` : "");
+    ].filter(Boolean).join(" · ");
 
     const inner = `
       <div class="t">${clock(e.at)}</div>
@@ -3068,15 +3119,20 @@ function renderEvents() {
     // The cost is doing by hand what the element gave for free: role, tabindex, and
     // Enter/Space in the keydown handler below. Worth it for a rail whose whole
     // purpose is telling you which commit did what.
+    // The message, where it costs no width. Dropped from the row above; a reader who
+    // wants the one line in fifty that says something can hover for it.
+    const note = e.message && e.message.toLowerCase() !== s.label.toLowerCase()
+      ? e.message : "";
+
     if (!go) {
       return `<div class="ev${sel}" style="--edge:${s.color}"
-                   title="nothing left to open — this build has been cleaned up">${inner}</div>`;
+                   title="${esc(note ? note + " — " : "")}nothing left to open, this build has been cleaned up">${inner}</div>`;
     }
     return `<div class="ev linked${sel}" role="button" tabindex="0"
                  style="--edge:${s.color}" data-id="${esc(e.preview_id)}"
                  data-commit="${esc(e.commit || "")}" data-at="${esc(e.at)}"
                  data-kind="${esc(e.kind)}" ${sel ? 'aria-current="true"' : ""}
-                 title="Show this build's log">${inner}</div>`;
+                 title="${esc(note ? note + " — " : "")}Show this build's log">${inner}</div>`;
   }).join("");
 
   for (const b of el.querySelectorAll(".ev.linked")) {
@@ -3974,7 +4030,11 @@ function renderProjectsPage(s) {
      Edit stays inline, in the card, because that form belongs to a row and being beside it
      is the thing that says which. */
   const adder = ro ? ""
-    : `<div class="act projadd"><button class="btn primary" id="p-new">New project</button></div>`;
+    : `<div class="act projadd">
+         <button class="btn primary" id="p-new">New project</button>
+         <span class="grow"></span>
+         ${prefixField(s)}
+       </div>`;
 
   const dialog = (!ro && projOpen.key === NEW)
     ? `<div class="modal" id="p-new-modal">
@@ -4519,6 +4579,30 @@ function scmCredentialFields(s, p, id) {
       </div>` : ""}
     </div>
     </div>`;
+}
+
+/* prefixField is the installation's name prefix, beside New project.
+
+   Not on a project card, because it is not a project's: it starts every hostname this daemon
+   publishes. It is here rather than in config.yml because the moment somebody needs it is the
+   moment they are standing up a second installation against the same exposer account — and
+   that is not a moment when they want to hand-edit YAML on a host they have just built.
+
+   Names are scoped to the exposer *account* while shares are scoped to the environment, so
+   two daemons on one account do not reap each other's shares — they collide on names, and
+   this is what separates them.
+
+   The example is live rather than described. "a" is an abstraction; `a-docs-main` is the
+   thing that will be in a URL, and it is the only way to make the trailing-hyphen question
+   answer itself. */
+function prefixField(s) {
+  const cur = (s.defaults && s.defaults.prefix) || "";
+  const sample = cur ? `${esc(cur)}-docs-main` : "docs-main";
+  return `<label class="hint" for="p-prefix">Hostname prefix</label>
+    <input id="p-prefix" class="prefixbox" value="${esc(cur)}" placeholder="none"
+      maxlength="12" spellcheck="false" aria-label="hostname prefix">
+    <span class="took" id="p-prefix-eg">${sample}</span>
+    <button class="btn" data-save-prefix="1">Save</button>`;
 }
 
 /* branchStrip is the project's permanent preview of its default branch.
@@ -5567,6 +5651,33 @@ function wireProjectHandlers(s) {
   // No handler for a Build open PRs button any more — the button is gone. The scan itself
   // is not: adding a project still runs it, which is where it earns its place, and the
   // route is unchanged for anything calling the API.
+
+  // The hostname prefix. Live example as it is typed, because "a" tells nobody what they
+  // are about to get and `a-docs-main` is the string that ends up in a URL.
+  const prefixBox = el.querySelector("#p-prefix");
+  if (prefixBox) {
+    const eg = el.querySelector("#p-prefix-eg");
+    const show = () => {
+      const v = prefixBox.value.trim().replace(/-+$/, "");
+      eg.textContent = v ? `${v}-docs-main` : "docs-main";
+    };
+    prefixBox.oninput = show;
+  }
+  for (const b of el.querySelectorAll("[data-save-prefix]")) {
+    b.onclick = async () => {
+      const box = el.querySelector("#p-prefix");
+      if (!box) return;
+      await runProject(b, async () => {
+        const st = await api("PUT", "/api/settings/prefix", {prefix: box.value});
+        // Said out loud, because the alternative is somebody discovering it from a share
+        // list a week later: nothing already published is renamed. Renaming in place would
+        // mean withdrawing and recreating every share — minutes of 404s, and a comment on
+        // every open pull request pointing at a URL that had moved.
+        projFlash = "Saved. Previews already published keep their names until rebuilt.";
+        return st;
+      });
+    };
+  }
 
   // The branch preview: build it, or build it again. One handler for both, because the
   // request is identical — the server reads the repository's default branch either way, so

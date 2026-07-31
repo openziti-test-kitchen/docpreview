@@ -1232,6 +1232,44 @@ console.log("\nunlinked pull requests are listed, and can be linked back");
   }
 }
 
+console.log("\nthe installation's hostname prefix");
+{
+  // Beside New project, not on a card: it starts every hostname this daemon publishes, so
+  // it belongs to the page rather than to any project.
+  const box = doc.getElementById("p-prefix");
+  if (!box) {
+    fail("no hostname prefix field on the projects page");
+  } else {
+    if (box.value !== "") fail(`the field starts at ${JSON.stringify(box.value)}, want empty`);
+
+    // The example is live, because "a" tells nobody what they are about to get and
+    // `a-docs-main` is the string that ends up in a URL.
+    await type(box, "a-");
+    const eg = doc.getElementById("p-prefix-eg");
+    if (!eg) fail("no live example beside the field");
+    else if (eg.textContent.trim() !== "a-docs-main") {
+      fail(`the example reads ${JSON.stringify(eg.textContent.trim())}, want "a-docs-main"`);
+    } else ok(`typing "a-" shows ${JSON.stringify(eg.textContent.trim())}`);
+
+    // Saved to the settings route, not to a project. The trailing hyphen goes as typed —
+    // the server normalizes it, so the page does not have to guess.
+    calls.length = 0;
+    await click(btn("Save"));
+    const put = calls.find(c => c.method === "PUT" && c.url === "/api/settings/prefix");
+    if (!put) fail(`Save posted nothing to the settings route: ${JSON.stringify(calls)}`);
+    else if (put.body?.prefix !== "a-") {
+      fail(`it sent ${JSON.stringify(put.body)}, want the field's value`);
+    } else ok("PUT /api/settings/prefix");
+
+    // And it says what saving does not do. Nothing already published is renamed, which is
+    // the thing somebody would otherwise discover from a share list a week later.
+    const note = [...doc.querySelectorAll("#toasts .toast")]
+      .find(t => t.textContent.includes("keep their names"));
+    if (!note) fail("saving did not say that existing previews keep their names");
+    else ok("says existing previews keep their names until rebuilt");
+  }
+}
+
 console.log("\nthe default branch's preview is on the card");
 {
   const cards = $$(".pcard");
