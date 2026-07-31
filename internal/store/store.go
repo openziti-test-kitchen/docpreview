@@ -130,6 +130,25 @@ CREATE TABLE IF NOT EXISTS projects (
     PRIMARY KEY (platform, owner, repo)
 );
 
+-- Settings an operator changed from the dashboard.
+--
+-- The config file stays the source of the *default*; this holds the overrides. The split
+-- exists because config.yml is written by hand and carries comments explaining why each
+-- value is what it is — the most valuable thing in the file — and a daemon that rewrote it
+-- to store one string would delete them.
+--
+-- So: config is what a fresh installation starts from, this is what an operator has since
+-- decided, and the read path prefers this. One row per setting rather than a column per
+-- setting, because the alternative is a migration for every new one.
+--
+-- Deliberately not a home for credentials. Those are in the vault, encrypted; this table is
+-- plaintext and anything in it should be readable over somebody's shoulder.
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 -- Pull requests this installation has been told not to build.
 --
 -- A preview is created by discovery — a webhook delivery, or the scan that runs when a
@@ -818,6 +837,51 @@ func (s *Store) ListPreviews(ctx context.Context) ([]Preview, error) {
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// SettingNamePrefix is the key holding the per-installation name prefix.
+//
+// Named as a constant rather than spelled at each call site, because a typo in a settings
+// key is not a compile error — it is a value that silently reads back as the default, which
+// looks exactly like a setting that did not save.
+const SettingNamePrefix = "exposer.prefix"
+
+// Setting reads one setting, reporting whether it was set at all.
+//
+// The boolean matters: an operator who deliberately cleared the prefix has set it to the
+// empty string, and that is a different answer from never having touched it — the first
+// means "no prefix", the second means "use the config file's".
+func (s *Store) Setting(ctx context.Context, key string) (string, bool, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("reading setting %s: %w", key, err)
+	}
+	return v, true, nil
+}
+
+// SetSetting writes one setting.
+func (s *Store) SetSetting(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `
+        INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		key, value, time.Now().UnixMilli())
+	if err != nil {
+		return fmt.Errorf("writing setting %s: %w", key, err)
+	}
+	return nil
+}
+
+// ClearSetting removes an override, so the config file's value applies again.
+func (s *Store) ClearSetting(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key)
+	if err != nil {
+		return fmt.Errorf("clearing setting %s: %w", key, err)
+	}
+	return nil
 }
 
 // IgnorePR records that this pull request must not be built again.

@@ -22,7 +22,7 @@ func pr(branch string) model.PullRequest {
 
 func TestRenderNameDefaultsToTheBranch(t *testing.T) {
 	// "the unique url should be the branchname" is the requirement; this is it.
-	got, err := RenderName("{{.Name}}", pr("release-2-1"))
+	got, err := RenderName("{{.Name}}", pr("release-2-1"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestRenderNameDefaultsToTheBranch(t *testing.T) {
 }
 
 func TestRenderNameSanitizesTheBranch(t *testing.T) {
-	got, err := RenderName("{{.Name}}", pr("feature/JIRA-123_new guide"))
+	got, err := RenderName("{{.Name}}", pr("feature/JIRA-123_new guide"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestRenderNameEmptyTemplateIsUniquePerRepository(t *testing.T) {
 	// The fallback here must stay in step with config.DefaultNameTemplate; they
 	// are separate constants so that config does not have to import this
 	// package for a string.
-	got, err := RenderName("", pr("main"))
+	got, err := RenderName("", pr("main"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestRenderNameEmptyTemplateIsUniquePerRepository(t *testing.T) {
 
 	other := pr("main")
 	other.Repo.Name = "handbook"
-	got2, err := RenderName("", other)
+	got2, err := RenderName("", other, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestRenderNameEmptyTemplateIsUniquePerRepository(t *testing.T) {
 func TestRenderNameCanDisambiguateRepositories(t *testing.T) {
 	// The documented fix for two repositories sharing one zrok namespace, where
 	// a `main` branch in each would otherwise fight over the same name.
-	got, err := RenderName("{{.Repo.Name}}-{{.Name}}", pr("main"))
+	got, err := RenderName("{{.Repo.Name}}-{{.Name}}", pr("main"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestRenderNameResanitizesTemplateOutput(t *testing.T) {
 	p := pr("main")
 	p.Repo.Name = "docs.internal_v2"
 
-	got, err := RenderName("{{.Repo.Name}}-{{.Name}}", p)
+	got, err := RenderName("{{.Repo.Name}}-{{.Name}}", p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,11 +102,101 @@ func TestRenderNameResanitizesTemplateOutput(t *testing.T) {
 	}
 }
 
+// The name prefix is what lets two installations share one exposer account.
+//
+// Names are scoped to the account and shares to the environment, so two docpreviews on one
+// zrok account do not reap each other's shares — but both want `docs-main`, and the second
+// to ask gets a 409 for a name the account already holds.
+func TestRenderNamePrependsThePrefix(t *testing.T) {
+	got, err := RenderName("", pr("main"), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "a-docs-main" {
+		t.Errorf("RenderName = %q, want %q", got, "a-docs-main")
+	}
+
+	// A trailing hyphen is how anybody writes a prefix, and means the same thing. Accepting
+	// it rather than refusing avoids `a--docs-main`, which is what carrying it through would
+	// produce.
+	withHyphen, err := RenderName("", pr("main"), "a-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withHyphen != got {
+		t.Errorf(`"a-" rendered %q and "a" rendered %q`, withHyphen, got)
+	}
+
+	// And the point of it: the same preview on two installations is two names.
+	plain, err := RenderName("", pr("main"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain == got {
+		t.Errorf("both installations rendered %q, so they would fight over the name", got)
+	}
+}
+
+// The prefix is reserved out of the label *before* truncation, and this is the test that
+// pins why.
+//
+// Put it back and a long branch spends the whole label on itself, leaving the prefix to
+// overrun the 48-character limit or the name to be cut to nothing. The collision hash that
+// makes truncated names unique must also still be the last thing in the label, so two long
+// branches under one prefix stay distinct. Only branch names nobody writes by accident reach
+// this path, which is why it is a test rather than a comment.
+func TestRenderNameKeepsThePrefixWhenTheBranchIsTooLong(t *testing.T) {
+	long := pr("feature/a-really-quite-extraordinarily-long-branch-name-nobody-should-have-written")
+	got, err := RenderName("{{.Repo.Name}}-{{.Name}}", long, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) > model.MaxLabelLen {
+		t.Errorf("RenderName = %q, %d characters, over the %d limit", got, len(got), model.MaxLabelLen)
+	}
+	if !strings.HasPrefix(got, "a-") {
+		t.Errorf("RenderName = %q, which lost the prefix to truncation", got)
+	}
+
+	// Two long branches that truncate alike must still differ, and both keep the prefix.
+	other := pr("feature/a-really-quite-extraordinarily-long-branch-name-nobody-would-ever-write")
+	got2, err := RenderName("{{.Repo.Name}}-{{.Name}}", other, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == got2 {
+		t.Errorf("two long branches both rendered %q", got)
+	}
+	if !strings.HasPrefix(got2, "a-") {
+		t.Errorf("RenderName = %q, which lost the prefix", got2)
+	}
+}
+
+func TestValidPrefixRefusesWhatWouldBreakAHostname(t *testing.T) {
+	// Empty is the default and means "one installation", which must stay valid — as must a
+	// bare hyphen, which is what clearing the field in the dashboard leaves behind.
+	for _, ok := range []string{"", "-", "a", "a-", "aws", "aws-staging", "sg4", "b2"} {
+		if why := model.ValidPrefix(ok); why != "" {
+			t.Errorf("ValidPrefix(%q) refused it: %s", ok, why)
+		}
+	}
+	// Refused rather than sanitized: this string is in the URL a reviewer bookmarks, and
+	// quietly turning `AWS_prod` into `aws-prod` is how two installations end up
+	// disagreeing about which is which.
+	for _, bad := range []string{"AWS", "aws_prod", "aws prod", "aws.prod",
+		"far-too-long-to-be-a-prefix"} {
+		if why := model.ValidPrefix(bad); why == "" {
+			t.Errorf("ValidPrefix(%q) accepted it", bad)
+		}
+	}
+}
+
 func TestRenderNameRejectsABrokenTemplate(t *testing.T) {
-	if _, err := RenderName("{{.Nope", pr("main")); err == nil {
+	if _, err := RenderName("{{.Nope", pr("main"), ""); err == nil {
 		t.Fatal("RenderName accepted an unparseable template")
 	}
-	if _, err := RenderName("{{.NoSuchField}}", pr("main")); err == nil {
+	if _, err := RenderName("{{.NoSuchField}}", pr("main"), ""); err == nil {
 		t.Fatal("RenderName accepted a template naming a field that does not exist")
 	}
 }
@@ -127,7 +217,6 @@ func TestJoinURL(t *testing.T) {
 		}
 	}
 }
-
 
 // localOnServer builds a path-mounting exposer behind a real HTTP server, which
 // is how it runs for real: previews are paths on the daemon's own listener, not

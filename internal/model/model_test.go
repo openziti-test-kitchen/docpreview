@@ -53,8 +53,8 @@ func TestSanitizeNameIsStable(t *testing.T) {
 func TestSanitizeNameTruncatesLongBranches(t *testing.T) {
 	long := "feature/a-really-quite-extraordinarily-long-branch-name-that-nobody-should-have-written"
 	got := SanitizeName(long)
-	if len(got) > maxLabelLen {
-		t.Fatalf("SanitizeName(%q) = %q, length %d exceeds %d", long, got, len(got), maxLabelLen)
+	if len(got) > MaxLabelLen {
+		t.Fatalf("SanitizeName(%q) = %q, length %d exceeds %d", long, got, len(got), MaxLabelLen)
 	}
 }
 

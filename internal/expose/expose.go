@@ -281,7 +281,16 @@ type nameData struct {
 // The output is sanitized a second time after templating because a template
 // like "{{.Repo.Name}}-{{.Name}}" can reintroduce characters that are legal in
 // a repository name but not in a hostname.
-func RenderName(tmplText string, pr model.PullRequest) (string, error) {
+//
+// `prefix` starts every name, and is empty for a single installation. Its length is
+// reserved out of the label *before* truncation, which is the whole reason SanitizeNameTo
+// exists — put it back and a long branch spends the entire label on itself, leaving the
+// prefix to overrun the limit or the name to be cut to nothing.
+//
+// A prefix rather than a suffix because the interesting end of a hostname is the front: in
+// a list of shares, `a-docs-main` and `b-docs-main` sort together by installation, and the
+// eye finds the distinguishing part without reading to the end of a 40-character label.
+func RenderName(tmplText string, pr model.PullRequest, prefix string) (string, error) {
 	if strings.TrimSpace(tmplText) == "" {
 		// Matches config.DefaultNameTemplate. Not imported from there, because
 		// config imports nothing from this package and the dependency should
@@ -292,16 +301,27 @@ func RenderName(tmplText string, pr model.PullRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parsing name template %q: %w", tmplText, err)
 	}
+
+	budget := model.MaxLabelLen
+	head := ""
+	if p := model.NamePrefix(prefix); p != "" {
+		head = p + "-"
+		budget -= len(head)
+	}
+
 	var sb strings.Builder
-	data := nameData{PullRequest: pr, Name: model.SanitizeName(pr.Branch)}
+	// The branch is sanitized against the same reduced budget, so a long branch leaves room
+	// for the prefix rather than filling the label and having the template's own text
+	// trimmed off the end of it.
+	data := nameData{PullRequest: pr, Name: model.SanitizeNameTo(pr.Branch, budget)}
 	if err := tmpl.Execute(&sb, data); err != nil {
 		return "", fmt.Errorf("rendering name template %q: %w", tmplText, err)
 	}
-	name := model.SanitizeName(sb.String())
+	name := model.SanitizeNameTo(sb.String(), budget)
 	if name == "" {
 		return "", fmt.Errorf("name template %q produced an empty name for %s", tmplText, pr)
 	}
-	return name, nil
+	return head + name, nil
 }
 
 // JoinURL appends a normalized baseURL path to a scheme+host origin.

@@ -18,6 +18,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/netfoundry/docpreview/internal/model"
 	"github.com/netfoundry/docpreview/internal/vault"
 )
 
@@ -157,6 +158,29 @@ type ZitiListener struct {
 	// sharing a service would each answer about half the requests. Give a
 	// second instance its own service.
 	Service string `yaml:"service"`
+
+	// AdminIdentities are the overlay identities allowed to write through this listener —
+	// to edit projects and store credentials, the two surfaces that decide what runs on
+	// this host and with which secrets.
+	//
+	// **Empty means read-only, and that is the default.** Without it the whole
+	// authorization for a credential write would be "is enrolled on this network at all",
+	// which is not a decision anybody made about docpreview. So the dashboard serves over
+	// the overlay, and the admin pages explain that they are read-only rather than
+	// pretending the buttons will work.
+	//
+	// Listed per listener rather than once for the daemon because that is the scope the
+	// grant belongs to: a network may bind one service for reviewers and another for
+	// operators, and those are different lists.
+	//
+	// The values are identity **ids** as the controller knows them — what
+	// `edge.ServiceConn.GetDialerIdentityId` reports, and what `ziti edge list identities`
+	// shows in its ID column. Not names: a name can be changed on the controller without
+	// the grant following it, which would silently widen or void this list.
+	//
+	// An identity that dials and is not here gets the read-only dashboard, and the refusal
+	// is logged with the id so an operator can copy it in.
+	AdminIdentities []string `yaml:"admin_identities"`
 }
 
 // UnmarshalYAML accepts either spelling of a listener entry:
@@ -308,6 +332,32 @@ type LocalSCMConfig struct {
 type ExposerConfig struct {
 	// Kind is "zrok2", "frontdoor", "ziti", or "local".
 	Kind string `yaml:"kind"`
+
+	// Prefix starts every name this installation publishes, so two installations can share
+	// one exposer account without fighting over names.
+	//
+	// It exists because names are scoped to the *account* while shares are scoped to the
+	// environment. Two docpreviews on one zrok account therefore do not reap each other's
+	// shares — that hazard is per environment — but they do both want
+	// `customer-connect-docs-main`, and the second one to ask gets a 409 for a name the
+	// account already holds. With `prefix: a` the second publishes
+	// `a-customer-connect-docs-main` and neither is in the other's way.
+	//
+	// A trailing hyphen is accepted: `a` and `a-` mean the same thing.
+	//
+	// Empty is the default, which is what every existing installation gets — adding one
+	// changes every public hostname this daemon serves, so it is a decision rather than a
+	// default.
+	//
+	// **This is the fallback, not the live value.** The prefix is editable from the
+	// dashboard, and an operator-set value is kept in the database, because rewriting this
+	// file would destroy the comments an operator wrote in it. See store.Setting and
+	// Daemon.NamePrefix; this field is what a fresh installation starts from.
+	//
+	// The two tunnel commands are not covered by it. `webhook-only` and `dashboard-only`
+	// take their name on the command line, so a second installation passes
+	// `-zrok-name a-docpreview` itself.
+	Prefix string `yaml:"prefix"`
 
 	Zrok      ZrokConfig      `yaml:"zrok2"`
 	Frontdoor FrontdoorConfig `yaml:"frontdoor"`
@@ -693,6 +743,12 @@ func (s *Server) validate() error {
 	case "zrok2", "frontdoor", "ziti", "local":
 	default:
 		return fmt.Errorf("exposer.kind %q must be one of zrok2, frontdoor, ziti, local", s.Exposer.Kind)
+	}
+	// Refused here, at load, rather than at the first publish. An illegal suffix would
+	// otherwise fail one build at a time, remotely, with the exposer's own 400 in the
+	// middle of a build log.
+	if why := model.ValidPrefix(s.Exposer.Prefix); why != "" {
+		return fmt.Errorf("exposer.%s", why)
 	}
 	switch s.Build.Driver {
 	case "local", "docker":
