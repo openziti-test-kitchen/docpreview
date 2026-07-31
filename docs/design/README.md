@@ -19,10 +19,12 @@ break if I change this". Where the two overlap, `www/` is the contract and this 
 | [08-storage.md](08-storage.md) | The sqlite schema, the job queue, recovery |
 | [09-scm.md](09-scm.md) | Webhooks, the single-comment protocol, the local simulator |
 | [10-security.md](10-security.md) | The trust boundaries, and what is deliberately not defended |
+| [20-container.md](20-container.md) | The image and compose file: the host socket over docker-in-docker, and the path rule that breaks builds |
 
 ## Plans, not descriptions
 
-01–10 describe code that exists. These describe work that does not, and each ends with the order to build it in.
+01–10 and 20 describe code that exists. These describe work that does not, and each ends with the order to build
+it in.
 They go stale in a way the others do not: when the work lands, the plan should be folded into the document above
 that now describes it, and deleted.
 

@@ -1,0 +1,35 @@
+# The build context is source only. Everything below is either large, machine-specific,
+# or a credential — and a Docker build context is copied to the daemon whole, so anything
+# left in here travels to whatever daemon builds the image.
+
+# Credentials and live state. .docpreview holds the vault, the database and every
+# preview's workspace; it is the single most important thing to keep out of an image.
+.docpreview/
+*.age
+*.key
+
+# Build output and caches.
+#
+# `**/` on each one, not a bare `node_modules/`. A leading pattern with no `**` matches at
+# the root only, so `node_modules/` left www/node_modules in the context — 436 MB of it,
+# measured, and the whole context was 851 MB against the 3 MB of Go source the build reads.
+build.claude/
+**/node_modules/
+**/.yarn/
+**/.docusaurus/
+**/build/
+**/dist/
+
+# The demo: four Docusaurus checkouts, a 298 MB template they are cloned from, its own
+# database and a copy of the binary. None of it is the daemon.
+demo/
+
+# Git metadata. The image does not need history, and .git on this repository is large.
+.git/
+.gitignore
+
+# Editor and OS noise.
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
