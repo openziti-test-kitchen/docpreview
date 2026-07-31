@@ -1444,6 +1444,13 @@ footer {
     <p class="backlink"><a href="/">← back to previews</a></p>
     <h2 id="setup-head">Secrets</h2>
     <div id="setup-body"></div>
+
+    <!-- The zrok panel, below the credentials because it is the less frequent visit and
+         because the account token it produces is one of the rows above. Its own heading
+         rather than a section of Secrets: signing up for a service and storing a
+         credential are different acts, and one of them is destructive. -->
+    <h2 id="zrok-head">How previews reach the internet</h2>
+    <div id="zrok-body"></div>
   </div>
 </div>
 
@@ -3854,6 +3861,283 @@ async function run(btn, fn, opts) {
 const runProject = (btn, fn) =>
   run(btn, fn, {render: renderProjectsPage, body: "projects-body"});
 
+// runZrok is run, aimed at the zrok panel. Without it a failed enrolment renders zrok
+// state through the credential renderer and prints the exception into a hidden element —
+// the exact bug `run`'s arguments were added to stop, one panel later.
+const runZrok = (btn, fn) =>
+  run(btn, fn, {render: renderZrok, body: "zrok-body"});
+
+/* ── zrok: signing up, and which environment ──────────────────────────────
+   Two things happen here, and only one of them is about zrok's service.
+
+   **Signing up** is invite, then register. The invite is an email, so the flow has a
+   gap in it that no amount of UI closes: the operator has to open their mail and come
+   back with the link. The panel says that in as many words, because a form that submits
+   and then looks unchanged reads as a form that failed.
+
+   **Choosing an environment** is the part that matters more and is easier to get wrong.
+   zrok keeps its account token in a directory, and there can be two: the machine's
+   `~/.zrok2` — which the zrok CLI uses and which a developer very likely already has —
+   and this installation's own, beside the vault. They are usually different accounts.
+   Startup deletes every share it recognises as its own, so a daemon pointed at the wrong
+   one deletes the shares of whatever else uses that account. That is why this panel
+   refuses to guess, shows both, and marks which is in force.
+
+   The account token is never displayed and no endpoint returns it. */
+
+async function loadZrok() {
+  try {
+    renderZrok(await api("GET", "/api/zrok"));
+  } catch (e) {
+    // A daemon with no zrok surface wired answers 404, and that is not an error worth
+    // showing: it means this build of the page is talking to a daemon that has no zrok
+    // in it. The whole section goes, heading included — an empty box under a heading is
+    // something people look for content in.
+    if (/\b404\b/.test(e.message)) {
+      hideZrokPanel();
+      return;
+    }
+    document.getElementById("zrok-body").innerHTML =
+      `<div class="notice bad">${esc(e.message)}</div>`;
+  }
+}
+
+function hideZrokPanel() {
+  for (const id of ["zrok-head", "zrok-body"]) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  }
+}
+
+// zrokRootRow describes one environment directory: where it is, what is in it, and
+// whether it is the one being used.
+function zrokRootRow(s, which, info, label) {
+  const inForce = s.in_force === which;
+  const stored = s.stored === which;
+
+  // "In use" and "chosen" are different facts and the difference is a restart. Showing
+  // only one of them produced "I changed it and nothing happened", so both are said.
+  const marks = [
+    inForce ? `<span class="flag on">in use</span>` : "",
+    stored && !inForce ? `<span class="flag opt">chosen — restart to apply</span>` : "",
+    info.enabled ? `<span class="flag on">enrolled</span>`
+                 : `<span class="flag off">empty</span>`,
+  ].filter(Boolean).join(" ");
+
+  const detail = info.enabled
+    ? `against ${esc(info.api_endpoint || "an unrecorded endpoint")}` +
+      (info.namespace ? `, namespace <code>${esc(info.namespace)}</code>` : "")
+    : esc(info.why || "nothing enrolled here yet");
+
+  const pick = s.can_write && !stored
+    ? `<button class="btn" data-zrok-use="${esc(which)}">Use this one</button>`
+    : "";
+
+  // The same .sec grid the credential rows use — label column, middle column, actions —
+  // so the two panels on this page read as one control rather than two designs.
+  return `<div class="sec" data-zrok-root="${esc(which)}">
+    <div>
+      <div class="name">${esc(label)} ${marks}</div>
+      <div class="key">${esc(info.path)}</div>
+    </div>
+    <div>${detail}</div>
+    <div class="act">${pick}</div>
+  </div>`;
+}
+
+function renderZrok(s) {
+  const el = document.getElementById("zrok-body");
+  if (!s || !el) return;
+
+  if (!s.available) {
+    el.innerHTML = `<div class="notice bad">
+      <strong>Not available on this daemon.</strong> ${esc(s.reason)}</div>`;
+    return;
+  }
+
+  const ro = !s.can_write;
+  const parts = [];
+
+  if (s.note) parts.push(`<div class="notice ok">${esc(s.note)}</div>`);
+  if (ro && s.read_only_why) {
+    parts.push(`<div class="notice">${esc(s.read_only_why)}</div>`);
+  }
+
+  // Said before anything else when it applies: an enrolled zrok environment on a daemon
+  // configured for another exposer publishes nothing, and the panel would otherwise look
+  // like a working setup.
+  if (s.enrolled && s.exposer_kind !== "zrok2") {
+    parts.push(`<div class="notice">zrok is enrolled, but this daemon publishes with
+      <code>${esc(s.exposer_kind)}</code>. Set <code>exposer.kind: zrok2</code> in the
+      config and restart to use it.</div>`);
+  }
+
+  if (s.must_choose) {
+    parts.push(`<div class="notice bad"><strong>Two zrok environments are enrolled.</strong>
+      They are almost certainly different accounts, and startup deletes every share it
+      recognises as its own — so the wrong choice deletes whatever else is using that
+      account. Pick one below.</div>`);
+  }
+
+  parts.push(`<div class="secbox">
+    ${zrokRootRow(s, "project", s.project, "This installation")}
+    ${zrokRootRow(s, "system", s.system, "This machine")}
+  </div>`);
+
+  if (s.enrolled) {
+    // No signup form. This is the rule, not a simplification: a second account means a
+    // second set of reserved names, and every preview URL already in a pull request
+    // comment lives on the first one.
+    parts.push(`<p class="n">An account is already enrolled, so there is nothing to sign
+      up for. ${s.has_account_token
+        ? "The account token is in the vault, so another host can be enrolled without the email."
+        : s.vault_locked
+          ? "The vault is locked, so whether the account token is stored cannot be checked."
+          : "No account token is stored here — keep one if you expect to move this installation."}</p>`);
+
+    if (!ro) {
+      parts.push(`<div class="act">
+        <button class="btn" id="zrok-disable" title="Removes this host from the zrok
+          account. Every published preview URL stops answering until the daemon
+          republishes.">Disable this host</button></div>`);
+    }
+  } else if (!ro) {
+    parts.push(zrokSignupForm(s));
+  }
+
+  el.innerHTML = parts.join("");
+  wireZrok(s);
+}
+
+// zrokSignupForm is the two-step signup plus the "I already have a token" path.
+//
+// Both are on screen at once rather than behind a chooser: an operator who already has a
+// zrok account should not have to work out that the signup form is not for them, and the
+// one who does not should not have to guess what an account token is.
+function zrokSignupForm(s) {
+  return `
+  <div class="secbox">
+    <div class="sec">
+      <div>
+        <div class="name">1. Sign up</div>
+        <div class="key">zrok emails a link</div>
+      </div>
+      <div>
+        <input type="email" id="zrok-email" placeholder="you@example.com"
+               autocomplete="email">
+      </div>
+      <div class="act"><button class="btn" id="zrok-invite">Email me a link</button></div>
+      <div class="hint wide">Nothing is stored until step 2. Leave the endpoint below alone
+        unless you run your own zrok service.</div>
+    </div>
+
+    <div class="sec">
+      <div>
+        <div class="name">2. Finish</div>
+        <div class="key">the link from that email</div>
+      </div>
+      <div>
+        <input type="text" id="zrok-link" placeholder="paste the whole link"
+               autocomplete="off" spellcheck="false">
+        <input type="password" id="zrok-password" placeholder="a password for the zrok account"
+               autocomplete="new-password">
+      </div>
+      <div class="act"><button class="btn" id="zrok-register">Create the account</button></div>
+      <div class="hint wide">The token is the last part of that link and this takes either
+        form. The password belongs to the zrok account and is not stored here — keep it
+        somewhere, it is how you reset the account later.</div>
+    </div>
+
+    <div class="sec">
+      <div>
+        <div class="name">Already have a zrok account?</div>
+        <div class="key">account token</div>
+      </div>
+      <div>
+        <input type="password" id="zrok-token" placeholder="paste the account token"
+               autocomplete="off">
+      </div>
+      <div class="act"><button class="btn" id="zrok-enable">Enrol this host</button></div>
+      <div class="hint wide">It goes into the vault and is never shown again. This is also
+        the path after moving the installation to another machine.</div>
+    </div>
+
+    <div class="sec">
+      <div>
+        <div class="name">zrok service</div>
+        <div class="key">api endpoint</div>
+      </div>
+      <div>
+        <input type="text" id="zrok-endpoint" placeholder="${esc(s.default_api_endpoint)}"
+               autocomplete="off" spellcheck="false">
+      </div>
+      <div class="act"></div>
+      <div class="hint wide">Only for a self-hosted zrok. Blank uses the hosted service,
+        which is what the placeholder shows.</div>
+    </div>
+  </div>`;
+}
+
+function wireZrok(s) {
+  const val = id => (document.getElementById(id)?.value || "").trim();
+
+  for (const b of document.querySelectorAll("[data-zrok-use]")) {
+    b.onclick = () => runZrok(b, () =>
+      api("POST", "/api/zrok/use", {scope: b.dataset.zrokUse}));
+  }
+
+  const invite = document.getElementById("zrok-invite");
+  if (invite) {
+    invite.onclick = () => runZrok(invite, () => api("POST", "/api/zrok/invite", {
+      email: val("zrok-email"),
+      api_endpoint: val("zrok-endpoint"),
+    }));
+  }
+
+  const register = document.getElementById("zrok-register");
+  if (register) {
+    register.onclick = () => runZrok(register, () => api("POST", "/api/zrok/register", {
+      link: val("zrok-link"),
+      password: val("zrok-password"),
+      api_endpoint: val("zrok-endpoint"),
+    }));
+  }
+
+  const enable = document.getElementById("zrok-enable");
+  if (enable) {
+    enable.onclick = () => runZrok(enable, () => api("POST", "/api/zrok/enable", {
+      account_token: val("zrok-token"),
+    }));
+  }
+
+  const disable = document.getElementById("zrok-disable");
+  if (disable) {
+    // Confirmed, because it is the one destructive control on this page: it takes every
+    // published preview URL down until the daemon republishes.
+    disable.onclick = async () => {
+      const yes = await ask({
+        kind: "Disable this zrok environment?",
+        what: `<code>${esc(s.in_force === "system" ? s.system.path : s.project.path)}</code>`,
+        lede: "This host is removed from the zrok account. Nothing about the account itself " +
+          "changes, and nothing on disk here is lost except the enrolment.",
+        goes: [
+          "Every share published through this environment",
+          "The enrolled identity in this directory",
+        ],
+        keeps: [
+          "The reserved names, which belong to the account — so preview URLs come back unchanged",
+          "The account itself, and its token if it is in the vault",
+          "Every stored preview, which the daemon republishes once enrolled again",
+        ],
+        note: "Nothing serves those URLs between now and the next republish.",
+        confirm: "Disable",
+      });
+      if (!yes) return;
+      runZrok(disable, () => api("POST", "/api/zrok/disable", {}));
+    };
+  }
+}
+
 // The Secrets control is an ordinary link now, so there is no click handler.
 // Which of the two pages this document is depends on the path it was served at.
 const currentPath = location.pathname.replace(/\/+$/, "");
@@ -6224,6 +6508,11 @@ if (isSetupPage) {
   hideOperationsChrome("setup");
   setupEl().hidden = false;
   loadSetup();
+  // A second fetch rather than a field on the credential payload. The two surfaces have
+  // different gates and different failure modes — a locked vault makes the first one a
+  // form and leaves this one perfectly usable — and folding them together would mean a
+  // locked vault hiding the panel that gets previews onto the internet.
+  loadZrok();
 } else if (isProjectsPage) {
   hideOperationsChrome("projects");
   document.getElementById("projects").hidden = false;

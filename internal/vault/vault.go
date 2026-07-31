@@ -74,6 +74,19 @@ const (
 	KeyBitbucketHookSec = "bitbucket.webhook_secret"
 	KeyFrontdoorToken   = "frontdoor.api_token"
 
+	// KeyZrokAccountToken is the zrok account token, which creates and deletes every share on
+	// the account.
+	//
+	// Here even though zrok also writes it to its own `environment.json` in plaintext, which
+	// docpreview does not control. Two reasons: enrolling a *second* host on the same account
+	// otherwise needs the registration email again, which has by then been used; and the
+	// registration response is the only place the token ever appears, so a signup done from the
+	// dashboard would produce a credential that exists in no readable place at all.
+	//
+	// Not read by the exposer — that authenticates from zrok's environment directory, as the
+	// zrok CLI does. This copy exists for re-enrolment.
+	KeyZrokAccountToken = "zrok.account_token"
+
 	// The Google OAuth application, for signing in to the dashboard.
 	//
 	// The id is not a secret — it appears in the URL a browser is sent to — but it lives here

@@ -410,9 +410,29 @@ Get-Process docpreview -ErrorAction SilentlyContinue | Stop-Process
 
 | Error | Fix |
 |---|---|
-| `zrok environment is not enabled` | `zrok2 enable <account-token>` |
-| `zrok controller rejected this environment` | Token revoked or environment deleted server-side. `zrok2 disable` then `zrok2 enable`. |
+| `no zrok environment is enrolled here` | Enrol from `/secrets`, or `docpreview zrok invite <email>`. Run `docpreview zrok status` first — see below. |
+| `zrok controller rejected this environment` | Token revoked or environment deleted server-side. `docpreview zrok disable -yes` then `docpreview zrok enable`. |
 | `no zrok namespace configured` | Set `exposer.zrok2.namespace`, or give the environment a default. |
+
+### `no zrok environment is enrolled here` — but `zrok2 overview` shows one
+
+There are two possible environment directories and you are looking at the other one:
+
+```powershell
+docpreview zrok status
+```
+
+`~/.zrok2` is what the `zrok2` CLI enrols into; `<data_dir>/zrok2` is docpreview's own. `zrok status` marks which
+one this installation uses, and `docpreview zrok use system` switches to the machine's. It takes effect on the next
+restart.
+
+:::danger Do not point two daemons at one environment
+
+Startup deletes every share it recognises as its own, so two installations sharing a zrok account delete each
+other's live previews. Give the second one `docpreview zrok use project` and its own enrolment — and a
+[name prefix](../reference/cli.md), so their names cannot collide either.
+
+:::
 
 ### `name already in use`
 

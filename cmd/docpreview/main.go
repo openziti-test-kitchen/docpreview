@@ -75,6 +75,8 @@ func run(args []string) error {
 		return cmdConsole(args[1:])
 	case "settings":
 		return cmdSettings(args[1:])
+	case "zrok":
+		return cmdZrok(args[1:])
 	case "vault":
 		return cmdVault(args[1:])
 	case "help", "-h", "--help":
@@ -99,6 +101,7 @@ Usage:
   docpreview shares  list [-json]         Audit the exposer account against the database
   docpreview console <subcommand>         The password on the admin surface
   docpreview settings <subcommand>        Settings the daemon keeps in its database
+  docpreview zrok    <subcommand>         Sign up for zrok and enrol this host
   docpreview vault   <subcommand>         Manage stored credentials
 
 Reaching a loopback daemon from the internet. All three take -zrok-name, never
@@ -157,6 +160,21 @@ for a host whose dashboard is not reachable yet:
   docpreview settings prefix              Print the installation's hostname prefix
   docpreview settings prefix P            Publish previews as P-<name>, read at startup
   docpreview settings prefix -clear       Back to bare preview names
+
+zrok subcommands. The same things the zrok panel on /secrets does, for a host with no
+browser on it — and "zrok use", which the daemon reads at startup:
+
+  docpreview zrok status                  Both environments, and which one is in use
+  docpreview zrok use system|project      Which one the daemon adopts; needs a restart
+  docpreview zrok invite <email>          Ask zrok to email a registration link
+  docpreview zrok register <link>         Turn that link into an account and enrol
+  docpreview zrok enable                  Enrol with an account token you already have
+  docpreview zrok disable -yes            Remove this host from the account
+
+There are two possible zrok environments and they are usually different accounts: the
+machine's ~/.zrok2, which the zrok CLI uses, and this installation's own beside the
+vault. Startup deletes every share it recognises as its own, so a daemon on the wrong
+one deletes whatever else is using that account. "zrok status" says which is which.
 
 Vault subcommands:
   docpreview vault keygen [-out FILE]     Mint a new master key
@@ -343,6 +361,17 @@ func setup(configPath, logLevel string) (*wiring, error) {
 		store:     st,
 		clients:   map[model.Platform]scm.Client{},
 		vaultPath: cfg.VaultPath(),
+	}
+
+	// Which zrok environment directory this process uses, decided before anything loads one.
+	//
+	// zrok's root directory is a process-wide global read by every LoadRoot, so this must happen
+	// before buildExposer and can never happen again — see internal/expose/zrokenv.go. It runs
+	// whatever the exposer is, because `shares list` and the enrolment endpoints load a root too,
+	// on a daemon whose exposer is `local`.
+	if err := applyZrokScope(st, cfg, log); err != nil {
+		w.Close()
+		return nil, err
 	}
 
 	w.exposer, err = buildExposer(w, cfg, log)
@@ -667,7 +696,21 @@ func cmdServe(args []string) error {
 			// So a pasted token can be checked before it is discovered wrong by a build
 			// that clones for twenty seconds and then fails to authenticate.
 			WithSCMChecker(d.CheckRepoCredential).
-			WithDocker(dockerOK, dockerWhy))
+			WithDocker(dockerOK, dockerWhy)).
+		// Signing up for zrok, enrolling this host, and choosing between the machine's zrok
+		// environment and this installation's own. Wired whatever the exposer is: the usual
+		// order is to install docpreview, discover it needs a way onto the internet, and then
+		// change exposer.kind — so a panel that only appeared once zrok was already configured
+		// would only appear to people who no longer needed it.
+		//
+		// The vault accessor rather than the vault, for the reason every credential here is
+		// deferred: it may be locked at startup, and enrolment still works when it is.
+		WithZrok(daemon.NewZrokAdmin(w.cfg, w.store, w.log, func() (*vault.Vault, error) {
+			if v := admin.Vault(); v != nil {
+				return v, nil
+			}
+			return nil, vault.ErrLocked
+		}))
 
 	// The login gate. The hashes live in the database rather than the vault, because the page
 	// that unlocks the vault is behind this gate — so it is wired from the store and needs

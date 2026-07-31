@@ -315,13 +315,35 @@ App daemon's previews.
 
 The fix has two halves, and the first is the important one:
 
-1. **A per-instance zrok environment.** `environment.SetRootDirName` accepts an absolute path
-   (`environment/api.go:11-13`, `env_v0_4/dirs.go:15-18`) and docpreview never calls it. Add
-   `exposer.zrok2.root_dir`, defaulting to empty (meaning `$HOME/.zrok2`, today's behaviour), and call
-   `SetRootDirName` in `buildExposer` *before* `expose.NewZrok` (`main.go:303-304`) — `NewZrok` calls
-   `LoadRoot` at construction, so afterwards is too late. Two instances then have two environments, two ziti
-   identities, two `EnvZID`s, and `Reap` separates them for free. Note that `rootDirName` is a mutable package
-   variable, so this is process-global: set it once, at wiring.
+1. **A per-instance zrok environment. Built** — `internal/expose/zrokenv.go`, `cmd/docpreview/zrok.go`.
+   `environment.SetRootDirName` accepts an absolute path (`environment/api.go:11-13`,
+   `env_v0_4/dirs.go:15-18`), and `applyZrokScope` calls it from `setup`, before `buildExposer` — `NewZrok`
+   calls `LoadRoot` at construction, so afterwards is too late. Two installations then have two environments,
+   two ziti identities, two `EnvZID`s, and `Reap` separates them for free.
+
+   Two departures from the sketch above, both learned in the writing:
+
+   - **A stored setting, not a config key.** `exposer.zrok2.root_dir` would have been a path an operator has to
+     invent, in a file that is hand-written and full of comments a rewrite would destroy. What the operator
+     actually has is a *choice between two*: the machine's `~/.zrok2`, which a developer very likely already
+     has, and this installation's own at `<data_dir>/zrok2`. So it is `exposer.zrok.scope`, values `system` and
+     `project`, in the settings table — settable from the dashboard and from `docpreview zrok use`.
+   - **The choice is never guessed once it can be recorded.** With one environment enabled and nothing stored,
+     startup adopts it *and writes it down*: without the write, enrolling the other one later would move the
+     daemon to a different zrok account at the next restart, and the first thing it would do there is reap.
+     With **both** enabled it adopts `project`, warns, and records nothing — so the dashboard keeps asking,
+     because either answer may be an account something else is reaping. `chooseZrokScope` is that decision,
+     separated out precisely so it can be tested: the alternative touches a process-wide global that cannot be
+     undone inside a test binary.
+
+   `rootDirName` being a mutable package variable is also why `UseZrokRoot` refuses a second, different call, and
+   why `InspectZrokRoots` — which has to load a root that is *not* the one in force — takes a mutex and restores
+   the global afterwards. `TestInspectingDoesNotChangeWhichRootIsInForce` is the guard on that.
+
+   The cost is that `webhook-only` and `dashboard-only` have to be told separately, with `-zrok-home`: they read
+   no config file, which is the whole reason they exist, so they cannot derive the daemon's answer. A share
+   created from the wrong account reserves a name the previews cannot use.
+
 2. **An instance token in the target.** Belt and braces for the case where an operator does point two daemons at
    one environment anyway. `Target` is free-form for our purposes — with an SDK listener nothing dials the
    target (`zrok.go:23-31`) — so `docpreview:<instance>:<previewID>` costs nothing but a two-way split instead

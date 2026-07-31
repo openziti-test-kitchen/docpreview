@@ -402,6 +402,12 @@ reloading under you. **If something on the page contradicts the code, reload bef
 | `GET` | `/preview/{name}/` | Previews, under the `local` exposer only. |
 | `GET` | `/healthz` | `ok`. |
 | `GET` | `/readyz` | JSON: whether recovery has finished, and how busy the daemon is. |
+| `GET` | `/api/zrok` | JSON: both zrok environments, which is in use, and whether one is enrolled. |
+| `POST` | `/api/zrok/use` | Record which environment the daemon adopts. Takes effect at the next restart. |
+| `POST` | `/api/zrok/invite` | Ask zrok to email a registration link. Refused if one is already enrolled. |
+| `POST` | `/api/zrok/register` | Turn that link into an account and enrol this host. |
+| `POST` | `/api/zrok/enable` | Enrol with an account token, from the request or from the vault. |
+| `POST` | `/api/zrok/disable` | Remove this host from the account. Takes every preview URL down until republish. |
 | `GET` | `/status` | JSON: exposer, queue depth, live previews. |
 
 ```json
@@ -487,6 +493,7 @@ router, not a guard — the guard is one hop further in, and a forged payload ge
 |---|---|---|
 | `-zrok-name` | | Serve over a named public zrok share and bind no local port. |
 | `-zrok-namespace` | the environment's default | Namespace for `-zrok-name`. Required if the environment has none. |
+| `-zrok-home` | `~/.zrok2` | The zrok environment directory. Pass `<data_dir>/zrok2` if the daemon uses its own — this process reads no config and cannot know. A share created from the wrong account reserves a name the previews cannot use. |
 | `-listen` | `127.0.0.1:8481` | Where to accept tunnelled requests. Unused with `-zrok-name`. |
 | `-upstream` | `http://127.0.0.1:8471` | The daemon to forward to. |
 | `-path` | `/webhook/github` | The one path forwarded. |
@@ -585,6 +592,7 @@ way it cannot for a webhook.
 |---|---|---|
 | `-zrok-name` | | Serve over a named public zrok share and bind no local port. |
 | `-zrok-namespace` | the environment's default | Namespace for `-zrok-name`. Required if the environment has none. |
+| `-zrok-home` | `~/.zrok2` | The zrok environment directory. Pass `<data_dir>/zrok2` if the daemon uses its own — this process reads no config and cannot know. A share created from the wrong account reserves a name the previews cannot use. |
 | `-listen` | `127.0.0.1:8482` | Where to accept tunnelled requests. Unused with `-zrok-name`. Note the port differs from `webhook-only`'s `8481`, so both can run at once. |
 | `-upstream` | `http://127.0.0.1:8471` | The daemon to forward to. Non-loopback is refused, for the same reason as `webhook-only`. |
 | `-log-level` | `info` | |
@@ -741,6 +749,77 @@ A **leaked reserved name** — the object the quota actually counts — is invis
 the listing is of shares. And only the `zrok2` exposer can answer at all; the others say so and point at `doctor`.
 
 :::
+
+## `zrok`
+
+Signing up for zrok, enrolling this host, and choosing which of the two possible zrok environments the daemon
+uses. The same operations as the panel on `/secrets`, for a host with no browser on it.
+
+```powershell
+docpreview zrok status
+docpreview zrok use system|project
+docpreview zrok invite <email> [-api-endpoint URL] [-invite-token T]
+docpreview zrok register <link-or-token> [-api-endpoint URL] [-description D] [-no-enable]
+docpreview zrok enable [-token-stdin] [-description D]
+docpreview zrok disable -yes
+```
+
+### `zrok status`
+
+Both environment directories, what is enrolled in each, and which one this installation uses.
+
+```text
+in use: system
+  this installation  D:\docpreview\.docpreview\zrok2
+    nothing here yet
+* this machine       C:\Users\you\.zrok2
+    enabled against https://api-v2.zrok.io/, default namespace public
+```
+
+### `zrok use system|project`
+
+Records which environment the daemon adopts. **Takes effect at the next restart** — zrok's root directory is a
+process-wide setting read once at startup.
+
+| | |
+|---|---|
+| `system` | `~/.zrok2`, what the `zrok2` CLI uses |
+| `project` | `<data_dir>/zrok2`, docpreview's own, beside the vault |
+
+With nothing recorded, a daemon adopts whichever is enabled and writes that down. With **both** enabled it uses
+`project`, warns, and records nothing — so the dashboard keeps asking. See
+[Runbook — zrok v2](../runbooks/zrok2.md) for why that is not a default worth guessing.
+
+### `zrok invite <email>`
+
+Asks the zrok service to email a registration link. Refused if an environment is already enrolled in either
+directory.
+
+| Flag | |
+|---|---|
+| `-api-endpoint` | A self-hosted zrok. Default `https://api-v2.zrok.io`. |
+| `-invite-token` | For a zrok service that is itself invitation-only (`tokenStrategy: store`). |
+
+### `zrok register <link-or-token>`
+
+Creates the account and enrols this host. Takes the whole emailed link or just the token at the end of it.
+
+The **zrok account password** is read from stdin, never an argument. It is not stored here — it is how you reset
+that account later, so keep it somewhere.
+
+The account token goes into the vault as `zrok.account_token`. A locked vault is not fatal: the enrolment still
+happens and the command says how to store the token afterwards. `-no-enable` stops after creating the account.
+
+### `zrok enable`
+
+Enrols this host against an account token you already have. Reads it from the vault, or from stdin with
+`-token-stdin` — which also stores it.
+
+### `zrok disable -yes`
+
+Removes this host's environment from the account. `-yes` is required because every share published through it is
+deleted: preview URLs stop answering until the daemon republishes. The reserved names belong to the account and
+survive, so the URLs come back unchanged.
 
 ## `sim`
 

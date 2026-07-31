@@ -99,7 +99,14 @@ func (z *Zrok) Kind() string { return "zrok2" }
 // converts that into a startup error with a fix in it.
 func (z *Zrok) Validate(ctx context.Context) error {
 	if !z.root.IsEnabled() {
-		return errors.New("zrok environment is not enabled; run 'zrok2 enable <account-token>'")
+		// Names the built-in path first. The old message named `zrok2 enable`, which meant
+		// installing a second binary and finding an account before anything here could work —
+		// and it was the same sentence whether the problem was no account, the wrong
+		// environment directory, or a revoked token.
+		return errors.New("no zrok environment is enrolled here; sign up and enrol from the " +
+			"dashboard at /secrets, or run 'docpreview zrok invite <email>'. If you already " +
+			"have an environment, 'docpreview zrok status' says which directory this " +
+			"installation is looking in")
 	}
 
 	client, err := z.root.Client()

@@ -846,6 +846,15 @@ func (s *Store) ListPreviews(ctx context.Context) ([]Preview, error) {
 // looks exactly like a setting that did not save.
 const SettingNamePrefix = "exposer.prefix"
 
+// SettingZrokScope is the key holding which zrok environment directory this installation uses:
+// "system" for the machine's `~/.zrok2`, or "project" for its own beside the vault.
+//
+// Stored rather than derived because both can exist and both can be enabled, and the two are
+// different zrok accounts. Startup reaps every share it recognises as its own, so a daemon that
+// guessed would delete the shares belonging to whatever else uses the other one — see
+// internal/expose/zrokenv.go.
+const SettingZrokScope = "exposer.zrok.scope"
+
 // Setting reads one setting, reporting whether it was set at all.
 //
 // The boolean matters: an operator who deliberately cleared the prefix has set it to the
