@@ -990,28 +990,21 @@ console.log("\nsaving an edit closes the form and says so");
   }
 }
 
-console.log("\nBuild open PRs");
+console.log("\nno per-card build button");
 {
-  // Named for what it does. As "Build now" it read as "build this thing", and it queues one
-  // build per *open pull request* — which on a repository with two of them looked like it
-  // picked one at random.
-  const build = btn("Build open PRs");
-  if (!build) {
-    fail("no Build control, or it is still called something that implies one build");
-  }
-  calls.length = 0;
-  await click(build);
-  const scan = calls.find(c => c.method === "POST" && c.url.endsWith("/scan"));
-  if (!scan) {
-    fail("Build open PRs sent no scan");
-  } else if (scan.url !== "/api/projects/github/netfoundry/unified-doc/scan") {
-    fail(`it scanned ${scan.url}`);
-  } else ok(`POST ${scan.url}`);
+  // It queued one build per open pull request — the same thing adding a project does — and
+  // on a repository with several it read as having picked one at random. Adding a project
+  // still scans; the button that invited it by hand is gone from every card.
+  if (btn("Build open PRs") || btn("Build now")) {
+    fail("a per-card build button is back on the project cards");
+  } else ok("no Build control on a card");
 
-  // And it says what happened, since queueing is invisible from this page.
-  const notes = $$("#toasts .toast");
-  if (!notes.length) fail("Build now reported nothing");
-  else ok(`toasted ${JSON.stringify(notes[notes.length - 1].textContent.trim().slice(0, 48))}`);
+  // The scan on *add* is a different thing and must survive, which the add flow asserts
+  // further down. Nothing here posts a scan.
+  calls.length = 0;
+  await click($$(".pcard [data-tab=build]")[0]);
+  if (calls.some(c => c.url.endsWith("/scan"))) fail("opening Edit scanned the repository");
+  await click(btn("Cancel — discard edits") || btn("Cancel"));
 }
 
 console.log("\nunsaved edits are not thrown away silently");
@@ -1167,68 +1160,67 @@ console.log("\nunlinked pull requests are listed, and can be linked back");
 {
   const cards = $$(".pcard");
   const bb = cards[1];
+
+  // Only where there is something to say. The first version put a line on every card
+  // saying everything was being built — true, unasked, and one more line to read past.
+  if (cards[0].querySelector(".pcard-links")) {
+    fail("a project with nothing unlinked still renders the strip");
+  } else ok("silent on a project that is building everything");
+
   const links = bb.querySelector(".pcard-links");
   if (!links) {
-    fail("the card with an unlinked pull request has no linking section");
-  } else {
-    // The number, because "one pull request is unlinked" does not tell anybody which.
-    if (!links.textContent.includes("#20")) {
-      fail(`the unlinked pull request is not named: ${JSON.stringify(links.textContent)}`);
-    } else ok("the unlinked pull request is named on the card");
+    fail("the card with an unlinked pull request says nothing about it");
+  } else if (!/Skipping\s+1\s+pull request/.test(links.textContent.replace(/\s+/g, " "))) {
+    fail(`the strip reads ${JSON.stringify(links.textContent.replace(/\s+/g, " ").trim())}`);
+  } else ok("the count is on the card");
 
-    // A project with nothing unlinked says so rather than rendering an empty strip: a
-    // blank space is not an answer to "is this repository being built".
-    const clean = cards[0].querySelector(".pcard-links");
-    if (!clean || !clean.textContent.includes("Every open pull request")) {
-      fail("a project with nothing unlinked says nothing about it");
-    } else ok("a project with nothing unlinked says so");
-  }
-
-  // Re-linking sends the number the chip carries. A button that renders correctly and
-  // posts the wrong number is exactly what a screenshot cannot catch.
+  // The numbers themselves are in the dialog, not on the card: which pull request, what
+  // branch, when it was unlinked and a way back is four facts per row.
   calls.length = 0;
   const relink = bb.querySelector("[data-relink]");
-  if (!relink) fail("no way to link an unlinked pull request back");
+  if (!relink) fail("no way to reach the unlinked pull requests");
   else {
     await click(relink);
-    const post = calls.find(c => c.method === "POST" && c.url.endsWith("/link"));
-    if (!post) fail(`re-link posted nothing: ${JSON.stringify(calls)}`);
-    else if (!post.url.includes("/bitbucket/netfoundry/customer-connect-docs/")) {
-      fail(`re-link posted to ${post.url}`);
-    } else if (post.body?.number !== 20) {
-      fail(`re-link sent ${JSON.stringify(post.body)}, want number 20`);
-    } else ok("re-link posts the pull request number to its own project");
-  }
+    const picker = $(".modal .picklist");
+    if (!picker) {
+      fail("the button did not open a picker");
+    } else {
+      if (calls.some(c => c.method === "POST")) {
+        fail("opening the picker posted something");
+      } else ok("the picker opens without posting");
 
-  // Typing a number and pressing Link. The box is the only way to build a pull request
-  // nothing has built yet, which has no preview on the dashboard to press anything on.
-  calls.length = 0;
-  const box = doc.getElementById("link-bitbucket/netfoundry/customer-connect-docs");
-  const linkBtn = bb.querySelector("[data-link]");
-  if (!box || !linkBtn) fail("no way to link a pull request by number");
-  else {
-    await type(box, "19");
-    await click(linkBtn);
-    const post = calls.find(c => c.method === "POST" && c.url.endsWith("/link"));
-    if (!post) fail(`Link posted nothing: ${JSON.stringify(calls)}`);
-    else if (post.body?.number !== 19) {
-      fail(`Link sent ${JSON.stringify(post.body)}, want number 19`);
-    } else ok("Link posts the number typed into the box");
-  }
+      const rows = $$(".modal .pickrow");
+      if (rows.length !== 1) fail(`${rows.length} rows in the picker, want 1`);
+      else if (!rows[0].textContent.includes("#20")) {
+        fail(`the row reads ${JSON.stringify(rows[0].textContent.replace(/\s+/g, " ").trim())}`);
+      } else if (!rows[0].textContent.includes("feature/pricing")) {
+        fail("the row does not say which branch it was");
+      } else ok("one row per unlinked pull request, with its branch");
 
-  // An empty box asks rather than posting. A POST with no number would 400, and the
-  // page would report a server error for something it could see itself.
-  calls.length = 0;
-  const box2 = doc.getElementById("link-bitbucket/netfoundry/customer-connect-docs");
-  const linkBtn2 = $$(".pcard")[1].querySelector("[data-link]");
-  if (box2 && linkBtn2) {
-    await type(box2, "");
-    await click(linkBtn2);
-    if (calls.some(c => c.method === "POST")) {
-      fail("Link posted with no number in the box");
-    } else if (!$("#toasts .toast.bad")) {
-      fail("Link with an empty box did nothing and said nothing");
-    } else ok("Link with an empty box asks for a number instead of posting");
+      // Escape closes it and posts nothing.
+      doc.dispatchEvent(new win.KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
+      await settle();
+      if ($(".modal .picklist")) fail("Escape did not close the picker");
+      else if (calls.some(c => c.method === "POST")) fail("Escape linked it anyway");
+      else ok("Escape closes it and links nothing");
+
+      // Choosing a row is the whole gesture: the row is the button.
+      calls.length = 0;
+      await click($$(".pcard")[1].querySelector("[data-relink]"));
+      const row = $(".modal .pickrow");
+      if (!row) fail("the picker did not reopen");
+      else {
+        await click(row);
+        const post = calls.find(c => c.method === "POST" && c.url.endsWith("/link"));
+        if (!post) fail(`choosing a row posted nothing: ${JSON.stringify(calls)}`);
+        else if (!post.url.includes("/bitbucket/netfoundry/customer-connect-docs/")) {
+          fail(`it posted to ${post.url}`);
+        } else if (post.body?.number !== 20) {
+          fail(`it sent ${JSON.stringify(post.body)}, want number 20`);
+        } else ok("clicking a row posts its number to its own project");
+        if ($(".modal .picklist")) fail("the picker stayed open after choosing");
+      }
+    }
   }
 }
 

@@ -173,18 +173,69 @@ console.log("\nUnlink removes the preview it is attached to");
     } else {
       calls.length = 0;
       await click(unlink);
-      const post = calls.find(c => c.method === "POST");
-      if (!post) {
-        fail(`Unlink posted nothing: ${JSON.stringify(calls)}`);
-      } else if (post.url !== "/api/builds/81379294374a/unlink") {
-        fail(`Unlink posted to ${post.url}`);
-      } else ok("POST /api/builds/81379294374a/unlink");
 
-      // No alert. This page reports failures as toasts, and success is the row
-      // disappearing on the next status tick.
-      if (calls.some(c => c.method === "ALERT")) {
-        fail("Unlink raised an alert on success");
-      } else ok("no dialog to dismiss on success");
+      // A dialog of the page's own, not the browser's. `confirm()` cannot show what is
+      // about to be deleted, which is the only thing anybody wants to know here — and it
+      // is stubbed to true in this harness, so a regression to it would silently pass
+      // every assertion below.
+      // `.modal.ask`, not `.modal`: the boot report is also a .modal and is present from
+      // the start, so the bare selector finds that one and every assertion below reads an
+      // empty element and passes for the wrong reason.
+      const dialog = $(".modal.ask");
+      if (!dialog) {
+        fail("Unlink did not open a dialog of its own");
+      } else {
+        if (calls.some(c => c.method === "POST")) {
+          fail("Unlink posted before the dialog was answered");
+        } else ok("nothing is posted until the dialog is answered");
+
+        // It answers the question rather than only asking one. Both halves: what goes,
+        // and that it can be undone.
+        const said = dialog.textContent;
+        for (const phrase of ["Removed now", "comes back", "Reversible", "#19"]) {
+          if (!said.includes(phrase)) {
+            fail(`the dialog does not mention ${JSON.stringify(phrase)}`);
+          }
+        }
+        if (!failures) ok("says what goes, what returns, and that it is reversible");
+
+        // Cancel has focus, not the destructive button. A stray Return on a dialog that
+        // opens focused on Unlink is an irreversible action nobody chose.
+        const focused = doc.activeElement;
+        if (!focused || focused.dataset.ask !== "no") {
+          fail(`focus is on ${focused && focused.textContent}, not Cancel`);
+        } else ok("Cancel has focus, so Return does not delete anything");
+
+        // Escape cancels, and posts nothing.
+        dialog.ownerDocument.dispatchEvent(
+          new win.KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
+        await settle();
+        if ($(".modal.ask")) fail("Escape did not close the dialog");
+        else if (calls.some(c => c.method === "POST")) fail("Escape posted the request anyway");
+        else ok("Escape cancels and sends nothing");
+
+        // And the whole way through, from the top.
+        calls.length = 0;
+        await click($('.item.open [data-role="unlink"]'));
+        const yes = $('.modal.ask .ask-acts [data-ask="yes"]');
+        if (!yes) fail("the dialog has no confirming button");
+        else {
+          await click(yes);
+          const post = calls.find(c => c.method === "POST");
+          if (!post) {
+            fail(`confirming posted nothing: ${JSON.stringify(calls)}`);
+          } else if (post.url !== "/api/builds/81379294374a/unlink") {
+            fail(`Unlink posted to ${post.url}`);
+          } else ok("POST /api/builds/81379294374a/unlink");
+          if ($(".modal.ask")) fail("the dialog stayed open after confirming");
+        }
+
+        // No browser alert anywhere in the flow. Failures are toasts; success is the row
+        // disappearing on the next status tick.
+        if (calls.some(c => c.method === "ALERT")) {
+          fail("Unlink raised an alert");
+        } else ok("no alert(), before or after");
+      }
     }
   }
 }

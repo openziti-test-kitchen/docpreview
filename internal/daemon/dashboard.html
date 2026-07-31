@@ -89,7 +89,7 @@ h2 span { color: var(--ink-2); text-transform: none; letter-spacing: 0 }
 .seg .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--edge, var(--idle)); flex: none }
 /* The Building counter turns while anything is building, so the fact that work
    is happening is visible without reading a number or finding the row. */
-.seg .dot.work, .counts .dot.work {
+.seg .dot.work {
   width: 10px; height: 10px; box-sizing: border-box; background: none;
   border: 2px solid transparent;
   border-top-color: var(--edge, var(--idle));
@@ -104,7 +104,7 @@ h2 span { color: var(--ink-2); text-transform: none; letter-spacing: 0 }
    long way from the fast rotation the guidance is aimed at, and the state is
    also carried by a word and a colour for anyone who needs no motion at all. */
 @media (prefers-reduced-motion: reduce) {
-  .seg .dot.work, .counts .dot.work { animation-duration: 2.4s }
+  .seg .dot.work { animation-duration: 2.4s }
 }
 
 .control {
@@ -424,6 +424,60 @@ input.control::placeholder { color: var(--muted) }
   max-height: 14rem; overflow-y: auto;
 }
 
+/* ── The confirm dialog ─────────────────────────────────────────────────────
+   `confirm()` was what stood here, and it was the wrong control twice over. It is
+   drawn by the browser, so it cannot show the one thing worth showing — what is about
+   to be deleted and what comes back — and it renders newlines as a wall of plain text
+   that reads as a warning rather than as an answer.
+
+   This dialog is the explanation *and* the decision. The question anybody asks before
+   pressing Unlink is "what does this actually do, and can I undo it", so the answer is
+   in front of them at the moment they ask it rather than in a document. */
+.ask-what {
+  font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em;
+  margin: 0.45rem 0 0.15rem;
+}
+.ask-what .mono {
+  font: 13px/1.5 ui-monospace, Consolas, monospace; color: var(--ink-2);
+}
+.ask-lede { font-size: 0.85rem; color: var(--ink-2); margin: 0 0 0.8rem }
+
+/* Two columns, because the shape of the answer is a comparison: this goes, that comes
+   back. One list of eight items with mixed marks made the reader classify each line
+   themselves, which is the work the columns do for them. */
+.ask-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem }
+@media (max-width: 30rem) { .ask-cols { grid-template-columns: 1fr } }
+.ask-col {
+  border: 1px solid var(--ring); border-radius: 8px; padding: 0.55rem 0.65rem;
+  border-top: 3px solid var(--edge, var(--ring)); background: var(--raised);
+}
+.ask-col h4 {
+  margin: 0 0 0.35rem; font-size: 0.68rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+}
+.ask-col ul { margin: 0; padding: 0; list-style: none }
+.ask-col li {
+  display: flex; gap: 0.4rem; align-items: baseline;
+  font-size: 0.8rem; color: var(--ink-2); padding: 0.1rem 0;
+}
+/* The mark carries the meaning without colour, for the same reason the startup steps
+   use one: a red list and a green list are the same list to a reader who cannot tell
+   them apart. */
+.ask-col li::before { content: "✕"; color: var(--critical); flex: none; font-size: 0.85em }
+.ask-col.keeps li::before { content: "↺"; color: var(--good) }
+.ask-note {
+  font-size: 0.78rem; color: var(--muted); margin: 0.8rem 0 0;
+  padding-top: 0.6rem; border-top: 1px solid var(--hairline);
+}
+.ask-note b { color: var(--ink-2); font-weight: 600 }
+.ask-acts { display: flex; gap: 0.45rem; justify-content: flex-end; margin-top: 0.9rem }
+/* The destructive button is filled, and it is not the one that has focus. A dialog that
+   opens with the irreversible action focused turns a stray Return into the action. */
+.btn.solid-danger {
+  background: var(--critical); border-color: var(--critical); color: #fff;
+}
+.btn.solid-danger:hover { filter: brightness(1.08) }
+
 /* ── Startup banner ─────────────────────────────────────────────────────────
    A sibling of .wrap rather than a child, so it must reproduce .wrap's own box:
    same max width, same 1.25rem gutter, or its left edge does not line up with the
@@ -600,22 +654,43 @@ input.control::placeholder { color: var(--muted) }
 .pcard-head .grow { flex: 1 }
 .pcard-off { opacity: 0.6 }
 
-/* The unlinked pull requests and the box that links one back. One line, because on a
-   working project it says one short sentence and must not cost a paragraph of height. */
+/* The strip that appears only when a project is skipping something. One line: a count and
+   the way in. Tinted, because its presence is the signal — a project in this state is not
+   building everything it looks like it is building. */
 .pcard-links {
   display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
-  margin-top: 0.45rem; padding-top: 0.45rem; border-top: 1px solid var(--hairline);
+  margin-top: 0.45rem; padding: 0.4rem 0.5rem;
+  border-radius: 7px;
+  border-left: 3px solid var(--serious);
+  background: color-mix(in srgb, var(--serious) 7%, transparent);
 }
 .pcard-links .grow { flex: 1 }
-.pcard-links .chip { gap: 0.3rem }
-/* Wide enough for four digits and no wider: a number box that stretches invites a
-   sentence, and this one takes 19. */
-.linknum {
-  width: 4.5rem; padding: 0.15rem 0.35rem; font: inherit;
-  border: 1px solid var(--ring); border-radius: 5px;
-  background: var(--surface); color: var(--ink);
+.pcard-links strong { color: var(--ink); font-variant-numeric: tabular-nums }
+
+/* The picker's rows. A row is one choice, so the whole row is the control — a list of
+   labels each with a small button beside it makes the reader aim. */
+.picklist {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  max-height: 21rem; overflow-y: auto; scrollbar-gutter: stable;
 }
-.btn.tiny { padding: 0 0.3rem; font-size: 11px; line-height: 1.5 }
+.pickrow {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  border: 1px solid var(--ring); border-radius: 7px; background: var(--raised);
+  border-left: 3px solid var(--serious);
+  padding: 0.4rem 0.55rem;
+}
+.pickrow:hover { border-color: var(--ink-2) }
+.pickrow:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px }
+.pickrow .num { font-weight: 650 }
+.pickrow .branch {
+  font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pickrow .took { font-size: 0.75rem; color: var(--muted) }
+/* The row is the button, so the thing that looks like one inside it must not also be
+   clickable — it is a label saying what the row does. */
+.pickrow .btn { pointer-events: none }
 
 /* A badge, not a fetched image. Two characters or an emoji, on a colour derived from
    the name so it is stable without being stored. */
@@ -881,16 +956,11 @@ input.control::placeholder { color: var(--muted) }
   border-left: 3px solid var(--edge, var(--idle));
 }
 
-/* Per-state counts for the project, on the row itself. Colour plus number,
-   with the state named in the tooltip — a bare coloured number is a quiz. */
-.counts { display: flex; gap: 0.3rem; align-items: center }
-.counts .chip {
-  display: inline-flex; align-items: center; gap: 0.25rem;
-  font-size: 0.72rem; font-variant-numeric: tabular-nums; color: var(--ink-2);
-  border: 1px solid var(--ring); border-radius: 5px; padding: 0.05rem 0.32rem;
-}
-.counts .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--edge, var(--idle)) }
-@media (max-width: 52rem) { .counts { display: none } }
+/* The per-state count chips that used to sit here are gone. They said how many of a
+   project's previews were ready or failed, beside a pill already naming the state of the
+   one preview the row shows — two answers to different questions in one line, and nobody
+   acted on the second. The empty cell in the grid above is now the spacer. */
+.row .head .grow { min-width: 0 }
 
 /* ── Under 1000px ───────────────────────────────────────────────────────────
    The layout already stacks at 68rem and the header and toolbar already wrap, so
@@ -1237,6 +1307,16 @@ footer {
   color: var(--muted); font-size: 0.75rem;
 }
 .live { color: var(--good) } .stale { color: var(--critical) }
+/* A button that reads as one of the footer's links, because it belongs to that row rather
+   than to the page's controls. A <button> and not an <a>, since it navigates nowhere —
+   an anchor with no href is unreachable by keyboard. */
+.footlink {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  font: inherit; color: inherit; text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.footlink:hover { color: var(--ink-2) }
+.footlink:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px }
 
 /* Last in the sheet, and !important, because `[hidden]` loses to any author rule
    that sets display — and .wrap sets grid. So `el.hidden = true` on it did nothing,
@@ -1361,6 +1441,14 @@ footer {
 <footer>
   <span id="conn" class="live">connecting…</span> ·
   <a href="/status">/status</a> · <a href="/pr">/pr</a>
+  <!-- The startup report, on request rather than in the way.
+       It used to open by itself on the first load after a restart, which was right when a
+       restart took four and a half minutes and wrong the moment adoption made it three
+       seconds: a dialog to dismiss to be told that nothing went wrong. As a footer link it
+       is available for as long as the daemon runs, beside the other two things nobody needs
+       until they need them — and the label carries the duration, so the number the report
+       exists to give is readable without opening it. -->
+  <span id="boot-link" hidden> · <button class="footlink" id="boot-open"></button></span>
 </footer>
 
 <script>
@@ -1550,11 +1638,8 @@ function groups() {
     list.sort((a, b) =>
       rank(a) - rank(b) || new Date(b.updated_at) - new Date(a.updated_at));
 
-    const counts = {};
-    for (const p of list) counts[p.state] = (counts[p.state] || 0) + 1;
-
     const picked = list.find(p => p.preview_id === ui.pick[name]) || list[0];
-    out.push({name, list, counts, current: picked});
+    out.push({name, list, current: picked});
   }
   out.sort((a, b) => rank(a.current) - rank(b.current) || a.name.localeCompare(b.name));
   return out;
@@ -1846,11 +1931,14 @@ function updateHead(item, g) {
   const p = g.current;
   const s = state(p.state);
 
-  const chips = ORDER
-    .filter(k => g.counts[k])
-    .map(k => `<span class="chip" style="--edge:${state(k).color}" title="${g.counts[k]} ${state(k).label.toLowerCase()}">
-                 <span class="dot${k === "building" ? " work" : ""}"></span>${g.counts[k]}</span>`)
-    .join("");
+  // No per-state count chips on the row.
+  //
+  // They were three or four coloured pills saying how many of this project's previews were
+  // ready, failed or building — beside a pill already naming the state of the one preview
+  // the row is showing. Nobody acted on the numbers: the question a row answers is "what is
+  // this branch doing", and the counts answered a question about a set the row does not
+  // otherwise represent. Removed rather than moved; the state of each preview is on its own
+  // line in the picker.
 
   // p.url is in the signature because the row now carries the link: a republish
   // that moves the URL without changing the state would otherwise leave the
@@ -1859,7 +1947,7 @@ function updateHead(item, g) {
   // for a running build, which is the point — and for every other row it is a fixed
   // finishing time, so a page of finished previews still rebuilds nothing.
   const sig = [p.preview_id, p.state, p.url, p.branch, p.number, rowWhen(p),
-               ui.open === g.name, JSON.stringify(g.counts)].join("|");
+               ui.open === g.name].join("|");
 
   const head = item.querySelector(".head");
   if (head.dataset.sig === sig) return;
@@ -1878,7 +1966,7 @@ function updateHead(item, g) {
       <span class="proj">${esc(g.name)}</span>
       <span class="branch">${esc(p.branch)}</span><span class="num">#${p.number}</span>
     </span>
-    <span class="counts">${chips}</span>
+    <span class="grow"></span>
     <span class="pill${s.work ? " work" : s.spin ? " spin" : ""}" style="--edge:${s.color}">
       <span class="dot"></span>${esc(s.label)}
     </span>
@@ -2187,7 +2275,7 @@ function updateBody(item, g) {
       openLog(p.preview_id);
       render();
     } catch (e) {
-      alert(`Could not rebuild: ${e.message}`);
+      toast(`Could not rebuild: ${e.message}`, "bad", e.message);
     } finally {
       rebuild.disabled = false;
       rebuild.textContent = label;
@@ -2206,10 +2294,29 @@ function updateBody(item, g) {
   unlink.hidden = !admin.projects;
   unlink.title = `Remove this preview and stop building ${p.branch} #${p.number}`;
   unlink.onclick = async () => {
-    if (!confirm(`Unlink ${p.branch} #${p.number}?\n\n` +
-      `The preview, its URL and its pull request comment are removed, and this pull ` +
-      `request is not built again — a push or a project scan will skip it.\n\n` +
-      `You can link it again from the Projects page.`)) return;
+    const yes = await ask({
+      kind: "Unlink a pull request",
+      what: `${p.branch} <span class="mono">#${p.number}</span>`,
+      lede: `${esc(g.name)} — this pull request stops being built. A push, a webhook ` +
+        `delivery and a project scan will all skip it.`,
+      goes: [
+        "The preview and its URL",
+        "Every build's own URL",
+        "Build logs and cached packages",
+        "The comment on the pull request",
+      ],
+      keeps: [
+        "The same URL, if you link it again",
+        "A fresh comment on the next build",
+        "Other pull requests on this repository",
+        "The project, its settings and its webhook",
+      ],
+      note: `<b>Reversible.</b> Link it back from the Projects page — the card lists what ` +
+        `it is not building, with a link beside each. The build history is the one thing ` +
+        `that does not come back, so the first build after linking is a cold one.`,
+      confirm: "Unlink",
+    });
+    if (!yes) return;
     const label = unlink.textContent;
     unlink.disabled = true;
     unlink.textContent = "…";
@@ -2228,9 +2335,27 @@ function updateBody(item, g) {
   };
 
   cancel.onclick = async () => {
-    const what = p.state === "queued" ? "queued build" : "build";
-    if (!confirm(`Cancel the ${what} of ${p.branch} #${p.number}?\n\n` +
-      `It will be reported as failed on the pull request. Pushing again rebuilds it.`)) return;
+    const queued = p.state === "queued";
+    const yes = await ask({
+      kind: queued ? "Cancel a queued build" : "Cancel a running build",
+      what: `${p.branch} <span class="mono">#${p.number}</span>`,
+      lede: queued
+        ? `${esc(g.name)} — this build has not started, so it is taken out of the queue.`
+        : `${esc(g.name)} — the build is abandoned where it stands.`,
+      goes: [
+        queued ? "Its place in the queue" : "The work done so far",
+        "Reported as failed on the pull request",
+      ],
+      keeps: [
+        "The preview currently published",
+        "Its URL, which keeps serving the last good build",
+        "Rebuild, or a push, starts it again",
+      ],
+      note: `Nothing is deleted. This stops one build; the preview and everything about ` +
+        `the pull request are untouched.`,
+      confirm: queued ? "Cancel the build" : "Abandon the build",
+    });
+    if (!yes) return;
     const label = cancel.textContent;
     cancel.disabled = true;
     cancel.textContent = "…";
@@ -2238,9 +2363,9 @@ function updateBody(item, g) {
       const r = await api("POST", `/api/builds/${encodeURIComponent(p.preview_id)}/cancel`);
       // Not an error when nothing was running: this page can be a second out of date, and
       // a build that finished between the render and the click is not a failure.
-      if (!r.cancelled) alert("That build had already finished.");
+      if (!r.cancelled) toast("That build had already finished.");
     } catch (e) {
-      alert(`Could not cancel: ${e.message}`);
+      toast(`Could not cancel: ${e.message}`, "bad", e.message);
     } finally {
       cancel.disabled = false;
       cancel.textContent = label;
@@ -3648,6 +3773,84 @@ function toast(text, kind, detail) {
   setTimeout(() => t.remove(), kind === "bad" ? 9000 : 5000);
 }
 
+/* ask puts a question in a dialog and resolves to what the reader chose.
+
+   It replaces `confirm()` for anything destructive, and the reason is not that the browser's
+   dialog is ugly. It cannot show the answer. What somebody wants before pressing Unlink is
+   two lists — what goes and what comes back — and `confirm()` renders that as a paragraph of
+   plain text that reads as a warning to be clicked past. Here it is a comparison they can
+   read in one pass, so the dialog answers the question instead of asking them to trust it.
+
+   Returns a promise, so a caller reads as it did with confirm:
+
+       if (!await ask({...})) return;
+
+   Cancel is what has focus and what Escape, the backdrop and ✕ all do. A dialog that opens
+   with an irreversible action focused turns a stray Return into that action. */
+function ask(o) {
+  return new Promise(resolve => {
+    const wrap = document.createElement("div");
+    // `.modal ask`, not `.modal` alone: the boot report is also a .modal and is in the
+    // document from the start, so a selector of `.modal` finds that one and anything
+    // reasoning about "the dialog" reads the wrong element. The harness did.
+    wrap.className = "modal ask";
+    wrap.setAttribute("role", "dialog");
+    wrap.setAttribute("aria-modal", "true");
+    wrap.innerHTML = `
+      <div class="modal-card">
+        <div class="modal-body">
+          <div class="modal-x-row">
+            <button class="modal-x" data-ask="no" title="Cancel" aria-label="Cancel">✕</button>
+          </div>
+          <h3>${esc(o.kind)}</h3>
+          <p class="ask-what">${o.what}</p>
+          <p class="ask-lede">${o.lede}</p>
+          <div class="ask-cols">
+            <div class="ask-col" style="--edge:var(--critical)">
+              <h4>Removed now</h4>
+              <ul>${(o.goes || []).map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+            </div>
+            <div class="ask-col keeps" style="--edge:var(--good)">
+              <h4>Unaffected, or comes back</h4>
+              <ul>${(o.keeps || []).map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+            </div>
+          </div>
+          ${o.note ? `<p class="ask-note">${o.note}</p>` : ""}
+          <div class="ask-acts">
+            <button class="btn" data-ask="no">Cancel</button>
+            <button class="btn solid-danger" data-ask="yes">${esc(o.confirm)}</button>
+          </div>
+        </div>
+      </div>`;
+
+    // The element goes away exactly once, whichever of the four exits was taken —
+    // otherwise the keydown listener outlives the dialog and eats the next Escape.
+    let done = false;
+    const finish = answer => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("keydown", onKey);
+      wrap.remove();
+      resolve(answer);
+    };
+    const onKey = e => {
+      if (e.key === "Escape") finish(false);
+    };
+
+    wrap.addEventListener("click", e => {
+      // The backdrop cancels. Clicking the card must not, which is what the closest check
+      // distinguishes — a drag that ends outside the card is otherwise a cancel.
+      if (e.target === wrap) return finish(false);
+      const btn = e.target.closest("[data-ask]");
+      if (btn) finish(btn.dataset.ask === "yes");
+    });
+    document.addEventListener("keydown", onKey);
+
+    document.body.appendChild(wrap);
+    wrap.querySelector('.ask-acts [data-ask="no"]').focus();
+  });
+}
+
 // confirmDiscard asks before throwing away unsaved edits, and returns whether to go on.
 function confirmDiscard() {
   if (!formDirty) return true;
@@ -3749,14 +3952,10 @@ function projectCard(p, s, ro) {
       <span class="grow"></span>
       ${ro ? "" : `<button class="btn" data-tab="build" data-key="${esc(key)}"
           aria-pressed="${open === "build"}">Edit</button>
-        <!-- Queues a build for every open pull request on this repository, which is the
-             same thing adding a project does. It exists because the answer to "I changed
-             the image, now what" was to wait for somebody to push. -->
-        <!-- Named for what it does. "Build now" reads as "build this thing", and this
-             queues one build per *open pull request* on the repository — which on a repo
-             with two of them looks like it picked one at random. -->
-        <button class="btn" data-build="${esc(key)}"
-          title="Queue a build for each open pull request on this repository">Build open PRs</button>
+        <!-- No "Build open PRs" here. It queued one build per open pull request, which is
+             what adding a project already does, and on a repository with several it read as
+             having picked one at random. The scan still runs when a project is added; the
+             button that invited it by hand did not earn its place on every card. -->
         <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
     </div>
     ${projectFacts(p)}
@@ -4234,37 +4433,101 @@ function scmCredentialFields(s, p, id) {
     </div>`;
 }
 
-/* unlinkedSection lists the pull requests this project will not build, and links one.
+/* unlinkedSection says this project is skipping pull requests, and opens the picker.
 
-   Both halves are on the card because they answer the same two questions. "Why is #20 not
-   building" has no answer anywhere else — an ignore that nothing displays is
-   indistinguishable from a build system that has quietly stopped noticing a pull request.
-   And "build #19, which nothing has ever built" cannot be asked from the dashboard, where
-   every control is attached to a preview that already exists.
+   Nothing at all when nothing is unlinked, which is the ordinary state of every project.
+   The first version said "Every open pull request on this repository is built" on every
+   card — true, unasked, and one more line to read past on all of them. A strip that appears
+   only when there is something to say is also a signal by its presence.
 
-   The link box is shown even with nothing unlinked, since that second case is the common
-   one: a project added before its webhook, or one whose delivery was missed. */
+   The count and not the numbers: which pull requests, when each was unlinked and what branch
+   it was on is four facts per row, and a card is not where four-by-N belongs. The picker is.
+   Also gone is the free-number box that used to sit here — building an arbitrary pull
+   request by typing its number is still an API call, but it was a control nobody reached
+   for beside one they do. */
 function unlinkedSection(p, ro) {
   if (ro) return "";
   const key = projectKey(p);
-  const ignored = p.ignored || [];
-  const list = ignored.map(ig =>
-    `<span class="chip" title="unlinked ${ig.branch ? esc(ig.branch) + ", " : ""}${
-      esc(stamp(ig.created_at))}">#${ig.number}
-       <button class="btn tiny" data-relink="${esc(key)}" data-number="${ig.number}"
-         title="Build #${ig.number} again and stop skipping it">link</button></span>`).join("");
+  const n = (p.ignored || []).length;
+  if (!n) return "";
 
   return `<div class="pcard-links">
-    ${ignored.length
-      ? `<span class="hint"><strong>Not building:</strong></span> ${list}`
-      : `<span class="hint">Every open pull request on this repository is built.</span>`}
+    <span class="hint">Skipping <strong>${n}</strong> pull request${n === 1 ? "" : "s"} —
+      ${n === 1 ? "it is" : "they are"} not built by a push, a delivery or a scan.</span>
     <span class="grow"></span>
-    <label class="hint" for="link-${esc(key)}">Build one PR:</label>
-    <input id="link-${esc(key)}" class="linknum" type="number" min="1" step="1"
-      inputmode="numeric" placeholder="#" aria-label="pull request number">
-    <button class="btn" data-link="${esc(key)}"
-      title="Build this pull request, whether or not it was unlinked">Link</button>
+    <button class="btn" data-relink="${esc(key)}">Link an unlinked PR…</button>
   </div>`;
+}
+
+/* relinkPicker is the dialog behind that button: one row per unlinked pull request.
+
+   A dialog rather than the card, because this is the only place the four facts about each
+   one are worth showing — the number, the branch it was on, when it was unlinked, and a
+   control to bring it back. Choosing is the whole interaction, so nothing else is in it.
+
+   Resolves to the chosen number, or null. The list is passed in rather than re-fetched: it
+   came with the page state, and a picker that fetched would open empty for a moment. */
+function relinkPicker(p) {
+  const ignored = p.ignored || [];
+  return new Promise(resolve => {
+    const wrap = document.createElement("div");
+    // Distinguished from every other .modal for the same reason ask's is — see there.
+    wrap.className = "modal pick";
+    wrap.setAttribute("role", "dialog");
+    wrap.setAttribute("aria-modal", "true");
+    wrap.innerHTML = `
+      <div class="modal-card">
+        <div class="modal-body">
+          <div class="modal-x-row">
+            <button class="modal-x" data-pick="" title="Close" aria-label="Close">✕</button>
+          </div>
+          <h3>Link an unlinked pull request</h3>
+          <p class="ask-what">${esc(projectLabel(p))}
+            <span class="mono">${esc(p.owner)}/${esc(p.repo)}</span></p>
+          <p class="ask-lede">Linking one builds it now and stops it being skipped. Its
+            preview comes back at the same URL, with a fresh comment on the pull request.</p>
+          <div class="picklist">
+            ${ignored.map(ig => `
+              <button class="pickrow" data-pick="${ig.number}">
+                <span class="mono num">#${ig.number}</span>
+                <span class="branch">${esc(ig.branch || "branch unrecorded")}</span>
+                <span class="grow"></span>
+                <span class="took">unlinked ${esc(stamp(ig.created_at))}</span>
+                <span class="btn">Link</span>
+              </button>`).join("")}
+          </div>
+          <div class="ask-acts">
+            <button class="btn" data-pick="">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+
+    let done = false;
+    const finish = n => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("keydown", onKey);
+      wrap.remove();
+      resolve(n);
+    };
+    const onKey = e => {
+      if (e.key === "Escape") finish(null);
+    };
+
+    wrap.addEventListener("click", e => {
+      if (e.target === wrap) return finish(null);
+      const el = e.target.closest("[data-pick]");
+      if (!el) return;
+      finish(el.dataset.pick ? parseInt(el.dataset.pick, 10) : null);
+    });
+    document.addEventListener("keydown", onKey);
+
+    document.body.appendChild(wrap);
+    // The first pull request, not Cancel. Nothing here is destructive — the worst outcome
+    // of a stray Return is a build somebody wanted anyway.
+    const first = wrap.querySelector(".pickrow");
+    (first || wrap.querySelector('.ask-acts [data-pick]')).focus();
+  });
 }
 
 /* credentialWanted is the line on a project card naming the credential it still needs.
@@ -5171,56 +5434,30 @@ function wireProjectHandlers(s) {
     };
   }
 
-  for (const b of el.querySelectorAll("[data-build]")) {
+  // No handler for a Build open PRs button any more — the button is gone. The scan itself
+  // is not: adding a project still runs it, which is where it earns its place, and the
+  // route is unchanged for anything calling the API.
+
+  // Linking: pick one from the dialog, then post it. The route un-ignores the number and
+  // queues the build in one call — "build this" and "stop skipping this" are the same
+  // request, so there is nothing to keep in step.
+  for (const b of el.querySelectorAll("[data-relink]")) {
     b.onclick = async () => {
-      const key = b.dataset.build;
+      const key = b.dataset.relink;
+      const p = s.projects.find(x => projectKey(x) === key);
+      if (!p) return;
+      const number = await relinkPicker(p);
+      if (!number) return;
       await runProject(b, async () => {
-        const scan = await api("POST", `${projectPath(key)}/scan`);
-        // The count is the whole answer: 3 says it worked, 0 with an error says the App
-        // is not installed there, 0 without one says the repository has nothing open.
-        projFlash = scan.error
-          ? `Nothing queued: ${scan.error}`
-          : scan.queued
-            ? `Queued ${scan.queued} build${scan.queued === 1 ? "" : "s"} — watch the dashboard.`
-            : "That repository has no open pull requests, so there is nothing to build.";
+        const r = await api("POST", `${projectPath(key)}/link`, {number});
+        // The daemon answers 200 with an error when the pull request is closed or gone,
+        // which is a stale list rather than a broken installation.
+        projFlash = r.error
+          ? `Nothing queued: ${r.error}`
+          : `Queued a build for #${number} — watch the dashboard.`;
         return api("GET", "/api/projects");
       });
     };
-  }
-
-  // Link and re-link are one action reached two ways: a number typed into the box, or a
-  // chip for a pull request that was unlinked. Both POST the same route, which un-ignores
-  // the number and queues a build — "build this" and "stop skipping this" are the same
-  // request, so there is nothing to keep in step.
-  const linkPR = async (btn, key, number) => {
-    await runProject(btn, async () => {
-      const r = await api("POST", `${projectPath(key)}/link`, {number});
-      // The daemon answers 200 with an error for a number that is closed or absent,
-      // because that is a mistyped number rather than a broken installation.
-      projFlash = r.error
-        ? `Nothing queued: ${r.error}`
-        : `Queued a build for #${number} — watch the dashboard.`;
-      return api("GET", "/api/projects");
-    });
-  };
-
-  for (const b of el.querySelectorAll("[data-link]")) {
-    b.onclick = async () => {
-      const key = b.dataset.link;
-      const box = document.getElementById(`link-${key}`);
-      const number = parseInt(box && box.value, 10);
-      if (!number || number < 1) {
-        toast("Which pull request? Type its number, as in 19.", "bad");
-        if (box) box.focus();
-        return;
-      }
-      if (box) box.value = "";
-      await linkPR(b, key, number);
-    };
-  }
-
-  for (const b of el.querySelectorAll("[data-relink]")) {
-    b.onclick = () => linkPR(b, b.dataset.relink, parseInt(b.dataset.number, 10));
   }
 
   for (const b of el.querySelectorAll("[data-del-project]")) {
@@ -5329,9 +5566,10 @@ function applyStatus(d) {
   // stuck queue — which is exactly how it was reported, twice, both times a minute after a
   // restart.
   showStarting(d.starting, d.startup);
-  // Only once the daemon says it has finished, so the report does not appear over the
-  // banner that is still counting.
-  if (!d.starting) showBootReport(d);
+  // Only once the daemon says it has finished: while it is still recovering, the banner
+  // above is the live account of the same thing and the footer would contradict it with a
+  // duration from the previous run.
+  if (!d.starting) renderBootLink(d);
 
 
   // A project whose last preview was torn down must not keep a stream open
@@ -5352,27 +5590,33 @@ function applyStatus(d) {
 // Not a spinner on the row: the row is correct — the build *is* queued. What is missing is
 // that nothing can claim it yet, which is a property of the daemon and belongs where the
 // daemon's own state is reported.
-/* showBootReport shows what the last recovery did, once per daemon process.
+/* renderBootLink puts the startup report in the footer, and nothing on the screen.
 
-   Gated on the instance stamp, in sessionStorage: the daemon reports its startup for as
-   long as it runs, so without a marker every reload would re-announce a restart from an
-   hour ago. sessionStorage rather than localStorage because it is scoped to the tab,
-   which is the right lifetime for "I have seen this" — and rather than a variable,
-   because reloading the page is the commonest way to arrive here. */
-function showBootReport(s) {
+   It used to open by itself, gated on an instance stamp in sessionStorage so a reload would
+   not re-announce a restart from an hour ago. That machinery is gone with the auto-open:
+   nothing appears unasked, so nothing has to remember whether it already has, and the report
+   stays reachable for as long as the daemon runs rather than being spent on one load.
+
+   The label carries the duration. A link reading "startup report" makes somebody open a
+   dialog to learn a number that fits in the link. */
+function renderBootLink(s) {
   const r = s && s.last_startup;
-  if (!r || !r.instance) return;
-
-  const seen = `docpreview.boot.${r.instance}`;
-  try {
-    if (sessionStorage.getItem(seen)) return;
-    sessionStorage.setItem(seen, "1");
-  } catch {
-    // Private browsing, or storage disabled. Showing it every reload is worse than not
-    // showing it, because it appears over whatever the reader came back to look at.
+  const host = document.getElementById("boot-link");
+  if (!host) return;
+  if (!r || !r.instance) {
+    host.hidden = true;
     return;
   }
 
+  const btn = document.getElementById("boot-open");
+  btn.textContent = `startup ${secs(r.seconds)}`;
+  btn.title = "What the daemon did when it last started";
+  btn.onclick = () => openBootReport(r);
+  host.hidden = false;
+}
+
+/* openBootReport builds the dialog and shows it. Called from the footer link only. */
+function openBootReport(r) {
   // Adopted versus created is the number worth reporting: adoption binds a listener to a
   // share that already exists, creating one is a controller round trip that answers in
   // ten to fifteen seconds. The difference between the two is the difference between a
@@ -5380,18 +5624,10 @@ function showBootReport(s) {
   const adopted = (r.adopted_previews || 0) + (r.adopted_builds || 0);
   const created = (r.created_previews || 0) + (r.created_builds || 0);
 
-  /* Nothing to report when a restart was quick and everything was adopted.
-
-     This dialog exists to explain a wait — it was written when a restart took four and a
-     half minutes and nobody could see what it was spending them on. Adoption made the
-     ordinary case three seconds, and a modal that has to be dismissed to tell you a
-     three-second startup took three seconds is a toll on every restart.
-
-     Two things still open it inside ten seconds. Anything *created* means the fast path
-     did not work for something, which is the number that predicts the next restart being
-     slow. Anything queued means a build was waiting through recovery, which is the state
-     somebody wants to know about immediately. */
-  if (r.seconds < 10 && created === 0 && !r.pending) return;
+  // No suppression rule here any more. It used to refuse to open for a startup under ten
+  // seconds with nothing created — the right call for something that opened itself, and
+  // wrong for something asked for: a reader who clicks the link wants the report, including
+  // the one that says everything went well.
 
   const shares = adopted + created;
   // One row per fact, and only for facts that happened. A tile reading "0 created" is a
