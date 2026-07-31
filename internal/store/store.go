@@ -130,6 +130,49 @@ CREATE TABLE IF NOT EXISTS projects (
     PRIMARY KEY (platform, owner, repo)
 );
 
+-- Settings an operator changed from the dashboard.
+--
+-- The config file stays the source of the *default*; this holds the overrides. The split
+-- exists because config.yml is written by hand and carries comments explaining why each
+-- value is what it is — the most valuable thing in the file — and a daemon that rewrote it
+-- to store one string would delete them.
+--
+-- So: config is what a fresh installation starts from, this is what an operator has since
+-- decided, and the read path prefers this. One row per setting rather than a column per
+-- setting, because the alternative is a migration for every new one.
+--
+-- Deliberately not a home for credentials. Those are in the vault, encrypted; this table is
+-- plaintext and anything in it should be readable over somebody's shoulder.
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+-- Pull requests this installation has been told not to build.
+--
+-- A preview is created by discovery — a webhook delivery, or the scan that runs when a
+-- project is added — and discovery cannot know which pull requests an operator cares
+-- about. Removing the preview alone is not an answer: the next delivery or the next
+-- scan finds the pull request again and rebuilds it, so "remove" without a record of
+-- the decision reads as the removal having silently failed.
+--
+-- Keyed by repository and number rather than by preview id, because the preview is
+-- deleted at the same moment this row is written and a reopened pull request gets a
+-- new preview for the same number.
+--
+-- Deliberately not a column on previews. The row has to outlive the preview, which is
+-- the entire point.
+CREATE TABLE IF NOT EXISTS ignored_prs (
+    platform   TEXT NOT NULL,
+    owner      TEXT NOT NULL,
+    repo       TEXT NOT NULL,
+    number     INTEGER NOT NULL,
+    branch     TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (platform, owner, repo, number)
+);
+
 -- Comments exist only for the local platform, which has nowhere else to put
 -- them. GitHub and Bitbucket keep the comment on the pull request, which is the
 -- point: the comment is self-identifying by its marker and needs no record
@@ -212,6 +255,13 @@ func migrate(db *sql.DB) error {
 		// as a number of seconds: it is displayed in the form it was entered, and a
 		// column of 2700s is a unit somebody has to work out.
 		`ALTER TABLE projects ADD COLUMN timeout TEXT NOT NULL DEFAULT ''`,
+		// Whether the repository needs a credential to clone. Advisory, and the reason the
+		// form can warn about a missing token without nagging every public repository.
+		`ALTER TABLE projects ADD COLUMN private INTEGER NOT NULL DEFAULT 0`,
+		// A framework preset id, supplying the build command and output for the fields
+		// left blank. Empty means the repository's own configuration decides, which is
+		// what every existing row gets.
+		`ALTER TABLE projects ADD COLUMN framework TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -306,6 +356,11 @@ type PendingJob struct {
 // context cancellation and touches nothing here; a queued one has no context to cancel, so
 // the only way to stop it is to take it out of the queue before a worker claims it.
 //
+// Teardown is the second caller, and the reason this is not only about a button. Claim used
+// to be the only statement that removed a job, so tearing a preview down left its queued
+// build behind for a worker to pick up minutes later — rebuilding, recording and
+// republishing a preview an operator had deliberately deleted. See Daemon.teardown.
+//
 // It reports what it did rather than returning nothing, because of the race with Claim: a
 // worker can take the job between the dashboard drawing the button and the click arriving,
 // and the caller has to tell "removed it" from "too late, it is running" so it can cancel
@@ -364,6 +419,15 @@ type Project struct {
 	Repo     string `json:"repo"`
 	Enabled  bool   `json:"enabled"`
 
+	// Framework is a preset id — "docusaurus", "mkdocs" — supplying the build command and
+	// output directory for the fields left blank below. Empty means no preset, and the
+	// repository's own .docpreview.yml decides.
+	//
+	// Stored rather than resolved at save time, so the preset's values are not frozen into
+	// the row: a corrected default in a later version applies to every project that named
+	// the framework instead of only to new ones. See config.Frameworks.
+	Framework string `json:"framework,omitempty"`
+
 	BuildDir     string `json:"build_dir,omitempty"`
 	BuildCommand string `json:"build_command,omitempty"`
 	BuildOutput  string `json:"build_output,omitempty"`
@@ -374,6 +438,19 @@ type Project struct {
 	// this project. Empty means the server default.
 	Driver string `json:"driver,omitempty"`
 	Image  string `json:"image,omitempty"`
+
+	// Private records that this repository cannot be cloned without a credential.
+	//
+	// Not derived from the platform, and not looked up: a public repository needs no token
+	// at all, so without this the form has to either nag every project about a credential
+	// it may not need, or say nothing and let a private repository be added with no way to
+	// clone it. Asking once is the difference between a warning that means something and
+	// one that is always on.
+	//
+	// Advisory. Nothing refuses to build because of it — the clone's own failure is the
+	// authority — but the form warns when a private repository has no credential it can
+	// reach, which is the moment the answer is cheap to fix.
+	Private bool `json:"private,omitempty"`
 
 	// Timeout caps one build of this project, as a Go duration string — "45m", "2h".
 	// Empty means the server-wide build.timeout.
@@ -428,8 +505,8 @@ func (s *Store) SaveProject(ctx context.Context, p Project) error {
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO projects (platform, owner, repo, enabled, build_dir, build_command,
             build_output, base_url, detect_script, driver, image, notes,
-            display_name, avatar, timeout, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            display_name, avatar, timeout, private, framework, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(platform, owner, repo) DO UPDATE SET
             enabled       = excluded.enabled,
             build_dir     = excluded.build_dir,
@@ -443,10 +520,12 @@ func (s *Store) SaveProject(ctx context.Context, p Project) error {
             display_name  = excluded.display_name,
             avatar        = excluded.avatar,
             timeout       = excluded.timeout,
+            private       = excluded.private,
+            framework     = excluded.framework,
             updated_at    = excluded.updated_at`,
 		p.Platform, p.Owner, p.Repo, p.Enabled, p.BuildDir, p.BuildCommand,
 		p.BuildOutput, p.BaseURL, p.DetectScript, p.Driver, p.Image, p.Notes,
-		p.DisplayName, p.Avatar, p.Timeout, created, now)
+		p.DisplayName, p.Avatar, p.Timeout, p.Private, p.Framework, created, now)
 	if err != nil {
 		return fmt.Errorf("saving project %s: %w", p.Key(), err)
 	}
@@ -464,7 +543,7 @@ func (s *Store) ProjectFor(ctx context.Context, platform, owner, repo string) (P
 	rows, err := s.queryProjects(ctx,
 		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
                 base_url, detect_script, driver, image, notes, display_name, avatar,
-                timeout, created_at, updated_at
+                timeout, private, framework, created_at, updated_at
          FROM projects WHERE platform = ? AND owner = ? AND repo = ?`,
 		platform, owner, repo)
 	if err != nil {
@@ -481,7 +560,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	return s.queryProjects(ctx,
 		`SELECT platform, owner, repo, enabled, build_dir, build_command, build_output,
                 base_url, detect_script, driver, image, notes, display_name, avatar,
-                timeout, created_at, updated_at
+                timeout, private, framework, created_at, updated_at
          FROM projects ORDER BY platform, owner, repo`)
 }
 
@@ -511,8 +590,8 @@ func (s *Store) queryProjects(ctx context.Context, query string, args ...any) ([
 		var created, updated int64
 		if err := rows.Scan(&p.Platform, &p.Owner, &p.Repo, &p.Enabled, &p.BuildDir,
 			&p.BuildCommand, &p.BuildOutput, &p.BaseURL, &p.DetectScript, &p.Driver,
-			&p.Image, &p.Notes, &p.DisplayName, &p.Avatar, &p.Timeout,
-			&created, &updated); err != nil {
+			&p.Image, &p.Notes, &p.DisplayName, &p.Avatar, &p.Timeout, &p.Private,
+			&p.Framework, &created, &updated); err != nil {
 			return nil, err
 		}
 		p.CreatedAt = time.UnixMilli(created)
@@ -693,6 +772,37 @@ func (s *Store) SavePreview(ctx context.Context, p Preview) error {
 	return nil
 }
 
+// FailPreview empties a preview's URL and records why nothing is serving it.
+//
+// For the republish that fails at startup. The row is written by a build that succeeded,
+// so it says `ready` and carries the URL that build published — and after a failed
+// restore nothing is bound to that address, so `/status` offers a link that answers 502
+// and the pull request comment advertises the same one. Both read this row, which is why
+// emptying it is what fixes both. Seen live on 2026-07-30, when `CreateShare` timed out.
+//
+// An UPDATE rather than a delete, because the artifacts are still on disk and still
+// good: the failure is a controller round trip that may work on the next attempt, and a
+// deleted row takes the preview off the dashboard — off the page holding the Rebuild
+// button — while its comment still points at the dead URL.
+//
+// `name` is deliberately left alone. Teardown reads it to give the exposer's reserved
+// name back (`Daemon.releaseNames`), and on zrok that name is a quota-bearing object, so
+// clearing it here would leak one per failed restore with nothing left to name it.
+//
+// The sibling for a build is ClearBuildShare, which empties both columns and leaves the
+// state alone — a build row is history and its state is a fact about what happened,
+// where a preview row is a claim about what is being served right now.
+func (s *Store) FailPreview(ctx context.Context, previewID, reason string) error {
+	_, err := s.db.ExecContext(ctx, `
+        UPDATE previews SET url = '', state = ?, reason = ?, updated_at = ?
+        WHERE preview_id = ?`,
+		string(scm.StateFailed), reason, time.Now().UnixMilli(), previewID)
+	if err != nil {
+		return fmt.Errorf("recording the failed republish of preview %s: %w", previewID, err)
+	}
+	return nil
+}
+
 // DeletePreview forgets a preview.
 func (s *Store) DeletePreview(ctx context.Context, previewID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM previews WHERE preview_id = ?`, previewID)
@@ -725,6 +835,136 @@ func (s *Store) ListPreviews(ctx context.Context) ([]Preview, error) {
 		p.State = scm.State(state)
 		p.UpdatedAt = time.UnixMilli(updated)
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SettingNamePrefix is the key holding the per-installation name prefix.
+//
+// Named as a constant rather than spelled at each call site, because a typo in a settings
+// key is not a compile error — it is a value that silently reads back as the default, which
+// looks exactly like a setting that did not save.
+const SettingNamePrefix = "exposer.prefix"
+
+// Setting reads one setting, reporting whether it was set at all.
+//
+// The boolean matters: an operator who deliberately cleared the prefix has set it to the
+// empty string, and that is a different answer from never having touched it — the first
+// means "no prefix", the second means "use the config file's".
+func (s *Store) Setting(ctx context.Context, key string) (string, bool, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("reading setting %s: %w", key, err)
+	}
+	return v, true, nil
+}
+
+// SetSetting writes one setting.
+func (s *Store) SetSetting(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `
+        INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		key, value, time.Now().UnixMilli())
+	if err != nil {
+		return fmt.Errorf("writing setting %s: %w", key, err)
+	}
+	return nil
+}
+
+// ClearSetting removes an override, so the config file's value applies again.
+func (s *Store) ClearSetting(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key)
+	if err != nil {
+		return fmt.Errorf("clearing setting %s: %w", key, err)
+	}
+	return nil
+}
+
+// IgnorePR records that this pull request must not be built again.
+//
+// Written as part of unlinking, whose other half is tearing the preview down. Idempotent:
+// unlinking something already unlinked is not an error, it is the state the operator
+// asked for.
+func (s *Store) IgnorePR(ctx context.Context, pr model.PullRequest) error {
+	_, err := s.db.ExecContext(ctx, `
+        INSERT INTO ignored_prs (platform, owner, repo, number, branch, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (platform, owner, repo, number) DO UPDATE SET branch = excluded.branch`,
+		string(pr.Repo.Platform), pr.Repo.Owner, pr.Repo.Name, pr.Number, pr.Branch,
+		time.Now().UnixMilli())
+	if err != nil {
+		return fmt.Errorf("ignoring %s: %w", pr.String(), err)
+	}
+	return nil
+}
+
+// UnignorePR undoes IgnorePR, and reports whether there was anything to undo.
+//
+// The boolean is what tells the caller whether linking a pull request that was ignored
+// is a re-link or a first build, which is the difference between two sentences the
+// dashboard shows.
+func (s *Store) UnignorePR(ctx context.Context, repo model.Repo, number int) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `
+        DELETE FROM ignored_prs WHERE platform = ? AND owner = ? AND repo = ? AND number = ?`,
+		string(repo.Platform), repo.Owner, repo.Name, number)
+	if err != nil {
+		return false, fmt.Errorf("un-ignoring %s#%d: %w", repo.String(), number, err)
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// PRIgnored answers the question every build path asks before doing any work.
+func (s *Store) PRIgnored(ctx context.Context, repo model.Repo, number int) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `
+        SELECT 1 FROM ignored_prs
+        WHERE platform = ? AND owner = ? AND repo = ? AND number = ?`,
+		string(repo.Platform), repo.Owner, repo.Name, number).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking whether %s#%d is ignored: %w", repo.String(), number, err)
+	}
+	return true, nil
+}
+
+// IgnoredPR is one unlinked pull request, for the list the projects page shows.
+type IgnoredPR struct {
+	Number    int       `json:"number"`
+	Branch    string    `json:"branch,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ListIgnored returns the pull requests unlinked on one repository, lowest number first.
+//
+// Listed rather than merely enforced, because an ignore nothing displays is
+// indistinguishable from a build system that has stopped working. The list is also
+// where re-linking is offered.
+func (s *Store) ListIgnored(ctx context.Context, repo model.Repo) ([]IgnoredPR, error) {
+	rows, err := s.db.QueryContext(ctx, `
+        SELECT number, branch, created_at FROM ignored_prs
+        WHERE platform = ? AND owner = ? AND repo = ? ORDER BY number`,
+		string(repo.Platform), repo.Owner, repo.Name)
+	if err != nil {
+		return nil, fmt.Errorf("listing ignored pull requests for %s: %w", repo.String(), err)
+	}
+	defer rows.Close()
+
+	var out []IgnoredPR
+	for rows.Next() {
+		var ig IgnoredPR
+		var created int64
+		if err := rows.Scan(&ig.Number, &ig.Branch, &created); err != nil {
+			return nil, fmt.Errorf("scanning an ignored pull request: %w", err)
+		}
+		ig.CreatedAt = time.UnixMilli(created)
+		out = append(out, ig)
 	}
 	return out, rows.Err()
 }

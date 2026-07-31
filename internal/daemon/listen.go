@@ -1,12 +1,15 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 
 	"github.com/openziti/sdk-golang/ziti"
+	"github.com/openziti/sdk-golang/ziti/edge"
 
 	"github.com/netfoundry/docpreview/internal/config"
 )
@@ -95,7 +98,118 @@ func (ls *Listeners) openZiti(cfg config.ZitiListener) (net.Listener, error) {
 	// Recorded only once the bind succeeded, so the failure paths above own
 	// their own cleanup and Close never double-closes a context.
 	ls.contexts = append(ls.contexts, zctx)
-	return ln, nil
+	return &overlayListener{Listener: ln, admins: adminSet(cfg.AdminIdentities)}, nil
+}
+
+// adminSet indexes a listener's admin identities.
+//
+// A nil map for an empty list, which is the default: every lookup then misses, which is the
+// read-only answer. Fail-closed by construction rather than by remembering to check the
+// length somewhere.
+func adminSet(ids []string) map[string]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+// overlayListener tags every connection it accepts with who dialed it and whether that
+// identity may write.
+//
+// The decision is made here, at accept, for one reason: `http.Server.ConnContext` is handed
+// a `net.Conn` and nothing else, so by the time a request is being served there is no way
+// back to *which listener* it arrived on — and the admin grant is a property of the listener.
+// One http.Server serves every listener, so without this tag a two-listener config could not
+// tell an operator's service from a reviewer's.
+type overlayListener struct {
+	net.Listener
+	admins map[string]bool
+}
+
+func (l *overlayListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &overlayConn{Conn: c, dialer: dialerOf(c), admins: l.admins}, nil
+}
+
+// overlayConn carries the dialing identity and the grant through to ConnContext.
+type overlayConn struct {
+	net.Conn
+	dialer string
+	admins map[string]bool
+}
+
+// mayWrite reports whether this connection's dialer may use the admin surfaces.
+//
+// Empty identity is refused, always. That is what both a non-overlay connection and a router
+// that never sent the header produce, and treating "we could not tell" as "allowed" is how a
+// credential surface ends up open.
+func (c *overlayConn) mayWrite() bool {
+	if c.dialer == "" {
+		return false
+	}
+	return c.admins[c.dialer]
+}
+
+// dialerOf reads the dialing identity from an accepted overlay connection.
+//
+// `edge.ServiceConn` is the interface carrying it; `edge.Conn` embeds that one, and the
+// methods live on the narrower of the two. A conditional assertion rather than a blind one,
+// because this is also called for anything a test hands the listener.
+func dialerOf(c net.Conn) string {
+	if ec, ok := c.(edge.ServiceConn); ok {
+		return ec.GetDialerIdentityId()
+	}
+	return ""
+}
+
+// overlayKey types the context value. An unexported empty struct, so nothing outside this
+// package can set it — a request that claims to be an admin identity because a middleware
+// somewhere wrote a string key is exactly the forgery this prevents.
+type overlayKey struct{}
+
+// overlayCaller is what a request knows about the connection it arrived on.
+type overlayCaller struct {
+	// Dialer is the identity id the controller reported, empty for a plain TCP connection.
+	Dialer string
+
+	// MayWrite is whether that identity is in this listener's admin list. Decided at
+	// accept, because the grant belongs to the listener and a request cannot see which one
+	// it came from.
+	MayWrite bool
+}
+
+// ConnContext stamps the accepted connection's overlay identity onto every request served on
+// it. Installed on the ingress http.Server.
+//
+// A plain TCP connection stamps nothing, which leaves the existing loopback rule in charge
+// for the ordinary case.
+func ConnContext(ctx context.Context, c net.Conn) context.Context {
+	oc, ok := c.(*overlayConn)
+	if !ok {
+		return ctx
+	}
+	return context.WithValue(ctx, overlayKey{}, overlayCaller{
+		Dialer:   oc.dialer,
+		MayWrite: oc.mayWrite(),
+	})
+}
+
+// overlayCallerFrom reads what ConnContext stamped.
+//
+// The zero value when there is nothing — no dialer, no write grant — so a caller that forgets
+// to check `ok` still gets the closed answer.
+func overlayCallerFrom(ctx context.Context) (overlayCaller, bool) {
+	v, ok := ctx.Value(overlayKey{}).(overlayCaller)
+	return v, ok
 }
 
 // Close releases every listener and overlay identity.

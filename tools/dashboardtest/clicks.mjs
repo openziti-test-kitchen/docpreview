@@ -41,8 +41,14 @@ import {dirname, join} from "node:path";
 import {fileURLToPath} from "node:url";
 import {JSDOM, VirtualConsole} from "jsdom";
 
+import {liveStatus} from "./live.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
-const dashboard = join(here, "..", "..", "internal", "daemon", "dashboard.html");
+// Overridable, as in logtail.mjs and for the same reason: a harness that can only load
+// the current file cannot tell a real assertion from one that would have passed before
+// the change, which is how two earlier diagnoses of this page went wrong.
+const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
+  join(here, "..", "..", "internal", "daemon", "dashboard.html");
 const daemon = process.env.DOCPREVIEW_URL || "http://127.0.0.1:8471";
 
 let failures = 0;
@@ -53,15 +59,11 @@ const fail = msg => { failures++; console.log(`   FAIL: ${msg}`); };
 // file, which is the case that was broken and which a captured payload from an idle
 // daemon never contains.
 async function loadStatus() {
-  let status;
-  try {
-    const res = await fetch(`${daemon}/status`);
-    status = await res.json();
-    console.log(`state: live, from ${daemon}`);
-  } catch {
-    status = JSON.parse(readFileSync(join(here, "status.fixture.json"), "utf8"));
-    console.log("state: fixture (no daemon on " + daemon + ")");
-  }
+  // Through live.mjs, which knows how to log in. /status is behind the login now, and a
+  // 401 body parses as JSON perfectly well — so the previous version handed the page a
+  // status object with no previews and the failure surfaced inside the page.
+  const {status, source} = await liveStatus(daemon);
+  console.log(`state: ${source}`);
 
   const first = status.previews?.[0];
   if (first) {

@@ -213,6 +213,92 @@ func (c *Client) OpenPullRequests(ctx context.Context, repo model.Repo) ([]model
 	}
 }
 
+// DefaultBranch names the repository's default branch and the commit at its tip.
+//
+// Two calls, because GitHub's repository object carries the branch's *name* and not what it
+// points at. `GET /repos/{o}/{r}` answers the first and `BranchTip` the second.
+//
+// The branch is read rather than assumed. A repository whose default branch is `master`
+// would otherwise get a preview of a branch that does not exist, which fails at the clone
+// with git's own message about a missing ref — accurate and about the wrong thing.
+func (c *Client) DefaultBranch(ctx context.Context, repo model.Repo) (string, string, error) {
+	installationID, err := c.installationFor(ctx, repo)
+	if err != nil {
+		return "", "", err
+	}
+
+	var out struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	path := fmt.Sprintf("/repos/%s/%s", repo.Owner, repo.Name)
+	if err := c.do(ctx, installationID, http.MethodGet, path, nil, &out); err != nil {
+		return "", "", fmt.Errorf("reading %s/%s: %w", repo.Owner, repo.Name, err)
+	}
+	if out.DefaultBranch == "" {
+		// An empty repository has no default branch to report. Saying so beats returning
+		// a blank name that fails later as a clone error about a missing ref.
+		return "", "", fmt.Errorf("%s/%s reports no default branch; is it empty?",
+			repo.Owner, repo.Name)
+	}
+
+	commit, err := c.BranchTip(ctx, repo, out.DefaultBranch)
+	if err != nil {
+		return "", "", err
+	}
+	return out.DefaultBranch, commit, nil
+}
+
+// BranchTip is the commit a branch currently points at.
+//
+// `GET /repos/{o}/{r}/branches/{branch}` rather than the git-refs endpoint: it takes the
+// branch name unencoded in the path, and a 404 from it means "no such branch" rather than
+// the empty list a refs query returns for one.
+func (c *Client) BranchTip(ctx context.Context, repo model.Repo, branch string) (string, error) {
+	installationID, err := c.installationFor(ctx, repo)
+	if err != nil {
+		return "", err
+	}
+
+	var out struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	// Escaped, because a branch name legitimately contains slashes — `release/8.2` would
+	// otherwise address a path two segments deep and 404.
+	path := fmt.Sprintf("/repos/%s/%s/branches/%s",
+		repo.Owner, repo.Name, url.PathEscape(branch))
+	if err := c.do(ctx, installationID, http.MethodGet, path, nil, &out); err != nil {
+		return "", fmt.Errorf("reading branch %s on %s/%s: %w", branch, repo.Owner, repo.Name, err)
+	}
+	if out.Commit.SHA == "" {
+		return "", fmt.Errorf("branch %s on %s/%s reports no commit", branch, repo.Owner, repo.Name)
+	}
+	return out.Commit.SHA, nil
+}
+
+// installationOf is the installation to act as for this pull request, looking it up when the
+// pull request does not carry one.
+//
+// `InstallationID` is documented as "the installation that delivered the event", and for a
+// webhook that is exactly right — the id is in the payload and no lookup is needed. But not
+// every build comes from a delivery: a project scan, a linked pull request and a branch
+// preview are all started by an operator, and a zero id there is not an error, it is the
+// absence of a webhook.
+//
+// This existed as a bug rather than as a decision. Branch previews built a pull request with
+// no id and every GitHub one failed at the clone with "the webhook payload was missing
+// installation.id" — a message about a webhook, for a build that never had one, which is
+// exactly the kind of error that sends somebody to read delivery logs that do not exist.
+//
+// One extra App-authenticated call in that case, and none in the webhook case.
+func (c *Client) installationOf(ctx context.Context, pr model.PullRequest) (int64, error) {
+	if pr.InstallationID != 0 {
+		return pr.InstallationID, nil
+	}
+	return c.installationFor(ctx, pr.Repo)
+}
+
 // installationFor finds the installation covering a repository.
 //
 // `GET /repos/{owner}/{repo}/installation` is authenticated as the *App*, not as an
@@ -274,7 +360,11 @@ func (c *Client) installationFor(ctx context.Context, repo model.Repo) (int64, e
 // argument list and nowhere else — never a log line, never an error message,
 // never a comment.
 func (c *Client) CloneURL(ctx context.Context, pr model.PullRequest) (string, error) {
-	token, err := c.auth.installationToken(ctx, pr.InstallationID)
+	installationID, err := c.installationOf(ctx, pr)
+	if err != nil {
+		return "", err
+	}
+	token, err := c.auth.installationToken(ctx, installationID)
 	if err != nil {
 		return "", err
 	}
@@ -319,6 +409,11 @@ func (c *Client) ChangedFiles(ctx context.Context, pr model.PullRequest) ([]stri
 	const perPage = 100
 	var files []string
 
+	installationID, err := c.installationOf(ctx, pr)
+	if err != nil {
+		return nil, err
+	}
+
 	for page := 1; page <= maxChangedFilePages; page++ {
 		path := fmt.Sprintf("/repos/%s/%s/pulls/%d/files?per_page=%d&page=%d",
 			pr.Repo.Owner, pr.Repo.Name, pr.Number, perPage, page)
@@ -327,7 +422,7 @@ func (c *Client) ChangedFiles(ctx context.Context, pr model.PullRequest) ([]stri
 			Filename         string `json:"filename"`
 			PreviousFilename string `json:"previous_filename"`
 		}
-		if err := c.do(ctx, pr.InstallationID, http.MethodGet, path, nil, &batch); err != nil {
+		if err := c.do(ctx, installationID, http.MethodGet, path, nil, &batch); err != nil {
 			return nil, fmt.Errorf("listing changed files on %s: %w", pr, err)
 		}
 		for _, f := range batch {

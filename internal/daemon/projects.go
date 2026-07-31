@@ -2,9 +2,9 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -64,6 +64,31 @@ type ProjectsAdmin struct {
 	// was found.
 	rebuilder func(ctx context.Context, previewID string) (bool, error)
 
+	// unlinker removes a preview and records that its pull request must not be built
+	// again, reporting whether the preview was found. linker is the other direction, by
+	// pull request number, because a pull request nothing has built yet has no preview
+	// id to name it by.
+	unlinker func(ctx context.Context, previewID string) (bool, error)
+	linker   func(ctx context.Context, repo model.Repo, number int) error
+
+	// brancher builds a branch with no pull request behind it, returning the branch it
+	// built — which the caller does not necessarily know, since an empty branch means "this
+	// repository's default" and that is read from the platform rather than assumed.
+	//
+	// A function rather than the daemon, like every other one of these, so this admin
+	// depends on the store and the config only.
+	brancher func(ctx context.Context, repo model.Repo, branch string) (string, error)
+
+	// prefix reads and writes the per-installation name prefix. Two functions rather than
+	// one accessor, because the read is on every page load and the write is gated.
+	readPrefix func() string
+	setPrefix  func(ctx context.Context, prefix string) error
+
+	// scmChecker verifies that a project's source-control credential reaches its
+	// repository, returning what it found. Nil for a daemon with no platform that can be
+	// checked, in which case the route answers 501 rather than pretending.
+	scmChecker func(ctx context.Context, repo model.Repo) (string, error)
+
 	// The docker volume operations behind the cache controls, injectable because they are
 	// destructive and reach the real docker daemon.
 	//
@@ -118,10 +143,50 @@ func (a *ProjectsAdmin) WithRebuilder(fn func(context.Context, string) (bool, er
 	return a
 }
 
+// WithLinking installs the unlink and link actions. Both or neither: a page that can
+// unlink a pull request and not link it back offers a one-way door.
+func (a *ProjectsAdmin) WithLinking(
+	unlink func(context.Context, string) (bool, error),
+	link func(context.Context, model.Repo, int) error,
+) *ProjectsAdmin {
+	a.unlinker, a.linker = unlink, link
+	return a
+}
+
+// WithBrancher installs the branch-preview build: the permanent preview of a project's
+// default branch, started when the project is created and rebuildable from its card.
+func (a *ProjectsAdmin) WithBrancher(fn func(context.Context, model.Repo, string) (string, error)) *ProjectsAdmin {
+	a.brancher = fn
+	return a
+}
+
+// WithNamePrefix installs the read and write of the per-installation name prefix.
+func (a *ProjectsAdmin) WithNamePrefix(read func() string,
+	set func(context.Context, string) error,
+) *ProjectsAdmin {
+	a.readPrefix, a.setPrefix = read, set
+	return a
+}
+
+// WithSCMChecker installs the credential test behind the projects page's Test button.
+func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (string, error)) *ProjectsAdmin {
+	a.scmChecker = fn
+	return a
+}
+
 // WithDocker records what the startup probe found.
 func (a *ProjectsAdmin) WithDocker(ok bool, why string) *ProjectsAdmin {
 	a.dockerOK, a.dockerWhy = ok, why
 	return a
+}
+
+// namePrefix is the installation's prefix, or empty on a daemon that has no reader wired —
+// which is every test that builds this admin directly.
+func (a *ProjectsAdmin) namePrefix() string {
+	if a.readPrefix == nil {
+		return ""
+	}
+	return a.readPrefix()
 }
 
 func (a *ProjectsAdmin) openVault() *vault.Vault {
@@ -151,6 +216,12 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.setSecret))
 	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}/secrets/{env}", a.gated(a.delSecret))
 
+	// A project's own source-control credential, which is not one of its variables and is
+	// deliberately not routed under /secrets/. Bitbucket needs this because an access
+	// token there is scoped to a repository unless an administrator allows wider ones.
+	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}/scm/{name}", a.gated(a.setSCM))
+	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/scm-test", a.gated(a.testSCM))
+
 	// Build what is already open. A project added here has no webhook behind it, so
 	// without this the answer to "I added it, now what" is "wait for somebody to push".
 	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/scan", a.gated(a.scan))
@@ -159,6 +230,23 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// controls, and here for the same reason: one gate rather than a third copy of it.
 	mux.HandleFunc("POST /api/builds/{preview}/cancel", a.gated(a.cancelBuild))
 	mux.HandleFunc("POST /api/builds/{preview}/rebuild", a.gated(a.rebuild))
+
+	// Unlinking is keyed on the preview, because that is what the operator is looking
+	// at when they decide they do not want it. Linking is keyed on the project and a
+	// number, because a pull request nothing has built has no preview.
+	mux.HandleFunc("POST /api/builds/{preview}/unlink", a.gated(a.unlink))
+	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/link", a.gated(a.link))
+
+	// The branch preview. Fired automatically when a project is created; this route is for
+	// rebuilding it, and for a project that was added before the daemon could reach the
+	// platform to ask what its default branch is called.
+	mux.HandleFunc("POST /api/projects/{platform}/{owner}/{repo}/branch", a.gated(a.branch))
+
+	// The installation's name prefix. Not under /api/projects/{...} because it belongs to
+	// the daemon rather than to a project, but served by this admin so it inherits the same
+	// two gates — it decides the public hostname of every preview, which is not a thing a
+	// remote caller may change.
+	mux.HandleFunc("PUT /api/settings/prefix", a.gated(a.setNamePrefix))
 
 	// Checking an image runs a docker command with an operator-supplied argument and
 	// makes a registry round trip, so it is gated like every other write even though it
@@ -181,29 +269,23 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 // rather than restating it: on a loopback-only daemon the boundary is the one that
 // already protects the binary, and anyone who can reach 127.0.0.1 can edit the
 // database directly.
+// One rule, one implementation, shared with the credential surface — see
+// listenersAllowAdmin. A project row decides what command runs on the build host and the
+// vault decides which credentials it runs with; guarding them differently would mean
+// guarding the weaker of the two.
 func (a *ProjectsAdmin) available() (bool, string) {
-	if len(a.cfg.Listeners) == 0 {
-		return false, "no listeners"
-	}
-	for _, l := range a.cfg.Listeners {
-		if l.Ziti != nil {
-			return false, "a ziti listener is configured; the admin surface does not yet " +
-				"check the dialing identity, so changing what a build runs is refused"
-		}
-		host, _, err := net.SplitHostPort(l.TCP)
-		if err != nil {
-			return false, "unparseable listener " + l.TCP
-		}
-		if !isLoopback(host) {
-			return false, fmt.Sprintf("the ingress listens on %s; projects can only be edited "+
-				"from a loopback-only daemon", l.TCP)
-		}
-	}
-	return true, ""
+	return listenersAllowAdmin(a.cfg.Listeners, "projects")
 }
 
 func (a *ProjectsAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// An authenticated admin skips the listener check, for the reason spelled out on
+		// SecretsAdmin.gated: that check is a proxy for "we cannot tell who this is", and a
+		// session answers the question directly.
+		if roleOfContext(r.Context()) == RoleAdmin {
+			next(w, r)
+			return
+		}
 		if ok, why := a.available(); !ok {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": why})
 			return
@@ -243,6 +325,14 @@ type projectsState struct {
 	// SecretsAvailable is false when no vault is wired at all, which is a different
 	// thing again: not locked, not empty, just not a feature on this daemon.
 	SecretsAvailable bool `json:"secrets_available"`
+
+	// Note is something that happened alongside the request and did not fail it — today,
+	// only a default-branch preview that could not be started when a project was created.
+	//
+	// Carried on the state rather than raised as an error because the project *was* saved:
+	// answering 500 would tell the operator their work was lost when it was not. The page
+	// toasts this, so the one thing that did not work is still said out loud.
+	Note string `json:"note,omitempty"`
 }
 
 // projectView is a project row plus the names of the secrets scoped to it.
@@ -255,6 +345,42 @@ type projectView struct {
 
 	// Secrets are the environment variable names this project injects, sorted.
 	Secrets []string `json:"secrets"`
+
+	// SCM names which of this project's own source-control credentials are stored —
+	// "scm.access_token", "scm.email", "scm.api_token". Names only, like every other
+	// credential surface here: nothing reads a value back.
+	//
+	// Present so the form can say "set" rather than showing an empty box that gives no
+	// way to tell a stored token from a missing one.
+	SCM []string `json:"scm,omitempty"`
+
+	// Ignored are the pull requests unlinked on this repository, lowest number first.
+	//
+	// Displayed rather than only enforced. An ignore that nothing shows is
+	// indistinguishable from a build system that has quietly stopped noticing a pull
+	// request, and this list is also the only place a mistaken unlink can be undone.
+	Ignored []store.IgnoredPR `json:"ignored,omitempty"`
+
+	// Branch is this project's permanent branch preview — the state of its default branch,
+	// which is the thing an operator looks at most and the one preview that is not about a
+	// review.
+	//
+	// Nil when there is none yet: a project added before the daemon could reach the platform,
+	// or one whose first build has not finished. The card offers to start it in that case,
+	// which is why the absence has to be distinguishable from a preview that exists and is
+	// failing.
+	Branch *branchView `json:"branch,omitempty"`
+}
+
+// branchView is the branch preview as the projects page needs it: enough to render a link
+// and say whether it works, and nothing else.
+type branchView struct {
+	Name      string `json:"name"`
+	PreviewID string `json:"preview_id"`
+	URL       string `json:"url,omitempty"`
+	State     string `json:"state"`
+	Commit    string `json:"commit,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 type projectDefaults struct {
@@ -277,6 +403,32 @@ type projectDefaults struct {
 	// request's own build scripts on the host, so it is off unless the operator wrote
 	// it down — and the form must not offer what the build will refuse.
 	AllowLocalDriver bool `json:"allow_local_driver"`
+
+	// SCMGlobal names the workspace-wide source-control credentials that are stored —
+	// "bitbucket.access_token", "bitbucket.email", "bitbucket.api_token". Names only.
+	//
+	// The form needs it to say which credential a project will actually use: with one
+	// stored, a blank per-project field means "inherit this", and with none it means "this
+	// repository cannot be cloned". Those are opposite meanings for the same empty box,
+	// and the page cannot tell them apart without being told.
+	SCMGlobal []string `json:"scm_global,omitempty"`
+
+	// Frameworks is the preset table, so the dropdown and the placeholders under it come
+	// from the same source the build uses. A copy in the page would drift, and the way it
+	// would drift is a form promising one build command and the build running another.
+	Frameworks []config.Framework `json:"frameworks,omitempty"`
+
+	// Framework is the preset a *new* project's form starts on. Not applied to a stored
+	// blank, which would change what every existing project builds.
+	Framework string `json:"framework,omitempty"`
+
+	// Prefix is what every preview hostname this installation publishes starts with.
+	//
+	// On this page because it is the setting that lets two installations share one exposer
+	// account, and the moment somebody needs it is the moment they are standing up the
+	// second one — not a moment when they want to edit a YAML file on a host they have just
+	// built. Empty means no prefix, which is every existing installation.
+	Prefix string `json:"prefix"`
 
 	// Images are the container images this project knows work, offered as suggestions
 	// beside a free-text field rather than as a closed list: the set of images that
@@ -364,10 +516,46 @@ func knownImages() []string {
 	}
 }
 
+// branchPreviewFor picks a repository's branch preview out of the preview list.
+//
+// Nil when there is none, which the card renders as an offer to start one rather than as an
+// empty space. A repository has at most one today — the default branch's — but the search is
+// written as "the first branch preview of this repository" rather than assuming that, since
+// building an arbitrary branch is the same code path and nothing stops a second one existing.
+//
+// Matched on IsBranch rather than on a branch name, because the name is whatever the platform
+// said its default was and this code does not get to assume it is called `main`.
+func branchPreviewFor(previews []store.Preview, repo model.Repo) *branchView {
+	for _, p := range previews {
+		if !p.PR.IsBranch() || p.PR.Repo != repo {
+			continue
+		}
+		return &branchView{
+			Name:      p.PR.Branch,
+			PreviewID: p.PreviewID,
+			URL:       p.URL,
+			State:     string(p.State),
+			Commit:    p.Commit,
+			UpdatedAt: p.UpdatedAt.Format(time.RFC3339),
+		}
+	}
+	return nil
+}
+
 func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projectsState, error) {
 	projects, err := a.store.ListProjects(ctx)
 	if err != nil {
 		return projectsState{}, err
+	}
+
+	// The branch preview lives in the previews table, not in the project row: it is a
+	// preview like any other, and duplicating its URL onto the project would give the page
+	// two sources for one fact that a failed republish could make disagree.
+	//
+	// A failure is not worth failing the page for — the cards render without the link.
+	previews, err := a.store.ListPreviews(ctx)
+	if err != nil {
+		a.log.Warn("listing previews for the branch links", "error", err)
 	}
 
 	v := a.openVault()
@@ -377,7 +565,10 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 			Driver: a.cfg.Build.Driver, Image: a.cfg.Build.Image,
 			Timeout:         a.cfg.Build.Timeout.String(),
 			DockerAvailable: a.dockerOK, AllowLocalDriver: a.cfg.Build.AllowLocalDriver,
-			Images: knownImages(),
+			Frameworks: config.Frameworks(),
+			Framework:  config.FrameworkDefault,
+			Images:     knownImages(),
+			Prefix:     a.namePrefix(),
 		},
 		SecretsAvailable: a.vault != nil,
 		VaultLocked:      v == nil,
@@ -385,14 +576,42 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 	if !a.dockerOK {
 		st.Defaults.DockerDetail = a.dockerWhy
 	}
+	// Which workspace-wide credentials exist, so an empty per-project box can say whether
+	// it means "inherit" or "nothing will work". Names only — nothing reads a value back.
+	if v != nil {
+		for _, k := range []string{vault.KeyBitbucketAccessToken, vault.KeyBitbucketEmail,
+			vault.KeyBitbucketAPIToken} {
+			if _, err := v.Get(k); err == nil {
+				st.Defaults.SCMGlobal = append(st.Defaults.SCMGlobal, k)
+			}
+		}
+	}
 	for _, p := range projects {
 		view := projectView{Project: p, Secrets: []string{}}
 		if v != nil {
 			prefix := vault.ProjectSecretPrefix(p.Platform, p.Owner, p.Repo)
 			for _, k := range v.KeysWithPrefix(prefix) {
-				view.Secrets = append(view.Secrets, strings.TrimPrefix(k, prefix))
+				name := strings.TrimPrefix(k, prefix)
+				// The two kinds share a prefix and are listed separately, because one is
+				// injected into every build and the other is what the daemon clones with.
+				// Before this split, a project's access token appeared in the page's list
+				// of build variables — which is both wrong and alarming.
+				if vault.IsProjectSCMKey(name) {
+					view.SCM = append(view.SCM, name)
+					continue
+				}
+				view.Secrets = append(view.Secrets, name)
 			}
 		}
+		// A failure here is not worth failing the page for: the list is informational,
+		// and the enforcement that matters happens in the build path.
+		repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
+		ignored, err := a.store.ListIgnored(r.Context(), repo)
+		if err != nil {
+			a.log.Warn("listing unlinked pull requests", "project", p.Key(), "error", err)
+		}
+		view.Ignored = ignored
+		view.Branch = branchPreviewFor(previews, repo)
 		st.Projects = append(st.Projects, view)
 	}
 
@@ -402,7 +621,12 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 	}
 	sort.Strings(st.GlobalSecrets)
 
+	// The admin-session shortcut first, mirroring gated. Without it a logged-in admin on a
+	// daemon that listens on more than loopback would be shown a read-only page whose every
+	// button then worked, which is as misleading as the reverse.
 	switch ok, why := a.available(); {
+	case roleOfContext(r.Context()) == RoleAdmin:
+		st.CanWrite = true
 	case !ok:
 		st.ReadOnlyWhy = why
 	default:
@@ -445,6 +669,8 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 		DisplayName  string `json:"display_name"`
 		Avatar       string `json:"avatar"`
 		Timeout      string `json:"timeout"`
+		Private      *bool  `json:"private"`
+		Framework    string `json:"framework"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -469,6 +695,24 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 	p.DisplayName = strings.TrimSpace(body.DisplayName)
 	p.Avatar = strings.TrimSpace(body.Avatar)
 	p.Timeout = strings.TrimSpace(body.Timeout)
+
+	// The framework preset. Validated against the table rather than stored as typed: an id
+	// this binary does not know silently falls back to the repository's own configuration
+	// at build time, which is a project that looks configured and is not.
+	p.Framework = strings.TrimSpace(body.Framework)
+	if p.Framework != config.FrameworkNone {
+		if _, ok := config.FrameworkByID(p.Framework); !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("unknown framework preset %q", p.Framework)})
+			return
+		}
+	}
+	// A pointer, like Enabled: PUT is a whole-row upsert, and a plain bool would read a
+	// field the caller omitted as "false" — silently unmarking a private repository on
+	// any save from something that does not know about this field.
+	if body.Private != nil {
+		p.Private = *body.Private
+	}
 
 	// Checked here, once, rather than at the start of every build. A build that
 	// discovers the timeout is unusable has already cloned the repository, and the only
@@ -530,6 +774,16 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Was there a row here before? Asked before the upsert, because afterwards there
+	// always is.
+	//
+	// This is what distinguishes creating a project from editing one, and only the first
+	// should start a build. PUT is a whole-row upsert with no separate create, so without
+	// this every save of an existing project would queue another build of its default
+	// branch — a rebuild on every typo correction.
+	_, existing := a.store.ProjectFor(r.Context(), p.Platform, p.Owner, p.Repo)
+	isNew := errors.Is(existing, store.ErrNoProject)
+
 	if err := a.store.SaveProject(r.Context(), p); err != nil {
 		a.log.Error("saving project", "project", p.Key(), "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -542,10 +796,38 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 	a.log.Info("project saved", "project", p.Key(), "driver", p.Driver,
 		"command", p.BuildCommand, "enabled", p.Enabled)
 
+	// A new project gets a preview of its default branch, immediately.
+	//
+	// Here rather than in the page, so it happens however the project was created — a
+	// browser, a script, a restored configuration. Adding a project used to build only what
+	// was already under review, so a repository with no open pull requests produced nothing
+	// at all and the answer to "I added it, now what" was to wait for somebody to push.
+	//
+	// Inline rather than in a goroutine, and best-effort: it is two API calls and an enqueue,
+	// which is worth the wait on project creation, and a failure here must not fail the save
+	// — the project row is correct and the branch build can be asked for again from its card.
+	branchNote := ""
+	if isNew && p.Enabled && a.brancher != nil {
+		branch, err := a.brancher(r.Context(), model.Repo{
+			Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
+		}, "")
+		switch {
+		case err != nil:
+			a.log.Warn("could not start the default branch preview",
+				"project", p.Key(), "error", err)
+			branchNote = err.Error()
+		default:
+			a.log.Info("queued a default branch preview", "project", p.Key(), "branch", branch)
+		}
+	}
+
 	st, err := a.snapshot(r.Context(), r)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 		return
+	}
+	if branchNote != "" {
+		st.Note = branchNote
 	}
 	writeJSON(w, http.StatusOK, st)
 }
@@ -660,6 +942,158 @@ func (a *ProjectsAdmin) rebuild(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
 }
 
+// unlink removes a preview and stops its pull request being rediscovered.
+//
+// A destructive action with no undo beyond linking it again, so it is gated like every
+// other write and the page asks before calling it. What comes back names both halves of
+// what happened, because "removed" alone leaves the operator wondering whether the next
+// push brings it back.
+func (a *ProjectsAdmin) unlink(w http.ResponseWriter, r *http.Request) {
+	preview := r.PathValue("preview")
+	if !previewIDPattern.MatchString(preview) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "not a preview id: expected twelve hex characters, got " + preview,
+		})
+		return
+	}
+	if a.unlinker == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot unlink pull requests"})
+		return
+	}
+
+	found, err := a.unlinker(r.Context(), preview)
+	if err != nil {
+		// The ignore is written before the teardown, so a failure here means the pull
+		// request will not be rebuilt and something of the preview may remain. Say so:
+		// the operator's next step is to look at the log, not to press the button again.
+		a.log.Error("unlinking a preview", "preview", preview, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": err.Error() + " — the pull request will not be rebuilt, " +
+				"but some of the preview may remain; see the daemon log"})
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "there is no preview " + preview + " any more"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"unlinked": true})
+}
+
+// link builds one pull request by number, and un-ignores it if it was unlinked.
+func (a *ProjectsAdmin) link(w http.ResponseWriter, r *http.Request) {
+	p, bad := projectFromRequest(r)
+	if bad != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad})
+		return
+	}
+	var body struct {
+		Number int `json:"number"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if body.Number < 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "which pull request? give a number, as in 19"})
+		return
+	}
+	if a.linker == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot look up a pull request by number"})
+		return
+	}
+
+	repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
+	if err := a.linker(r.Context(), repo, body.Number); err != nil {
+		// 200 with an error, as scan does: the message is the operator's next step —
+		// usually that the number is closed or does not exist — and this is a button on
+		// a page that stays open, not a form submission.
+		a.log.Warn("linking a pull request", "project", p.Key(), "number", body.Number, "error", err)
+		writeJSON(w, http.StatusOK, map[string]any{"queued": false, "error": err.Error()})
+		return
+	}
+	a.log.Info("linked a pull request", "project", p.Key(), "number", body.Number)
+	writeJSON(w, http.StatusOK, map[string]any{"queued": true, "number": body.Number})
+}
+
+// setNamePrefix changes what every published name starts with.
+//
+// Stored in the database rather than written back into config.yml, because that file is
+// hand-written and its comments are the most valuable thing in it — a daemon that rewrote it
+// to save one string would delete them.
+func (a *ProjectsAdmin) setNamePrefix(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Prefix string `json:"prefix"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if a.setPrefix == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot change the name prefix"})
+		return
+	}
+	// Refused rather than sanitized, and refused here as well as at config load: this is
+	// reachable without a browser, and a prefix that is not a hostname label produces names
+	// the exposer rejects one build at a time.
+	if err := a.setPrefix(r.Context(), body.Prefix); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	st, err := a.snapshot(r.Context(), r)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// branch builds a preview of a branch, with no pull request behind it.
+//
+// An absent or empty `branch` means the repository's default, read from the platform. That
+// is the case this exists for: the operator wants "a preview of main that always works" and
+// does not necessarily know whether this repository calls it `main` or `master`.
+func (a *ProjectsAdmin) branch(w http.ResponseWriter, r *http.Request) {
+	p, bad := projectFromRequest(r)
+	if bad != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad})
+		return
+	}
+	// An empty body is legitimate and means the default branch, so a decode failure is only
+	// an error when there was something there to decode.
+	var body struct {
+		Branch string `json:"branch"`
+	}
+	if r.ContentLength > 0 {
+		if err := decodeJSON(r, &body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	if a.brancher == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot build a branch preview"})
+		return
+	}
+
+	repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
+	branch, err := a.brancher(r.Context(), repo, strings.TrimSpace(body.Branch))
+	if err != nil {
+		// 200 with an error, as scan and link do: the message is the operator's next step —
+		// an App not installed there, a credential that cannot read the repository, an empty
+		// repository with no default branch — and this is a button on a page that stays open.
+		a.log.Warn("building a branch preview", "project", p.Key(), "error", err)
+		writeJSON(w, http.StatusOK, map[string]any{"queued": false, "error": err.Error()})
+		return
+	}
+	a.log.Info("queued a branch preview", "project", p.Key(), "branch", branch)
+	writeJSON(w, http.StatusOK, map[string]any{"queued": true, "branch": branch})
+}
+
 // inspectImage answers whether a container image can be resolved, so the form can
 // refuse a typo while the operator is still looking at it.
 //
@@ -737,6 +1171,105 @@ func (a *ProjectsAdmin) setSecret(w http.ResponseWriter, r *http.Request) {
 	a.respond(w, r)
 }
 
+// setSCM stores a project's own source-control credential.
+//
+// Separate from setSecret, and separate in the vault, because these two things look alike
+// and are not: a project *variable* is handed to every build of that repository, and this
+// is the credential the daemon clones and comments with. Sharing the handler would mean one
+// validation rule for both, and the rule that keeps the credential out of a build's
+// environment is the shape of its name.
+//
+// PUT with an empty value deletes, so one route covers "set", "rotate" and "clear". A
+// credential is a single field on a form and a DELETE route for it would be a second
+// button whose only difference is that it needs no value.
+func (a *ProjectsAdmin) setSCM(w http.ResponseWriter, r *http.Request) {
+	p, bad := projectFromRequest(r)
+	if bad != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad})
+		return
+	}
+
+	name := r.PathValue("name")
+	if !vault.IsProjectSCMKey(name) {
+		// A closed list, so a typo cannot become a credential the daemon looks for and
+		// nothing sets — which fails as a build that cannot clone, with nothing to say
+		// the name was wrong.
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("unknown credential %q; expected one of %s, %s, %s",
+				name, vault.SCMAccessToken, vault.SCMEmail, vault.SCMAPIToken)})
+		return
+	}
+
+	v := a.openVault()
+	if v == nil {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "the vault is locked; unlock it at /secrets first"})
+		return
+	}
+
+	var body struct {
+		Value string `json:"value"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	// Trailing whitespace from a paste is the commonest way a token is wrong in a way
+	// nothing reports.
+	body.Value = strings.TrimSpace(body.Value)
+
+	key := vault.ProjectSCMKey(p.Platform, p.Owner, p.Repo, name)
+	if body.Value == "" {
+		if err := v.Delete(key); err != nil {
+			a.log.Error("clearing a project credential", "project", p.Key(), "name", name, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		a.log.Info("project credential cleared", "project", p.Key(), "name", name)
+		a.respond(w, r)
+		return
+	}
+
+	if err := v.Set(key, vault.NewSecretString(body.Value)); err != nil {
+		a.log.Error("storing a project credential", "project", p.Key(), "name", name, "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	// The name and the length, never the value. No rearm: the client resolves this per
+	// call, so it applies to the next delivery without a restart.
+	a.log.Info("project credential stored", "project", p.Key(), "name", name, "bytes", len(body.Value))
+	a.respond(w, r)
+}
+
+// testSCM checks that a project's credential can actually reach its repository.
+//
+// A token is pasted once and otherwise unverifiable, and both ways of getting it wrong are
+// quiet: too few scopes fails twenty seconds into a clone, and read-without-write fails at
+// the comment, after a successful build. So the answer is available before either.
+func (a *ProjectsAdmin) testSCM(w http.ResponseWriter, r *http.Request) {
+	p, bad := projectFromRequest(r)
+	if bad != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad})
+		return
+	}
+	if a.scmChecker == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "this daemon cannot test credentials for " + p.Platform})
+		return
+	}
+
+	detail, err := a.scmChecker(r.Context(), model.Repo{
+		Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
+	})
+	if err != nil {
+		// The platform's own message, which is the useful half: "credentials lack one or
+		// more required privilege scopes" names the fix in a way this code cannot.
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ok": detail})
+}
+
 func (a *ProjectsAdmin) delSecret(w http.ResponseWriter, r *http.Request) {
 	p, env, v, bad, code := a.secretRequest(r)
 	if bad != "" {
@@ -803,6 +1336,16 @@ func validEnvName(env string) string {
 	}
 	if len(env) > 128 {
 		return "that environment variable name is too long"
+	}
+	// A dotted name is almost always somebody putting a platform credential where the build
+	// variables are, and the generic message sent them back to the same box to try again.
+	// `bitbucket.access_token` is not a build variable and must not become one: it is what
+	// the daemon clones with, and a build that could read it is a build that could print it.
+	if strings.Contains(env, ".") {
+		return fmt.Sprintf("%q is not a build variable — a dotted name is a platform "+
+			"credential. A Bitbucket token goes under Edit → Bitbucket credential on this "+
+			"project, where it is stored for cloning and never given to a build. Build "+
+			"variables are named like BB_REPO_TOKEN_ONPREM.", env)
 	}
 	for i, r := range env {
 		switch {

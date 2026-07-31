@@ -31,6 +31,17 @@ type fakeClient struct {
 	events    []scm.Event
 	reports   []scm.Report
 	retracted []model.PullRequest
+
+	// openPRs is what OpenPullRequests answers. Implementing the optional
+	// scm.PullRequestLister here rather than in a second fake, because the daemon
+	// discovers the capability by type assertion — a fake that lacked it would make the
+	// scan and link paths silently untestable rather than failing.
+	openPRs []model.PullRequest
+
+	// What scm.BranchResolver answers. `master` rather than `main` in the tests that use
+	// it, so an implementation that assumed the name instead of asking would fail.
+	defaultBranch string
+	branchTip     string
 }
 
 func (f *fakeClient) Platform() model.Platform { return model.PlatformGitHub }
@@ -62,6 +73,24 @@ func (f *fakeClient) Retract(_ context.Context, pr model.PullRequest) error {
 	defer f.mu.Unlock()
 	f.retracted = append(f.retracted, pr)
 	return nil
+}
+
+func (f *fakeClient) OpenPullRequests(context.Context, model.Repo) ([]model.PullRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.openPRs, nil
+}
+
+func (f *fakeClient) DefaultBranch(context.Context, model.Repo) (string, string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.defaultBranch, f.branchTip, nil
+}
+
+func (f *fakeClient) BranchTip(_ context.Context, _ model.Repo, _ string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.branchTip, nil
 }
 
 func (f *fakeClient) reportStates() []scm.State {

@@ -57,6 +57,10 @@ const sidebars: SidebarsConfig = {
     'runbooks/webhook-tunnel',
     'runbooks/zrok2',
     'runbooks/frontdoor',
+    // Deployment, after the pages about getting one instance working: nobody containerises
+    // or moves an installation they have not run yet.
+    'runbooks/container',
+    'runbooks/move-an-installation',
     'troubleshooting',
 
     // Understanding-oriented: read when deciding whether to use this, or before
@@ -83,7 +87,7 @@ const sidebars: SidebarsConfig = {
       // Not features. Each of these says so at the top, and the grouping repeats it
       // — a reader who finds one of these by search should not go looking for a flag
       // that does not exist.
-      items: ['future/ziti-native-previews'],
+      items: ['future/ziti-native-previews', 'future/vercel-features'],
     },
 
     // Information-oriented. Exhaustive, scannable, and the thing you come back for.

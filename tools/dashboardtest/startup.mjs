@@ -241,7 +241,43 @@ console.log("\nit says what it is doing, not only how far along");
   }
 }
 
-console.log("\nstarted: the banner goes, the page comes back, the report appears");
+console.log("\nno startup dialog opens by itself");
+{
+  // It used to, gated on a marker in sessionStorage so a reload would not re-announce a
+  // restart from an hour ago. Right for a four-minute startup and wrong for a three-second
+  // one: a dialog to dismiss to be told that nothing went wrong.
+  await apply({...starting, starting: false, startup: undefined, pending: 0,
+    last_startup: {
+      seconds: 3, instance: "20260730-100000.000",
+      previews: 2, adopted_previews: 2, created_previews: 0,
+      adopted_builds: 11, created_builds: 0, orphans: 0, pending: 0,
+    }});
+  if (!$("#boot").hidden) fail("a startup opened a dialog nobody asked for");
+  else ok("nothing over the page");
+
+  // The footer link is how it is reached, and it carries the duration — a link reading
+  // "startup report" makes somebody open a dialog for a number that fits in the link.
+  const host = $("#boot-link");
+  const btn = $("#boot-open");
+  if (!host || host.hidden) fail("no footer link to the startup report");
+  else if (!/3s/.test(btn.textContent)) {
+    fail(`the link reads ${JSON.stringify(btn.textContent)}, without the duration`);
+  } else ok(`footer reads ${JSON.stringify(btn.textContent.trim())}`);
+
+  // And it opens on click, including for the quick, uneventful startup that the old rule
+  // refused to report: somebody who clicks wants the report either way.
+  btn.dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
+  await settle();
+  if ($("#boot").hidden) fail("the footer link did not open the report");
+  else ok("opens on click, even for a 3-second startup");
+
+  $("#boot-close").dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
+  await settle();
+  if (!$("#boot").hidden) fail("Close did not close it");
+  else ok("closes again");
+}
+
+console.log("\nstarted: the banner goes, the page comes back, the report is reachable");
 {
   const report = {
     seconds: 74, instance: "20260730-090000.000",
@@ -259,6 +295,10 @@ console.log("\nstarted: the banner goes, the page comes back, the report appears
   } else {
     ok(".wrap is shown");
   }
+
+  // Opened from the footer, which is now the only way in.
+  $("#boot-open").dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
+  await settle();
 
   const modal = $("#boot");
   if (!modal || modal.hidden) {
@@ -300,16 +340,21 @@ console.log("\nstarted: the banner goes, the page comes back, the report appears
     }
   }
 
-  // Once per process. The daemon keeps reporting its startup for as long as it runs, so
-  // without a marker every poll would reopen this over whatever is being read.
+  // Closed stays closed across a status tick. The daemon keeps reporting its startup for as
+  // long as it runs, and a poll every five seconds must not reopen this over whatever is
+  // being read — the failure that the old sessionStorage marker existed to prevent, and
+  // which a re-render can reintroduce without one.
   $("#boot-close").dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
   await settle();
   await apply({...starting, starting: false, startup: undefined, last_startup: report});
   if (!$("#boot").hidden) {
     fail("the report reopened on the next status");
   } else {
-    ok("stays closed once dismissed");
+    ok("stays closed across a status tick");
   }
+  // And the link is still there to open it again, rather than being spent on one use.
+  if ($("#boot-link").hidden) fail("the footer link went away after the report was closed");
+  else ok("still reachable from the footer");
 }
 
 console.log(failures ? `\n${failures} failure(s)` : `\nall startup-banner checks OK`);

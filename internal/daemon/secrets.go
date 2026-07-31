@@ -100,7 +100,52 @@ func NewSecretsAdmin(cfg config.Server, log *slog.Logger, rearm func(changed str
 // recommended arrangement is to tunnel the `webhook-only` proxy rather than the
 // daemon: then the credential API is not reachable at all and this check is a
 // second line rather than the only one.
+//
+// # The overlay case
+//
+// A request that arrived over a ziti listener is judged on *who dialed it* instead. That is a
+// stronger statement than either check above — the overlay authenticated the identity, and
+// there is no address to spoof — but it is only as good as the grant, so it is an explicit
+// list of identity ids on the listener rather than "enrolled at all".
+//
+// It is deliberately checked before the loopback rule, because an overlay connection's
+// RemoteAddr is not a loopback address and would fail it. Nothing here trusts the request:
+// the identity was recorded by the accept path, in a context key this package alone can
+// write, and an unrecognised or absent identity is refused.
 func isLocalRequest(r *http.Request) (bool, string) {
+	// An admin session outranks everything below, and is the only one of the three checks that
+	// is authentication rather than a statement about the network. It is first because it is
+	// also the only one that can be true from another machine — which is the entire point of
+	// having a password, and the reason "managing credentials remotely is unsupported" is no
+	// longer the answer.
+	//
+	// A viewer session deliberately does not fall through to the locality checks: it is a
+	// positive statement that this caller is *not* an admin, so treating a viewer on the
+	// loopback interface as an admin would make logging in as a viewer a way to gain less than
+	// nothing. It is refused here with a reason the page can show.
+	switch roleOfContext(r.Context()) {
+	case RoleAdmin:
+		return true, ""
+	case RoleViewer:
+		return false, "this session is signed in as a viewer, which can read everything and " +
+			"change nothing; sign in with the admin password to make changes"
+	}
+
+	if caller, ok := overlayCallerFrom(r.Context()); ok {
+		if caller.MayWrite {
+			return true, ""
+		}
+		if caller.Dialer == "" {
+			// The router sent no dialer, or something that is not an overlay connection
+			// reached this path. Either way we cannot say who this is, and "cannot say" is
+			// not a grant.
+			return false, "this request arrived over the overlay with no dialing identity, " +
+				"so there is nothing to authorize it against"
+		}
+		return false, "the identity " + caller.Dialer + " is not in this listener's " +
+			"admin_identities, so it may read but not change anything"
+	}
+
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -120,29 +165,52 @@ func isLocalRequest(r *http.Request) (bool, string) {
 
 // Available reports whether this daemon may serve the secrets surface at all.
 //
-// Every listener must be loopback. A ziti listener is arguably a stronger
-// boundary than loopback — the overlay authenticates the dialer — but the
-// admin surface does not yet check the dialing identity, so "enrolled at all"
-// would be the whole authorization. That is not enough for credential writes.
+// Every listener must be one of two things: loopback, or a ziti service that names the
+// identities allowed to write through it.
+//
+// The ziti case used to be an outright refusal, on the reasoning that "enrolled at all" is
+// not authorization for a credential write. That reasoning was right and the refusal was the
+// wrong shape: it made a daemon reachable *only* over the overlay permanently read-only, and
+// it refused loopback writes too, because one ziti listener disqualified the whole daemon.
+//
+// What replaced it is an explicit grant. `admin_identities` on the listener names the
+// identity ids that may write, the accept path records which identity dialed, and
+// isLocalRequest checks one against the other. A listener with no list is still refused —
+// the default is read-only, and that is the same answer as before for anybody who has not
+// opted in.
 //
 // This is a property of the daemon, not of a request. See isLocalRequest for the
 // per-request half, and why one without the other is not sufficient.
 func (a *SecretsAdmin) Available() (bool, string) {
-	if len(a.cfg.Listeners) == 0 {
+	return listenersAllowAdmin(a.cfg.Listeners, "secrets")
+}
+
+// listenersAllowAdmin is the listener half of the gate, shared by both admin surfaces.
+//
+// One implementation because the rule is one rule: the projects surface decides what command
+// runs on the build host and the secrets surface decides which credentials it runs with, and
+// a daemon that guarded them differently would be guarding the weaker of the two. `what`
+// names the surface in the refusal, which is the only thing that differs.
+func listenersAllowAdmin(listeners []config.Listener, what string) (bool, string) {
+	if len(listeners) == 0 {
 		return false, "no listeners"
 	}
-	for _, l := range a.cfg.Listeners {
+	for _, l := range listeners {
 		if l.Ziti != nil {
-			return false, "a ziti listener is configured; the admin surface does not yet " +
-				"check the dialing identity, so credential writes are refused"
+			if len(l.Ziti.AdminIdentities) == 0 {
+				return false, fmt.Sprintf("the ziti service %s names no admin_identities, "+
+					"so %s are read-only over it: add the identity ids allowed to write "+
+					"(ziti edge list identities)", l.Ziti.Service, what)
+			}
+			continue
 		}
 		host, _, err := net.SplitHostPort(l.TCP)
 		if err != nil {
 			return false, "unparseable listener " + l.TCP
 		}
 		if !isLoopback(host) {
-			return false, fmt.Sprintf("the ingress listens on %s; secrets can only be managed "+
-				"from a loopback-only daemon", l.TCP)
+			return false, fmt.Sprintf("the ingress listens on %s; %s can only be managed "+
+				"from a loopback-only daemon", l.TCP, what)
 		}
 	}
 	return true, ""
@@ -179,6 +247,25 @@ type secretsState struct {
 	Entries   []secretView `json:"entries"`
 }
 
+// Secret groups, which are a security boundary and not a display preference.
+//
+// GroupDaemon holds what docpreview uses to talk to a platform or an exposer: a
+// GitHub App private key, a Bitbucket access token, a webhook secret. **None of them
+// ever reaches a build.** GroupBuild is the opposite — every one of those is injected
+// into every build as an environment variable and is readable by whatever the pull
+// request's own build script chooses to do.
+//
+// One flat list put a GitHub App private key three rows above a Docusaurus API key
+// with nothing between them, which is how six tokens came to be stored in the belief
+// that storing them was enough. The rule that separates them is
+// vault.IsBuildEnvKey: shell-shaped names are build variables, dotted names are the
+// daemon's own.
+const (
+	GroupDaemon = "daemon"
+	GroupBuild  = "build"
+	GroupUnused = "unused"
+)
+
 // secretView is one row: what it is for, and whether it is set.
 type secretView struct {
 	Key      string `json:"key"`
@@ -186,8 +273,18 @@ type secretView struct {
 	Label    string `json:"label"`
 	Hint     string `json:"hint"`
 	Required bool   `json:"required"`
+
+	// Optional is set for a key that applies here and is not needed — as opposed to one
+	// that does not apply at all. The page renders three states, because "missing",
+	// "optional" and "not needed" are three different instructions to the reader.
+	Optional bool `json:"optional,omitempty"`
 	// EnvVar is set for build secrets: the variable this value is injected as.
 	EnvVar string `json:"env_var,omitempty"`
+
+	// Group is which section this row belongs in. See the constants above: the
+	// distinction is what reads the value, which is why it comes from the server
+	// rather than being guessed at from the key's shape by the page.
+	Group string `json:"group"`
 }
 
 // snapshot describes the vault for the given request.
@@ -211,8 +308,13 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 	}
 
 	// Mirror what gated will actually decide, so the page never offers an action
-	// that is going to 403.
+	// that is going to 403. Including the admin-session shortcut: without it a
+	// logged-in admin on a non-loopback daemon would be told the page is read-only
+	// and then find every write succeed, which is the same lie in the other
+	// direction.
 	switch local, lwhy := isLocalRequest(r); {
+	case roleOfContext(r.Context()) == RoleAdmin:
+		st.CanWrite = true
 	case !ok:
 		st.CanWrite, st.ReadOnlyWhy = false, why
 	case !local:
@@ -233,10 +335,14 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 	// rather than a dump. A setup screen that lists what you have is less
 	// useful than one that lists what you still need.
 	for _, k := range knownKeys() {
-		st.Entries = append(st.Entries, secretView{
+		view := secretView{
 			Key: k.key, Set: have[k.key], Label: k.label, Hint: k.hint,
-			Required: k.required(a.cfg),
-		})
+			Required: k.required(a.cfg), Group: GroupDaemon,
+		}
+		if !view.Required && k.optional != nil {
+			view.Optional = k.optional(a.cfg)
+		}
+		st.Entries = append(st.Entries, view)
 		delete(have, k.key)
 	}
 
@@ -251,7 +357,8 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 		key := a.cfg.Build.Secrets[env]
 		st.Entries = append(st.Entries, secretView{
 			Key: key, Set: have[key], Label: env, Required: true, EnvVar: env,
-			Hint: "injected into every build as " + env + ", and redacted from every log",
+			Group: GroupBuild,
+			Hint:  "injected into every build as " + env + ", and redacted from every log",
 		})
 		delete(have, key)
 	}
@@ -269,7 +376,7 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 	}
 	sort.Strings(rest)
 	for _, k := range rest {
-		view := secretView{Key: k, Set: true, Label: k}
+		view := secretView{Key: k, Set: true, Label: k, Group: GroupBuild}
 		if vault.IsBuildEnvKey(k) {
 			// EnvVar alone. The page turns this into a one-word chip and states the rule
 			// once above the list: as a per-row sentence it wrapped to three lines on every
@@ -277,7 +384,10 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 			view.EnvVar = k
 		} else {
 			// Not shell-shaped, not mapped by build.secrets, and not one of the known
-			// keys: nothing reads it. Better said than left looking configured.
+			// keys: nothing reads it. Better said than left looking configured — and
+			// its own section, because a dead key listed among live ones is the thing
+			// somebody skims past.
+			view.Group = GroupUnused
 			view.Hint = "nothing on this daemon reads this key. A build variable has to be " +
 				"named like one — upper case, digits and underscore."
 		}
@@ -290,20 +400,72 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 type knownKey struct {
 	key, label, hint string
 	required         func(config.Server) bool
+
+	// optional distinguishes "usable here but not needed" from "not needed at all", for
+	// keys that are neither required nor irrelevant.
+	//
+	// Two states were not enough once a Bitbucket token could live on a project instead.
+	// A workspace-wide token is genuinely useful and genuinely optional: an operator whose
+	// administrator refuses wide tokens will never store one, and flagging it `missing` in
+	// red sent them looking for a credential they cannot create. Flagging it `not needed`
+	// is the opposite lie — it is the thing that saves setting a token per project.
+	//
+	// Nil means "never optional", which is every key that predates this.
+	optional func(config.Server) bool
 }
 
 func knownKeys() []knownKey {
 	usingGitHub := func(c config.Server) bool { return c.GitHub.AppID != 0 }
 	return []knownKey{
 		{vault.KeyGitHubPrivateKey, "GitHub App private key",
-			"the .pem GitHub generated — paste the whole file, BEGIN line included", usingGitHub},
+			"the .pem GitHub generated — paste the whole file, BEGIN line included",
+			usingGitHub, nil},
 		{vault.KeyGitHubWebhookSec, "GitHub webhook secret",
-			"the value in the App's Webhook secret field", usingGitHub},
+			"the value in the App's Webhook secret field", usingGitHub, nil},
 		{vault.KeyFrontdoorToken, "Frontdoor API token",
 			"only for exposer.kind: frontdoor",
-			func(c config.Server) bool { return c.Exposer.Kind == "frontdoor" }},
+			func(c config.Server) bool { return c.Exposer.Kind == "frontdoor" }, nil},
+
+		// Bitbucket. Listed even when it is not enabled, so the Generate button for
+		// the webhook secret exists before the operator has committed to the config —
+		// the secret has to be generated *first* and pasted into Bitbucket's form,
+		// and a key that is not listed has no button.
+		{vault.KeyBitbucketHookSec, "Bitbucket webhook secret",
+			"generate it here, then paste the same value into Repository settings → Webhooks",
+			usingBitbucket, nil},
+		// The three Bitbucket credentials are optional, never required, and that is a
+		// consequence of where a Bitbucket token can live. It is scoped to a repository
+		// unless a workspace administrator permits the wider kinds, so an operator may
+		// legitimately have nothing to put here and a token on each project instead.
+		// Marking these `missing` in red sent people looking for a credential their admin
+		// will not issue.
+		{vault.KeyBitbucketAccessToken, "Bitbucket access token",
+			"a workspace or project access token, used by every Bitbucket project that has " +
+				"none of its own. Scopes: repository, pullrequest:write. Optional — a " +
+				"project can carry its own on /projects.",
+			never,
+			func(c config.Server) bool {
+				return usingBitbucket(c) && c.Bitbucket.Auth != config.BitbucketAuthAPIToken
+			}},
+		{vault.KeyBitbucketEmail, "Bitbucket account email",
+			"only for bitbucket.auth: api_token — the account the API token belongs to",
+			never,
+			func(c config.Server) bool {
+				return usingBitbucket(c) && c.Bitbucket.Auth == config.BitbucketAuthAPIToken
+			}},
+		{vault.KeyBitbucketAPIToken, "Bitbucket API token",
+			"only for bitbucket.auth: api_token. Optional, like the access token above.",
+			never,
+			func(c config.Server) bool {
+				return usingBitbucket(c) && c.Bitbucket.Auth == config.BitbucketAuthAPIToken
+			}},
 	}
 }
+
+// never is the required-predicate for a key nothing insists on.
+func never(config.Server) bool { return false }
+
+func usingBitbucket(c config.Server) bool { return c.Bitbucket.Enabled }
 
 // Handler routes the secrets API.
 //
@@ -392,6 +554,18 @@ func (a *SecretsAdmin) generate(w http.ResponseWriter, r *http.Request) {
 // cannot explain why it is read-only is worse than one that can.
 func (a *SecretsAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// An authenticated admin skips the listener check entirely, and that is the whole
+		// change a password buys.
+		//
+		// Available() asks a question about the *network* — is every listener loopback — which
+		// is the right question when the only evidence available is where a request came from.
+		// A session is evidence about *who* is asking, so a daemon listening on an address the
+		// world can reach is no longer a reason to refuse: that was a proxy for "we cannot
+		// tell who this is", and now we can.
+		if roleOfContext(r.Context()) == RoleAdmin {
+			next(w, r)
+			return
+		}
 		if ok, why := a.Available(); !ok {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": why})
 			return

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -30,6 +32,21 @@ var dashboardPaths = []string{
 	"/logs/{preview}/stream",           // a live build log
 	"/logs/{preview}/download",         // the whole log
 	"/logs/{preview}/download/{build}", // one build's log
+	"/login",                           // the login form, when the daemon asks for one
+}
+
+// dashboardPostPaths are the routes that need POST as well.
+//
+// Two, and both are the login. Without them a daemon with a viewer password set would serve the
+// form through this tunnel and 404 the submission — a sign-in page that cannot sign anybody in,
+// which is a worse failure than having no login at all because it looks like the password is
+// wrong.
+//
+// Deliberately still an allowlist. The alternative — forwarding every POST — would hand the
+// tunnel the credential and project APIs, which is exactly what this command exists to prevent.
+var dashboardPostPaths = []string{
+	"/login",
+	"/logout",
 }
 
 // cmdDashboardOnly publishes the read-only dashboard and nothing else.
@@ -63,6 +80,13 @@ func cmdDashboardOnly(args []string) error {
 		"serve over a named public zrok share instead of a local port, e.g. -zrok-name docpreview-dash")
 	zrokNamespace := fs.String("zrok-namespace", "",
 		"namespace for -zrok-name; blank uses the zrok environment's default")
+	// The dashboard's own sign-in, done by zrok's frontend rather than by docpreview. Previews
+	// deliberately have no equivalent: a preview URL goes in a pull request comment for anybody
+	// reviewing to open, and a sign-in in front of it defeats the tool.
+	oauth := fs.String("oauth", "",
+		"gate the share at the zrok frontend: google or github (needs -oauth-domain)")
+	oauthDomain := fs.String("oauth-domain", "",
+		"comma-separated email domains allowed through -oauth, e.g. example.com")
 	logLevel := fs.String("log-level", "info", "debug, info, warn or error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -108,6 +132,12 @@ func cmdDashboardOnly(args []string) error {
 			proxy.ServeHTTP(w, r)
 		})
 	}
+	for _, p := range dashboardPostPaths {
+		mux.HandleFunc("POST "+p, func(w http.ResponseWriter, r *http.Request) {
+			log.Debug("forwarding", "path", r.URL.Path, "remote", r.RemoteAddr)
+			proxy.ServeHTTP(w, r)
+		})
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Debug("refused", "method", r.Method, "path", r.URL.Path, "remote", r.RemoteAddr)
 		http.NotFound(w, r)
@@ -125,15 +155,50 @@ func cmdDashboardOnly(args []string) error {
 	}
 
 	if *zrokName != "" {
-		ln, shareURL, cleanup, err := zrokListener(*zrokName, *zrokNamespace, log)
+		auth := zrokFrontendAuth{Provider: strings.ToLower(strings.TrimSpace(*oauth))}
+		for _, d := range strings.Split(*oauthDomain, ",") {
+			if d = strings.TrimSpace(d); d != "" {
+				// Written as a domain and used as a glob, because a domain is what an
+				// operator has in mind and `*@example.com` is what zrok matches against.
+				// Accepting a pattern verbatim as well, for the case where the intended set
+				// is not one whole domain.
+				if strings.ContainsAny(d, "*@") {
+					auth.EmailPatterns = append(auth.EmailPatterns, d)
+				} else {
+					auth.EmailPatterns = append(auth.EmailPatterns, "*@"+d)
+				}
+			}
+		}
+		// A provider with no domain authenticates every account that provider will
+		// authenticate — every Google account in existence. That is almost certainly not what
+		// somebody typing -oauth meant, and it fails closed here rather than being discovered
+		// from the access log.
+		if auth.Provider != "" && len(auth.EmailPatterns) == 0 {
+			return errors.New("-oauth needs -oauth-domain: a provider with no domain lets in " +
+				"every account that provider will authenticate")
+		}
+		if auth.Provider == "" && len(auth.EmailPatterns) > 0 {
+			return errors.New("-oauth-domain needs -oauth: there is no provider to check it against")
+		}
+
+		ln, shareURL, cleanup, err := zrokListener(*zrokName, *zrokNamespace, auth, log)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
 
 		log.Info("dashboard serving over zrok", "url", shareURL, "to", target.String())
-		log.Warn("this publishes every open documentation pull request and its build logs, unauthenticated",
-			"fix", "add --basic-auth to the zrok share if that is not acceptable")
+		switch {
+		case auth.Provider != "":
+			log.Info("the share is gated at the zrok frontend",
+				"provider", auth.Provider, "emails", strings.Join(auth.EmailPatterns, ", "))
+		default:
+			// Still worth shouting about, and now with two answers rather than one: gate the
+			// share at the frontend, or give the daemon a viewer password so it asks for one
+			// itself.
+			log.Warn("this publishes every open documentation pull request and its build logs, unauthenticated",
+				"fix", "-oauth google -oauth-domain example.com, or: docpreview console password -role viewer")
+		}
 
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			return err

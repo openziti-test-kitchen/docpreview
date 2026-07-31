@@ -64,6 +64,32 @@ func TestFailureCommentLinksToTheBuildLogWhenItCan(t *testing.T) {
 	}
 }
 
+// Every URL the comment publishes must be a markdown link.
+//
+// GitHub autolinks a bare URL and Bitbucket does not, so a bare URL in a table cell
+// looked correct in review and shipped as unclickable text on Bitbucket — which is the
+// only thing the comment is for.
+func TestEveryURLInTheCommentIsALink(t *testing.T) {
+	ready := testReport(StateReady)
+	ready.URL = "https://docs-feature-x-b400e0.shares.zrok.io/"
+	ready.Name = "docs-feature-x-b400e0"
+
+	failed := testReport(StateFailed)
+	failed.DetailURL = "https://docpreview.example/logs/abc123"
+
+	for _, r := range []Report{ready, failed} {
+		body := RenderComment(r)
+		for _, url := range []string{r.URL, r.DetailURL} {
+			if url == "" {
+				continue
+			}
+			if !strings.Contains(body, "["+url+"]("+url+")") {
+				t.Errorf("%s is not a link in the %s comment:\n%s", url, r.State, body)
+			}
+		}
+	}
+}
+
 func TestFailureCommentNamesTheDashboardWithNoURL(t *testing.T) {
 	// dashboard_url is unset, which is the default: the daemon binds loopback and
 	// cannot know an address a link would work from. Saying so beats emitting a

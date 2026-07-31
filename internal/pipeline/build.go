@@ -263,7 +263,15 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 	}
 
 	if err := verifyBaseURL(outputDir, cfg.Build.BaseURL); err != nil {
-		return nil, fmt.Errorf("%w\n%s", err, out)
+		// A typed error, so the diagnosis can be printed without the build output.
+		//
+		// Every failure here is wrapped with the whole build log, because a pull request
+		// comment quotes it — which means whatever writes this to the build log has to
+		// truncate, or the log ends up containing itself twice. Truncating took the mismatch
+		// down to its first line: "the site was built for a different base URL than the
+		// preview will serve", with neither base URL shown. The four lines that follow are
+		// the entire value of the check, and they were the part being thrown away.
+		return nil, &BaseURLError{Diagnosis: err.Error(), Output: out, err: err}
 	}
 
 	return &Result{
@@ -893,7 +901,14 @@ func verifyBaseURL(outputDir, baseURL string) error {
 	// A real base prefix contains the assets — at "/zrok/" the stylesheet is at
 	// /zrok/assets/…. A dominant segment the assets do not share is a route
 	// directory, not a base path.
-	if !assetsUnder(refs, built) {
+	//
+	// And it contains a route as well, which is the other half of the same argument.
+	// Without that half the corroboration reads the same evidence as the dominance: a site
+	// built at "/" whose index.html is mostly /assets/css/… infers "/assets/", and asking
+	// whether the assets are under "/assets/" cannot say no. Every plain Docusaurus site
+	// built at the root was refused with a built-in base URL of "/assets/" — see
+	// routeUnder, and TestVerifyBaseURLAcceptsARootSiteWhoseRefsAreMostlyAssets.
+	if !assetsUnder(refs, built) || !routeUnder(refs, built) {
 		return nil
 	}
 	return baseURLMismatch(baseURL, built, refs[0])
@@ -921,6 +936,24 @@ func assetsUnder(refs []string, prefix string) bool {
 	}
 	return float64(matched)/float64(len(assets)) >= dominantShare
 }
+
+// BaseURLError is a built site whose asset paths do not match the URL it would be served
+// at, carrying the diagnosis and the build output separately.
+//
+// Separately because they have different audiences and different lengths: the diagnosis is
+// four lines naming both base URLs and the asset that proves the mismatch, and the output is
+// the whole build log, which the caller already has. Error() joins them for anything that
+// wants one string; Diagnosis is what belongs in the build log.
+type BaseURLError struct {
+	Diagnosis string
+	Output    string
+
+	// err is the underlying mismatch, kept so errors.Is against it still works.
+	err error
+}
+
+func (e *BaseURLError) Error() string { return e.Diagnosis + "\n" + e.Output }
+func (e *BaseURLError) Unwrap() error { return e.err }
 
 func baseURLMismatch(baseURL, built, sample string) error {
 
@@ -986,4 +1019,33 @@ func inferBaseURL(refs []string) string {
 		return "/"
 	}
 	return "/" + top + "/"
+}
+
+// routeUnder reports whether any reference that is *not* an asset lies under prefix.
+//
+// The second half of the corroboration, and the half that was missing. `assetsUnder` asks
+// whether the assets share the inferred prefix, which cannot fail when the inferred prefix
+// *is* the asset directory: a site built at "/" whose index.html is mostly
+// /assets/css/styles.css infers "/assets/", and then "are the assets under /assets/" is
+// trivially yes. Dominance and corroboration were reading the same evidence twice, and
+// every plain Docusaurus site built at the root was refused with a built-in base URL of
+// "/assets/" — a value no site has ever been built for.
+//
+// A real base prefix contains the routes as well: at "/zrok/" the stylesheet is at
+// /zrok/assets/… *and* a page is at /zrok/docs/intro. Requiring one non-asset reference
+// under the prefix is what makes the two signals independent.
+func routeUnder(refs []string, prefix string) bool {
+	assets := map[string]bool{}
+	for _, ref := range assetRefs(refs) {
+		assets[ref] = true
+	}
+	for _, ref := range refs {
+		if assets[ref] {
+			continue
+		}
+		if strings.HasPrefix(ref, prefix) {
+			return true
+		}
+	}
+	return false
 }

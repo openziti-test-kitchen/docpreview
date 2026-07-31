@@ -1,12 +1,19 @@
 package expose
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/openziti/sdk-golang/ziti/edge"
 
 	"github.com/netfoundry/docpreview/internal/config"
 )
@@ -186,6 +193,190 @@ func TestZiti404EscapesTheHostHeader(t *testing.T) {
 	_, body := serve(t, z, "<script>alert(1)</script>.docpreview.ziti")
 	if strings.Contains(body, "<script>") {
 		t.Errorf("the Host header was not escaped: %q", body)
+	}
+}
+
+// The dialing-identity plumbing.
+//
+// The identity comes off the accepted connection, so the only thing an offline
+// test can honestly cover is the wiring: that ConnContext puts the value where
+// a handler can read it, and that a connection which cannot answer the question
+// yields empty rather than panicking. Whether the *router* populates the header
+// the SDK reads it from needs an overlay — see ziti_integration_test.go.
+
+// fakeServiceConn is an edge.ServiceConn over an in-memory pipe. edge.Conn's
+// two identity methods live on the narrower edge.ServiceConn interface, which
+// is why zitiConnContext asserts that one and why this stub can exist at all
+// without reimplementing a circuit.
+type fakeServiceConn struct {
+	net.Conn // the pipe end, so the HTTP server has something to read and write
+
+	id   string
+	name string
+}
+
+func (c *fakeServiceConn) CloseWrite() error        { return c.Conn.Close() }
+func (c *fakeServiceConn) IsClosed() bool           { return false }
+func (c *fakeServiceConn) GetAppData() []byte       { return nil }
+func (c *fakeServiceConn) SourceIdentifier() string { return c.name }
+func (c *fakeServiceConn) TraceRoute(uint32, time.Duration) (*edge.TraceRouteResult, error) {
+	return nil, errors.New("not supported on a fake conn")
+}
+func (c *fakeServiceConn) GetCircuitId() string        { return "fake-circuit" }
+func (c *fakeServiceConn) GetStickinessToken() []byte  { return nil }
+func (c *fakeServiceConn) GetDialerIdentityId() string { return c.id }
+func (c *fakeServiceConn) GetDialerIdentityName() string {
+	return c.name
+}
+
+// oneConnListener hands an http.Server exactly one connection and then blocks
+// until closed, which is enough to drive a real Serve loop — and driving the
+// real loop is the point: it proves http.Server actually calls ConnContext with
+// the conn the listener returned, rather than proving that a function we call
+// ourselves does what it says.
+type oneConnListener struct {
+	conn net.Conn
+	once sync.Once
+	done chan struct{}
+}
+
+func (l *oneConnListener) Accept() (net.Conn, error) {
+	var c net.Conn
+	l.once.Do(func() { c = l.conn })
+	if c != nil {
+		return c, nil
+	}
+	<-l.done
+	return nil, errors.New("listener closed")
+}
+
+func (l *oneConnListener) Close() error {
+	select {
+	case <-l.done:
+	default:
+		close(l.done)
+	}
+	return nil
+}
+
+func (l *oneConnListener) Addr() net.Addr { return dummyAddr("ziti") }
+
+type dummyAddr string
+
+func (a dummyAddr) Network() string { return string(a) }
+func (a dummyAddr) String() string  { return string(a) }
+
+// serveOverConn runs one HTTP request over conn against a server wired exactly
+// as Validate wires it, and returns whatever the handler saw.
+func serveOverConn(t *testing.T, server net.Conn, client net.Conn, h http.Handler) {
+	t.Helper()
+
+	l := &oneConnListener{conn: server, done: make(chan struct{})}
+	srv := &http.Server{Handler: h, ConnContext: zitiConnContext}
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		_ = srv.Serve(l)
+	}()
+	t.Cleanup(func() {
+		_ = l.Close()
+		_ = srv.Close()
+		<-served
+	})
+
+	if _, err := io.WriteString(client, "GET / HTTP/1.1\r\nHost: alpha.docpreview.ziti\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Reading the response is what guarantees the handler ran before the test
+	// asserts on what it recorded.
+	if _, err := bufio.NewReader(client).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestZitiConnContextCarriesTheDialingIdentityToTheHandler(t *testing.T) {
+	serverEnd, clientEnd := net.Pipe()
+	conn := &fakeServiceConn{Conn: serverEnd, id: "abc123", name: "reviewer-bob"}
+
+	var got zitiDialer
+	serveOverConn(t, conn, clientEnd, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = zitiDialerFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	if got.id != "abc123" || got.name != "reviewer-bob" {
+		t.Errorf("the handler saw dialer %+v, want id abc123 name reviewer-bob", got)
+	}
+}
+
+func TestZitiConnContextMustNotPanicOnAConnWithoutAnIdentity(t *testing.T) {
+	// A plain TCP conn is what every test provides and what any non-overlay
+	// listener would provide. The type assertion in zitiConnContext is the one
+	// line most likely to be written unchecked, and unchecked it turns an
+	// unauthenticated request into a dead daemon.
+	serverEnd, clientEnd := net.Pipe()
+
+	var got zitiDialer
+	var reached bool
+	serveOverConn(t, serverEnd, clientEnd, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		got = zitiDialerFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	if !reached {
+		t.Fatal("the handler never ran; a conn carrying no identity must still be served")
+	}
+	if got != (zitiDialer{}) {
+		t.Errorf("a conn with no identity produced %+v, want the zero value", got)
+	}
+}
+
+func TestZitiDialerFromAContextWithoutOneIsEmpty(t *testing.T) {
+	// The direct form of the same guarantee, including a context carrying a
+	// *different* type under nothing docpreview owns.
+	if got := zitiDialerFrom(context.Background()); got != (zitiDialer{}) {
+		t.Errorf("an empty context produced %+v", got)
+	}
+	//nolint:staticcheck // the point is a foreign value, so a string key is correct here
+	ctx := context.WithValue(context.Background(), "dialer", "not-a-zitiDialer")
+	if got := zitiDialerFrom(ctx); got != (zitiDialer{}) {
+		t.Errorf("a foreign context value was mistaken for a dialer: %+v", got)
+	}
+}
+
+func TestZitiLogsANewIdentityOncePerPreview(t *testing.T) {
+	// A documentation page is on the order of a hundred asset requests. The Info
+	// line must fire on the first and not on the rest, or the log is unreadable.
+	z := testZiti(t)
+	if _, err := z.Publish(context.Background(),
+		Spec{PreviewID: "p1", Name: "alpha", BaseURL: "/"}, handler("x")); err != nil {
+		t.Fatal(err)
+	}
+
+	z.mu.Lock()
+	entry := z.live["alpha"]
+	z.mu.Unlock()
+
+	if !entry.noteDialer("abc123") {
+		t.Fatal("the first sighting of an identity was not reported as new")
+	}
+	for i := 0; i < 10; i++ {
+		if entry.noteDialer("abc123") {
+			t.Fatalf("request %d reported the same identity as new again", i)
+		}
+	}
+	if !entry.noteDialer("def456") {
+		t.Error("a second identity was not reported as new")
+	}
+
+	// An unknown identity — every offline path, and the overlay too if the
+	// header is ever absent — is still one distinct entry rather than a panic.
+	if !entry.noteDialer("") {
+		t.Error("an empty identity was not reported as new")
+	}
+	if entry.noteDialer("") {
+		t.Error("an empty identity was reported as new twice")
 	}
 }
 

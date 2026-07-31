@@ -29,13 +29,57 @@ than shown as a default, because the card is for your decisions and not for the 
 
 | Control | |
 |---|---|
-| **Build** | Expands the build settings for that project, in place |
+| **Edit** | Expands the build settings for that project, in place |
 | **Secrets** | Expands its environment variables, with a count when it has any |
 | **Delete** | Removes the row. Existing previews are left alone |
-| **Disable** | Inside **Build**. A disabled project stops building; the row and its settings stay |
+| **Disable** | Inside **Edit**. A disabled project stops building; the row and its settings stay |
+| **Open ↗** | On the branch strip. Goes to this project's default-branch preview |
+| **Rebuild** | On the branch strip. Builds the default branch again, at its current tip |
+| **Link an unlinked PR…** | Appears only when the project is skipping something. See below |
 
-One panel is open at a time. **New project** opens the same form the Build panel uses, because a save is an upsert
+One panel is open at a time. **New project** opens the same form the Edit panel uses, because a save is an upsert
 and one form means the two cannot drift apart.
+
+## The default branch is always previewed
+
+Adding a project immediately builds its default branch, and that preview is permanent. It is the first thing on
+the card, because it is the link people actually want: every other preview belongs to a pull request that will be
+merged and forgotten, and this one is the current state of the documentation.
+
+The branch name is read from the platform rather than assumed, so a repository on `master` gets `master`.
+
+It differs from a pull request's preview in four ways, and each matters:
+
+- **It never comments.** There is no pull request to comment on.
+- **Closing a pull request cannot remove it**, even one whose head is that same branch.
+- **It does not expire.** The preview TTL exists because a pull request's preview outlives its usefulness; `main`
+  is still `main` after a quiet fortnight.
+- **Rebuild takes the branch's current tip**, not the commit it last built — the opposite of a pull request's
+  rebuild, which repeats the commit under review.
+
+A project that has no branch preview yet says so and offers to build one. That covers a project added before this
+existed, or one added while the platform was unreachable; the daemon also builds any that are missing at startup.
+
+:::note A push does not yet refresh it
+
+Pushes to the default branch are not built automatically — a push delivery is not a pull request event, and
+docpreview ignores it. Until that lands, the branch preview refreshes when you press **Rebuild** or when the
+daemon restarts. Its commit is shown on the strip, so you can see what it is currently serving.
+
+:::
+
+## Pull requests you do not want built
+
+**Unlink** on a preview removes it and records the decision, so a push, a webhook delivery and a project scan all
+skip that pull request afterwards. Removing a preview without recording the decision would only mean the next
+delivery rebuilt it, which reads as the removal having failed.
+
+The project's card then says how many it is skipping, and **Link an unlinked PR…** opens a picker: one row per
+unlinked pull request, with the branch it was on and when it was unlinked. Linking one builds it immediately and
+stops it being skipped — the same request, so there is nothing to remember to undo.
+
+What comes back on a relink is the same URL and a fresh comment. What does not come back is the build history:
+the logs were deleted with the preview, so the first build after linking is a cold one.
 
 :::note Writes are local-only
 

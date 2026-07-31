@@ -2,9 +2,6 @@ package github
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -62,18 +59,13 @@ func (c *Client) VerifyWebhook(_ context.Context, headers map[string][]string, b
 }
 
 // verifySignature checks the HMAC-SHA256 of body against the sha256= header.
+//
+// A thin wrapper now that the comparison is shared. Kept as a function here because
+// the *header name* is this platform's business — GitHub sends both spellings, and
+// only `X-Hub-Signature-256` carries the SHA-256 digest — while the digest check
+// itself was written identically in three packages.
 func verifySignature(secret, body []byte, header string) bool {
-	const prefix = "sha256="
-	if !strings.HasPrefix(header, prefix) {
-		return false
-	}
-	want, err := hex.DecodeString(strings.TrimPrefix(header, prefix))
-	if err != nil {
-		return false
-	}
-	mac := hmac.New(sha256.New, secret)
-	mac.Write(body)
-	return hmac.Equal(mac.Sum(nil), want)
+	return scm.VerifyHMACSHA256(secret, body, header)
 }
 
 // pullRequestPayload is the subset of GitHub's pull_request event we read.

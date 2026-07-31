@@ -12,6 +12,7 @@ docpreview configure ziti [-controller URL] [-username U] [-password P] …
 docpreview preview   [-build] [-base-url PATH] [-name LABEL] <dir>
 docpreview serve     [-config FILE] [-log-level LEVEL]
 docpreview doctor    [-config FILE]
+docpreview shares    list [-config FILE] [-json] [-log-level LEVEL]
 docpreview sim       <subcommand>
 docpreview webhook-only    [-zrok-name NAME] [-listen ADDR] [-upstream URL] [-path PATH]
 docpreview dashboard-only  [-zrok-name NAME] [-listen ADDR] [-upstream URL]
@@ -378,7 +379,7 @@ reloading under you. **If something on the page contradicts the code, reload bef
 |---|---|---|
 | `POST` | `/webhook/github` | HMAC-verified. Returns `202` before doing the work. |
 | `POST` | `/webhook/local` | The local platform. No signature — see [Local platform](../local-platform.md). |
-| `POST` | `/webhook/bitbucket` | Returns `501` until Bitbucket is wired up. |
+| `POST` | `/webhook/bitbucket` | HMAC-verified, with the signature in `X-Hub-Signature` — which is SHA-256 here, despite being the name GitHub uses for its legacy SHA-1. Returns `501` only when no Bitbucket credential is stored. |
 | `GET` | `/` | The dashboard. |
 | `GET` | `/secrets` | Credential management. Its own page rather than a panel on the dashboard: a URL can be bookmarked and named in a runbook, and a distinct path is something a proxy or a later authentication layer can gate. Registered only when a credential surface is wired, so a daemon without one answers `404` rather than serving an empty page. |
 | `GET` | `/projects` | [Projects](./projects.md) and their environment variables. The third page, same embedded document, switched on the path. |
@@ -386,6 +387,11 @@ reloading under you. **If something on the page contradicts the code, reload bef
 | `GET` | `/api/secrets` | What that page reads: names, whether the vault is unlocked, and whether this daemon may be written to at all. Never a value. |
 | `PUT` `DELETE` `POST` | `/api/secrets/…` | Store, delete, unlock, generate. Refused unless every listener is loopback *and* the request arrived from this machine carrying no forwarding header. Loopback is not local: a tunnel makes the first true while the caller is on the internet, which is what [`webhook-only`](#webhook-only) exists for. |
 | `GET` `PUT` `DELETE` | `/api/projects/…` | Project rows and their environment variables. Same two gates as `/api/secrets`, for a stronger reason: a project row decides what command runs on the build host. |
+| `POST` | `/api/projects/…/branch` | Build a project's default branch, or the branch named in the body. The permanent preview described in [Projects](./projects.md). Same gates. |
+| `POST` | `/api/projects/…/link` | Build one pull request by number, and stop skipping it if it was unlinked. Same gates. |
+| `POST` | `/api/builds/{preview}/unlink` | Remove a preview and record that its pull request must not be built again. The ignore is written before the teardown, so a failure partway leaves the pull request unbuilt rather than rebuilding itself on the next push. Same gates. |
+| `POST` | `/api/builds/{preview}/rebuild` | Build again: the recorded commit for a pull request, the branch's current tip for a branch preview. Same gates. |
+| `POST` | `/api/builds/{preview}/cancel` | Abandon the build running for a preview. Same gates. |
 | `DELETE` | `/api/cache` | Empty every preview's package cache. Same gates. |
 | `DELETE` | `/api/cache/{preview}` | Empty one preview's. Keyed on a preview rather than a project, but served by the projects admin so there is one gate rather than two. |
 | `GET` | `/events` | Server-sent events: the whole status payload on every change. |
@@ -395,6 +401,7 @@ reloading under you. **If something on the page contradicts the code, reload bef
 | `GET` | `/pr` | The stand-in pull request page, for the local platform. |
 | `GET` | `/preview/{name}/` | Previews, under the `local` exposer only. |
 | `GET` | `/healthz` | `ok`. |
+| `GET` | `/readyz` | JSON: whether recovery has finished, and how busy the daemon is. |
 | `GET` | `/status` | JSON: exposer, queue depth, live previews. |
 
 ```json
@@ -417,7 +424,26 @@ reloading under you. **If something on the page contradicts the code, reload bef
 ```
 
 `/status` carries no secrets, but it does enumerate every open documentation pull request. Think about that
-before sharing the ingress publicly alongside the webhook endpoint.
+before sharing the ingress publicly alongside the webhook endpoint. Once a console password is set it is behind
+the login with the rest of the dashboard, including from loopback.
+
+`/readyz` is the endpoint to poll instead, from a script or a supervisor. It answers without a login, and it says
+how busy the daemon is without saying what it is busy with — counts and a stage name, never a repository, branch or
+URL:
+
+```json
+{
+  "starting": false,
+  "pending": 0,
+  "running": 0,
+  "ready": 8,
+  "instance": "20260731-192655.448"
+}
+```
+
+While recovery is running it also carries `startup` with `stage`, `note`, `done` and `total`, which is what the
+restart script prints as it waits. `instance` is the process start stamp, so a caller can tell the daemon it just
+restarted from one that was already running.
 
 ## `webhook-only`
 
@@ -675,6 +701,46 @@ all checks passed
 The vault line is absent there because nothing needed it. The vault is opened lazily, so a setup with the
 `local` exposer and no source control never asks for a master key — demanding a passphrase to serve a
 directory on loopback would be pure ceremony.
+
+## `shares list`
+
+What the exposer's account actually holds, compared against what the database claims. It answers two questions that
+have opposite fixes and were both invisible before it existed: is this account paying for something nothing uses,
+and is something advertising a URL that no longer resolves.
+
+```powershell
+docpreview shares list -config .docpreview\config.yml
+```
+
+```text
+STATE    PUBLICATION                           PULL REQUEST                                     SHARE         URL
+missing  81379294374a/20260730-184200-cf9f37d  bitbucket:netfoundry/customer-connect-docs#19    -             https://…-cf9f37d.shares.zrok.io/
+ok       10e1d73c7eea                          github:openziti-test-kitchen/docpreview@main     g83f5pgt410k  https://docpreview-main.shares.zrok.io/
+never    58a4a5f461f7                          github:openziti-test-kitchen/docpreview#6        -             -
+
+23 shares held: 23 matched the database, 0 orphaned. 1 recorded publication is no longer on the account;
+2 previews have never published.
+```
+
+| State | |
+|---|---|
+| `ok` | The account holds it and the database claims it |
+| `orphan` | The account holds it, the database does not. Costs a share and a reserved name against quota, and serves a URL nothing links to. `Reap` deletes these at its next sweep |
+| `missing` | The database claims it, the account does not hold it. A comment or the dashboard is offering a URL that now 404s — rebuild the preview |
+| `never` | A recorded preview that has not published yet. Counted apart so a queued build is not reported as a problem |
+
+A `@branch` in the pull request column is a [branch preview](./projects.md#the-default-branch-is-always-previewed)
+rather than a pull request.
+
+**It deletes nothing.** `Reap` is what deletes, and an audit command that also deleted is one nobody would run.
+`-json` gives the same data for a script.
+
+:::note Two things it cannot see
+
+A **leaked reserved name** — the object the quota actually counts — is invisible once its share is gone, because
+the listing is of shares. And only the `zrok2` exposer can answer at all; the others say so and point at `doctor`.
+
+:::
 
 ## `sim`
 

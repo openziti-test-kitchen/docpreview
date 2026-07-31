@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -8,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,6 +20,8 @@ import (
 	"github.com/openziti/zrok/v2/environment/env_core"
 	"github.com/openziti/zrok/v2/rest_client_zrok/metadata"
 	"github.com/openziti/zrok/v2/sdk/golang/sdk"
+
+	"github.com/netfoundry/docpreview/internal/expose"
 )
 
 // cmdWebhookOnly reverse-proxies exactly one route to the daemon and refuses
@@ -53,7 +58,12 @@ func cmdWebhookOnly(args []string) error {
 	fs := flag.NewFlagSet("webhook-only", flag.ExitOnError)
 	listen := fs.String("listen", "127.0.0.1:8481", "address to accept tunnelled requests on")
 	upstream := fs.String("upstream", "http://127.0.0.1:8471", "the docpreview daemon to forward to")
-	path := fs.String("path", "/webhook/github", "the single path to forward")
+	// Repeatable. One share can carry every platform's endpoint, which matters
+	// because a zrok name is a quota-bearing object and a second share means a second
+	// name, a second reap to get wrong, and a second URL to keep in step.
+	var paths pathList
+	fs.Var(&paths, "path",
+		"a path to forward; repeat for more than one (default /webhook/github)")
 	zrokName := fs.String("zrok-name", "",
 		"serve over a named public zrok share instead of a local port, e.g. -zrok-name docpreview")
 	zrokNamespace := fs.String("zrok-namespace", "",
@@ -101,26 +111,32 @@ func cmdWebhookOnly(args []string) error {
 
 	mux := http.NewServeMux()
 
-	// One route, method included in the pattern, so a GET to the same path is a
-	// 405 from the mux rather than something forwarded.
-	mux.HandleFunc("POST "+*path, func(w http.ResponseWriter, r *http.Request) {
-		log.Info("forwarding webhook", "remote", r.RemoteAddr, "delivery", r.Header.Get("X-GitHub-Delivery"))
-		proxy.ServeHTTP(w, r)
-	})
+	for _, p := range paths.values() {
+		// One route per path, method included in the pattern, so a GET to the same
+		// path is a 405 from the mux rather than something forwarded.
+		mux.HandleFunc("POST "+p, func(w http.ResponseWriter, r *http.Request) {
+			// Both delivery headers, because neither platform sends the other's and
+			// an empty field is cheaper than two log lines.
+			log.Info("forwarding webhook", "remote", r.RemoteAddr, "path", r.URL.Path,
+				"delivery", r.Header.Get("X-GitHub-Delivery"),
+				"request_uuid", r.Header.Get("X-Request-UUID"))
+			proxy.ServeHTTP(w, r)
+		})
 
-	// A GET on the webhook path gets 405 and a sentence, not a bare 404.
-	//
-	// The first thing anyone does with a webhook URL is paste it into a browser to
-	// check it, and a browser sends GET — so the useful answer is "right URL,
-	// wrong method". This leaks nothing that is not already discoverable: a POST
-	// to the real path answers 401 and a POST to anything else answers 404, so the
-	// path is distinguishable to anyone probing properly regardless.
-	mux.HandleFunc("GET "+*path, func(w http.ResponseWriter, r *http.Request) {
-		log.Debug("refused a GET on the webhook path", "remote", r.RemoteAddr)
-		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "this endpoint accepts signed POST deliveries only; "+
-			"there is nothing here to open in a browser", http.StatusMethodNotAllowed)
-	})
+		// A GET on a webhook path gets 405 and a sentence, not a bare 404.
+		//
+		// The first thing anyone does with a webhook URL is paste it into a browser to
+		// check it, and a browser sends GET — so the useful answer is "right URL,
+		// wrong method". This leaks nothing that is not already discoverable: a POST
+		// to the real path answers 401 and a POST to anything else answers 404, so the
+		// path is distinguishable to anyone probing properly regardless.
+		mux.HandleFunc("GET "+p, func(w http.ResponseWriter, r *http.Request) {
+			log.Debug("refused a GET on a webhook path", "remote", r.RemoteAddr, "path", r.URL.Path)
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "this endpoint accepts signed POST deliveries only; "+
+				"there is nothing here to open in a browser", http.StatusMethodNotAllowed)
+		})
+	}
 
 	// Everything else, including "/", answers 404 and says nothing about what is
 	// behind it. A tunnel URL gets scanned; there is no reason to confirm that a
@@ -152,14 +168,22 @@ func cmdWebhookOnly(args []string) error {
 	// rc8 CLI cannot claim a reserved name for a public share at all. The SDK
 	// can, and internal/expose/zrok.go already does it the same way.
 	if *zrokName != "" {
-		ln, url, cleanup, err := zrokListener(*zrokName, *zrokNamespace, log)
+		// No frontend auth, and this is not an oversight: the caller is GitHub or Bitbucket,
+		// which hold no account with any OAuth provider. The endpoint's protection is the HMAC
+		// over the body, verified by the daemon with the secret from the vault.
+		ln, url, cleanup, err := zrokListener(*zrokName, *zrokNamespace, zrokFrontendAuth{}, log)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
 
-		log.Info("webhook-only serving over zrok", "url", url, "forwards", "POST "+*path, "to", target.String())
-		log.Info("this is the webhook URL to give GitHub", "webhook", url+*path)
+		log.Info("webhook-only serving over zrok", "url", url,
+			"forwards", paths.describe(), "to", target.String())
+		// One line per path. This is the line an operator copies, so it says which
+		// platform each URL is for rather than making them work it out from the path.
+		for _, p := range paths.values() {
+			log.Info("this is the webhook URL to configure", "platform", platformOf(p), "webhook", url+p)
+		}
 
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			return err
@@ -173,7 +197,7 @@ func cmdWebhookOnly(args []string) error {
 	}
 
 	log.Info("webhook-only proxy listening",
-		"listen", ln.Addr().String(), "forwards", "POST "+*path, "to", target.String())
+		"listen", ln.Addr().String(), "forwards", paths.describe(), "to", target.String())
 	log.Info("point the tunnel here, not at the daemon",
 		"share", fmt.Sprintf("zrok2 share public --headless -b proxy http://%s", ln.Addr().String()))
 
@@ -192,7 +216,29 @@ func cmdWebhookOnly(args []string) error {
 // The returned cleanup deletes the share but not the name. Deleting the share
 // releases the binding so the next run can claim it again; deleting the name
 // would throw away the stable URL that is the whole reason for this path.
-func zrokListener(name, namespace string, log *slog.Logger) (net.Listener, string, func(), error) {
+// zrokAuth optionally puts the zrok frontend's own OAuth in front of a share.
+//
+// It exists for the dashboard and deliberately not for previews. A preview URL is pasted into a
+// pull request for anyone reviewing to open; putting a sign-in in front of it defeats the point
+// of the tool. The dashboard is the opposite: it enumerates every open documentation pull
+// request across every project, and it is the thing worth gating.
+//
+// The check happens at zrok's frontend, so an unauthenticated request never reaches this
+// process. That is stronger than anything docpreview could do with a password — and it is why
+// the daemon's own login is the fallback for arrangements that have no such frontend, rather
+// than the primary.
+type zrokFrontendAuth struct {
+	// Provider is "google" or "github", empty for none.
+	Provider string
+
+	// EmailPatterns restricts who may pass, as globs against the address the provider
+	// reports: `*@example.com`. Empty with a provider set means any account the provider
+	// will authenticate, which is every Google account in existence — so the two are
+	// validated together by the caller.
+	EmailPatterns []string
+}
+
+func zrokListener(name, namespace string, auth zrokFrontendAuth, log *slog.Logger) (net.Listener, string, func(), error) {
 	root, err := environment.LoadRoot()
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("loading the zrok environment (is zrok2 enabled?): %w", err)
@@ -220,7 +266,32 @@ func zrokListener(name, namespace string, log *slog.Logger) (net.Listener, strin
 		PermissionMode: sdk.OpenPermissionMode,
 	}
 
-	shr, err := sdk.CreateShare(root, req)
+	// The frontend's own sign-in, when the caller asked for it. Three hours matches what the
+	// preview exposer uses: long enough not to interrupt somebody reading, short enough that
+	// removing a person from the identity provider takes effect the same working day.
+	if auth.Provider != "" {
+		req.OauthProvider = auth.Provider
+		req.OauthEmailAddressPatterns = auth.EmailPatterns
+		req.OauthRefreshInterval = 3 * time.Hour
+	}
+
+	// Retried, because the controller is a network service that does time out.
+	//
+	// This process used to die outright on "context deadline exceeded" from the create call,
+	// which is a bad failure and not a rare one: the zrok share record outlives the process
+	// holding it, so the frontend keeps routing to a backend that is gone and every visitor
+	// gets a 502 for a tunnel nobody can see is dead. It happened three times in one afternoon
+	// before the output was captured to notice why.
+	//
+	// context.Background() rather than a plumbed context because this runs during startup,
+	// before anything can be cancelled, and the whole budget is a few seconds.
+	var shr *sdk.Share
+	create := func() error {
+		var cerr error
+		shr, cerr = sdk.CreateShare(root, req)
+		return cerr
+	}
+	err = expose.RetryZrok(context.Background(), log, "create share "+name, create)
 	if err != nil {
 		// A name still held by a share from a previous run. This is the ordinary
 		// case rather than the exceptional one: the share is deleted on graceful
@@ -232,7 +303,7 @@ func zrokListener(name, namespace string, log *slog.Logger) (net.Listener, strin
 		// this account, and the only thing that can be holding it is our own
 		// abandoned share. internal/expose/zrok.go does the same for previews.
 		if reclaimed := reclaimZrokName(root, namespace, name, log); reclaimed {
-			shr, err = sdk.CreateShare(root, req)
+			err = expose.RetryZrok(context.Background(), log, "create share "+name, create)
 		}
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("creating the zrok share for name %q in namespace %q "+
@@ -337,6 +408,67 @@ func endpointLabelMatches(endpoints []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// pathList collects a repeatable -path flag.
+//
+// A flag.Value rather than a comma-separated string, because these are URL paths and
+// a separator inside a value is a parsing decision waiting to be got wrong.
+type pathList struct {
+	paths []string
+}
+
+func (p *pathList) String() string {
+	if p == nil || len(p.paths) == 0 {
+		return "/webhook/github"
+	}
+	return strings.Join(p.paths, ",")
+}
+
+func (p *pathList) Set(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return errors.New("a -path cannot be empty")
+	}
+	if !strings.HasPrefix(v, "/") {
+		return fmt.Errorf("-path %q must start with a slash", v)
+	}
+	// Duplicates are refused rather than deduplicated: registering the same pattern
+	// twice on a ServeMux panics, and a flag repeated by accident should say so
+	// rather than being quietly tidied up.
+	if slices.Contains(p.paths, v) {
+		return fmt.Errorf("-path %q was given twice", v)
+	}
+	p.paths = append(p.paths, v)
+	return nil
+}
+
+// values returns the paths, defaulting when none were given. The default lives here
+// rather than in the flag so that repeating -path *replaces* it instead of adding to
+// it — an operator forwarding only Bitbucket must not silently also publish GitHub's
+// endpoint.
+func (p *pathList) values() []string {
+	if len(p.paths) == 0 {
+		return []string{"/webhook/github"}
+	}
+	return p.paths
+}
+
+func (p *pathList) describe() string {
+	out := make([]string, 0, len(p.values()))
+	for _, v := range p.values() {
+		out = append(out, "POST "+v)
+	}
+	return strings.Join(out, ", ")
+}
+
+// platformOf names the platform a webhook path belongs to, for the log line an
+// operator copies the URL out of.
+func platformOf(path string) string {
+	if i := strings.LastIndex(path, "/"); i >= 0 && i < len(path)-1 {
+		return path[i+1:]
+	}
+	return "unknown"
 }
 
 func isLoopbackHost(host string) bool {

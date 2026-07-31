@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/netfoundry/docpreview/internal/model"
@@ -24,6 +25,85 @@ func TestSpecKey(t *testing.T) {
 	}
 	if build.Key() == pv.Key() {
 		t.Error("a build share and its branch share share a key, so one would withdraw the other")
+	}
+}
+
+// TestRebuildingOneCommitTakesItsOwnBuildShare covers the collision that greyed out
+// "Open build" on a build that had just succeeded.
+//
+// A build share's name embeds the commit, so rebuilding the same commit asks for the
+// same name under a new build id — and a check that refused every key it did not
+// recognise refused the preview its own name. The build succeeded, the share was not
+// created, and the dashboard had no URL to offer for it.
+func TestRebuildingOneCommitTakesItsOwnBuildShare(t *testing.T) {
+	l := NewLocal(slog.New(slog.DiscardHandler), "")
+	t.Cleanup(func() { l.Close() })
+	l.SetOrigin("http://127.0.0.1:8471")
+
+	pr := model.PullRequest{
+		Repo:   model.Repo{Platform: model.PlatformGitHub, Owner: "acme", Name: "docs"},
+		Number: 7, Branch: "add-guide",
+	}
+	spec := func(buildID string) Spec {
+		return Spec{
+			PreviewID: pr.PreviewID(), BuildID: buildID,
+			Name: "add-guide-85912e2", BaseURL: "/", PR: pr,
+		}
+	}
+
+	if _, err := l.Publish(context.Background(), spec("20260729-190307-85912e2"), http.NotFoundHandler()); err != nil {
+		t.Fatalf("publishing the first build of a commit: %v", err)
+	}
+
+	// Same commit, rebuilt: same name, new build id.
+	again, err := l.Publish(context.Background(), spec("20260730-182502-85912e2"), http.NotFoundHandler())
+	if err != nil {
+		t.Fatalf("rebuilding one commit must reuse its own build share: %v", err)
+	}
+	if again.URL == "" {
+		t.Error("the rebuilt commit got no URL, which is what leaves Open build greyed out")
+	}
+
+	// The older publication is gone rather than left holding a name nothing serves.
+	if n := l.count(); n != 1 {
+		t.Errorf("the exposer holds %d publications of one commit, want 1", n)
+	}
+}
+
+// TestOneNameForTwoPreviewsIsStillRefused is the other half: the takeover above must
+// not be reachable across previews.
+//
+// Two pull requests rendering to one name is a name_template that cannot separate
+// them. Letting the second take the name would point a reviewer's URL at another
+// pull request's site, which is worse than a failed publish.
+func TestOneNameForTwoPreviewsIsStillRefused(t *testing.T) {
+	l := NewLocal(slog.New(slog.DiscardHandler), "")
+	t.Cleanup(func() { l.Close() })
+	l.SetOrigin("http://127.0.0.1:8471")
+
+	mine := model.PullRequest{
+		Repo:   model.Repo{Platform: model.PlatformGitHub, Owner: "acme", Name: "docs"},
+		Number: 7, Branch: "add-guide",
+	}
+	theirs := model.PullRequest{
+		Repo:   model.Repo{Platform: model.PlatformGitHub, Owner: "acme", Name: "handbook"},
+		Number: 3, Branch: "add-guide",
+	}
+
+	if _, err := l.Publish(context.Background(), Spec{
+		PreviewID: mine.PreviewID(), Name: "add-guide", BaseURL: "/", PR: mine,
+	}, http.NotFoundHandler()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := l.Publish(context.Background(), Spec{
+		PreviewID: theirs.PreviewID(), Name: "add-guide", BaseURL: "/", PR: theirs,
+	}, http.NotFoundHandler())
+	if err == nil {
+		t.Fatal("a second preview took another's name; a reviewer's URL now serves the wrong site")
+	}
+	if !strings.Contains(err.Error(), "name_template") {
+		t.Errorf("the refusal does not name the fix: %v", err)
 	}
 }
 

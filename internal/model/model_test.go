@@ -53,8 +53,8 @@ func TestSanitizeNameIsStable(t *testing.T) {
 func TestSanitizeNameTruncatesLongBranches(t *testing.T) {
 	long := "feature/a-really-quite-extraordinarily-long-branch-name-that-nobody-should-have-written"
 	got := SanitizeName(long)
-	if len(got) > maxLabelLen {
-		t.Fatalf("SanitizeName(%q) = %q, length %d exceeds %d", long, got, len(got), maxLabelLen)
+	if len(got) > MaxLabelLen {
+		t.Fatalf("SanitizeName(%q) = %q, length %d exceeds %d", long, got, len(got), MaxLabelLen)
 	}
 }
 
@@ -79,6 +79,56 @@ func TestPreviewIDIgnoresBranchAndCommit(t *testing.T) {
 
 	if base.PreviewID() != moved.PreviewID() {
 		t.Fatalf("preview ID changed with the branch: %q vs %q", base.PreviewID(), moved.PreviewID())
+	}
+}
+
+// TestPreviewIDIsStableForPullRequests is a pin, not a behaviour test.
+//
+// This id is the primary key of every preview, build and comment row, the tag on every
+// remote share, and the directory name of every artifact and log. Branch previews needed
+// the branch in the hashed input; folding it in for *numbered* pull requests as well would
+// silently orphan all of that — every restored preview reaped as an orphan, every existing
+// comment re-posted as a duplicate. The literal is here so that change cannot be made
+// quietly.
+func TestPreviewIDIsStableForPullRequests(t *testing.T) {
+	pr := PullRequest{
+		Repo:   Repo{Platform: PlatformGitHub, Owner: "acme", Name: "docs"},
+		Number: 42, Branch: "feature/a", HeadSHA: "aaaa",
+	}
+	if got, want := pr.PreviewID(), "03f53fd3e24d"; got != want {
+		t.Errorf("preview id for %s is %q, want %q — every stored row and remote share "+
+			"is keyed on the old value", pr, got, want)
+	}
+}
+
+func TestBranchPreviewsAreKeyedOnTheBranch(t *testing.T) {
+	repo := Repo{Platform: PlatformGitHub, Owner: "acme", Name: "docs"}
+	main := PullRequest{Repo: repo, Branch: "main"}
+	release := PullRequest{Repo: repo, Branch: "release-8.2"}
+
+	if !main.IsBranch() {
+		t.Fatal("a pull request with no number is not recognised as a branch preview")
+	}
+	// Without the branch in the seed, every branch of one repository hashes to the same
+	// id — so the second branch built would take over the first one's preview, its share
+	// and its artifacts.
+	if main.PreviewID() == release.PreviewID() {
+		t.Error("two branches of one repository share a preview id")
+	}
+	// And a branch preview must not collide with pull request 0's, which cannot exist, or
+	// with any real pull request's.
+	pr := PullRequest{Repo: repo, Number: 1, Branch: "main"}
+	if main.PreviewID() == pr.PreviewID() {
+		t.Error("a branch preview collides with a pull request on the same branch")
+	}
+
+	// The string form has to say which it is. "#0" reads as a bug in a log line.
+	if got, want := main.String(), "github:acme/docs@main"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
+	}
+	// And the link goes to the branch, since there is no pull request to open.
+	if got, want := main.WebURL(), "https://github.com/acme/docs/tree/main"; got != want {
+		t.Errorf("WebURL() = %q, want %q", got, want)
 	}
 }
 

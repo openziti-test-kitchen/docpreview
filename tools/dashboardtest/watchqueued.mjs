@@ -6,11 +6,19 @@
 // rather than removing fifteen. So this records the evidence instead of guessing at
 // it — run it, push, and read what came back.
 //
+//   $env:DOCPREVIEW_PASSWORD = "<the admin password>"
 //   node tools/dashboardtest/watchqueued.mjs
 //
 // It prints one line per change in (state set, event count) and shouts if the event
 // count drops.
+//
+// The password is needed because /status is behind the login. Without it this exits
+// rather than polling: a watcher that reports nothing because it is being refused is
+// worse than one that does not start.
+import {statusFetcher} from "./live.mjs";
+
 const daemon = process.env.DOCPREVIEW_URL || "http://127.0.0.1:8471";
+const status = statusFetcher(daemon);
 const every = Number(process.env.INTERVAL_MS || 1500);
 
 let lastKey = "";
@@ -22,7 +30,7 @@ console.log(`watching ${daemon}/status every ${every}ms — push something, then
 
 for (;;) {
   try {
-    const s = await (await fetch(`${daemon}/status`)).json();
+    const s = await status();
     const events = s.events || [];
     const states = {};
     for (const p of s.previews || []) states[p.state] = (states[p.state] || 0) + 1;

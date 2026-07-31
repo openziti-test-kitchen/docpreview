@@ -1,15 +1,26 @@
 // Prints the rendered text of the first few activity rows, to see what a reader sees
 // rather than what the markup intends.
+//
+// Needs DOCPREVIEW_PASSWORD, since /status is behind the login and this file is only
+// useful against real state.
 import {readFileSync} from "node:fs";
+import {dirname, join} from "node:path";
+import {fileURLToPath} from "node:url";
 import {JSDOM, VirtualConsole} from "jsdom";
 
-const daemon = "http://127.0.0.1:8471";
-const status = await (await fetch(`${daemon}/status`)).json();
+import {statusFetcher} from "./live.mjs";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const daemon = process.env.DOCPREVIEW_URL || "http://127.0.0.1:8471";
+const status = await statusFetcher(daemon)();
 
 const vc = new VirtualConsole();
 vc.on("jsdomError", e => console.log("PAGE ERROR:", e.message));
 
-const dom = new JSDOM(readFileSync("internal/daemon/dashboard.html", "utf8"), {
+// Resolved from this file rather than from the working directory, which made it runnable
+// only from the repository root and only by somebody who knew that.
+const dom = new JSDOM(readFileSync(
+  join(here, "..", "..", "internal", "daemon", "dashboard.html"), "utf8"), {
   runScripts: "dangerously", url: `${daemon}/`, virtualConsole: vc,
   beforeParse(win) {
     win.EventSource = class { constructor() { this.readyState = 1; } close() {} addEventListener() {} };

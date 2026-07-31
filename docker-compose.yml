@@ -1,0 +1,108 @@
+# docpreview: the daemon and its two public shares.
+#
+# Three containers from one image, exactly as the three processes on a workstation: the
+# daemon, the webhook share, and the read-only dashboard share.
+#
+# ── The two things that make this work, and break it if changed ──────────────────
+#
+# **The data directory is mounted at the same path inside and outside the container.**
+# `/srv/docpreview` on both sides, and that is not tidiness. The daemon builds by asking
+# the *host's* docker daemon to bind-mount a workspace into a build container, so the path
+# it passes is resolved out there, not in here. Mount the data somewhere else inside and
+# every build gets an empty /workspace — which surfaces as a missing package.json and sends
+# whoever debugs it looking at the repository. Change the host side and change
+# DOCPREVIEW_DATA and the config to match, together.
+#
+# **The share containers join the daemon's network namespace.** `network_mode: service:` is
+# what makes 127.0.0.1:8471 mean the daemon to them. It is also what preserves the security
+# model: webhook-only refuses a non-loopback -upstream, because forwarding elsewhere would
+# make it a relay, and the daemon's own admin surface is gated on the request arriving over
+# loopback. Put them on a bridge network with a hostname instead and the first refuses to
+# start while the second silently becomes reachable from anywhere on that network.
+#
+# ── Before the first start ───────────────────────────────────────────────────────
+#
+#   docker compose run --rm docpreview vault keygen -out /srv/docpreview/master.key
+#   docker compose run --rm docpreview init -config /srv/docpreview/config.yml -exposer zrok2 -yes
+#   # then edit config.yml: data_dir: /srv/docpreview/data, vault.key_source: file:…/master.key
+#
+# zrok needs an enabled environment in the volume below, once. This image carries no zrok
+# CLI, so enable it on the host and copy the directory in — see
+# www/docs/runbooks/container.md, and docs/design/20-container.md for why the environment
+# is not something the new machine can recreate.
+
+services:
+  # ── The daemon ────────────────────────────────────────────────────────────────
+  docpreview:
+    image: docpreview:latest
+    build:
+      context: .
+    restart: unless-stopped
+    command: ["serve"]
+    volumes:
+      # Identical on both sides. See the note above.
+      - /srv/docpreview:/srv/docpreview
+      # The host's docker daemon. Every build runs as a sibling container out there, which
+      # is why the image cache stays warm across restarts of this one.
+      #
+      # Read-write, necessarily: creating containers and removing cache volumes are writes.
+      # This is root on the host, and no `:ro` makes it otherwise.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The zrok environment identity. A named volume rather than a bind mount because
+      # nothing on the host needs to read it, and losing it is not a small thing: it is what
+      # owns every reserved name, so a fresh environment orphans every preview URL on the
+      # old account with no way to reclaim them from here.
+      - zrok:/root/.zrok2
+    environment:
+      # The only environment variable the binary reads for configuration. Set here as well
+      # as in the image so a deployment that moves the file changes one line.
+      DOCPREVIEW_CONFIG: /srv/docpreview/config.yml
+      # Unattended unlock, if you want it. Without a key source the daemon starts *locked*
+      # and serves a setup page — which is deliberate and fine, but it means a restart needs
+      # somebody to visit the dashboard. Prefer `vault.key_source: file:` in config.yml with
+      # the key mounted as a secret; this variable is the third fallback and puts the key in
+      # `docker inspect`.
+      # DOCPREVIEW_MASTER_KEY: ""
+
+  # ── The webhook share ─────────────────────────────────────────────────────────
+  #
+  # A separate container for the same reason it is a separate process on a workstation:
+  # `zrok2 share public http://127.0.0.1:8471` would publish *every* route the daemon
+  # serves, including /api/secrets, whose write gate only checks that the listeners are
+  # loopback — which they are. This publishes one method and two paths.
+  webhook:
+    image: docpreview:latest
+    restart: unless-stopped
+    # Shares the daemon's network namespace, so -upstream's loopback check passes and
+    # nothing else on any network can reach the daemon.
+    network_mode: "service:docpreview"
+    depends_on:
+      docpreview:
+        condition: service_started
+    command:
+      - webhook-only
+      - -zrok-name=docpreview
+      - -path=/webhook/github
+      - -path=/webhook/bitbucket
+    volumes:
+      - zrok:/root/.zrok2
+
+  # ── The public dashboard ──────────────────────────────────────────────────────
+  #
+  # Read-only by allowlist: /api/admin is not in it, so the admin links are absent and the
+  # write routes 404 through this share rather than relying on the loopback gate alone.
+  dashboard:
+    image: docpreview:latest
+    restart: unless-stopped
+    network_mode: "service:docpreview"
+    depends_on:
+      docpreview:
+        condition: service_started
+    command:
+      - dashboard-only
+      - -zrok-name=docpreview-dash
+    volumes:
+      - zrok:/root/.zrok2
+
+volumes:
+  zrok:

@@ -6,6 +6,65 @@ Related: `www/docs/future/ziti-native-previews.md` holds the design research tha
 
 ## In flight
 
+**Branch previews, and a permanent one for the default branch. Shipped and exercised live**, 31 July 2026: `main`
+previews for `bitbucket:netfoundry/customer-connect-docs` and `github:openziti-test-kitchen/docpreview`, both
+serving 200, neither commenting on anything.
+
+Every preview used to belong to a pull request, which is the wrong shape for the thing an operator looks at most:
+the current state of `main`. A branch preview differs from a pull request's in four ways, and each is enforced
+somewhere different:
+
+- **No comment, ever** — `d.report` returns early for `IsBranch`, which is the funnel every state change passes
+  through, and `teardown` skips `Retract` for the same reason.
+- **Not torn down by a closed pull request**, because the ids cannot collide: a branch preview hashes the branch
+  where a pull request hashes its number.
+- **Not reaped for being old.** The TTL exists because a pull request's preview outlives its usefulness; `main` is
+  still `main` after a quiet fortnight.
+- **Rebuilt at the branch tip**, not at the commit on the row — the opposite of a pull request's rebuild, because
+  this preview is a claim about what the branch looks like now.
+
+- [x] **A preview identity that is not a pull request number.** Number 0 means "no pull request", and
+      `PreviewID()` folds the branch into the hash only in that case — `TestPreviewIDIsStableForPullRequests` pins
+      the numbered form with a literal, because changing it would orphan every stored row and remote share.
+- [x] **Build the default branch when a project is added**, discovered rather than assumed: `scm.BranchResolver`
+      with `DefaultBranch` and `BranchTip` on both platforms. A repository on `master` gets `master`.
+      `backfillBranchPreviews` covers projects that predate the feature, on every startup.
+- [x] **A build with no webhook behind it can authenticate.** Found by the live test: every GitHub branch build
+      failed with "the webhook payload was missing installation.id" — a message about a webhook, for a build that
+      never had one. `installationOf` looks the installation up when the pull request carries none, which also
+      covers the scan and link paths.
+- [ ] **Decide what happens on a push to the default branch.** A push delivery is not a pull request event and is
+      ignored entirely, so the permanent preview goes stale until somebody presses Rebuild or the daemon restarts.
+      Handling `push` for the default branch only is the smallest version, and it is what makes "always current"
+      true rather than "current as of the last time somebody asked".
+- [ ] **A failed branch preview is not retried.** `backfillBranchPreviews` only builds where a preview is *absent*,
+      deliberately — rebuilding a broken one on every restart would hide it. But a permanent preview stuck failed
+      is exactly the state that most wants attention, and nothing surfaces it beyond the project card.
+
+**The log pane now follows a running build selected from the picker. Fixed**, 31 July 2026, and covered by
+`tools/dashboardtest/logtail.mjs` — six scenarios, including the two that were broken.
+
+Choosing the in-flight build from the dropdown used to show its log to the point it had reached and then stop
+updating, and a build that started while the row was open did not appear in the picker until a reload.
+
+**Both entries here previously described the wrong causes**, which is worth leaving on the record: the plausible
+diagnosis and the real one were different, and the harness is what told them apart.
+
+- [x] **The pane was streaming and not following.** The guess was that selecting the newest build by id fetched the
+      stored file instead of streaming. It did not — index 0 of the picker already carries the empty value, so a
+      stream did open and lines did arrive. What was wrong is that `setFollow(false)`, the deliberate pause a
+      *stored* build sets, leaked into that path: the viewport stayed where it was while output piled up below the
+      fold, which looks exactly like a stream that stopped. `liveBuild()` now decides, and it is true only for
+      index 0 with a live state — not "whenever something is running", because `/logs/{preview}/stream` serves
+      whichever build is current and streaming for any other id would show one build's output under another's label.
+- [x] **The picker froze while it had focus.** The guess was that `loadBuilds` never ran on a status tick. It does,
+      on every render of an open row. The real cause: `updateBuildPicker` correctly refuses to rewrite a `<select>`
+      that has focus — doing so closes an open dropdown — and a `<select>` keeps focus after you pick from it. The
+      preview picker has an `onblur` catch-up and the build picker had none, so a reload was the only way out.
+- [ ] **`updateBody`'s handler closures capture a stale group.** Found while fixing the above: the build picker's
+      `onchange` writes `ui.build[<the preview at expand time>]`, so switching the preview dropdown and then the
+      build dropdown records the selection against the wrong preview. Avoided rather than fixed in the blur handler.
+
 **Secrets have a scope now, and the projects page is where they live.** `build.secrets` was one map for the whole
 daemon, which is the wrong shape for the case it exists for: a documentation site assembling several private
 repositories needs a token per source, and those are not the same for every project. A single global map also means
@@ -332,12 +391,14 @@ a DNS suffix — but it is a **bare hostname**, not a URL, so anything putting i
       no row, so the history shows a gap where a push was deliberately not built — which is the one case somebody
       asks the history about. The skip branch in `Daemon.build` (`internal/daemon/daemon.go:812`) is where the
       first belongs.
-- [ ] **A pending job survives the teardown of its preview.** The only statement that removes a `jobs` row is
-      `Claim`, and `teardown` deletes the `previews` row and nothing else — so a push landing just before a close
-      leaves a job that a worker later claims and builds, republishing a preview that was deliberately removed.
-      Unverified against a live pull request. The fix has to choose between deleting the job in `teardown` and
-      re-checking the pull request's state in the commit phase; the second is more correct and needs an API call the
-      commit phase does not make today.
+- [x] **A pending job survived the teardown of its preview.** `Claim` was the only statement that removed a `jobs`
+      row, so a push landing just before a close left a job that a worker later claimed and built, republishing a
+      preview that was deliberately removed — and unlinking a pull request is a button an operator presses to make
+      that stop. `teardown` now calls `store.Dequeue`, the same statement the cancel button uses, and collects its
+      error rather than logging it: a surviving job puts back everything the rest of teardown removes. The narrow
+      race left is a worker that has claimed the job but not yet registered it in `d.running`, which is visible in
+      neither place; closing it wants the commit phase to re-read the pull request's state, an API call it does not
+      make today.
 - [ ] **`/healthz` is `ok\n` and answers before recovery runs**, and the vault's locked state — which makes
       every GitHub webhook answer 501 — appears in no endpoint. Extend `/status`.
 - [ ] **Log the dialing identity on the ziti exposer**, then enforce against it. This is the cheap first half of
@@ -371,24 +432,37 @@ NetFoundry-hosted is a decision nobody has made.
 
 ## Bitbucket
 
-Nothing exists beyond the interface. `POST /webhook/bitbucket` returns 501. The research is done —
-[docs/design/15-bitbucket.md](docs/design/15-bitbucket.md), read against a live Vercel integration on
-`bitbucket.org/netfoundry/customer-connect-docs` — and stage 1 of its build order has landed.
+**Built and exercised against a live private repository**, 30 July 2026: `netfoundry/customer-connect-docs` cloned
+with a repository access token, built, published, and a comment upserted on pull requests 19 and 20. The plan in
+[docs/design/15-bitbucket.md](docs/design/15-bitbucket.md) has landed and its build order is spent; what remains
+below is what a week of use will decide rather than what is missing.
 
 - [x] **The marker is portable.** `scm.MarkerStyle`, `MarkerFor` and `HasMarker`; `findComment` matches with
       `HasMarker` rather than against one rendered string. Bitbucket escapes raw HTML, so `<!-- docpreview:… -->`
       would render as a visible paragraph there — Vercel ships exactly that defect on a public pull request. The
       working form is a CommonMark link reference definition. Done first and on GitHub alone, because a matcher that
       forgets a style posts a duplicate comment on every open pull request, and only GitHub has comments in the wild.
-- [ ] `internal/scm/bitbucket` implementing `scm.Client`, writing `MarkerLinkRef`
-- [ ] Webhook verification, comment upsert, diffstat for changed files
-- [ ] **A repository access token, not app passwords** — those were removed 28 July 2026. Not an Atlassian account
-      email plus API token either: that credential is a whole-account one.
-- [ ] **`Repo.Name` must hold the slug, not the display name.** Bitbucket distinguishes them, and fork detection
-      comparing the wrong one refuses every pull request.
-- [ ] **`source.commit.hash` is 12 characters, not 40.** The client has to normalize, or `Report.Commit` silently
-      holds two widths depending on the platform.
-- [ ] Vault keys already reserved: `bitbucket.email`, `bitbucket.api_token`, `bitbucket.webhook_secret`
+- [x] `internal/scm/bitbucket` implementing `scm.Client`, writing `MarkerLinkRef`. Webhook verification
+      (`X-Hub-Signature`, which is SHA-256 here despite the name GitHub uses for its SHA-1), comment upsert,
+      diffstat for changed files, and fork refusal.
+- [x] **A repository access token, not app passwords** — those were removed 28 July 2026. Per *project*, not
+      workspace-wide, because an administrator can forbid the wider kind: `project/<platform>/<owner>/<repo>/scm.access_token`
+      overrides a global `bitbucket.access_token`, and the projects page tests it before a build depends on it. No
+      account email is involved; `x-token-auth` is the clone username and the API takes a bearer token.
+- [x] **`Repo.Name` holds the slug**, and **`source.commit.hash` is normalized from 12 characters to 40** through
+      `resolveCommit`, so `Report.Commit` is one width on both platforms.
+- [x] **IPv4 first.** `api.bitbucket.org` over IPv6 from this host resets mid-response — `wsarecv: An existing
+      connection was forcibly closed` — which surfaced as a credential that worked under `curl --ipv4` and failed
+      from the daemon. `ipv4First()` dials `tcp4` and falls back.
+- [ ] **A comment is authored by the token's name.** A repository access token posts as its own label, so comments
+      arrive from `BB_REPO_TOKEN_CUSTOMER_CONNECT_DOC_PREVIEW`. The API exposes no author field; the only lever is
+      renaming the token in Bitbucket. Worth documenting rather than fixing.
+- [ ] **`pullrequest:updated` fires for a title edit as well as a push.** Today that queues a build of a commit
+      already built, which supersede handles and the cache makes cheap, but it is work nobody asked for. Comparing
+      the head against the stored commit before enqueueing is the fix.
+- [ ] Vault keys reserved and unused: `bitbucket.email`, `bitbucket.api_token`. Kept because a workspace-wide
+      credential of the account kind is still a legitimate shape; the secrets page marks them optional rather than
+      missing.
 
 ## Identity management
 
@@ -414,6 +488,12 @@ revocation story**.
 - [ ] A real Ziti Desktop Edge import against a `configure ziti`-provisioned network. The SDK dial is the
       equivalent proof minus DNS and TUN, and ZDEW was confirmed manually in the earlier trial, but not
       against the provisioned objects.
+- [ ] **`clicks.mjs` reports three failures against live state, and they predate the login work** — confirmed by
+      running it against `git show HEAD:internal/daemon/dashboard.html` with the same payload, which fails the
+      same three ways plus two the working tree has since fixed. All three are the log pane losing its place when
+      a status tick re-renders underneath it: the picker jumps from `(live)` to a stored build, and the pane
+      switches to a different preview's stream. Reproduces only with several previews building at once, which is
+      why the fixture never showed it. Needs `DOCPREVIEW_PASSWORD` to see at all — see `tools/dashboardtest/live.mjs`.
 
 ## Namespace hygiene
 
@@ -457,15 +537,38 @@ Cleanup is wired, not aspirational:
       try to reclaim it (the `docpreview:` target prefix says it is ours); if that fails, suffix a counter; and if
       *that* fails, refuse the build with an error naming the fix — rename the branch — rather than fighting over
       a name forever. Needs a live zrok account to verify, which is the same gap that blocks the reap tests below.
-- [ ] **A failed republish leaves the row advertising a dead URL.** Seen live on 2026-07-30: a preview that had
-      built successfully failed to restore at startup when `CreateShare` timed out, and `/status` went on reporting
-      `state: ready` with a URL that answered 502. `restoreBuildShares` already clears a build's URL when it cannot
-      republish it, for exactly this reason; the preview path does not. Either clear it, or mark the row as needing
-      a republish and retry it — but the dashboard must not offer a link to something that is not served. Retry
-      with backoff around the zrok calls is in (`Zrok.retryTransient`), which makes this rarer, not impossible.
-- [ ] **No audit command.** `Reap` logs what it deletes but there is no `docpreview shares list` to see what a
-      zrok namespace or Frontdoor tenant currently holds versus what the database thinks. The gap that matters
-      is a share created by a daemon whose database was then deleted: nothing claims it, and nothing looks.
+- [x] **A failed republish left the row advertising a dead URL.** Seen live on 2026-07-30: a preview that had built
+      successfully failed to restore at startup when `CreateShare` timed out, and `/status` went on reporting
+      `state: ready` with a URL that answered 502 for the rest of the day. The row is now **marked, not deleted** —
+      `store.FailPreview` empties `url`, sets `failed` and records a reason naming Rebuild, and
+      `Daemon.markUnpublished` sends a matching failed report so the comment stops offering the link. Emptying the
+      URL is the half that matters: the Open button is enabled by the presence of a URL rather than by the state,
+      deliberately, so a state alone would change nothing. The artifacts are still good, which is why the row lives
+      — Rebuild is offered from it. `name` stays for the same reason `releaseNames` reads it. Covered by
+      `internal/daemon/recovery_test.go`.
+- [ ] **A build share whose preview failed to restore still advertises its URL.** The other half of the item above,
+      one level down: when the *preview's* republish fails, `restoreBuildShares` never runs, so every
+      `builds.url` for it goes on offering a per-commit link with no listener behind it — and the log pane's
+      `Open build ↗` is the button that offers them. `ClearBuildShare` is the wrong tool as it stands, because it
+      empties `name` too and the name has to be released first or it leaks against the zrok quota. Bounded: the next
+      startup's keep-set no longer claims those shares, so `Reap` deletes them.
+- [x] **`docpreview shares list`.** Four states, problems first: `orphan` (the account holds it, the database does
+      not claim it), `missing` (the database claims it, the account does not hold it), `ok`, and `never` (a recorded
+      preview that has not published yet, counted apart so it is not a permanent false alarm). Read-only —
+      deleting is `Reap`'s job, and an audit command that also deleted is one nobody would dare run. Its first run
+      against the live account found a real inconsistency, below.
+- [ ] **A build row can claim a publication it does not own.** Found by the command above: build
+      `20260730-184200-cf9f37d` records a name and URL whose share is held under its sibling
+      `20260730-181530-cf9f37d` — the same commit, so the same rendered name. The URL resolves, through the older
+      share, which is why nothing noticed. That is `expose.Collides`'s "same preview, newer build wins" path not
+      completing: the takeover withdrew the old publication without the new row's share replacing it.
+- [ ] **The audit cannot see a leaked reserved name**, which is the object the quota actually counts. Once a
+      share is deleted its name is invisible to `ListShares`, so nothing can find what earlier versions leaked.
+      `Zrok.Names(ctx)` over `ListNamesForNamespace` is the missing piece — see
+      [19-zrok-namespacing.md](docs/design/19-zrok-namespacing.md).
+- [ ] **`Adoptable` collapses duplicates.** It returns a `map[key]Adoptable`, so two shares tagged with the same
+      publication key become one — exactly the state a failed publish leaves behind, and therefore invisible to
+      both the audit and to Reap. A slice, or a separate `Shares(ctx)` listing for auditing, fixes it.
 - [ ] **Reap is untested against a live tenant** for zrok and Frontdoor. Covered by the same gap as their wire
       formats, below.
 
@@ -564,6 +667,14 @@ The four things that made this harder than a form, all still load-bearing and no
       moved to docker volumes — the cache was measured filling at 0.4 MB/s as a bind mount — but the site itself is
       an entire tree of small files written to the host, and prerendering is the phase that visibly stalls. Build
       to a volume and copy the output out in one transfer.
+- [ ] **A build can run the docker VM out of memory, and the failure names the page rather than the cause.** Seen
+      on 2026-07-31 building `github:netfoundry/docusaurus-shared` at `main`: six minutes, then
+      `[cause]: [Error: ENOMEM: not enough memory, write]` while prerendering one route, reported as
+      "Docusaurus static site generation failed for 1 paths". Nothing in that message says the container hit a
+      limit, so it reads as a broken page. Two halves: the operator's `.wslconfig` bounds the whole VM, and
+      docpreview sets no per-container limit and cannot see what it was given. Worth detecting — a container
+      killed for memory is distinguishable from a build that failed on its own, and saying so would save the
+      afternoon this cost.
 - [x] **The daemon has a log file.** `log_file` in the server config, teed with an `io.MultiWriter` so the output
       still reaches the terminal somebody may be watching. Appended to, never rotated — rotation belongs to
       whatever supervises the process, and truncating on boot would delete the evidence from before the restart

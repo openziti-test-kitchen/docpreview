@@ -341,7 +341,9 @@ func checkNameTemplate(tmpl string) error {
 		Number: 42,
 		Branch: "feature/example",
 	}
-	name, err := expose.RenderName(tmpl, sample)
+	// No instance suffix here: this runs while writing a fresh config, which has none yet.
+	// A caller that wants to see the effect of one sets it and re-runs `doctor`.
+	name, err := expose.RenderName(tmpl, sample, "")
 	if err != nil {
 		return err
 	}

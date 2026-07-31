@@ -10,6 +10,9 @@ package scm
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -94,6 +97,37 @@ type Report struct {
 // a valid secret that its guess was structurally fine.
 var ErrBadSignature = errors.New("webhook signature verification failed")
 
+// VerifyHMACSHA256 checks header, of the form "sha256=<hex>", against the
+// HMAC-SHA256 of body keyed by secret.
+//
+// Here rather than in each platform's package because this was written twice
+// already — byte for byte, in the github and local clients — and Bitbucket would
+// have been the third place somebody could accidentally write `==` instead of
+// hmac.Equal. Both hosted platforms spell the *value* the same way; what they
+// disagree about is the header *name*, which stays the caller's business:
+// GitHub's `X-Hub-Signature` is a legacy SHA-1 digest while Bitbucket's
+// `X-Hub-Signature` is SHA-256, so a shared "find the signature header" helper
+// would be the bug this one avoids.
+//
+// A method other than sha256 is a verification failure, not an unknown to wave
+// through — Atlassian reserves the right to send something else, and an
+// accepted-but-unverified delivery is a build trigger.
+func VerifyHMACSHA256(secret, body []byte, header string) bool {
+	const prefix = "sha256="
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	want, err := hex.DecodeString(strings.TrimPrefix(header, prefix))
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(body)
+	// Constant time: a byte-at-a-time comparison leaks the expected digest to a
+	// caller willing to make a few thousand requests.
+	return hmac.Equal(mac.Sum(nil), want)
+}
+
 // Client is everything docpreview needs from one source-control platform.
 type Client interface {
 	// Platform names the host this client talks to.
@@ -149,6 +183,19 @@ type Event struct {
 	Delivery string
 }
 
+// RepoChecker is implemented by clients that can verify their credential reaches one
+// repository, returning a sentence describing what they found.
+//
+// Optional, and needed by exactly one platform for a reason worth stating: a GitHub App is
+// installed on repositories, so the installation *is* the check and a token that cannot
+// reach a repository does not exist. A Bitbucket access token is scoped to a repository at
+// creation and pasted in by hand, so nothing has confirmed it reaches anything until
+// something tries — and both ways of getting it wrong are quiet, one failing twenty seconds
+// into a clone and the other at the comment after a successful build.
+type RepoChecker interface {
+	CheckRepo(ctx context.Context, repo model.Repo) (string, error)
+}
+
 // PullRequestLister is implemented by clients that can be asked what is open on a
 // repository, rather than waiting to be told by a webhook.
 //
@@ -162,6 +209,27 @@ type Event struct {
 // path does: building a fork's branch runs its author's code on this host.
 type PullRequestLister interface {
 	OpenPullRequests(ctx context.Context, repo model.Repo) ([]model.PullRequest, error)
+}
+
+// BranchResolver is implemented by clients that can name a repository's default branch and
+// the commit at its tip.
+//
+// Optional, like the two above, and needed for branch previews: the permanent preview of
+// `main` cannot be built without knowing what "main" is called here and what it currently
+// points at. Neither is guessable. A repository's default branch is `master` often enough
+// that assuming `main` would silently build nothing on it, and a build needs a commit —
+// passing an empty HeadSHA makes the clone take whatever the branch happens to be at, which
+// is a different commit from the one the preview would claim to be showing.
+//
+// Both are returned together because both come from the same one or two API calls, and a
+// caller that has one without the other cannot do anything with it.
+type BranchResolver interface {
+	// DefaultBranch names the repository's default branch and the commit at its tip.
+	DefaultBranch(ctx context.Context, repo model.Repo) (branch, commit string, err error)
+
+	// BranchTip is the same question for a branch the caller already knows the name of,
+	// so rebuilding a branch preview does not have to assume the tip has not moved.
+	BranchTip(ctx context.Context, repo model.Repo, branch string) (commit string, err error)
 }
 
 // MarkerStyle selects how the self-identifying marker is embedded in a comment

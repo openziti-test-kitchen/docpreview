@@ -40,7 +40,7 @@ onto that path — see [03-build-pipeline.md](03-build-pipeline.md).
 
 | Column | Notes |
 |---|---|
-| `preview_id` | primary key, `sha256(platform\|owner\|repo\|number)` |
+| `preview_id` | primary key, `sha256(platform\|owner\|repo\|number)` — and `\|branch` appended when `number` is 0, see below |
 | `payload` | the `model.PullRequest`, JSON |
 | `name` | the label the exposer actually used |
 | `url` | what the comment links to |
@@ -58,6 +58,30 @@ appear in it, and `Daemon.Status` composes those from the job queue and the runn
 `base_url` is stored because recovery has to reconstruct the handler with the same value the site was built
 with. Recomputing it from config would produce a different answer if the config changed between runs, and the
 site would 404 every asset.
+
+### Number 0 means "no pull request", and the branch becomes the identity
+
+A branch preview — the permanent preview of a repository's default branch — has no pull request. No platform
+numbers a pull request zero, so the zero value of the field is free to mean that, and `model.PullRequest.IsBranch()`
+is the one predicate everything else turns on.
+
+The id has to fold in the branch for that case, because every branch of one repository would otherwise hash to the
+same value and the second branch built would take over the first one's row, share and artifacts.
+
+:::danger The numbered form must never change
+
+This id is the primary key here, the foreign key in `builds` and `comments`, the tag on every remote share, and the
+directory name of every artifact and log. Adding the branch to the hashed input for *numbered* pull requests as
+well would silently orphan all of it: every restored preview reaped as an orphan on the next sweep, and a duplicate
+comment posted on every open pull request. `TestPreviewIDIsStableForPullRequests` pins the numbered form with a
+literal for exactly that reason.
+
+:::
+
+Three consequences elsewhere, each enforced where it happens rather than by a flag threaded through the build path:
+nothing is reported to the platform (`Daemon.report` returns early, and `teardown` skips `Retract`), the
+changed-file gate is skipped because there is no diff to take, and the TTL reaper leaves the row alone because
+`main` is still `main` after a quiet fortnight.
 
 ## `jobs`
 
@@ -206,6 +230,23 @@ leaving the row would advertise a URL that 404s. Artifacts that are *present but
 `base_url`* are dropped for the same reason (`errArtifactsUnusable`, `internal/daemon/daemon.go:466`): see
 [03-build-pipeline.md](03-build-pipeline.md).
 
+### A republish that fails
+
+Any *other* failure — the publish itself, which on a hosted controller means a timeout — leaves artifacts that are
+still good and a share that was never created. The row is therefore **marked, not deleted**: `store.FailPreview`
+empties `url`, sets `failed`, and records a reason naming Rebuild, and `Daemon.markUnpublished` sends a matching
+failed report so the pull request comment stops offering the link.
+
+Emptying the URL is the load-bearing half. The dashboard's Open button is enabled by the presence of a URL rather
+than by the state — a rebuild leaves the previous share serving, so a state test would grey the button on every
+rebuild — which means a row that keeps its URL keeps offering it however the state reads. Seen live on 2026-07-30:
+`CreateShare` timed out at startup and `/status` reported `state: ready` with a URL answering 502 for the rest of
+the day.
+
+`name` is deliberately left on the row. Teardown reads it to give the exposer's reserved name back, and on zrok
+that name is a quota-bearing object, so clearing it here would leak one per failed restore with nothing left to
+name it.
+
 ### The URL can move
 
 Under exposers whose address is not derived from the name, republishing yields a different URL. When it does,
@@ -269,11 +310,19 @@ branch did is still true. It disappears on `build.keep_logs` with its log files 
 too, but as a side effect of `Retract`, which on the local platform is a `DeleteComment` and on a hosted platform
 deletes the comment on the pull request and touches no table at all.
 
-A pending `jobs` row for the torn-down preview is *not* deleted here, and nothing else deletes one either — the only
-statement that removes a job is `Claim`. So a push landing just before a close leaves a job that a worker later
-claims and builds, which republishes a preview the teardown had removed. Unverified against a live pull request and
-recorded in `TODO.md` rather than fixed here, because the fix has to decide whether the answer is deleting the job or
-re-checking the pull request's state in the commit phase.
+**The pending `jobs` row goes too**, through `store.Dequeue` — the same statement the dashboard's cancel button
+uses. `Claim` was once the only thing that removed a job, so a push landing moments before a close left one behind
+for a worker to claim minutes later: it built, wrote the preview row back and published a share for something an
+operator had deliberately removed. Cancelling the in-flight build and dropping the queued one are the two halves of
+"stop the work", which is what unlinking a pull request is a button for.
+
+Its failure is *collected*, unlike a name release or a comment retraction, because a surviving job puts back
+everything the rest of teardown removes.
+
+One race is left and is narrow: a worker that has claimed the job but not yet registered it in `d.running` is
+visible in neither place. The commit lock bounds it — that build cannot publish until the teardown returns — and
+closing it properly means the commit phase re-reading the pull request's state, which is an API call it does not
+make today.
 
 ## Path safety
 
@@ -301,3 +350,6 @@ would make it fail if the mux's normalization changed — which would be a false
 10. A build row outlives its share. A share that can no longer be republished has its `name` and `url` cleared, never
     the row deleted.
 11. A reap runs on a complete keep-set or not at all.
+12. A row never advertises a URL nothing is serving. A publication that could not be restored takes its `url` with
+    it — `FailPreview` for a preview, `ClearBuildShare` for a build.
+13. No job outlives the preview it would build. Teardown removes the queued one; nothing else has to notice.
