@@ -53,8 +53,8 @@ const MasterKeyEnv = "DOCPREVIEW_MASTER_KEY"
 // Well-known vault keys. Using constants rather than bare strings means a typo
 // is a compile error instead of a silently missing credential at 3am.
 const (
-	KeyGitHubPrivateKey  = "github.private_key"
-	KeyGitHubWebhookSec  = "github.webhook_secret"
+	KeyGitHubPrivateKey = "github.private_key"
+	KeyGitHubWebhookSec = "github.webhook_secret"
 	// KeyBitbucketAccessToken is the recommended Bitbucket credential: a
 	// repository, project or workspace access token. Scoped to one resource,
 	// revocable on its own, and attributed to a synthetic bot address rather
@@ -72,7 +72,7 @@ const (
 	KeyBitbucketAPIToken = "bitbucket.api_token"
 
 	KeyBitbucketHookSec = "bitbucket.webhook_secret"
-	KeyFrontdoorToken    = "frontdoor.api_token"
+	KeyFrontdoorToken   = "frontdoor.api_token"
 )
 
 // ProjectPrefix is the namespace every project-scoped secret lives under.

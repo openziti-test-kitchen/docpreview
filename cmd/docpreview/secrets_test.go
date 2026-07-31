@@ -91,4 +91,3 @@ func TestBuildSecretsDoesNotOpenTheVaultWhenNoneAreConfigured(t *testing.T) {
 		t.Errorf("got %d secrets, want none", len(got))
 	}
 }
-
