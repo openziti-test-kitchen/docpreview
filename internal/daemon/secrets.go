@@ -100,7 +100,34 @@ func NewSecretsAdmin(cfg config.Server, log *slog.Logger, rearm func(changed str
 // recommended arrangement is to tunnel the `webhook-only` proxy rather than the
 // daemon: then the credential API is not reachable at all and this check is a
 // second line rather than the only one.
+//
+// # The overlay case
+//
+// A request that arrived over a ziti listener is judged on *who dialed it* instead. That is a
+// stronger statement than either check above — the overlay authenticated the identity, and
+// there is no address to spoof — but it is only as good as the grant, so it is an explicit
+// list of identity ids on the listener rather than "enrolled at all".
+//
+// It is deliberately checked before the loopback rule, because an overlay connection's
+// RemoteAddr is not a loopback address and would fail it. Nothing here trusts the request:
+// the identity was recorded by the accept path, in a context key this package alone can
+// write, and an unrecognised or absent identity is refused.
 func isLocalRequest(r *http.Request) (bool, string) {
+	if caller, ok := overlayCallerFrom(r.Context()); ok {
+		if caller.MayWrite {
+			return true, ""
+		}
+		if caller.Dialer == "" {
+			// The router sent no dialer, or something that is not an overlay connection
+			// reached this path. Either way we cannot say who this is, and "cannot say" is
+			// not a grant.
+			return false, "this request arrived over the overlay with no dialing identity, " +
+				"so there is nothing to authorize it against"
+		}
+		return false, "the identity " + caller.Dialer + " is not in this listener's " +
+			"admin_identities, so it may read but not change anything"
+	}
+
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -120,29 +147,52 @@ func isLocalRequest(r *http.Request) (bool, string) {
 
 // Available reports whether this daemon may serve the secrets surface at all.
 //
-// Every listener must be loopback. A ziti listener is arguably a stronger
-// boundary than loopback — the overlay authenticates the dialer — but the
-// admin surface does not yet check the dialing identity, so "enrolled at all"
-// would be the whole authorization. That is not enough for credential writes.
+// Every listener must be one of two things: loopback, or a ziti service that names the
+// identities allowed to write through it.
+//
+// The ziti case used to be an outright refusal, on the reasoning that "enrolled at all" is
+// not authorization for a credential write. That reasoning was right and the refusal was the
+// wrong shape: it made a daemon reachable *only* over the overlay permanently read-only, and
+// it refused loopback writes too, because one ziti listener disqualified the whole daemon.
+//
+// What replaced it is an explicit grant. `admin_identities` on the listener names the
+// identity ids that may write, the accept path records which identity dialed, and
+// isLocalRequest checks one against the other. A listener with no list is still refused —
+// the default is read-only, and that is the same answer as before for anybody who has not
+// opted in.
 //
 // This is a property of the daemon, not of a request. See isLocalRequest for the
 // per-request half, and why one without the other is not sufficient.
 func (a *SecretsAdmin) Available() (bool, string) {
-	if len(a.cfg.Listeners) == 0 {
+	return listenersAllowAdmin(a.cfg.Listeners, "secrets")
+}
+
+// listenersAllowAdmin is the listener half of the gate, shared by both admin surfaces.
+//
+// One implementation because the rule is one rule: the projects surface decides what command
+// runs on the build host and the secrets surface decides which credentials it runs with, and
+// a daemon that guarded them differently would be guarding the weaker of the two. `what`
+// names the surface in the refusal, which is the only thing that differs.
+func listenersAllowAdmin(listeners []config.Listener, what string) (bool, string) {
+	if len(listeners) == 0 {
 		return false, "no listeners"
 	}
-	for _, l := range a.cfg.Listeners {
+	for _, l := range listeners {
 		if l.Ziti != nil {
-			return false, "a ziti listener is configured; the admin surface does not yet " +
-				"check the dialing identity, so credential writes are refused"
+			if len(l.Ziti.AdminIdentities) == 0 {
+				return false, fmt.Sprintf("the ziti service %s names no admin_identities, "+
+					"so %s are read-only over it: add the identity ids allowed to write "+
+					"(ziti edge list identities)", l.Ziti.Service, what)
+			}
+			continue
 		}
 		host, _, err := net.SplitHostPort(l.TCP)
 		if err != nil {
 			return false, "unparseable listener " + l.TCP
 		}
 		if !isLoopback(host) {
-			return false, fmt.Sprintf("the ingress listens on %s; secrets can only be managed "+
-				"from a loopback-only daemon", l.TCP)
+			return false, fmt.Sprintf("the ingress listens on %s; %s can only be managed "+
+				"from a loopback-only daemon", l.TCP, what)
 		}
 	}
 	return true, ""

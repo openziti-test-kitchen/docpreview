@@ -134,10 +134,41 @@ the underlay at all** — the same posture the `ziti` exposer gives previews, ap
 |---|---|
 | `identity_file` | An enrolled identity, named by a **Bind** policy on the service. `docpreview configure ziti` produces one. |
 | `service` | The service to bind. |
+| `admin_identities` | Identity **ids** allowed to edit projects and store credentials through this listener. Empty — the default — means the dashboard is read-only over it. |
 
-Both are required; a `ziti` listener missing either is a config error at startup, not a surprise on the first
-request. `docpreview doctor` goes further and actually binds each one, which is the only way to catch an
+The first two are required; a `ziti` listener missing either is a config error at startup, not a surprise on the
+first request. `docpreview doctor` goes further and actually binds each one, which is the only way to catch an
 identity that will not authenticate or a service with no Bind policy naming it.
+
+#### Who may change things over the overlay
+
+The dashboard serves over a ziti listener in full. The two surfaces that *change* something — projects, which
+decide what command runs on the build host, and credentials, which decide what it runs with — are refused unless
+the dialing identity is named in `admin_identities`.
+
+```yaml
+listeners:
+  - ziti:
+      identity_file: "/home/you/.docpreview/ziti/docpreview-host.json"
+      service: "docpreview-admin"
+      admin_identities: ["abc123"]
+```
+
+Get the ids from `ziti edge list identities` — the **ID** column, not the name. A name can be changed on the
+controller without the grant following it, which would silently widen or void this list.
+
+:::note Empty is read-only, and that is deliberate
+
+Being enrolled on the network is not authorization to write a credential. So a listener that names nobody serves
+the dashboard, `/status` and every build log, and refuses every write with a message saying why — rather than
+offering buttons that will fail.
+
+The refusal names the identity that was turned away, so adding it is a copy and paste.
+
+:::
+
+An identity that dials with no id at all is refused too. That is what a router which never sent the header
+produces, and "we cannot tell who this is" is not a grant.
 
 :::warning One process per service
 

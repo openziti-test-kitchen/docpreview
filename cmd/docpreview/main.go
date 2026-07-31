@@ -632,6 +632,10 @@ func cmdServe(args []string) error {
 			// to open a pull request. The preview of the default branch is permanent: no
 			// comment to post, no pull request to close it, and the TTL reaper skips it.
 			WithBrancher(d.BuildBranch).
+			// So the setting that lets two installations share one exposer account can be
+			// changed from the dashboard. Stored in the database, because config.yml is
+			// hand-written and rewriting it would destroy its comments.
+			WithNamePrefix(d.NamePrefix, d.SetNamePrefix).
 			// So the form can grey out a driver that would fail rather than offering
 			// it and letting the operator discover the refusal from a failed build.
 			// So a pasted token can be checked before it is discovered wrong by a build
@@ -660,6 +664,15 @@ func cmdServe(args []string) error {
 		// streaming existed every handler returned in milliseconds and this
 		// never came up.
 		BaseContext: func(net.Listener) context.Context { return ctx },
+
+		// Who dialed, for a request that arrived over an OpenZiti listener.
+		//
+		// The admin surfaces are gated on it: a ziti listener naming `admin_identities` may
+		// write, and one that names none is read-only. Without this the identity is
+		// unavailable by the time a handler runs — ConnContext is the only hook that sees
+		// the connection — and the surfaces would have to refuse the overlay outright,
+		// which is what they used to do.
+		ConnContext: daemon.ConnContext,
 	}
 
 	// One http.Server, several listeners, one goroutine each. Serve returns as
