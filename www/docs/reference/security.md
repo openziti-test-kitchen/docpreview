@@ -156,6 +156,37 @@ inadvisable.
 On a loopback-only daemon the boundary is the same one that already protects `docpreview vault set`: anyone who
 can reach `127.0.0.1` can run the binary. The API adds no reach that a shell did not already have.
 
+### Over an OpenZiti listener, the gate is an identity instead
+
+A request that arrives on a [`ziti` listener](./configuration.md#a-ziti-listener) is judged on **who dialed it**
+rather than on where it came from. That is a stronger statement than the locality test above — the overlay
+authenticated the identity and there is no address to spoof — but it is only as good as the grant, so the grant is
+an explicit list of identity ids on the listener, `admin_identities`.
+
+Four properties, and three of them are refusals:
+
+| | |
+|---|---|
+| An id in `admin_identities` | May write |
+| A listener naming nobody | Read-only. Being enrolled on the network is not authorization to write a credential, and this is the default |
+| An enrolled id not on the list | Read-only, and the refusal names the id so adding it is a copy and paste |
+| No id at all | Refused. That is what a router which never sent the header produces, and "we cannot tell who this is" is not a grant |
+
+The identity is recorded when the connection is accepted, not read from the request — `http.Server.ConnContext` is
+the only hook that sees the connection, and the grant belongs to the listener rather than to the request. It is
+stored under a context key this package alone can write, so a value forged elsewhere in the process grants nothing.
+
+A mixed configuration is judged on its weakest listener. One `http.Server` serves them all, so allowing writes
+because *a* listener is loopback would allow them through the one that is not.
+
+:::note Not yet exercised against a live overlay
+
+The identity plumbing is tested offline, including every refusal. What no test here proves is that the router
+actually sends the dialer on a real circuit, or that the id matches what the controller shows. Until that has been
+run against a live network, treat the overlay grant as untried rather than as load-bearing.
+
+:::
+
 ### Point the tunnel at `webhook-only`, not the daemon
 
 The architectural half of the fix, and the one that matters more than the header check. `docpreview webhook-only`
