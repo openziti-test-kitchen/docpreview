@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -75,6 +76,85 @@ type Ziti struct {
 type zitiPreview struct {
 	previewID string
 	handler   http.Handler
+
+	// dialers is the set of overlay identities already logged against this
+	// preview, so the Info line below fires once per identity rather than once
+	// per asset. A Docusaurus page is a hundred requests; an Info line each
+	// would bury everything else in the log.
+	//
+	// Guarded by Ziti.mu, not by a lock of its own — every read and write
+	// happens inside the same critical section that looks the preview up, so a
+	// second mutex would only add a way to forget it. It is bounded by the
+	// number of distinct identities that reach this preview and dies with the
+	// map entry.
+	dialers map[string]bool
+}
+
+// noteDialer records that id has reached this preview and reports whether that
+// is the first time. The caller must hold Ziti.mu.
+func (p *zitiPreview) noteDialer(id string) bool {
+	if p.dialers[id] {
+		return false
+	}
+	if p.dialers == nil {
+		p.dialers = map[string]bool{}
+	}
+	p.dialers[id] = true
+	return true
+}
+
+// zitiDialer is the overlay identity that opened the connection a request
+// arrived on: cryptographically established by the router, and unlike the Host
+// header not something the client can assert.
+//
+// It is carried by value because it is two strings recorded once per
+// connection, and because a value cannot be mutated by a handler that receives
+// it through a context.
+type zitiDialer struct {
+	id   string
+	name string
+}
+
+// zitiDialerKey keys zitiDialer on a request context. An unexported empty
+// struct type rather than a string: it cannot collide with a key set by the
+// SDK, by net/http, or by a preview's own handler, and nothing outside this
+// package can read or forge the value.
+type zitiDialerKey struct{}
+
+// zitiConnContext is http.Server.ConnContext. It runs once per accepted
+// connection, before any request on it is served, which is the only place the
+// net.Conn is visible at all — by the time a handler runs, the connection is
+// gone from the API.
+//
+// edge.Listener.Accept returns the edge connection itself rather than a wrapper
+// (sdk-golang@v1.9.0 ziti/edge/network/listener.go:59 delegates to AcceptEdge),
+// and http.Server hands ConnContext the conn it accepted, so the assertion
+// holds on the overlay. It is a *conditional* assertion regardless: a plain TCP
+// conn is what every test and any future non-overlay listener provides, and the
+// dialing identity is then simply unknown. Unknown must degrade to empty, never
+// to a panic — a nil-safe assertion here is the difference between an
+// unauthenticated request being logged and the daemon dying on one.
+func zitiConnContext(ctx context.Context, c net.Conn) context.Context {
+	ec, ok := c.(edge.ServiceConn)
+	if !ok {
+		return ctx
+	}
+	// edge.ServiceConn is asserted rather than edge.Conn because these two
+	// methods live on ServiceConn; asking for the wider interface would make
+	// the assertion fail for a conn that can answer the question.
+	return context.WithValue(ctx, zitiDialerKey{}, zitiDialer{
+		id:   ec.GetDialerIdentityId(),
+		name: ec.GetDialerIdentityName(),
+	})
+}
+
+// zitiDialerFrom reads the dialing identity off a request context, returning
+// the zero value when there is none. Every caller wants a value it can log
+// unconditionally, so the absent case is empty strings rather than a second
+// return.
+func zitiDialerFrom(ctx context.Context) zitiDialer {
+	d, _ := ctx.Value(zitiDialerKey{}).(zitiDialer)
+	return d
 }
 
 // NewZiti builds a ziti exposer. Nothing touches the network until Validate.
@@ -135,6 +215,14 @@ func (z *Ziti) Validate(ctx context.Context) error {
 	z.srv = &http.Server{
 		Handler:           http.HandlerFunc(z.route),
 		ReadHeaderTimeout: 15 * time.Second,
+
+		// The dialing identity is the only trustworthy thing about a request
+		// here — the Host header that selects the preview is client-supplied —
+		// and it is reachable only from the accepted connection. Capturing it
+		// per connection is what makes "who asked for this preview" answerable
+		// at all; today that is logging, and it is the same hook an
+		// authorization check will read from.
+		ConnContext: zitiConnContext,
 	}
 
 	go func() {
@@ -153,11 +241,22 @@ func (z *Ziti) Validate(ctx context.Context) error {
 // The tunneler is a layer-4 proxy, so the browser's Host arrives verbatim —
 // that is the property the whole wildcard design rests on. The first label
 // selects the preview.
+//
+// Nothing here *enforces* anything about the dialing identity yet, and that is
+// the known hole: one Dial policy grants the whole wildcard service, so any
+// identity holding the reader attribute reaches every preview by sending any
+// hostname. See docs/design/18-exposer-ziti.md. What route does now is record
+// who asked, which turns hostname probing from invisible into a log line and
+// establishes the plumbing an enforcement rule will read.
 func (z *Ziti) route(w http.ResponseWriter, r *http.Request) {
 	name := hostLabel(r.Host)
+	dialer := zitiDialerFrom(r.Context())
 
 	z.mu.Lock()
 	entry, ok := z.live[name]
+	// Noted under the same lock as the lookup: two concurrent requests from one
+	// identity must produce one Info line, not two.
+	firstSighting := ok && entry.noteDialer(dialer.id)
 	names := make([]string, 0, len(z.live))
 	if !ok {
 		for n := range z.live {
@@ -166,7 +265,23 @@ func (z *Ziti) route(w http.ResponseWriter, r *http.Request) {
 	}
 	z.mu.Unlock()
 
+	// Debug, not Info: a documentation page is on the order of a hundred asset
+	// requests, and a per-request Info line would make the log useless for
+	// anything else.
+	z.log.Debug("overlay request",
+		"host", r.Host, "label", name, "path", r.URL.Path,
+		"dialer_id", dialer.id, "dialer_name", dialer.name)
+
 	if ok {
+		if firstSighting {
+			// The line an operator actually wants: a new identity started
+			// reading a preview. Once per identity per preview, so twenty
+			// reviewers on twenty previews is at most four hundred lines over
+			// the life of the process rather than four hundred per page load.
+			z.log.Info("overlay identity reached a preview",
+				"label", name, "preview", entry.previewID,
+				"dialer_id", dialer.id, "dialer_name", dialer.name)
+		}
 		entry.handler.ServeHTTP(w, r)
 		return
 	}
@@ -175,7 +290,17 @@ func (z *Ziti) route(w http.ResponseWriter, r *http.Request) {
 	// that is not published — a closed pull request, a typo, a stale bookmark.
 	// Listing what is live turns that into a usable page rather than a dead
 	// end, and it is the only thing the apex hostname would ever serve.
-	z.log.Debug("no preview for host", "host", r.Host, "label", name)
+	//
+	// It repeats the dialer that the request line above already carried, rather
+	// than relying on an operator to correlate the two: under concurrent
+	// requests those lines are not adjacent, and this is the one line worth
+	// grepping — an identity asking for hostnames that were never published is
+	// the shape a probe takes. Still Debug, because a stale bookmark produces
+	// exactly the same line and warning on it would cry wolf on every closed
+	// pull request.
+	z.log.Debug("no preview for host",
+		"host", r.Host, "label", name,
+		"dialer_id", dialer.id, "dialer_name", dialer.name)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNotFound)

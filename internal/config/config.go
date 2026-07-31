@@ -79,13 +79,13 @@ type Server struct {
 	// pretending to link to it.
 	DashboardURL string `yaml:"dashboard_url"`
 
-	Exposer ExposerConfig  `yaml:"exposer"`
+	Exposer   ExposerConfig   `yaml:"exposer"`
 	GitHub    GitHubConfig    `yaml:"github"`
 	Bitbucket BitbucketConfig `yaml:"bitbucket"`
 	Local     LocalSCMConfig  `yaml:"local"`
-	Build   BuildDefaults  `yaml:"build"`
-	Preview PreviewConfig  `yaml:"preview"`
-	Vault   VaultConfig    `yaml:"vault"`
+	Build     BuildDefaults   `yaml:"build"`
+	Preview   PreviewConfig   `yaml:"preview"`
+	Vault     VaultConfig     `yaml:"vault"`
 }
 
 // VaultConfig says where the vault's master key comes from.
@@ -366,11 +366,27 @@ type ZrokConfig struct {
 
 // FrontdoorConfig configures the NetFoundry Frontdoor exposer.
 type FrontdoorConfig struct {
-	// APIBase is the Frontdoor gateway root.
+	// APIBase is the Frontdoor gateway root, and it must include the Frontdoor instance
+	// id: `https://gateway.example/frontdoor/<frontdoorId>`. The paths under it are
+	// unversioned — the id segment is what carries the tenancy, where zrok has a version.
 	APIBase string `yaml:"api_base"`
 
-	// Frontend is the name of the Frontdoor frontend that will serve previews.
+	// Frontend is the **id** of the Frontdoor frontend that will serve previews — a value
+	// like "bMTHPrtQ", not a name like "public".
+	//
+	// It was documented and defaulted as a name, which cannot work: the API's field is
+	// `frontendIds` and takes ids. A name there is accepted by the JSON decoder and then
+	// matches no frontend, so the share is created serving nothing.
 	Frontend string `yaml:"frontend"`
+
+	// EnvZID is the ziti identity of the enrolled Frontdoor agent that will host the
+	// share — the agent that dials the local port a preview binds.
+	//
+	// Required by the API on every share, and there is nothing sensible to default it to:
+	// it is a property of the agent the operator enrolled, readable from the Frontdoor
+	// console. Without it every publish is refused, which is why `Validate` warns about it
+	// once per boot rather than letting the first pull request discover it.
+	EnvZID string `yaml:"env_z_id"`
 
 	// AgentReachableHost is the address at which the Frontdoor agent can reach
 	// this docpreview instance. Unlike zrok, Frontdoor shares point at a URL
