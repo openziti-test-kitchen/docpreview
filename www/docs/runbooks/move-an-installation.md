@@ -26,7 +26,13 @@ A move is stop, copy, start. Never an overlap.
 | The database | `<data_dir>/docpreview.db` | **and its `-wal` file** — Step 2 |
 | The credential store | `<data_dir>/vault.age` | encrypted; useless without the key |
 | The master key | wherever `vault.key_source` points | deliberately outside `data_dir` |
-| The zrok environment | `~/.zrok2` | the identity that owns every reserved name |
+| The zrok environment | `~/.zrok2` **or** `<data_dir>/zrok2` | the identity that owns every reserved name — Step 4 |
+| A ziti identity, if you use that exposer | `<data_dir>/ziti/*.json` | inside `data_dir`, so it travels with it |
+
+**More travels in the database than you might expect.** The settings table carries the console passwords, the
+hostname prefix, which exposer is selected, which zrok environment directory this installation uses, and the ziti
+service and identity path. None of it is in `config.yml`, so none of it needs re-entering — and the login on the
+new machine is the one you already use.
 
 And one thing that is edited rather than copied: `config.yml`, which holds absolute paths in `data_dir` and
 `vault.key_source`.
@@ -103,13 +109,37 @@ data directory, which is what decides it in practice.
 ```powershell
 Copy-Item "$data\vault.age" $out
 Copy-Item "$env:LOCALAPPDATA\docpreview\master.key" $out
-Copy-Item -Recurse "$env:USERPROFILE\.zrok2" "$out\zrok2"
 ```
 
 The vault is encrypted and the key is not in it. Bringing one without the other produces a daemon that starts,
 serves its setup page, and cannot decrypt anything it holds.
 
-:::note The zrok environment is not re-creatable
+### Which zrok directory to copy
+
+There are two possible ones, and the answer decides how much work this step is:
+
+```powershell
+docpreview zrok status -config .docpreview\config.yml
+```
+
+| In use | Copy | |
+|---|---|---|
+| `project` | nothing extra | It is `<data_dir>/zrok2` and came with `data_dir` |
+| `system` | `~/.zrok2` → the new machine's `~/.zrok2` | It is outside `data_dir`, under the account the daemon runs as |
+
+`~/.zrok2` is **per user**, so on the new machine it must land in the home directory of whatever account runs the
+daemon — a service account's home, not yours. That mismatch reports as `no zrok environment is enrolled here`
+while `zrok2 overview` in your own shell shows a working environment, and both statements are true.
+
+:::tip Move to the project directory while you are here
+
+`docpreview zrok use project` on the new machine, then move `~/.zrok2`'s contents into `<data_dir>/zrok2`, and the
+next move is a straight copy of one directory. It is also what a container needs, where a home directory is not
+durable.
+
+:::
+
+:::danger The zrok environment is not re-creatable
 
 Enabling a fresh environment on the new machine does not merely lose the preview URLs. The reserved names are
 objects owned by the old environment and counted against the account's quota, and nothing on the new machine can
@@ -138,10 +168,29 @@ docpreview doctor -config /srv/docpreview/config.yml
 ```
 
 `doctor` reads the config, the vault and the exposer's settings and reports what it cannot reach. It costs a second
-and answers the question a failed build answers ten minutes later.
+and answers the question a failed build answers ten minutes later. Four of its lines are the ones to read here:
+
+```text
+exposer: zrok2 (selected on the dashboard, not from the config file)
+key:     file /etc/docpreview/master.key
+login:   required — either password reaches the dashboard
+scm:     github (app 4420399), bitbucket (access_token)
+```
+
+`exposer` naming something other than the config file means the choice came from the database and travelled with
+it, which is correct and is worth recognising rather than re-editing the file over.
 
 Then start the daemon, and the two shares once it answers — the shares forward to the daemon and log errors until
 it does.
+
+**If the zrok environment is the project one, both shares need `-zrok-home`.** They read no config file, so they
+cannot derive it, and without the flag they look in `~/.zrok2` — a different account, or nothing at all. A share
+created from the wrong account reserves a name the previews cannot use:
+
+```powershell
+docpreview webhook-only   -zrok-name docpreview      -zrok-home /srv/docpreview/data/zrok2
+docpreview dashboard-only -zrok-name docpreview-dash -zrok-home /srv/docpreview/data/zrok2
+```
 
 ## Step 7 — Confirm the previews came back
 
@@ -157,10 +206,20 @@ is one whose artifacts you chose not to bring in Step 3 — rebuild it from the 
 The console passwords move with the database, so the login on the new machine is the one you already use. If you did
 not bring the database, set them again with `docpreview console password -role admin` and `-role viewer`.
 
+Preview URLs come back **unchanged** under zrok: a name is reserved on the account, and the URL is derived from
+it, so republishing produces what the comments already point at. Nothing is rewritten and nobody's link breaks.
+Under Frontdoor the share id is assigned by the tenant, so those URLs are new and the comments update on the first
+status change after the move.
+
 ## Afterwards
 
 The old machine still holds a copy of the vault and the master key. Whether that matters is a decision about the
 credentials inside it rather than about docpreview.
+
+If you left it able to start, make sure it cannot: an old daemon coming back up on the same zrok account will not
+reap the new one's shares — the two enrolments are different identities — but both will try to hold the same
+**names**, and the second one to publish takes them. Uninstall the service, or give the new installation a
+different [hostname prefix](../reference/cli.md).
 
 ## Moving into a container
 

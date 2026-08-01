@@ -333,12 +333,12 @@ function Closing(): ReactNode {
     <NetFoundryHorizontalSection>
       <div className={clsx(styles.section, styles.closing)}>
         <Heading as="h2" className={styles.sectionTitle}>
-          This page is the proof
+          Try it on one repository
         </Heading>
         <p className={styles.sectionLead} style={{margin: '0 auto'}}>
-          Everything you are reading lives in <code>www/</code> in the docpreview repository, and
-          docpreview builds it. If the documentation renders, the tool works. That is not a trick — it is
-          the integration test.
+          Ten minutes to a preview URL on a pull request, and nothing to undo if you stop there: one
+          binary, one config file, and a source-control app you can uninstall. Run it on a laptop first
+          — the quickstart needs no account and no inbound port.
         </p>
         <div className={styles.closingButtons}>
           <Link className="button button--primary button--lg" to="/docs/quickstart">
