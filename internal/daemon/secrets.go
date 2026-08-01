@@ -426,6 +426,20 @@ func knownKeys() []knownKey {
 			"only for exposer.kind: frontdoor",
 			func(c config.Server) bool { return c.Exposer.Kind == "frontdoor" }, nil},
 
+		// The zrok account token, listed here because this is where a credential belongs and
+		// listing it here is what let the exposer panel stop carrying a row of its own for it.
+		//
+		// Never required: zrok keeps its own copy in its environment directory and the exposer
+		// authenticates from there, so previews work whether or not this is set. What it buys is
+		// re-enrolment — another machine, or this one after a move — without recovering the
+		// token from the zrok account.
+		{vault.KeyZrokAccountToken, "zrok account token",
+			"kept so this installation can enrol again without a new signup. Previews work " +
+				"without it: zrok holds its own copy. Signing up from the exposer panel " +
+				"stores it here automatically.",
+			never,
+			func(c config.Server) bool { return c.Exposer.Kind == "zrok2" }},
+
 		// Bitbucket. Listed even when it is not enabled, so the Generate button for
 		// the webhook secret exists before the operator has committed to the config —
 		// the secret has to be generated *first* and pasted into Bitbucket's form,

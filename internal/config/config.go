@@ -856,6 +856,20 @@ func (s Server) WorkspacesDir() string { return filepath.Join(s.DataDir, "worksp
 func (s Server) ArtifactsDir() string  { return filepath.Join(s.DataDir, "artifacts") }
 func (s Server) LogsDir() string       { return filepath.Join(s.DataDir, "logs") }
 
+// ZrokDir is this installation's own zrok environment, when it is not using the machine's.
+//
+// Beside the vault rather than in the operator's home directory, and that is the point of it:
+// the directory holds an account token in plaintext — zrok writes `environment.json` itself and
+// docpreview has no say in the format — plus the ziti identity that token enrolled. It is
+// credential material, so it belongs with the other credential material, in the directory the
+// migration runbook already says to copy and to keep private.
+//
+// The machine-wide `~/.zrok2` remains usable and is what an operator who already ran
+// `zrok2 enable` expects to keep. Which of the two is in force is a stored choice rather than a
+// derived one, because both existing and both being enabled is the normal case on a developer's
+// machine and guessing wrong publishes previews from the wrong account.
+func (s Server) ZrokDir() string { return filepath.Join(s.DataDir, "zrok2") }
+
 // CacheRoot is where the package manager caches live.
 //
 // The one definition of the default. `validate` writes it into Build.CacheDir so the

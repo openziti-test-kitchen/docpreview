@@ -337,7 +337,7 @@ Push again. The **same comment** updates — the timestamp and commit change, th
 http://127.0.0.1:8471/
 ```
 
-Every preview, the activity feed, and each build's log, live. Two more pages — **Secrets** and **Projects** — are
+Every preview, the activity feed, and each build's log, live. Two more pages — **Settings** and **Projects** — are
 linked from it, but only when you open it on the machine running docpreview; from anywhere else the links are absent
 because the daemon would refuse the writes they lead to.
 

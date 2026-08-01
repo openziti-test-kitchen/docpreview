@@ -25,6 +25,7 @@ break if I change this". Where the two overlap, `www/` is the contract and this 
 
 01–10 and 20 describe code that exists. These describe work that does not, and each ends with the order to build
 it in.
+
 They go stale in a way the others do not: when the work lands, the plan should be folded into the document above
 that now describes it, and deleted.
 
@@ -39,6 +40,7 @@ that now describes it, and deleted.
 | [17-exposer-frontdoor.md](17-exposer-frontdoor.md) | Frontdoor in production: the bound port, tenant-wide reaping, authorization |
 | [18-exposer-ziti.md](18-exposer-ziti.md) | Plain OpenZiti, and the per-preview authorization question that gates it |
 | [19-zrok-namespacing.md](19-zrok-namespacing.md) | Deleting a leaked zrok name, what the account limits count, and why an owned subdomain is admin-only |
+| [21-multi-exposer.md](21-multi-exposer.md) | Several exposers at once and one per project: the publications table, and the per-exposer reap that must not delete the others' shares |
 
 ## CLAUDE.md files
 

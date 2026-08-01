@@ -68,8 +68,19 @@ func cmdWebhookOnly(args []string) error {
 		"serve over a named public zrok share instead of a local port, e.g. -zrok-name docpreview")
 	zrokNamespace := fs.String("zrok-namespace", "",
 		"namespace for -zrok-name; blank uses the zrok environment's default")
+	zrokHome := fs.String("zrok-home", "",
+		"the zrok environment directory; blank uses the machine's ~/.zrok2")
 	logLevel := fs.String("log-level", "info", "debug, info, warn or error")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	// This process reads no config file — that is the whole reason it exists, so it holds no copy
+	// of the webhook secret — which means it cannot derive the daemon's zrok directory the way the
+	// daemon does. So it is a flag, and it has to be passed whenever the daemon is using its own
+	// environment rather than the machine's: the share this creates must come from the same zrok
+	// account as the previews, or the name it reserves belongs to a different account.
+	if err := useZrokHome(*zrokHome); err != nil {
 		return err
 	}
 

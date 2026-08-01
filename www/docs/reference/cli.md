@@ -360,7 +360,7 @@ styles and the fetch helper to keep in step.
 | `/projects` | [Projects](./projects.md) and their environment variables. No stream either. |
 
 **The links to the last two appear only for a local request.** The page asks `/api/admin`, which runs the same
-locality check the write endpoints run, and draws **Projects**, **Secrets** and **Clear caches** only on an outright
+locality check the write endpoints run, and draws **Projects**, **Settings** and **Clear caches** only on an outright
 yes. The server decides, not the page: a `Host`-header test in the browser would be worthless, because `Host` is
 whatever the client typed. The pages themselves are still reachable if you type the path — read-only, with a banner
 saying why.
@@ -383,7 +383,7 @@ reloading under you. **If something on the page contradicts the code, reload bef
 | `GET` | `/` | The dashboard. |
 | `GET` | `/secrets` | Credential management. Its own page rather than a panel on the dashboard: a URL can be bookmarked and named in a runbook, and a distinct path is something a proxy or a later authentication layer can gate. Registered only when a credential surface is wired, so a daemon without one answers `404` rather than serving an empty page. |
 | `GET` | `/projects` | [Projects](./projects.md) and their environment variables. The third page, same embedded document, switched on the path. |
-| `GET` | `/api/admin` | Which of the two admin pages this request would be allowed to write to. The dashboard asks before drawing the **Projects**, **Secrets** and **Clear caches** controls, so the server decides and the page never offers an action that would `403`. |
+| `GET` | `/api/admin` | Which of the two admin pages this request would be allowed to write to. The dashboard asks before drawing the **Projects**, **Settings** and **Clear caches** controls, so the server decides and the page never offers an action that would `403`. |
 | `GET` | `/api/secrets` | What that page reads: names, whether the vault is unlocked, and whether this daemon may be written to at all. Never a value. |
 | `PUT` `DELETE` `POST` | `/api/secrets/…` | Store, delete, unlock, generate. Refused unless every listener is loopback *and* the request arrived from this machine carrying no forwarding header. Loopback is not local: a tunnel makes the first true while the caller is on the internet, which is what [`webhook-only`](#webhook-only) exists for. |
 | `GET` `PUT` `DELETE` | `/api/projects/…` | Project rows and their environment variables. Same two gates as `/api/secrets`, for a stronger reason: a project row decides what command runs on the build host. |
@@ -402,6 +402,12 @@ reloading under you. **If something on the page contradicts the code, reload bef
 | `GET` | `/preview/{name}/` | Previews, under the `local` exposer only. |
 | `GET` | `/healthz` | `ok`. |
 | `GET` | `/readyz` | JSON: whether recovery has finished, and how busy the daemon is. |
+| `GET` | `/api/zrok` | JSON: both zrok environments, which is in use, and whether one is enrolled. |
+| `POST` | `/api/zrok/use` | Record which environment the daemon adopts. Takes effect at the next restart. |
+| `POST` | `/api/zrok/invite` | Ask zrok to email a registration link. Refused if one is already enrolled. |
+| `POST` | `/api/zrok/register` | Turn that link into an account and enrol this host. |
+| `POST` | `/api/zrok/enable` | Enrol with an account token, from the request or from the vault. |
+| `POST` | `/api/zrok/disable` | Remove this host from the account. Takes every preview URL down until republish. |
 | `GET` | `/status` | JSON: exposer, queue depth, live previews. |
 
 ```json
@@ -487,6 +493,7 @@ router, not a guard — the guard is one hop further in, and a forged payload ge
 |---|---|---|
 | `-zrok-name` | | Serve over a named public zrok share and bind no local port. |
 | `-zrok-namespace` | the environment's default | Namespace for `-zrok-name`. Required if the environment has none. |
+| `-zrok-home` | `~/.zrok2` | The zrok environment directory. Pass `<data_dir>/zrok2` if the daemon uses its own — this process reads no config and cannot know. A share created from the wrong account reserves a name the previews cannot use. |
 | `-listen` | `127.0.0.1:8481` | Where to accept tunnelled requests. Unused with `-zrok-name`. |
 | `-upstream` | `http://127.0.0.1:8471` | The daemon to forward to. |
 | `-path` | `/webhook/github` | The one path forwarded. |
@@ -567,7 +574,7 @@ the new route is public.
 
 `/secrets`, `/projects`, `/api/secrets`, `/api/projects`, `/api/cache` and `/api/admin` are absent and therefore
 `404` through this proxy. That is the first of two layers: this proxy sets `X-Forwarded-For`, and the daemon refuses
-every write from a forwarded request regardless. The dashboard's own **Projects** and **Secrets** links come from
+every write from a forwarded request regardless. The dashboard's own **Projects** and **Settings** links come from
 `/api/admin`, so through this proxy the fetch 404s and the links are simply not drawn.
 
 :::danger There is no authentication here
@@ -585,6 +592,7 @@ way it cannot for a webhook.
 |---|---|---|
 | `-zrok-name` | | Serve over a named public zrok share and bind no local port. |
 | `-zrok-namespace` | the environment's default | Namespace for `-zrok-name`. Required if the environment has none. |
+| `-zrok-home` | `~/.zrok2` | The zrok environment directory. Pass `<data_dir>/zrok2` if the daemon uses its own — this process reads no config and cannot know. A share created from the wrong account reserves a name the previews cannot use. |
 | `-listen` | `127.0.0.1:8482` | Where to accept tunnelled requests. Unused with `-zrok-name`. Note the port differs from `webhook-only`'s `8481`, so both can run at once. |
 | `-upstream` | `http://127.0.0.1:8471` | The daemon to forward to. Non-loopback is refused, for the same reason as `webhook-only`. |
 | `-log-level` | `info` | |
@@ -741,6 +749,77 @@ A **leaked reserved name** — the object the quota actually counts — is invis
 the listing is of shares. And only the `zrok2` exposer can answer at all; the others say so and point at `doctor`.
 
 :::
+
+## `zrok`
+
+Signing up for zrok, enrolling this host, and choosing which of the two possible zrok environments the daemon
+uses. The same operations as the panel on `/secrets`, for a host with no browser on it.
+
+```powershell
+docpreview zrok status
+docpreview zrok use system|project
+docpreview zrok invite <email> [-api-endpoint URL] [-invite-token T]
+docpreview zrok register <link-or-token> [-api-endpoint URL] [-description D] [-no-enable]
+docpreview zrok enable [-token-stdin] [-description D]
+docpreview zrok disable -yes
+```
+
+### `zrok status`
+
+Both environment directories, what is enrolled in each, and which one this installation uses.
+
+```text
+in use: system
+  this installation  D:\docpreview\.docpreview\zrok2
+    nothing here yet
+* this machine       C:\Users\you\.zrok2
+    enabled against https://api-v2.zrok.io/, default namespace public
+```
+
+### `zrok use system|project`
+
+Records which environment the daemon adopts. **Takes effect at the next restart** — zrok's root directory is a
+process-wide setting read once at startup.
+
+| | |
+|---|---|
+| `system` | `~/.zrok2`, what the `zrok2` CLI uses |
+| `project` | `<data_dir>/zrok2`, docpreview's own, beside the vault |
+
+With nothing recorded, a daemon adopts whichever is enabled and writes that down. With **both** enabled it uses
+`project`, warns, and records nothing — so the dashboard keeps asking. See
+[Runbook — zrok v2](../runbooks/zrok2.md) for why that is not a default worth guessing.
+
+### `zrok invite <email>`
+
+Asks the zrok service to email a registration link. Refused if an environment is already enrolled in either
+directory.
+
+| Flag | |
+|---|---|
+| `-api-endpoint` | A self-hosted zrok. Default `https://api-v2.zrok.io`. |
+| `-invite-token` | For a zrok service that is itself invitation-only (`tokenStrategy: store`). |
+
+### `zrok register <link-or-token>`
+
+Creates the account and enrols this host. Takes the whole emailed link or just the token at the end of it.
+
+The **zrok account password** is read from stdin, never an argument. It is not stored here — it is how you reset
+that account later, so keep it somewhere.
+
+The account token goes into the vault as `zrok.account_token`. A locked vault is not fatal: the enrolment still
+happens and the command says how to store the token afterwards. `-no-enable` stops after creating the account.
+
+### `zrok enable`
+
+Enrols this host against an account token you already have. Reads it from the vault, or from stdin with
+`-token-stdin` — which also stores it.
+
+### `zrok disable -yes`
+
+Removes this host's environment from the account. `-yes` is required because every share published through it is
+deleted: preview URLs stop answering until the daemon republishes. The reserved names belong to the account and
+survive, so the URLs come back unchanged.
 
 ## `sim`
 

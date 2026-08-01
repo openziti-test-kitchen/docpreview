@@ -20,14 +20,19 @@ what is defended and what is not.
 - An outsider opening a fork pull request to get code executed.
 - A path in a repository config pointing somewhere it should not.
 - Someone who finds the tunnel URL and tries to write a credential through it.
+- Someone who finds the dashboard URL. With a password set, every page but the previews, the webhooks and the
+  health endpoints asks for a login.
 
 **Not defended against:**
 
 - Someone already running code as the docpreview user. They have won; no file format changes that.
-- Anything that proxies to the daemon while stripping forwarding headers. The locality gate below would read
+- Anything that proxies to the daemon while stripping forwarding headers. The locality route below would read
   those requests as local. Nothing docpreview ships does this; a proxy you put in front of it might.
-- Managing credentials from anywhere but the host. There is no password on `/api/secrets`, so a remote caller
-  gets a read-only view and nothing else. That is a missing feature, not a defence.
+- A guessed or shared password. There is no rate limit on `/login` and no lockout, so the password is the whole
+  defence — the comparison is constant-time and the hash is argon2id, which slows an offline attack on a stolen
+  database rather than an online one against the form.
+- Anyone at all, until a viewer password is set. Nothing is gated before then, deliberately: a feature that locks
+  people out on upgrade is not shippable.
 - A contributor with push access to a branch, under the `local` build driver. They can run arbitrary code on
   the build host, by design — that is what `npm run build` is. Use the `docker` driver if that is not
   acceptable.
@@ -44,6 +49,15 @@ encrypt, still decrypt, and still pass every test you would think to write. See
 
 Writes go to a temporary file in the same directory and are then renamed over the target, so a crash
 mid-write cannot leave a truncated and therefore unrecoverable vault behind.
+
+**Three things are deliberately not in the vault**, and each for the same ordering reason: the page that unlocks
+the vault is served by the daemon, so anything the daemon needs in order to serve that page cannot be inside it.
+
+| | Where | Why |
+|---|---|---|
+| The console password hashes | `settings` table, argon2id | A password inside the vault could not be checked in order to reach the form that opens the vault |
+| The session signing key | Memory, generated per process | Nothing persists it, which is why a restart signs everybody out |
+| The zrok account token's other copy | `<data_dir>/zrok2/environment.json`, plaintext | zrok writes that file and docpreview does not control its format. The vault holds a copy so re-enrolling needs no new signup; the file is why that directory sits beside the vault rather than in a home directory |
 
 ### The master key
 
@@ -109,35 +123,88 @@ through JSON and get the value back.
 
 Getting a value out requires calling `Reveal()`, which is awkward to type and easy to grep for.
 
+## The login
+
+**The whole dashboard is behind a password once one is set**, including from loopback. Two roles, and they are not
+two levels of the same thing:
+
+| Username | What it can do |
+|---|---|
+| `admin` | Everything, from anywhere the daemon is reachable |
+| `viewer` | Read everything, change nothing |
+
+Set them with [`docpreview console password`](./cli.md). Until a **viewer** password exists nothing is gated, which
+is what every installation had before this existed — a feature that locks people out on upgrade is not shippable.
+
+What is never gated, and each for a load-bearing reason:
+
+| Path | Why |
+|---|---|
+| `/webhook/*` | Authenticated already, by an HMAC over the body, and its callers hold no cookie. A cookie gate here breaks every delivery and the failure reads as a signature problem |
+| `/healthz`, `/readyz` | What a supervisor and the restart script poll. `/readyz` carries counts and a stage name and nothing that identifies a repository — see [the CLI reference](./cli.md) |
+| The previews | A preview URL goes in a pull request for a reviewer who has no login and should not need one. Under `local` that is `/preview/…` on this listener; the other exposers never reach this mux |
+| `/login`, `/logout`, `/auth/*` | The form cannot be behind the form, and the OAuth callback arrives from Google carrying no cookie of ours |
+
+:::danger Loopback is not exempt
+
+It was, briefly. A request from this machine was admitted as admin with no session, on the reasoning that anyone who
+can reach `127.0.0.1` can already run the binary — true, and the wrong rule, because "from this machine" is not
+something the daemon can establish. A tunnel in proxy mode connects from a local process, so `RemoteAddr` is
+loopback for a request that arrived from the internet. Betting the login on that hands every visitor an admin
+session the moment something proxies without setting a forwarding header.
+
+:::
+
+Sessions are a signed cookie with no server-side store, and the signing key is generated per process — so **every
+restart signs everybody out**. Twelve hours otherwise.
+
+### Google sign-in grants viewer, never admin
+
+Optional, and worth stating exactly: an address at a domain on the allow-list gets **viewer**. Admin is
+password-only, because the two are different claims — "somebody at this company" is not "the person who administers
+this installation". Configure with `docpreview console oauth-domains acme.com`; the check is an exact match on the
+part after the last `@`, not a suffix test, so a list naming `acme.com` does not admit `evil-acme.com`.
+
+The client id and secret live in the vault, so a locked vault means the login page offers the password field alone
+rather than a button that cannot work.
+
 ## The mutating surfaces
 
-There are two, and everything else the daemon serves is a `GET`:
+There are three, and everything else the daemon serves is a `GET`:
 
 | Surface | Endpoints | What it can do |
 |---|---|---|
 | Credentials | `/api/secrets/…` | Create the vault, unlock it, store a credential, delete one, generate a webhook secret |
-| [Projects](./projects.md) | `/api/projects/…`, `/api/cache/…` | Decide which repositories build and how, hold a per-project environment variable, clear a build cache |
+| [Projects](./projects.md) | `/api/projects/…`, `/api/cache/…`, `/api/settings/…` | Decide which repositories build and how, hold a per-project environment variable, clear a build cache, set the hostname prefix |
+| Exposer | `/api/zrok/…` | Sign up for zrok, enrol or un-enrol this host, store the Frontdoor token, enrol a ziti identity, switch which exposer publishes |
 
-They share both gates below, deliberately. **The projects surface is the more dangerous of the two**: a project row
+They share the gates below, deliberately. **The projects surface is the most dangerous of the three**: a project row
 decides what command runs on the build host, and a project's environment variables are credentials handed to the
-process that runs it — a more direct route to executing code on this machine than reading the vault would be.
+process that runs it — a more direct route to executing code on this machine than reading the vault would be. The
+exposer surface is next: it spends an account's quota and can take every published preview URL down.
 
-Both live on the same listener that serves the dashboard, the previews and the webhook, so how reachable they are is
-a property of your deployment, not of the code. Two conditions must both hold before either will act
-(`internal/daemon/secrets.go:375`, `internal/daemon/projects.go:120`):
+All of them live on the same listener that serves the dashboard, the previews and the webhook, so how reachable they
+are is a property of your deployment, not of the code. **One of these must hold** before any of them will act
+(`internal/daemon/secrets.go`):
 
-- **Every configured listener is loopback.** A daemon bound to `0.0.0.0` refuses credential writes, and so does
-  one serving over an OpenZiti listener: the admin surface does not yet check the dialing identity, so "enrolled
-  at all" would be the whole authorization (`internal/daemon/secrets.go:130`).
-- **The request itself arrived locally** — a loopback `RemoteAddr` **and** no `X-Forwarded-For`,
-  `X-Forwarded-Host`, `X-Real-Ip` or `Forwarded` header (`internal/daemon/secrets.go:103`).
+- **The request carries an admin session.** This is authentication, and it is the only one of the three that can be
+  true from another machine — which is the point of having a password, and the reason "managing credentials remotely
+  is unsupported" is no longer the answer.
+- **The request arrived over an OpenZiti listener from an identity in `admin_identities`.** See below.
+- **The request arrived locally** — a loopback `RemoteAddr` **and** no `X-Forwarded-For`, `X-Forwarded-Host`,
+  `X-Real-Ip` or `Forwarded` header — *and* every configured listener is loopback or a ziti listener naming
+  `admin_identities`. A daemon bound to `0.0.0.0` refuses on this route however local the request looks.
 
-### Why the second condition exists
+A **viewer** session does not fall through to the locality test. It is a positive statement that this caller is not
+an admin, so treating a viewer on the loopback interface as one would make signing in as a viewer a way to gain less
+than nothing. It is refused with a reason the page shows.
+
+### Why the locality route needs both halves
 
 Checking where the daemon listens is not enough, and the gap is a tunnel. `zrok2 share public
-http://127.0.0.1:8471` publishes every route the daemon serves while the listener is still loopback, so the first
-condition answered yes with `/api/secrets` on the internet — and with the vault unlocked, `PUT`, `DELETE` and
-generate would all have succeeded for anyone holding the share URL.
+http://127.0.0.1:8471` publishes every route the daemon serves while the listener is still loopback, so the listener
+test answered yes with `/api/secrets` on the internet — and with the vault unlocked, `PUT`, `DELETE` and generate
+would all have succeeded for anyone holding the share URL.
 
 `RemoteAddr` alone cannot tell the difference. In zrok's proxy mode the daemon sees the connection from the local
 tunnel process, so the address is loopback too, and `Host` is whatever the client sent. The forwarding-header test
@@ -145,16 +212,18 @@ is what closes it: anything that proxies to the daemon sets one of those headers
 `webhook-only` proxy. A caller that adds a header itself only makes the check refuse more, which is the safe
 direction to be wrong in.
 
-### This is a boundary, not authentication
+### The locality route is a boundary, not authentication
 
-Nothing here is a credential check. The gate answers "did this request originate on this machine", and it answers
-it from evidence the network arrangement supplies rather than from anything the caller proves. It assumes nothing
-proxies to the daemon while stripping forwarding headers. A real password on the credential surface is still
-outstanding — until it exists, managing credentials from another machine is not supported rather than merely
-inadvisable.
+Taken on its own, the locality test is not a credential check. It answers "did this request originate on this
+machine" from evidence the network arrangement supplies rather than from anything the caller proves, and it assumes
+nothing proxies to the daemon while stripping forwarding headers.
 
-On a loopback-only daemon the boundary is the same one that already protects `docpreview vault set`: anyone who
-can reach `127.0.0.1` can run the binary. The API adds no reach that a shell did not already have.
+That is why it is now one of three routes rather than the only one. **Set an admin password and the surface has real
+authentication**; the locality route remains so that a fresh installation with no password can be set up from the
+machine it is on, where the boundary is the same one that already protects `docpreview vault set` — anyone who can
+reach `127.0.0.1` can run the binary, and the API adds no reach a shell did not already have.
+
+Managing credentials from another machine is supported now, with the admin password. Without one it is not.
 
 ### Over an OpenZiti listener, the gate is an identity instead
 
@@ -194,20 +263,24 @@ forwards exactly `POST /webhook/github` and answers 404 to everything else, so t
 reachable through the tunnel at all and the locality gate becomes a second line rather than the only one. With
 `-zrok-name` it binds no local TCP port either. See the [webhook tunnel runbook](../runbooks/webhook-tunnel.md).
 
-### Reading is deliberately open
+### Reading is open to anyone who got past the login
 
-`GET /api/secrets` and `GET /api/projects` are not gated. They return names and set/unset flags, never a value, and
-each reports `can_write` plus `read_only_why` so a remote dashboard renders the panel read-only with the reason on
-it. A panel that vanished instead would read as a broken feature, and a panel offering buttons that 403 is worse than
-one that explains itself.
+`GET /api/secrets`, `GET /api/projects` and `GET /api/zrok` apply no gate of their own. They return names and
+set/unset flags, never a value, and each reports `can_write` plus `read_only_why` so a viewer's dashboard renders
+the panel read-only with the reason on it. A panel that vanished instead would read as a broken feature, and one
+offering buttons that 403 is worse than one that explains itself.
+
+None of the three ever returns a credential. Not on list, not in an error, not after storing one — including the
+zrok account token, which the signup flow creates and puts straight into the vault without it appearing in any
+response.
 
 A refused write is a `403` with the reason in it, and the daemon logs it — `refused a remote credential request` or
 `refused a remote project change`, with the remote address, method and path.
 
-The **Projects**, **Secrets** and **Clear caches** controls on the dashboard are drawn from `GET /api/admin`, which
-runs the same locality check the write endpoints run. The server decides, not the page: a `Host`-header test in the
-browser would be worthless, since `Host` is whatever the client typed. Anything other than an outright yes leaves the
-links absent — which is what happens through
+The **Projects**, **Settings** and **Clear caches** controls on the dashboard are drawn from `GET /api/admin`, which
+runs the same check the write endpoints run. The server decides, not the page: a `Host`-header test in the browser
+would be worthless, since `Host` is whatever the client typed. Anything other than an outright yes leaves the links
+absent — which is what happens for a viewer session, and through
 [`dashboard-only`](./cli.md#dashboard-only), where that endpoint is not in the allowlist at all.
 
 ### One preview URL per build is one more public surface
@@ -334,9 +407,14 @@ running a minute fast otherwise fails every API call with a 401 that says nothin
 
 ## Operational advice
 
+**Set both passwords, first.** `docpreview console password -role admin` and `-role viewer`. Until the viewer one
+exists nothing is gated, and `docpreview console status` says what is set and what this daemon listens on.
+
 **Bind loopback, and do not share the daemon.** Default `listen` is `127.0.0.1:8471`. Publish
 `docpreview webhook-only` and point the tunnel at that: a share of the daemon publishes the dashboard, every
 preview and `/api/secrets` alongside the webhook. See the [webhook tunnel runbook](../runbooks/webhook-tunnel.md).
+The login is a second line here, not a substitute — `dashboard-only` publishes a read-path allowlist that does not
+include `/api/admin` at all.
 
 **Rotate the private key.** See the [GitHub App runbook](../runbooks/github-app.md). Zero-downtime, and the
 step people forget is deleting the old key afterwards.

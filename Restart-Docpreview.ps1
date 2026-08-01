@@ -148,14 +148,25 @@ if (-not $NoShares) {
     # -zrok-name, never -config: these two read no config file and hold no copy of the webhook secret,
     # which is the whole reason webhook-only exists. Passing -config exits 2 with a usage dump.
     Write-Host 'starting the shares'
-    $webhook = Start-Docpreview 'webhook-only' @(
+    # -zrok-home when this installation has its own zrok environment. These two read no config
+    # file, so they cannot derive it — and a share created from a different zrok account than the
+    # daemon's reserves a name the previews cannot use. Absent, they use the machine's ~/.zrok2,
+    # which is right for the setup here and wrong the moment `docpreview zrok use project` is run.
+    $zrokArgs = @()
+    $zrokScope = (& $exe zrok status -config $Config 2>$null | Select-String '^in use: (\w+)').Matches.Groups[1].Value
+    if ($zrokScope -eq 'project') {
+        $zrokArgs = @('-zrok-home', (Join-Path $Root '.docpreview\data\zrok2'))
+        Write-Host "  zrok environment: this installation's own"
+    }
+
+    $webhook = Start-Docpreview 'webhook-only' (@(
         'webhook-only', '-zrok-name', $WebhookName,
-        '-path', '/webhook/github', '-path', '/webhook/bitbucket')
+        '-path', '/webhook/github', '-path', '/webhook/bitbucket') + $zrokArgs)
 
     # The dashboard share, optionally gated at the zrok frontend. Only this one: the webhook share
     # is called by GitHub and Bitbucket, which hold no account with any OAuth provider, and the
     # preview shares must stay open for reviewers.
-    $dashArgs = @('dashboard-only', '-zrok-name', $DashboardName)
+    $dashArgs = @('dashboard-only', '-zrok-name', $DashboardName) + $zrokArgs
     if ($Oauth)       { $dashArgs += @('-oauth', $Oauth) }
     if ($OauthDomain) { $dashArgs += @('-oauth-domain', $OauthDomain) }
 

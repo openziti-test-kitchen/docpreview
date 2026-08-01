@@ -48,6 +48,11 @@ type Ingress struct {
 	// projects is the project admin surface, on the same terms.
 	projects *ProjectsAdmin
 
+	// zrok is the zrok account and environment surface, on the same terms. Nil is the state for
+	// an installation using another exposer, where a signup panel would be an invitation to
+	// enrol against a service nothing here would publish through.
+	zrok *ZrokAdmin
+
 	// console is the login gate. Nil when no store was wired, in which case there is no
 	// login and the locality rules decide everything, exactly as before this existed.
 	console *console
@@ -94,6 +99,12 @@ func (i *Ingress) WithSecrets(a *SecretsAdmin) *Ingress {
 // WithProjects attaches the project admin surface.
 func (i *Ingress) WithProjects(a *ProjectsAdmin) *Ingress {
 	i.projects = a
+	return i
+}
+
+// WithZrok attaches the zrok account and environment surface.
+func (i *Ingress) WithZrok(a *ZrokAdmin) *Ingress {
+	i.zrok = a
 	return i
 }
 
@@ -205,6 +216,15 @@ func (i *Ingress) routes() http.Handler {
 		// helper to keep in step.
 		mux.HandleFunc("GET /secrets", i.dashboard)
 		mux.HandleFunc("GET /secrets/{$}", i.dashboard)
+	}
+
+	// The zrok panel lives on /secrets, beside the credentials, because the account token is one
+	// and because "how does this reach the internet" and "what credentials does it hold" are the
+	// same visit. Mounted here rather than only declared in the admin's own mux, for the reason
+	// spelled out on /api/settings/ below.
+	if i.zrok != nil {
+		mux.Handle("/api/zrok", i.zrok.Handler())
+		mux.Handle("/api/zrok/", i.zrok.Handler())
 	}
 
 	if i.projects != nil {

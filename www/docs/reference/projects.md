@@ -30,7 +30,7 @@ than shown as a default, because the card is for your decisions and not for the 
 | Control | |
 |---|---|
 | **Edit** | Expands the build settings for that project, in place |
-| **Secrets** | Expands its environment variables, with a count when it has any |
+| **Settings** | Expands its environment variables, with a count when it has any |
 | **Delete** | Removes the row. Existing previews are left alone |
 | **Disable** | Inside **Edit**. A disabled project stops building; the row and its settings stay |
 | **Open ↗** | On the branch strip. Goes to this project's default-branch preview |

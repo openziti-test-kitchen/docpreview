@@ -176,6 +176,47 @@ input.control::placeholder { color: var(--muted) }
 .secgroup-box[data-group="build"]  { --edge: var(--good) }
 .secgroup-box[data-group="unused"] { --edge: var(--idle) }
 
+/* The exposer sections take the same box, so the two panels on this page are one control.
+
+   A colour each, but only for the one in force: three greys and one hue says "this is how
+   previews get out, and these are the alternatives" in the stripe alone, which is the one
+   question this panel exists to answer. Four hues at once would say all four are doing
+   something. The hue itself distinguishes them at a glance across restarts — green for
+   zrok, amber for Frontdoor, blue for ziti, grey for local, which serves no URL anybody
+   outside this machine can open. */
+.secgroup-box[data-exposer]                      { --edge: var(--idle) }
+.secgroup-box[data-exposer="zrok2"].inuse        { --edge: var(--good) }
+.secgroup-box[data-exposer="frontdoor"].inuse    { --edge: var(--warning) }
+.secgroup-box[data-exposer="ziti"].inuse         { --edge: #3b7dd0 }
+.secgroup-box[data-exposer="local"].inuse        { --edge: var(--muted) }
+/* An exposer that is in force and cannot work outranks its own colour. The state this
+   catches is a zrok environment enrolled against the v1 service: configured, selected, and
+   dead on the first publish. */
+.secgroup-box[data-exposer].inuse.broken         { --edge: var(--critical) }
+/* A path is one long unbreakable token on Windows and was reaching past the border. */
+.sec .key { overflow-wrap: anywhere }
+/* The generated CLI. A terminal block, so it reads as something to paste into one, and it
+   scrolls sideways rather than wrapping — a wrapped shell command is one that cannot be
+   copied and run. */
+.ziti-cli { margin: 0.6rem 0.9rem 0.9rem 2.75rem }
+.ziti-cli > summary { cursor: pointer; font-size: 0.82rem; color: var(--muted) }
+.ziti-cli > summary:hover { color: var(--ink) }
+.ziti-cli pre {
+  background: var(--term-bg); color: var(--term-fg);
+  border-radius: 8px; padding: 0.7rem 0.8rem; margin: 0.5rem 0;
+  font: 12px/1.6 ui-monospace, Consolas, monospace;
+  overflow-x: auto; white-space: pre;
+  /* Selectable, because the fallback when the clipboard is unavailable is selecting it. */
+  user-select: text;
+}
+/* Step 2 of a two-step action, drawn as a continuation of the row above rather than as
+   another row. Without this the enrolment form reads as a third directory. */
+.sec.sub {
+  border-top: 0;
+  background: color-mix(in srgb, var(--edge, var(--idle)) 5%, transparent);
+  padding-top: 0;
+}
+
 /* Expanded, the whole section is washed with its own colour so the rows read as
    belonging to the heading above them rather than as a list that happens to follow it.
    Six percent: enough to group them, light enough that the row hairlines still show.
@@ -316,6 +357,16 @@ input.control::placeholder { color: var(--muted) }
 .flag.on  { color: var(--good) }
 .flag.off { color: var(--critical) }
 .flag.opt { color: var(--muted) }
+/* More than one chip in a place that is a grid cell.
+   A `<summary>` here is a three-column grid — caret, label, badge — so two loose spans in
+   the badge position are two grid items, and the second one wraps onto a row of its own
+   under the caret. One flex container is one item however many chips are in it. */
+   inline-flex rather than flex, because the same container is also used mid-sentence in a
+   row's label, where a block would break the line. */
+.chips {
+  display: inline-flex; gap: 0.35rem; align-items: center; flex-wrap: wrap;
+  vertical-align: middle;
+}
 
 .notice {
   font-size: 0.8rem; border: 1px solid var(--ring); border-left: 3px solid var(--edge, var(--muted));
@@ -481,6 +532,43 @@ input.control::placeholder { color: var(--muted) }
 }
 .ask-note b { color: var(--ink-2); font-weight: 600 }
 .ask-acts { display: flex; gap: 0.45rem; justify-content: flex-end; margin-top: 0.9rem }
+
+/* The setup wizard. One screen per decision, so the card is narrow and the content is a
+   short stack rather than a form. */
+.wiz-trail { display: flex; gap: 0.3rem; margin-bottom: 0.75rem }
+.wiz-dot {
+  width: 1.4rem; height: 3px; border-radius: 999px; background: var(--hairline);
+}
+.wiz-dot.past { background: var(--muted) }
+.wiz-dot.on { background: var(--ink) }
+.wiz-body { display: flex; flex-direction: column; gap: 0.7rem; margin: 0.8rem 0 }
+/* A field is its label, its input and its reason, stacked. The reason is the part that
+   matters: every one of these asks for something whose purpose is not obvious from its name. */
+.wiz-field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.82rem }
+.wiz-field > span:first-child { font-weight: 600 }
+.wiz-why { font-size: 0.76rem; color: var(--muted) }
+/* A pickable row, drawn as a card so the whole thing is the click target. A bare radio with
+   a path beside it is a 12-pixel target next to 400 pixels of inert text. */
+.wiz-pick {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.6rem;
+  align-items: start; cursor: pointer;
+  border: 1px solid var(--ring); border-radius: 8px; padding: 0.6rem 0.7rem;
+}
+.wiz-pick:hover { background: var(--raised) }
+.wiz-pick.on { border-color: var(--ink); background: var(--raised) }
+.wiz-pick > span { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.82rem }
+.wiz-pick .key { overflow-wrap: anywhere }
+.wiz-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.9rem }
+.wiz-two > div { font-size: 0.82rem }
+.wiz-next { font-size: 0.82rem; margin: 0; padding-left: 1.1rem; display: grid; gap: 0.35rem }
+.wiz-err { margin: 0.2rem 0 0 }
+/* The step's own action, filled so that "Next" is findable without reading both buttons.
+   Not danger-coloured: nothing in the wizard is destructive, and every step is either
+   reversible with Back or has not happened yet. */
+.btn.solid {
+  background: var(--ink); border-color: var(--ink); color: var(--surface);
+}
+.btn.solid:hover { filter: brightness(1.15) }
 /* The destructive button is filled, and it is not the one that has focus. A dialog that
    opens with the irreversible action focused turns a stray Return into the action. */
 .btn.solid-danger {
@@ -795,7 +883,21 @@ input.control::placeholder { color: var(--muted) }
   gap: 0.6rem; align-items: center; padding: 0.22rem 0;
 }
 .field-note { text-transform: none; letter-spacing: 0; font-weight: 400 }
-.backlink { margin: 0 0 0.5rem; font-size: 0.82rem }
+/* The way out, and the way across. Two links now: back to the previews, and to the other
+   admin page — /secrets and /projects are the two halves of administering an installation, and
+   with only a back-link each, getting between them meant going home first. */
+.backlink {
+  margin: 0 0 0.5rem; font-size: 0.82rem;
+  display: flex; align-items: center; gap: 0.6rem;
+}
+/* Pushed to the far end, so it reads as a destination rather than as part of the way back. */
+.backlink .control { margin-left: auto }
+/* A section within an admin page, under its one <h2>. Introduced when the settings page grew a
+   second panel and both were <h2>, which made the page look like two pages stacked. */
+.pagesec {
+  font-size: 0.95rem; font-weight: 600; margin: 1.4rem 0 0.5rem; color: var(--ink);
+}
+.pagesec:first-of-type { margin-top: 0.9rem }
 .avafield { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap }
 /* A checkbox and its wording on one line, so the box belongs to the sentence rather than
    sitting in the label column with the words in the control column. */
@@ -1441,9 +1543,30 @@ footer {
     <!-- The way out goes above the content, not below it. Below, it is past a form
          eleven fields long and past however many project cards exist, so on any real
          page it is off screen — a page with no visible way back reads as a dead end. -->
-    <p class="backlink"><a href="/">← back to previews</a></p>
-    <h2 id="setup-head">Secrets</h2>
+    <!-- Both ways out, because this page and /projects are the two halves of administering an
+         installation and people arrive at the wrong one. Previously each linked only back to
+         the previews, so getting between them meant going home first. -->
+    <p class="backlink"><a href="/">← back to previews</a>
+      <a class="control" href="/projects">Projects</a></p>
+    <!-- "Settings", not "Secrets". This page stopped being only credentials when the exposer
+         configuration landed on it, and a heading naming one of the two things on it is a
+         heading that makes the other unfindable. The path is unchanged — it is in runbooks,
+         in the dashboard-only allowlist, and in bookmarks. -->
+    <h2 id="setup-head">Settings</h2>
+    <h3 class="pagesec">Credentials</h3>
     <div id="setup-body"></div>
+
+    <!-- The exposer panel, below the credentials because it is the less frequent visit and
+         because the zrok account token it produces is one of the rows above. Its own
+         heading rather than a section of the credentials: signing up for a service and storing
+         a credential are different acts, and one of them is destructive.
+
+         One section per exposer rather than a zrok panel. Only zrok can be configured from
+         a browser — a ziti identity is a file from `ziti edge enroll` and a Frontdoor token
+         is a vault entry — but "which of the four is this daemon using, and is it ready"
+         was previously answerable only from `doctor`. -->
+    <h3 class="pagesec" id="exposer-head">Exposer configuration</h3>
+    <div id="exposer-body"></div>
   </div>
 </div>
 
@@ -1451,7 +1574,9 @@ footer {
      switched on pathname, so the styles and the fetch helper exist once. -->
 <div class="setup" id="projects" hidden>
   <div class="setup-inner">
-    <p class="backlink"><a href="/">← back to previews</a></p>
+    <!-- The other half of administering an installation. See the note on the settings page. -->
+    <p class="backlink"><a href="/">← back to previews</a>
+      <a class="control" href="/secrets">Settings</a></p>
     <h2>Projects</h2>
     <div id="projects-body"></div>
   </div>
@@ -1707,9 +1832,25 @@ function matches(p) {
    Number 0 is the branch preview; see model.PullRequest.IsBranch. */
 const inList = p => p.number > 0 || isLive(p.state);
 
+/* pinned reports whether this preview is the one a reader has selected in its project.
+
+   The exception that keeps `inList` from breaking the log pane. Clicking an activity entry
+   for a finished branch build pins that preview — and the pin then pointed at a preview the
+   list excludes, so the very next render decided the pin was stale, reset it to the project's
+   newest, and the pane jumped to a different preview's log while somebody was reading it.
+
+   From the reader's side that is a click that worked for one tick and then undid itself. It
+   was reported as the log pane "not tailing properly" and diagnosed wrongly twice before
+   `clicks.mjs` caught it against live state, where a project has both a branch preview and
+   several pull requests. */
+const pinned = p => ui.pick[project(p)] === p.preview_id;
+
 function groups() {
   const by = new Map();
-  for (const p of ui.previews.filter(inList).filter(matches)) {
+  // `|| pinned(p)`, so a selected branch preview stays in its project's list for as long as
+  // it is selected. It leaves again when the reader picks something else or closes the row,
+  // which is what keeps the list a worklist rather than accumulating furniture.
+  for (const p of ui.previews.filter(p => inList(p) || pinned(p)).filter(matches)) {
     const k = project(p);
     if (!by.has(k)) by.set(k, []);
     by.get(k).push(p);
@@ -3853,6 +3994,1036 @@ async function run(btn, fn, opts) {
 // runProject is run, aimed at the projects page.
 const runProject = (btn, fn) =>
   run(btn, fn, {render: renderProjectsPage, body: "projects-body"});
+
+// runZrok is run, aimed at the zrok panel. Without it a failed enrolment renders zrok
+// state through the credential renderer and prints the exception into a hidden element —
+// the exact bug `run`'s arguments were added to stop, one panel later.
+const runZrok = (btn, fn) =>
+  run(btn, fn, {render: renderZrok, body: "exposer-body"});
+
+/* ── zrok: signing up, and which environment ──────────────────────────────
+   Two things happen here, and only one of them is about zrok's service.
+
+   **Signing up** is invite, then register. The invite is an email, so the flow has a
+   gap in it that no amount of UI closes: the operator has to open their mail and come
+   back with the link. The panel says that in as many words, because a form that submits
+   and then looks unchanged reads as a form that failed.
+
+   **Choosing an environment** is the part that matters more and is easier to get wrong.
+   zrok keeps its account token in a directory, and there can be two: the machine's
+   `~/.zrok2` — which the zrok CLI uses and which a developer very likely already has —
+   and this installation's own, beside the vault. They are usually different accounts.
+   Startup deletes every share it recognises as its own, so a daemon pointed at the wrong
+   one deletes the shares of whatever else uses that account. That is why this panel
+   refuses to guess, shows both, and marks which is in force.
+
+   The account token is never displayed and no endpoint returns it. */
+
+async function loadZrok() {
+  try {
+    renderZrok(await api("GET", "/api/zrok"));
+  } catch (e) {
+    // A daemon with no zrok surface wired answers 404, and that is not an error worth
+    // showing: it means this build of the page is talking to a daemon that has no zrok
+    // in it. The whole section goes, heading included — an empty box under a heading is
+    // something people look for content in.
+    if (/\b404\b/.test(e.message)) {
+      hideZrokPanel();
+      return;
+    }
+    document.getElementById("exposer-body").innerHTML =
+      `<div class="notice bad">${esc(e.message)}</div>`;
+  }
+}
+
+function hideZrokPanel() {
+  for (const id of ["exposer-head", "exposer-body"]) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  }
+}
+
+// zrokRootRow describes one environment directory: where it is, what is in it, and
+// whether it is the one being used.
+function zrokRootRow(s, which, info, label) {
+  const inForce = s.in_force === which;
+  const stored = s.stored === which;
+
+  // "In use" and "chosen" are different facts and the difference is a restart. Showing
+  // only one of them produced "I changed it and nothing happened", so both are said.
+  const marks = [
+    inForce ? `<span class="flag on">in use</span>` : "",
+    stored && !inForce ? `<span class="flag opt">chosen — restart to apply</span>` : "",
+    info.enabled ? `<span class="flag on">enrolled</span>`
+                 : `<span class="flag off">empty</span>`,
+  ].filter(Boolean).join(" ");
+
+  // What is here, in one line. Short on purpose: the row's job is to say which account and
+  // whether it works, and everything else was filler that pushed the two facts off screen.
+  const detail = info.unsupported
+    // A configured environment that still cannot publish, which is the state that otherwise
+    // reads as working until the first build fails.
+    ? `<span class="flag off">not zrok v2</span> ${esc(info.unsupported)}.`
+    : info.enabled
+      ? `Enrolled against <code>${esc(info.api_endpoint || "no recorded endpoint")}</code>` +
+        (info.namespace ? `, namespace <code>${esc(info.namespace)}</code>` : "") + "."
+      : which === "system"
+        // A statement about a user account, not about the machine. `~/.zrok2` is per-user,
+        // so a service account with its own home reports nothing enrolled while
+        // `zrok2 overview` in the operator's shell shows a working environment.
+        ? `Empty for the account this daemon runs as.`
+        : `Empty.`;
+
+  // The actions this row owns, and only the ones it can actually perform.
+  //
+  // They used to be a separate row below both directories, which made "un-enrol this host"
+  // a button with no visible subject — the complaint, and a fair one. Un-enrolling acts on
+  // the directory the process has loaded, so it appears on that row and nowhere else.
+  const acts = [];
+  if (s.can_write && info.enabled && !stored) {
+    // Only for a directory that has something in it. "Use this one" over an empty directory
+    // was the earlier version and it was meaningless: nothing is there to use.
+    acts.push(`<button class="btn" data-zrok-use="${esc(which)}"
+      title="Publish previews through this environment, from the next restart.">Use this
+      one</button>`);
+  }
+  if (s.can_write && !info.enabled) {
+    // An empty directory gets the wizard, not a button that records half a decision.
+    //
+    // "Point the daemon here" recorded a choice and left the reader to find the next step,
+    // which was a form further down the page. Setting zrok up is four decisions in a fixed
+    // order — which directory, whether there is an account, the email round trip, then the
+    // enrolment — and a wizard is what that shape wants.
+    acts.push(`<button class="btn" data-zrok-wizard="${esc(which)}"
+      title="Sign up for zrok, or enrol with an account token, into this directory.">Configure
+      the daemon for zrok…</button>`);
+  }
+  // Un-enrolling is offered for this installation's own directory and never for the
+  // machine's.
+  //
+  // docpreview created the first one and nothing else reads it, so removing it is
+  // docpreview's business. `~/.zrok2` is the zrok CLI's, shared with whatever else that
+  // account uses it for — a `zrok2 share` somebody left running, another tool, a colleague's
+  // scripts. Deleting it from a documentation-preview dashboard would take those with it, and
+  // the operator would have no reason to look here for the cause. `zrok2 disable` is the tool
+  // for that, run by the person who knows what else depends on it.
+  if (s.can_write && inForce && info.enabled && which === "project") {
+    acts.push(`<button class="btn" data-zrok-unenrol="${esc(which)}"
+      title="Removes this host from the zrok account. Every preview URL published through it
+      stops answering until the daemon republishes.">Un-enrol…</button>`);
+  }
+
+  // "This machine" is the wrong noun for a per-user directory, so the account is in the
+  // label. Without it the row reads as a statement about the host, and the difference shows
+  // up as a daemon that cannot see an environment the operator can.
+  const who = which === "system" && s.run_as
+    ? `${label} — as ${s.run_as}`
+    : label;
+
+  // The same .sec grid the credential rows use — label column, middle column, actions —
+  // so the two panels on this page read as one control rather than two designs.
+  return `<div class="sec" data-zrok-root="${esc(which)}">
+    <div>
+      <div class="name">${esc(who)} <span class="chips">${marks}</span></div>
+      <div class="key">${esc(info.path)}</div>
+    </div>
+    <div>${detail}</div>
+    <div class="act">${acts.join("")}</div>
+  </div>`;
+}
+
+/* exposerSection wraps one exposer's content in the same collapsible box the credential
+   groups use.
+
+   Not decoration. `.sec` carries no horizontal padding of its own — `.secgroup-box .sec`
+   adds it — so rows placed straight into a `.secbox` render flush against the border,
+   which is exactly how the first version of this panel looked. Reusing the group box
+   fixes that and gets the caret, the keyboard behaviour and the stripe for free.
+
+   Open when it is the exposer in use, because that is the one section anybody arriving
+   here wants, and the other three are reference. */
+function exposerSection(kind, label, chips, open, body, inUse, broken) {
+  return `<details class="secgroup-box${inUse ? " inuse" : ""}${broken || ""}"
+      data-exposer="${esc(kind)}"${open ? " open" : ""}>
+    <summary><span class="secgroup">${esc(label)}</span>
+      <span class="chips">${chips}</span></summary>
+    ${body}
+  </details>`;
+}
+
+// zrokUnsupportedAnywhere reports whether either directory holds an enrolment docpreview
+// cannot use — a v1 service, or an on-disk format from an older zrok.
+const zrokUnsupportedAnywhere = s => Boolean(s.project?.unsupported || s.system?.unsupported);
+
+function renderZrok(s) {
+  const el = document.getElementById("exposer-body");
+  if (!s || !el) return;
+
+  if (!s.available) {
+    el.innerHTML = `<div class="notice bad">
+      <strong>Not available on this daemon.</strong> ${esc(s.reason)}</div>`;
+    return;
+  }
+
+  const ro = !s.can_write;
+  const parts = [];
+
+  if (s.note) parts.push(`<div class="notice ok">${esc(s.note)}</div>`);
+  if (ro && s.read_only_why) {
+    parts.push(`<div class="notice">${esc(s.read_only_why)}</div>`);
+  }
+
+  const inUse = s.exposer_kind === "zrok2";
+
+  // Said once, above the four sections: this is a choice of one, not four switches. Without it
+  // the enabled section looks like the only one missing its Disable.
+  parts.push(`<div class="secgroup-why">One of these publishes previews. Enabling another turns
+    the current one off — there is no state where nothing publishes.</div>`);
+
+  // A restart is owed. Loud, because until it happens the panel is describing two different
+  // answers at once, and because the restart is the moment every preview URL changes.
+  if (s.exposer_stored && s.exposer_stored !== s.exposer_kind) {
+    parts.push(`<div class="notice warn"><strong>Restart to apply.</strong> This daemon is
+      publishing with <code>${esc(s.exposer_kind)}</code> and is set to use
+      <code>${esc(s.exposer_stored)}</code>. Nothing changes until it restarts — and when it
+      does, every preview gets a new URL and every open pull request comment is rewritten to
+      match.</div>`);
+  }
+
+  // The zrok section. The only one with controls in it.
+  const zrokParts = [];
+
+  // Said first when it applies: an enrolled zrok environment on a daemon configured for
+  // another exposer publishes nothing, and the section would otherwise look like a
+  // working setup.
+  if (s.enrolled && !inUse) {
+    zrokParts.push(`<div class="notice">zrok is enrolled, but this daemon publishes with
+      <code>${esc(s.exposer_kind)}</code>. Set <code>exposer.kind: zrok2</code> in the
+      config and restart to use it.</div>`);
+  }
+
+  if (s.must_choose) {
+    zrokParts.push(`<div class="notice bad"><strong>Two zrok environments are enrolled.</strong>
+      They are almost certainly different accounts, and startup deletes every share it
+      recognises as its own — so the wrong choice deletes whatever else is using that
+      account. Pick one below.</div>`);
+  }
+
+  zrokParts.push(`<div class="secgroup-why">Public preview URLs through zrok. The account
+    token and enrolled identity live in a directory, and there can be two of them — the one
+    marked <em>in use</em> is where previews are published from.</div>`);
+
+  // Each directory row carries its own actions, including the enrolment step when it is the
+  // selected one and it is empty. Nothing floats below them with no visible subject.
+  zrokParts.push(
+    zrokRootRow(s, "project", s.project, "This installation"),
+    zrokRootRow(s, "system", s.system, "This machine"));
+
+  // The same control every other section has: publish through this one. Offered only once
+  // something is enrolled — recording zrok with no environment produces a daemon that will
+  // not start, and the page that would fix it is served by that daemon.
+  const useZrok = useExposerButton(s, "zrok2", inUse,
+    s.enrolled && !zrokUnsupportedAnywhere(s), s.can_write);
+  if (useZrok) {
+    zrokParts.push(`<div class="sec">
+      <div><div class="name">Publish with zrok</div></div>
+      <div>Previews get public URLs on the zrok service, and the pull request comment links
+        them.</div>
+      <div class="act">${useZrok}</div>
+    </div>`);
+  }
+
+  // No row for the account token. It is a vault entry, it is listed in the credential panel
+  // above like every other one, and a second place reporting the same fact was a row nobody
+  // had a reason to read — it answered a question ("is my token stored") that the panel
+  // twelve lines up already answers, in the place where it can also be changed.
+
+  // Broken outranks the exposer's own colour: enrolled, selected, and dead on the first
+  // publish is worse than not configured, because everything else says it is ready.
+  const zrokBroken = inUse && zrokUnsupportedAnywhere(s) ? " broken" : "";
+
+  // "enabled"/"disabled" rather than "in use"/"not in use", to match the button that changes
+  // it. Two vocabularies for one state is how a reader ends up looking for a control that is
+  // right in front of them under another name.
+  const zrokChips = [
+    inUse
+      ? (s.exposer_stored && s.exposer_stored !== "zrok2"
+          ? `<span class="flag opt">enabled, until the restart</span>`
+          : `<span class="flag on">enabled</span>`)
+      : s.exposer_stored === "zrok2"
+        ? `<span class="flag opt">enabled at the next restart</span>`
+        : `<span class="flag opt">disabled</span>`,
+    zrokBroken ? `<span class="flag off">not zrok v2</span>`
+      : s.enrolled ? `<span class="flag on">enrolled</span>`
+                   : `<span class="flag off">no account</span>`,
+  ].join(" ");
+
+  parts.push(`<div class="secbox">
+    ${exposerSection("zrok2", "zrok", zrokChips, inUse || !s.enrolled,
+      zrokParts.join(""), inUse, zrokBroken)}
+    ${(s.others || []).map(o => exposerSection(o.kind, o.label, otherChips(o, s), o.in_use,
+      otherExposerBody(o, s), o.in_use, "")).join("")}
+  </div>`);
+
+  el.innerHTML = parts.join("");
+  wireZrok(s);
+}
+
+// otherChips is the badge pair for one of the other three exposers.
+//
+// Three states, not two: running, chosen-but-not-running, and off. The middle one is what a
+// reader needs after pressing Enable, and the summary is where they look — the section may be
+// collapsed.
+function otherChips(o, s) {
+  const use = o.in_use
+    ? (s.exposer_stored && s.exposer_stored !== o.kind
+        ? `<span class="flag opt">enabled, until the restart</span>`
+        : `<span class="flag on">enabled</span>`)
+    : s.exposer_stored === o.kind
+      ? `<span class="flag opt">enabled at the next restart</span>`
+      : `<span class="flag opt">disabled</span>`;
+  // No readiness chip on an exposer that needs nothing — "ready" beside `local` invites
+  // the question of what could possibly not be ready.
+  if (!o.needs && o.kind === "local") return use;
+  return `${use} ${o.needs ? `<span class="flag off">not configured</span>`
+                           : `<span class="flag on">configured</span>`}`;
+}
+
+/* useExposerButton is the one control every section has: enable this one.
+
+   There is deliberately no Disable. Exactly one exposer publishes previews — it is
+   `exposer.kind`, a single value — so enabling one turns the others off, and a Disable button
+   would have to mean "publish nothing", which is not a state the daemon has. The section that
+   is on says so with an inert chip rather than showing nothing, because a row with no control
+   where the others have one reads as a control that failed to render.
+
+   It writes a stored setting rather than the config file, which is hand-written and whose
+   comments are the part that survives being copied to another machine — so switching exposers
+   used to be "edit YAML and restart" on a page built to avoid exactly that.
+
+   Disabled when the exposer cannot work. The server refuses it anyway, and for a reason worth
+   stating: recording an exposer with no credential produces a daemon that will not start, and
+   the page that would fix it is served by that daemon. */
+function useExposerButton(s, kind, inUse, ready, canWrite) {
+  // Chosen but not yet running. This is the state that made the button look inert: the chips
+  // are drawn from the *running* exposer, which does not change until a restart, so pressing
+  // Enable and watching nothing move read as nothing having happened.
+  const pending = s.exposer_stored === kind && !inUse;
+  if (pending) {
+    return `<span class="flag opt">enabled at the next restart</span>`;
+  }
+  if (inUse) {
+    // And the reverse: still running, already replaced.
+    const replaced = s.exposer_stored && s.exposer_stored !== kind;
+    return replaced
+      ? `<span class="flag opt">running until the restart</span>`
+      : `<span class="flag on">enabled</span>`;
+  }
+  if (!canWrite) return "";
+  if (!ready) {
+    return `<button class="btn" disabled
+      title="Not configured, so this daemon would not start with it.">Enable</button>`;
+  }
+  return `<button class="btn" data-exposer-use="${esc(kind)}"
+    title="Publish previews with this, from the next restart. Whichever exposer is on now is
+    turned off.">Enable</button>`;
+}
+
+function otherExposerBody(o, s) {
+  const parts = [`<div class="sec">
+    <div>
+      <div class="name">${esc(o.label)}</div>
+      <div class="key">exposer.kind: ${esc(o.kind)}</div>
+    </div>
+    <div>${esc(o.what)}${o.detail ? ` <span class="key">${esc(o.detail)}</span>` : ""}</div>
+    <div class="act">${useExposerButton(s, o.kind, o.in_use, o.ready, s.can_write)}</div>
+    ${o.needs
+      ? `<div class="hint wide">Needs ${esc(o.needs)}${o.setup ? ", below" : ""}.</div>`
+      : ""}
+    <!-- A path, not a link: the documentation site is not served by this daemon, so an
+         href would 404 from the only page it appears on. -->
+    ${o.doc ? `<div class="hint wide">Read: <code>${esc(o.doc)}</code></div>` : ""}
+  </div>`];
+
+  if (s.can_write && o.setup === "frontdoor") parts.push(frontdoorForm(s, o));
+  if (s.can_write && o.setup === "ziti") parts.push(zitiForm(s, o));
+  return parts.join("");
+}
+
+/* frontdoorForm collects the five things Frontdoor needs.
+
+   Four of them are values an operator copies out of the Frontdoor console — a browser tab —
+   and the fifth is a credential. Sending them to a YAML file for the four and to a different
+   panel for the fifth is where a setup flow loses people, so they are one form.
+
+   The token field is blank on every render and blank means "leave what is there", which is
+   what makes the form re-submittable to correct a frontend id without re-pasting a token. */
+function frontdoorForm(s, o) {
+  const field = (id, label, why, value) => `
+    <div class="sec sub">
+      <div>
+        <div class="name">${esc(label)}</div>
+        <div class="key">${esc(id.replace("fd-", ""))}</div>
+      </div>
+      <div>
+        <input type="${id === "fd-token" ? "password" : "text"}" id="${esc(id)}"
+               ${value ? `value="${esc(value)}"` : ""} autocomplete="off" spellcheck="false">
+      </div>
+      <div class="act"></div>
+      <div class="hint wide">${why}</div>
+    </div>`;
+
+  return `
+    ${field("fd-token", "API token", `From the Frontdoor console. Stored in the vault as
+       <code>frontdoor.api_token</code>; leave blank to keep the one already there.`, "")}
+    ${field("fd-api-base", "Gateway URL", `Must include the Frontdoor id:
+       <code>https://gateway.example/frontdoor/&lt;frontdoorId&gt;</code>. The paths under it are
+       unversioned, so the id is what carries the tenancy.`, s.frontdoor?.api_base)}
+    ${field("fd-frontend", "Frontend id", `The <em>id</em> of the frontend that serves previews —
+       something like <code>bMTHPrtQ</code>, not a name like <code>public</code>. A name here is
+       accepted and matches nothing, so the share serves nothing.`, s.frontdoor?.frontend)}
+    ${field("fd-env-z-id", "Agent identity id", `The ziti identity of the enrolled Frontdoor agent
+       that hosts the share. Readable from the console; without it every publish is refused.`,
+       s.frontdoor?.env_z_id)}
+    ${field("fd-agent-host", "Address the agent can reach", `Frontdoor shares point at a URL rather
+       than dialing an overlay listener, so previews bind a real TCP port the agent connects to.`,
+       s.frontdoor?.agent_reachable_host)}
+    <div class="sec sub">
+      <div><div class="name">Save and check</div></div>
+      <div class="hint">Testing asks the tenant whether the token works. Worth doing before
+        switching: a Frontdoor that refuses it stops every publish.</div>
+      <div class="act">
+        <button class="btn" id="fd-save">Save</button>
+        <button class="btn" id="fd-test"${o.ready ? "" : " disabled"}>Test the token</button>
+      </div>
+    </div>`;
+}
+
+/* zitiForm enrols an identity from a one-time JWT.
+
+   This was the last thing on the panel that needed a second binary, and the reason was a
+   binary rather than anything intrinsic: `ziti edge enroll` reads a JWT, generates a key pair,
+   exchanges the token and writes a JSON identity — and the Go SDK docpreview already depends
+   on does exactly that.
+
+   The token is one-time in the strict sense. The controller marks it spent on the exchange and
+   the private key exists nowhere but the file written here, so the form says so: pasting the
+   same token twice cannot work. */
+function zitiForm(s, o) {
+  return `
+    <div class="sec sub">
+      <div>
+        <div class="name">Enrolment token</div>
+        <div class="key">the JWT</div>
+      </div>
+      <div>
+        <textarea id="ziti-jwt" rows="3" spellcheck="false"
+          placeholder="eyJhbGciOi…"></textarea>
+      </div>
+      <div class="act"></div>
+      <div class="hint wide">From <code>ziti edge create identity</code>, or the enrolment token
+        on an identity that has not enrolled yet. It works once: the controller marks it spent,
+        and the key generated during enrolment exists only in the file this writes. Or run
+        <code>docpreview configure ziti</code>, which provisions a whole network including this
+        identity.</div>
+    </div>
+    <div class="sec sub">
+      <div>
+        <div class="name">Service</div>
+        <div class="key">the wildcard service to bind</div>
+      </div>
+      <div>
+        <input type="text" id="ziti-service" value="${esc(s.ziti?.service || "")}"
+               autocomplete="off" spellcheck="false">
+      </div>
+      <div class="act"></div>
+      <div class="hint wide">One service serves every preview, separated by the HTTP Host
+        header. Exactly one docpreview may bind it — two binders means two terminators and
+        roughly half of all previews answering 404 while every log looks healthy.</div>
+    </div>
+    <div class="sec sub">
+      <div>
+        <div class="name">Domain</div>
+        <div class="key">the DNS suffix previews appear under</div>
+      </div>
+      <div>
+        <input type="text" id="ziti-domain" value="${esc(s.ziti?.domain || "")}"
+               autocomplete="off" spellcheck="false">
+      </div>
+      <div class="act"><button class="btn" id="ziti-enroll">Enrol</button></div>
+      <div class="hint wide">Must match the addresses in the service's <code>intercept.v1</code>
+        config, or the tunneler resolves names this daemon does not answer to — and the mismatch
+        is invisible until somebody opens a link.</div>
+    </div>
+
+    <!-- The way out of the form.
+         Every field above corresponds to an object on the controller, and the operator with a
+         controller open in another tab wants the commands, not a form — they may have naming
+         conventions, an existing service, or no permission to create one and a colleague who
+         does. The commands are generated from the fields, so what is on screen is what these
+         produce. -->
+    <details class="ziti-cli">
+      <summary>Or run the ziti CLI yourself</summary>
+      <div class="hint">Generated from the fields above. <code>docpreview configure ziti</code>
+        does all of it, plus a reviewer identity, if you would rather not.</div>
+      <pre id="ziti-cli-text">${esc(zitiCliScript(s))}</pre>
+      <div class="act"><button class="btn" id="ziti-cli-copy">Copy</button></div>
+    </details>`;
+}
+
+/* zitiCliScript is the same objects the form makes, as commands.
+
+   Kept beside the form rather than in a runbook because it has to agree with the fields, and a
+   copy in the documentation would be a copy that drifts. The identity's role attribute and the
+   Bind policy have to name each other, which is the part people get wrong by hand — the policy
+   grants by attribute (`#docpreview`), not by identity name, so an identity created without
+   `-a docpreview` enrols fine and then binds nothing.
+
+   No `host.v1` config. docpreview binds the service itself through the SDK, so there is nothing
+   for a tunneler to host — that config only exists when a tunneler is the one serving. */
+function zitiCliScript(s) {
+  const svc = (s.ziti?.service || "docpreview-previews").trim();
+  const dom = (s.ziti?.domain || "preview.ziti").trim();
+  const id = "docpreview";
+  const intercept = JSON.stringify({
+    protocols: ["tcp"],
+    addresses: [`*.${dom}`],
+    portRanges: [{low: 80, high: 80}],
+  });
+
+  return [
+    `# 1. docpreview's own identity. The -a attribute is what the Bind policy grants to,`,
+    `#    so an identity created without it enrols fine and then binds nothing.`,
+    `ziti edge create identity ${id} -a ${id} -o ${id}.jwt`,
+    ``,
+    `# 2. how previews are addressed. Must match the domain above, or a tunneler resolves`,
+    `#    names this daemon does not answer to — invisible until somebody opens a link.`,
+    `ziti edge create config ${svc}-intercept intercept.v1 '${intercept}'`,
+    ``,
+    `# 3. the service. One wildcard service serves every preview, separated by the Host header.`,
+    `ziti edge create service ${svc} -a ${svc} --configs ${svc}-intercept`,
+    ``,
+    `# 4. docpreview hosts it; readers dial it. Exactly one docpreview may bind — two binders`,
+    `#    means two terminators and roughly half of all previews answering 404.`,
+    `ziti edge create service-policy ${svc}-bind Bind --service-roles "@${svc}" --identity-roles "#${id}"`,
+    `ziti edge create service-policy ${svc}-dial Dial --service-roles "@${svc}" --identity-roles "#${svc}-reader"`,
+    ``,
+    `# 5. paste the contents of ${id}.jwt into the box above. It works once.`,
+  ].join("\n");
+}
+
+/* ── The zrok setup wizard ────────────────────────────────────────────────
+   Four decisions in a fixed order, one screen each.
+
+   They were four controls on one page before, and the order was the problem rather than the
+   count: choosing a directory, requesting an invite, waiting for an email, and enrolling are
+   sequential, and two of them are only possible once the one before has happened. Laid out
+   flat, the page offered a button that recorded half a decision — "point the daemon here" —
+   and left the next step to be found further down.
+
+   The email is a real gap in the middle and no arrangement closes it. What a wizard adds is
+   somewhere to *say so*: step 2 ends with "go and read your mail", and step 3 is what to do
+   when you come back.
+
+   Every step posts to the same endpoints the CLI uses. Nothing is stored client-side beyond
+   the current step and what has been typed into it.
+
+   Steps:
+     where    which directory. Skipped when the caller already named one and it is the only
+              candidate — a fresh installation has exactly one sensible answer.
+     account  does an account exist. Two paths from here.
+     invite   the email round trip: address in, "go and read your mail" out.
+     finish   the emailed link plus a password → account created and this host enrolled.
+     token    an existing account token → this host enrolled.
+     done     what happened, and whether a restart is needed. */
+function zrokWizard(s, preselect) {
+  // The wizard's own state. Held here rather than in the DOM because the steps rebuild the
+  // card's contents, so anything typed into step 3 would be lost by rendering step 4.
+  const w = {
+    step: "where",
+    scope: preselect || s.stored || "project",
+    email: "",
+    endpoint: "",
+    link: "",
+    password: "",
+    token: "",
+    note: "",
+    // Set once an account has been created, so `done` can distinguish "signed up and
+    // enrolled" from "enrolled with a token you already had" — different next steps.
+    signedUp: false,
+  };
+
+  const wrap = document.createElement("div");
+  // `.modal wiz`, so nothing that reasons about "the dialog" picks this up by accident — the
+  // boot report and the confirm dialog are both `.modal` too.
+  wrap.className = "modal wiz";
+  wrap.setAttribute("role", "dialog");
+  wrap.setAttribute("aria-modal", "true");
+
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    document.removeEventListener("keydown", onKey);
+    wrap.remove();
+    // Re-read the state on the way out. The wizard changed things the panel reports, and
+    // leaving it stale would show a directory as empty seconds after enrolling it.
+    loadZrok();
+  };
+  const onKey = e => {
+    // Escape closes, except while a call is in flight — closing then would leave the reader
+    // with no idea whether the account was created.
+    if (e.key === "Escape" && !wrap.dataset.busy) finish();
+  };
+
+  // call runs one wizard action, keeping the button and the dialog honest about the wait.
+  //
+  // A zrok signup is two network round trips to a hosted controller and takes seconds. With
+  // no busy state the reader clicks again, and the second click is a second account request.
+  async function call(btn, fn, next) {
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "…";
+    wrap.dataset.busy = "1";
+    try {
+      const st = await fn();
+      w.note = st?.note || "";
+      w.step = next;
+      render();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = label;
+      // Into the card, not a toast: the toast appears at the edge of the screen while the
+      // reader is looking at a dialog in the middle of it.
+      const err = wrap.querySelector(".wiz-err");
+      if (err) {
+        err.textContent = e.message;
+        err.hidden = false;
+      }
+    } finally {
+      delete wrap.dataset.busy;
+    }
+  }
+
+  const val = id => (wrap.querySelector("#" + id)?.value || "").trim();
+
+  // STEPS is the content of each screen and what its buttons do. Kept as data so the order
+  // and the back-links are visible in one place rather than spread through handlers.
+  function stepWhere() {
+    const row = (which, label, info) => {
+      const chosen = w.scope === which;
+      const who = which === "system" && s.run_as ? `${label} — as ${s.run_as}` : label;
+      return `<label class="wiz-pick${chosen ? " on" : ""}">
+        <input type="radio" name="wiz-scope" value="${esc(which)}"${chosen ? " checked" : ""}>
+        <span>
+          <strong>${esc(who)}</strong>
+          ${info.enabled ? `<span class="flag on">already enrolled</span>` : ""}
+          <span class="key">${esc(info.path)}</span>
+          <span class="wiz-why">${which === "project"
+            ? `Beside the vault. Use this one in a container, where a home directory is not
+               durable, and when this machine's zrok account belongs to something else.`
+            : `The directory the zrok CLI uses, for the account this daemon runs as. Use this
+               one when <code>zrok2</code> on this machine is already set up the way you want
+               it.`}</span>
+        </span>
+      </label>`;
+    };
+    return {
+      title: "Where should zrok's environment live?",
+      lede: `zrok keeps an account token and an enrolled identity in a directory. There are
+             two possible ones and they are usually different zrok accounts — startup deletes
+             every share it recognises as its own, so this is the choice that matters most.`,
+      body: `${row("project", "This installation", s.project)}
+             ${row("system", "This machine", s.system)}`,
+      acts: [{
+        label: "Next", primary: true, act(btn) {
+          const picked = wrap.querySelector('input[name="wiz-scope"]:checked');
+          if (picked) w.scope = picked.value;
+          // Recorded now rather than at the end. The enrolment endpoints act on the
+          // directory this process has loaded, and the choice has to be on record before
+          // anything is written into it — otherwise a restart would look elsewhere for what
+          // the wizard just created.
+          //
+          // Straight past the account question when there already is an account: the server
+          // refuses a second signup with a 409, so offering it would be offering a route
+          // that ends in a refusal. This is the "enrol my other directory too" path.
+          call(btn, () => api("POST", "/api/zrok/use", {scope: w.scope}),
+            s.enrolled ? "token" : "account");
+        },
+      }],
+    };
+  }
+
+  function stepAccount() {
+    return {
+      title: "Do you have a zrok account?",
+      lede: `An account owns the names your preview URLs are built from. One account can hold
+             several enrolled hosts.`,
+      body: `<div class="wiz-two">
+        <div>
+          <strong>No, sign me up</strong>
+          <p class="wiz-why">zrok emails a registration link. Takes a minute, and there is a
+            free tier.</p>
+        </div>
+        <div>
+          <strong>Yes, I have one</strong>
+          <p class="wiz-why">You will need its account token —
+            <code>zrok2 overview</code> on a machine that is already enrolled, or the zrok
+            web console.</p>
+        </div>
+      </div>`,
+      acts: [
+        {label: "Sign me up", primary: true, act: () => { w.step = "invite"; render(); }},
+        {label: "I have a token", act: () => { w.step = "token"; render(); }},
+      ],
+      back: "where",
+    };
+  }
+
+  function stepInvite() {
+    return {
+      title: "Sign up for zrok",
+      lede: "zrok sends a registration link to this address. Nothing is stored here yet.",
+      body: `
+        <label class="wiz-field">
+          <span>Email</span>
+          <input type="email" id="wiz-email" value="${esc(w.email)}"
+                 placeholder="you@example.com" autocomplete="email">
+        </label>
+        <label class="wiz-field">
+          <span>zrok service</span>
+          <input type="text" id="wiz-endpoint" value="${esc(w.endpoint)}"
+                 placeholder="${esc(s.default_api_endpoint)}" autocomplete="off"
+                 spellcheck="false">
+          <span class="wiz-why">Only for a self-hosted zrok. Blank uses the hosted service.</span>
+        </label>`,
+      acts: [{
+        label: "Email me a link", primary: true, act(btn) {
+          w.email = val("wiz-email");
+          w.endpoint = val("wiz-endpoint");
+          if (!w.email) return;
+          call(btn, () => api("POST", "/api/zrok/invite",
+            {email: w.email, api_endpoint: w.endpoint}), "finish");
+        },
+      }],
+      back: "account",
+    };
+  }
+
+  function stepFinish() {
+    return {
+      title: "Finish signing up",
+      lede: `Open the email zrok just sent${w.email ? " to " + esc(w.email) : ""} and paste the
+             link from it here. The link works once.`,
+      body: `
+        <label class="wiz-field">
+          <span>The link from that email</span>
+          <input type="text" id="wiz-link" value="${esc(w.link)}"
+                 placeholder="https://zrok.io/register/…" autocomplete="off"
+                 spellcheck="false">
+          <span class="wiz-why">The token is the last part of the link. This takes either.</span>
+        </label>
+        <label class="wiz-field">
+          <span>A password for the zrok account</span>
+          <input type="password" id="wiz-password" autocomplete="new-password">
+          <span class="wiz-why">Belongs to the zrok account, not to docpreview, and is not
+            stored here. Keep it — it is how that account is recovered.</span>
+        </label>`,
+      acts: [{
+        label: "Create the account and enrol", primary: true, act(btn) {
+          w.link = val("wiz-link");
+          w.password = val("wiz-password");
+          if (!w.link || !w.password) return;
+          w.signedUp = true;
+          call(btn, () => api("POST", "/api/zrok/register",
+            {link: w.link, password: w.password, api_endpoint: w.endpoint}), "done");
+        },
+      }],
+      back: "invite",
+    };
+  }
+
+  function stepToken() {
+    return {
+      title: "Enrol with an account token",
+      lede: s.enrolled
+        // The other directory already holds an account, so this is a second environment on
+        // the same one. Naming the cost, because it is a quota the operator cannot see.
+        ? `An account is already enrolled in the other directory, so this enrols the same
+           account here. It spends one environment against the account's quota, and the one
+           it leaves behind keeps its shares until it is un-enrolled.`
+        : `The token authorises this host to create shares on the account. It goes into the
+           vault and is never displayed again.`,
+      body: `
+        <label class="wiz-field">
+          <span>Account token</span>
+          <input type="password" id="wiz-token" placeholder="${s.has_account_token
+            ? "leave blank to use the one already in the vault" : ""}" autocomplete="off">
+          ${s.has_account_token
+            ? `<span class="wiz-why">One is already stored. Leave this blank to use it.</span>`
+            : `<span class="wiz-why"><code>zrok2 overview</code> on an enrolled machine, or the
+               zrok web console.</span>`}
+        </label>`,
+      acts: [{
+        label: "Enrol this host", primary: true, act(btn) {
+          w.token = val("wiz-token");
+          call(btn, () => api("POST", "/api/zrok/enable", {account_token: w.token}), "done");
+        },
+      }],
+      // Back to the account question only when it was asked. With an account already
+      // enrolled the wizard skips it, so Back has to reach the step before that one.
+      back: s.enrolled ? "where" : "account",
+    };
+  }
+
+  function stepDone() {
+    // Whether a restart is needed is a fact about this process, and the answer arrived with
+    // the last response — so it is read from the note the server sent rather than guessed.
+    const needsRestart = /restart/i.test(w.note);
+    return {
+      title: w.signedUp ? "Signed up and enrolled" : "Enrolled",
+      lede: w.note || "This host is enrolled.",
+      body: `<ul class="wiz-next">
+        ${needsRestart
+          ? `<li><strong>Restart the daemon.</strong> zrok's directory is read once at
+             startup, so this takes effect on the next start.</li>` : ""}
+        <li>Set <code>exposer.kind: zrok2</code> in the config if it is not already, then
+          restart. The panel behind this dialog says which exposer is in use.</li>
+        <li>Give this installation a name prefix on <a href="/projects">Projects</a> if
+          another one shares the same zrok account, so their preview names cannot collide.</li>
+      </ul>`,
+      acts: [{label: "Done", primary: true, act: finish}],
+    };
+  }
+
+  function current() {
+    switch (w.step) {
+      case "where":   return stepWhere();
+      case "account": return stepAccount();
+      case "invite":  return stepInvite();
+      case "finish":  return stepFinish();
+      case "token":   return stepToken();
+      default:        return stepDone();
+    }
+  }
+
+  // The dots, so a reader knows how much is left. Not a count of screens — `token` and
+  // `invite`/`finish` are alternative routes — so it is drawn from where the current step
+  // sits in its own route.
+  function trail() {
+    const route = w.step === "token"
+      ? ["where", "account", "token", "done"]
+      : ["where", "account", "invite", "finish", "done"];
+    const at = Math.max(0, route.indexOf(w.step));
+    return route.map((_, i) =>
+      `<span class="wiz-dot${i === at ? " on" : ""}${i < at ? " past" : ""}"></span>`).join("");
+  }
+
+  function render() {
+    const st = current();
+    wrap.innerHTML = `
+      <div class="modal-card">
+        <div class="modal-body">
+          <div class="modal-x-row">
+            <button class="modal-x" data-wiz-close type="button" title="Close"
+              aria-label="Close">✕</button>
+          </div>
+          <div class="wiz-trail">${trail()}</div>
+          <h3>${esc(st.title)}</h3>
+          <p class="ask-lede">${st.lede}</p>
+          <div class="wiz-body">${st.body}</div>
+          <div class="notice bad wiz-err" hidden></div>
+          <div class="ask-acts">
+            ${st.back ? `<button class="btn" data-wiz-back type="button">Back</button>` : ""}
+            ${st.acts.map((a, i) => `<button class="btn${a.primary ? " solid" : ""}"
+              data-wiz-act="${i}" type="button">${esc(a.label)}</button>`).join("")}
+          </div>
+        </div>
+      </div>`;
+
+    wrap.querySelector("[data-wiz-close]").onclick = finish;
+    const back = wrap.querySelector("[data-wiz-back]");
+    if (back) back.onclick = () => { w.step = st.back; render(); };
+    for (const b of wrap.querySelectorAll("[data-wiz-act]")) {
+      b.onclick = () => st.acts[Number(b.dataset.wizAct)].act(b);
+    }
+    // The first field, or the primary action when there is none. A wizard that opens with
+    // nothing focused makes the reader reach for the mouse on every screen.
+    const first = wrap.querySelector("input:not([type=radio]), input[type=radio]:checked");
+    (first || wrap.querySelector(".ask-acts .btn.solid"))?.focus();
+  }
+
+  // Radio rows highlight as they are picked. A label with a border that never changes gives
+  // no feedback that the click landed.
+  wrap.addEventListener("change", e => {
+    if (e.target.name !== "wiz-scope") return;
+    for (const l of wrap.querySelectorAll(".wiz-pick")) {
+      l.classList.toggle("on", l.querySelector("input").checked);
+    }
+  });
+  wrap.addEventListener("click", e => {
+    // The backdrop closes, the card does not — same rule as the confirm dialog.
+    if (e.target === wrap && !wrap.dataset.busy) finish();
+  });
+  document.addEventListener("keydown", onKey);
+
+  render();
+  document.body.appendChild(wrap);
+}
+
+function wireZrok(s) {
+  const val = id => (document.getElementById(id)?.value || "").trim();
+
+  for (const b of document.querySelectorAll("[data-zrok-use]")) {
+    b.onclick = () => runZrok(b, () =>
+      api("POST", "/api/zrok/use", {scope: b.dataset.zrokUse}));
+  }
+
+  for (const b of document.querySelectorAll("[data-zrok-wizard]")) {
+    b.onclick = () => zrokWizard(s, b.dataset.zrokWizard);
+  }
+
+  // Which exposer publishes previews.
+  //
+  // Confirmed, because it is destructive in a way one click and a tooltip did not convey: at
+  // the next restart every preview is republished at a new address and every open pull request
+  // comment is rewritten to match. Found the hard way — one click on "This daemon only" put
+  // `http://127.0.0.1:8471/...` into seven pull requests.
+  for (const b of document.querySelectorAll("[data-exposer-use]")) {
+    const kind = b.dataset.exposerUse;
+    b.onclick = async () => {
+      // zrok is not in `others` — it is the section this panel grew out of — so its label is
+      // spelled here rather than looked up and coming back as "zrok2".
+      const label = kind === "zrok2"
+        ? "zrok"
+        : (s.others || []).find(o => o.kind === kind)?.label || kind;
+      const local = kind === "local";
+      const yes = await ask({
+        kind: "Publish previews with " + label + "?",
+        what: `<code>${esc(s.exposer_kind)}</code> → <code>${esc(kind)}</code>`,
+        lede: "Takes effect at the next restart. Nothing changes before then.",
+        goes: [
+          "Every current preview URL — each one is republished at a new address",
+          "The link in every open pull request comment, rewritten to the new address",
+          local
+            ? "Reachability from anywhere but this machine: local previews are served from " +
+              "this daemon's own listener"
+            : "Whatever the current exposer was serving",
+        ],
+        keeps: [
+          "Every built preview and its artifacts, which are republished rather than rebuilt",
+          "The credentials and enrolments of the exposer being turned off",
+          "The ability to switch back, which republishes at the old addresses again",
+        ],
+        note: local
+          ? "A local preview URL is <code>127.0.0.1</code>. A reviewer who is not on this " +
+            "machine cannot open it, and the pull request comment will say so."
+          : "Reviewers holding an old URL get a 404 until they reload the comment.",
+        confirm: "Enable " + label,
+      });
+      if (!yes) return;
+      runZrok(b, () => api("POST", "/api/zrok/exposer", {kind}));
+    };
+  }
+
+  const fdSave = document.getElementById("fd-save");
+  if (fdSave) {
+    fdSave.onclick = () => runZrok(fdSave, () => api("POST", "/api/zrok/frontdoor", {
+      // The token only when something was typed. Blank means keep what is stored, which is
+      // what lets the form be re-submitted to correct a frontend id without re-pasting a
+      // credential.
+      token: val("fd-token"),
+      api_base: val("fd-api-base"),
+      frontend: val("fd-frontend"),
+      env_z_id: val("fd-env-z-id"),
+      agent_reachable_host: val("fd-agent-host"),
+    }));
+  }
+
+  const fdTest = document.getElementById("fd-test");
+  if (fdTest) {
+    fdTest.onclick = () => runZrok(fdTest, () => api("POST", "/api/zrok/frontdoor/test", {}));
+  }
+
+  const zEnroll = document.getElementById("ziti-enroll");
+  if (zEnroll) {
+    zEnroll.onclick = () => runZrok(zEnroll, () => api("POST", "/api/zrok/ziti/enroll", {
+      jwt: val("ziti-jwt"),
+      service: val("ziti-service"),
+      domain: val("ziti-domain"),
+    }));
+  }
+
+  // The generated CLI follows the fields as they are typed.
+  //
+  // Regenerated rather than rendered once: the commands are only useful if they name the service
+  // and domain on screen, and a block that still said `docpreview-previews` after somebody typed
+  // their own name would be a block that produces the wrong objects — silently, since the wrong
+  // ones are created successfully.
+  const cliText = document.getElementById("ziti-cli-text");
+  if (cliText) {
+    const regen = () => {
+      cliText.textContent = zitiCliScript({
+        ziti: {service: val("ziti-service"), domain: val("ziti-domain")},
+      });
+    };
+    for (const id of ["ziti-service", "ziti-domain"]) {
+      const f = document.getElementById(id);
+      if (f) f.oninput = regen;
+    }
+
+    const copy = document.getElementById("ziti-cli-copy");
+    if (copy) {
+      copy.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(cliText.textContent);
+          copy.textContent = "Copied";
+          setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+        } catch {
+          // No clipboard permission, or an insecure context. Selecting it is the fallback that
+          // always works, and saying so beats a button that does nothing.
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(cliText);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          copy.textContent = "Selected — press Ctrl+C";
+          setTimeout(() => { copy.textContent = "Copy"; }, 2500);
+        }
+      };
+    }
+  }
+
+  for (const disable of document.querySelectorAll("[data-zrok-unenrol]")) {
+    // Confirmed, because it is the one destructive control on this page: it takes every
+    // published preview URL down until the daemon republishes.
+    disable.onclick = async () => {
+      // The row's own directory, not "whichever is in force". The button only appears on the
+      // in-force row, and reading it from the element keeps the dialog naming the thing that
+      // was clicked rather than something inferred.
+      const which = disable.dataset.zrokUnenrol;
+      const yes = await ask({
+        kind: "Un-enrol this host from zrok?",
+        what: `<code>${esc(which === "system" ? s.system.path : s.project.path)}</code>`,
+        lede: "This host stops being a zrok environment. The account itself is untouched — " +
+          "this is the undo for enrolling, not for signing up.",
+        goes: [
+          "Every share published through this environment",
+          "The enrolled identity in this directory",
+        ],
+        keeps: [
+          "The reserved names, which belong to the account — so preview URLs come back unchanged",
+          "The account itself, and its token if it is in the vault",
+          "Every stored preview, which the daemon republishes once enrolled again",
+        ],
+        note: "Nothing serves those URLs between now and the next republish.",
+        confirm: "Un-enrol",
+      });
+      if (!yes) return;
+      runZrok(disable, () => api("POST", "/api/zrok/disable", {}));
+    };
+  }
+}
 
 // The Secrets control is an ordinary link now, so there is no click handler.
 // Which of the two pages this document is depends on the path it was served at.
@@ -6224,6 +7395,11 @@ if (isSetupPage) {
   hideOperationsChrome("setup");
   setupEl().hidden = false;
   loadSetup();
+  // A second fetch rather than a field on the credential payload. The two surfaces have
+  // different gates and different failure modes — a locked vault makes the first one a
+  // form and leaves this one perfectly usable — and folding them together would mean a
+  // locked vault hiding the panel that gets previews onto the internet.
+  loadZrok();
 } else if (isProjectsPage) {
   hideOperationsChrome("projects");
   document.getElementById("projects").hidden = false;
@@ -6270,7 +7446,12 @@ async function showAdminLinks() {
   }
   const links = [];
   if (admin.projects) links.push(`<a class="control" href="/projects">Projects</a>`);
-  if (admin.secrets) links.push(`<a class="control" href="/secrets">Secrets</a>`);
+  // "Settings", not "Secrets". The page stopped being only credentials when the exposer
+  // configuration landed on it — signing up for zrok and choosing what publishes previews are
+  // not secrets — and a link named for one of the two things behind it is a link people stop
+  // looking behind. The path stays /secrets: it is in runbooks, in the dashboard-only
+  // allowlist, and in whatever anybody has bookmarked.
+  if (admin.secrets) links.push(`<a class="control" href="/secrets">Settings</a>`);
   if (admin.projects) {
     links.push(`<button class="control" id="cache-clear"
       title="Delete every preview's cached package downloads">Clear caches</button>`);

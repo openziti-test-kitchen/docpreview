@@ -79,7 +79,16 @@ function withBuilding(status) {
 // must not count.
 function withRequeueOfAFinishedCommit(status) {
   const s = structuredClone(status);
-  const done = s.events.find(e => e.kind === "ready");
+  // Preferring an event on the preview the expanded case scopes to.
+  //
+  // It took the first `ready` event of any preview, which on the fixture is the only preview
+  // and on a live daemon is whichever repository finished first — a different one from the
+  // expanded row, so the expanded view legitimately showed no queued entry and the harness
+  // reported it as the page dropping it. The scenario is "a finished commit is queued again",
+  // not "on whichever preview the data happened to name".
+  const first = s.previews[0]?.preview_id;
+  const done = s.events.find(e => e.kind === "ready" && e.preview_id === first) ||
+    s.events.find(e => e.kind === "ready");
   if (!done) return s;
   s.previews = s.previews.map(p =>
     p.preview_id === done.preview_id ? {...p, state: "queued"} : p);
@@ -111,6 +120,9 @@ const project = win.eval(`project(${JSON.stringify(base.previews[0])})`);
 console.log(`project name: ${project}\n`);
 
 let failures = 0;
+// The collapsed row count the baseline produced, whatever the data source. Set on the first
+// scenario and used as the floor for the rest.
+let floor = null;
 // "then building" wants **no** queued row, which is a reversal of what this harness
 // asserted when it was written.
 //
@@ -123,6 +135,7 @@ let failures = 0;
 // The queued-only and requeue cases still want one, because there is no later state for
 // that attempt to collapse into.
 for (const [name, status, wantQueued] of [
+  // The baseline goes first and sets the floor every later scenario is measured against.
   ["baseline (as the daemon has it)", base, 0],
   ["queued only, no building yet", withQueuedOnly(base), 1],
   ["then building", withBuilding(base), 0],
@@ -142,12 +155,21 @@ for (const [name, status, wantQueued] of [
     // The history must never shrink because something is in flight. That is the
     // reported symptom, and this is the assertion for it.
     //
-    // Collapsed only. Expanding a row scopes the feed to that one preview, so a handful
-    // of rows there is the feature working — asserting a floor on it made this harness
-    // report four failures on every run, whatever the page did.
-    if (!open && r.n < 15) {
-      failures++;
-      console.log(`   FAIL: only ${r.n} rows — the history collapsed`);
+    // Compared against the baseline this run measured, not a constant. It was `< 15`, which
+    // held against a live daemon with a few days of history and failed against the fixture
+    // beside this file — so the harness reported four failures for having less data rather
+    // than for anything the page did. A floor that depends on which source answered is not an
+    // assertion.
+    //
+    // Collapsed only. Expanding a row scopes the feed to that one preview, so a handful of
+    // rows there is the feature working.
+    if (!open) {
+      if (floor === null) {
+        floor = r.n;
+      } else if (r.n < floor) {
+        failures++;
+        console.log(`   FAIL: ${r.n} rows, down from ${floor} — the history collapsed`);
+      }
     }
   }
   console.log(`   (payload carried ${status.events.length} events)`);

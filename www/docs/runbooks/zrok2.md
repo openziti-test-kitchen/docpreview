@@ -6,10 +6,85 @@ sidebar_position: 2
 
 # Runbook: zrok v2
 
-docpreview assumes zrok v2 is installed and its environment is enabled. It does not enroll for you — it checks
-at startup and tells you what is missing.
+There are two ways to get from nothing to a working zrok environment. docpreview can do the whole thing itself —
+sign up, enrol, and tell you it worked — or you can use the `zrok2` CLI and point docpreview at the result. The
+first is fewer steps; the second is what you want if you already have a zrok account for something else.
 
-## Install
+## The short way: let docpreview do it
+
+Open **`/secrets`** on the dashboard and use the panel headed *How previews reach the internet*. Or, on a host with
+no browser:
+
+```powershell
+docpreview zrok invite you@example.com          # zrok emails a registration link
+docpreview zrok register <the-link-from-that-email>
+```
+
+`register` asks for a password on stdin — that is the password for the **zrok account**, not for docpreview. It
+creates the account, stores the account token in the vault, and enrols this host in one step, because the token
+appears exactly once, in the registration response.
+
+Already have a zrok account?
+
+```powershell
+docpreview zrok enable -token-stdin
+```
+
+Then set `exposer.kind: zrok2` in the config and restart. `docpreview zrok status` says what is enrolled and where.
+
+:::note Signing up twice is refused
+
+Every command and every button above refuses if an environment is already enrolled. A second account means a second
+set of reserved names, and every preview URL already posted to a pull request lives on the first one.
+
+:::
+
+## Two possible environments, and they are usually two accounts
+
+zrok keeps its account token and enrolled identity in a directory. There can be two:
+
+| | Path | |
+|---|---|---|
+| **this machine** | `~/.zrok2` | what the `zrok2` CLI uses; you very likely already have this |
+| **this installation** | `<data_dir>/zrok2` | docpreview's own, beside the vault |
+
+Both existing is the ordinary case on a developer's machine, and they are different zrok accounts. This matters more
+than it looks:
+
+:::danger Startup deletes every share it recognises as its own
+
+A daemon pointed at the wrong environment deletes the shares belonging to whatever else uses that account. See
+[one daemon per exposer account](../troubleshooting.md).
+
+:::
+
+So the choice is explicit and stored, never guessed:
+
+```powershell
+docpreview zrok status                # both directories, and which is in use
+docpreview zrok use project           # docpreview's own, beside the vault
+docpreview zrok use system            # the one the zrok2 CLI uses
+```
+
+A change takes effect at the **next restart**. zrok's root directory is a process-wide setting read once when the
+daemon starts, so the dashboard shows *chosen* and *in use* separately until you restart.
+
+**`webhook-only` and `dashboard-only` need telling too.** They read no config file, so they cannot know which
+directory the daemon chose:
+
+```powershell
+docpreview webhook-only   -zrok-name docpreview      -zrok-home <data_dir>\zrok2
+docpreview dashboard-only -zrok-name docpreview-dash -zrok-home <data_dir>\zrok2
+```
+
+Omit `-zrok-home` and they use `~/.zrok2`. If that is a different account from the daemon's, the share they create
+reserves a name the previews cannot use.
+
+**In a container, use `project`** and mount `<data_dir>` as a volume. A home directory in a container is not
+durable, so `system` means re-enrolling on every restart — and every enrolment spends an environment against the
+account's quota and orphans the last one.
+
+## Install the CLI (the long way, and for `zrok2 overview`)
 
 The v2 binary is called `zrok2`, not `zrok`, and its config lives in `~/.zrok2` with a `ZROK2_` environment
 prefix. That is deliberate: v1 and v2 coexist on one machine without interfering.
@@ -20,7 +95,7 @@ Download from [the install page](https://netfoundry.io/docs/zrok/get-started/ins
 zrok2 version
 ```
 
-## Enable an environment
+## Enable an environment with the CLI
 
 You need an account token from [zrok.io](https://zrok.io) or your self-hosted controller.
 
@@ -30,6 +105,9 @@ zrok2 enable <your-account-token>
 
 This enrolls **this machine** as a zrok environment: it registers an OpenZiti identity and writes it under
 `~/.zrok2`. docpreview loads that identity at startup — it never sees your account token in its own config.
+
+Done this way, the environment is the **system** one, and a daemon that finds it enabled and has no stored choice
+adopts it and records that. So this keeps working with no further action.
 
 Check it took:
 

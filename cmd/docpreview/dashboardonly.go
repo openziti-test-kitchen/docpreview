@@ -87,8 +87,16 @@ func cmdDashboardOnly(args []string) error {
 		"gate the share at the zrok frontend: google or github (needs -oauth-domain)")
 	oauthDomain := fs.String("oauth-domain", "",
 		"comma-separated email domains allowed through -oauth, e.g. example.com")
+	zrokHome := fs.String("zrok-home", "",
+		"the zrok environment directory; blank uses the machine's ~/.zrok2")
 	logLevel := fs.String("log-level", "info", "debug, info, warn or error")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	// See the note in webhookonly.go: this process reads no config, so the zrok directory has to
+	// be passed in whenever the daemon is not using the machine's.
+	if err := useZrokHome(*zrokHome); err != nil {
 		return err
 	}
 
