@@ -1793,9 +1793,25 @@ function matches(p) {
    Number 0 is the branch preview; see model.PullRequest.IsBranch. */
 const inList = p => p.number > 0 || isLive(p.state);
 
+/* pinned reports whether this preview is the one a reader has selected in its project.
+
+   The exception that keeps `inList` from breaking the log pane. Clicking an activity entry
+   for a finished branch build pins that preview — and the pin then pointed at a preview the
+   list excludes, so the very next render decided the pin was stale, reset it to the project's
+   newest, and the pane jumped to a different preview's log while somebody was reading it.
+
+   From the reader's side that is a click that worked for one tick and then undid itself. It
+   was reported as the log pane "not tailing properly" and diagnosed wrongly twice before
+   `clicks.mjs` caught it against live state, where a project has both a branch preview and
+   several pull requests. */
+const pinned = p => ui.pick[project(p)] === p.preview_id;
+
 function groups() {
   const by = new Map();
-  for (const p of ui.previews.filter(inList).filter(matches)) {
+  // `|| pinned(p)`, so a selected branch preview stays in its project's list for as long as
+  // it is selected. It leaves again when the reader picks something else or closes the row,
+  // which is what keeps the list a worklist rather than accumulating furniture.
+  for (const p of ui.previews.filter(p => inList(p) || pinned(p)).filter(matches)) {
     const k = project(p);
     if (!by.has(k)) by.set(k, []);
     by.get(k).push(p);

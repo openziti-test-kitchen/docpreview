@@ -192,13 +192,63 @@ type exposerInfo struct {
 // identity file there — and deliberately not the network half. A panel that dialled a controller
 // on every page load would be a page that takes seconds to render and reports transient failures
 // as configuration errors.
-func (a *ZrokAdmin) otherExposers() []exposerInfo {
+// effectiveZiti and effectiveFrontdoor are the config with the stored settings laid over it.
+//
+// The panel must report what the *next start* will use, not what this process loaded. Startup
+// applies these settings once and never re-reads them — swapping an exposer under a running daemon
+// would leave published previews pointing at one that no longer owns them — so a panel reading only
+// `a.cfg` reports a state that is already out of date the moment anything here writes a setting.
+//
+// It showed up immediately: enrolling a ziti identity stored the path, the panel went on saying
+// "needs exposer.ziti.identity_file", and Enable stayed disabled. A restart would have fixed it, and
+// the restart is only offered *after* enabling — a deadlock from the reader's side, produced
+// entirely by reporting the wrong one of two truths.
+func (a *ZrokAdmin) effectiveZiti(ctx context.Context) config.ZitiConfig {
+	z := a.cfg.Exposer.Ziti
+	for _, f := range []struct {
+		key   string
+		apply func(string)
+	}{
+		{store.SettingZitiIdentityFile, func(v string) { z.IdentityFile = v }},
+		{store.SettingZitiService, func(v string) { z.Service = v }},
+		{store.SettingZitiDomain, func(v string) { z.Domain = v }},
+	} {
+		if v, _, err := a.store.Setting(ctx, f.key); err == nil {
+			if v = strings.TrimSpace(v); v != "" {
+				f.apply(v)
+			}
+		}
+	}
+	return z
+}
+
+func (a *ZrokAdmin) effectiveFrontdoor(ctx context.Context) config.FrontdoorConfig {
+	fd := a.cfg.Exposer.Frontdoor
+	for _, f := range []struct {
+		key   string
+		apply func(string)
+	}{
+		{store.SettingFrontdoorAPIBase, func(v string) { fd.APIBase = v }},
+		{store.SettingFrontdoorFrontend, func(v string) { fd.Frontend = v }},
+		{store.SettingFrontdoorEnvZID, func(v string) { fd.EnvZID = v }},
+		{store.SettingFrontdoorAgentHost, func(v string) { fd.AgentReachableHost = v }},
+	} {
+		if v, _, err := a.store.Setting(ctx, f.key); err == nil {
+			if v = strings.TrimSpace(v); v != "" {
+				f.apply(v)
+			}
+		}
+	}
+	return fd
+}
+
+func (a *ZrokAdmin) otherExposers(ctx context.Context) []exposerInfo {
 	kind := a.cfg.Exposer.Kind
 
 	// Frontdoor needs five things and the credential is only one of them. Reported as the
 	// *first* missing one rather than a list: a panel that names five gaps at once reads as a
 	// wall, and they are filled in in this order anyway.
-	fd := a.cfg.Exposer.Frontdoor
+	fd := a.effectiveFrontdoor(ctx)
 	frontdoorHasToken := false
 	if v, err := a.vaultOf(); err == nil {
 		if _, err := v.Get(vault.KeyFrontdoorToken); err == nil {
@@ -220,7 +270,7 @@ func (a *ZrokAdmin) otherExposers() []exposerInfo {
 	}
 	frontdoorReady := frontdoorNeeds == ""
 
-	z := a.cfg.Exposer.Ziti
+	z := a.effectiveZiti(ctx)
 	zitiNeeds := ""
 	switch {
 	case z.IdentityFile == "":
@@ -397,14 +447,14 @@ func (a *ZrokAdmin) snapshot(r *http.Request) (zrokState, error) {
 		Reason:             why,
 		ExposerKind:        a.cfg.Exposer.Kind,
 		DefaultAPIEndpoint: expose.DefaultZrokAPIEndpoint,
-		Others:             a.otherExposers(),
+		Others:             a.otherExposers(r.Context()),
 	}
 
 	if stored, _, err := a.store.Setting(r.Context(), store.SettingExposerKind); err == nil {
 		st.ExposerStored = strings.TrimSpace(stored)
 	}
 
-	fd := a.cfg.Exposer.Frontdoor
+	fd := a.effectiveFrontdoor(r.Context())
 	st.Frontdoor = exposerFrontdoor{
 		APIBase:   fd.APIBase,
 		Frontend:  fd.Frontend,
@@ -416,7 +466,7 @@ func (a *ZrokAdmin) snapshot(r *http.Request) (zrokState, error) {
 			st.Frontdoor.HasToken = true
 		}
 	}
-	z := a.cfg.Exposer.Ziti
+	z := a.effectiveZiti(r.Context())
 	st.Ziti = exposerZiti{IdentityFile: z.IdentityFile, Service: z.Service, Domain: z.Domain}
 	st.CanWrite, st.ReadOnlyWhy = isLocalRequest(r)
 	if !ok {
@@ -694,7 +744,7 @@ func (a *ZrokAdmin) setExposer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "frontdoor", "ziti":
-		for _, o := range a.otherExposers() {
+		for _, o := range a.otherExposers(r.Context()) {
 			if o.Kind == kind && o.Needs != "" {
 				writeJSON(w, http.StatusConflict, map[string]string{
 					"error": kind + " needs " + o.Needs + "; this daemon would not start"})
@@ -828,7 +878,21 @@ func (a *ZrokAdmin) enrollZiti(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := a.enrollZitiID(r.Context(), body.JWT, strings.TrimSpace(body.Name))
+	// Recovered, because this one calls into a third-party SDK that panics on bad input rather
+	// than returning an error — `enroll.Enroll` with no KeyAlg reaches a switch with no default,
+	// and the first live enrolment took the request down with a stack trace in the log and no
+	// response at all. A panic here is a bug, and the operator should be told which bug rather
+	// than watching the connection close.
+	path, err := func() (p string, err error) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				a.log.Error("the ziti enrolment panicked", "panic", rec)
+				err = fmt.Errorf("the enrolment failed inside the ziti SDK: %v "+
+					"(this is a bug in docpreview, and the token may now be spent)", rec)
+			}
+		}()
+		return a.enrollZitiID(r.Context(), body.JWT, strings.TrimSpace(body.Name))
+	}()
 	if err != nil {
 		a.log.Warn("ziti enrolment failed", "error", err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})

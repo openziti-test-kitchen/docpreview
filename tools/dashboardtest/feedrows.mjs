@@ -297,6 +297,56 @@ console.log("\na branch preview that is building does appear");
   await apply(status);
 }
 
+console.log("\na selected branch preview survives the next render");
+{
+  // The bug the exclusion above created, and the reason `pinned()` exists.
+  //
+  // Clicking an activity entry for a finished branch build pins that preview. The pin then
+  // pointed at a preview `inList` excludes, so the very next render decided it was stale,
+  // reset it to the project's newest, and the pane jumped to a different preview's log while
+  // somebody was reading it. One tick of working, then silently undone — reported as the log
+  // pane "not tailing properly", and diagnosed wrongly twice before clicks.mjs caught it
+  // against live state, where a project has a branch preview *and* several pull requests.
+  const ui = win.eval("ui");
+  ui.pick = {};
+  ui.open = null;
+  await apply(status);
+
+  // The branch preview, which is finished and therefore not in the list.
+  const branch = status.previews.find(p => p.number === 0);
+  if (!branch) {
+    fail("the fixture has no finished branch preview to pin");
+  } else {
+    const name = win.eval(`project(${JSON.stringify(branch)})`);
+    ui.open = name;
+    ui.pick[name] = branch.preview_id;
+    win.eval("render()");
+    await settle();
+
+    if (ui.pick[name] !== branch.preview_id) {
+      fail(`the render reset the pin to ${ui.pick[name]}`);
+    } else ok("the pin survives a render");
+
+    // And it is offered in the picker, so the row can actually show it — a pin the row
+    // cannot render is the same jump by another route.
+    const options = $$('.item.open [data-role="pick"] option').map(o => o.value);
+    if (!options.includes(branch.preview_id)) {
+      fail(`the selected preview is not in its own picker: ${JSON.stringify(options)}`);
+    } else ok("and the row offers it");
+
+    // Deselecting lets it leave again: the list is a worklist, and a permanent green row is
+    // furniture. Without this the fix would quietly undo the exclusion it exists to protect.
+    delete ui.pick[name];
+    ui.open = null;
+    win.eval("render()");
+    await settle();
+    const heads = $$(".item .head").map(h => h.textContent.replace(/\s+/g, " ").trim());
+    if (heads.some(h => h.includes("main"))) {
+      fail("the branch preview stayed in the list after being deselected");
+    } else ok("it leaves again when deselected");
+  }
+}
+
 console.log(failures ? `\n${failures} failure(s)` : `\nall feed and row checks OK`);
 dom.window.close();
 process.exit(failures ? 1 : 0);

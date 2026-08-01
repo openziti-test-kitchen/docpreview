@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/openziti/sdk-golang/ziti"
 	"github.com/openziti/sdk-golang/ziti/enroll"
 
 	"github.com/netfoundry/docpreview/internal/config"
@@ -82,11 +83,25 @@ func enrollZitiIdentity(_ context.Context, cfg config.Server, jwtToken, name str
 			"since it is the only proof of that identity — move it aside first", path)
 	}
 
+	// KeyAlg is not optional, and the SDK does not say so politely: left unset, `enroll.Enroll`
+	// reaches a switch with no default and **panics** with "invalid KeyAlg specified: ". Found by
+	// running it — the first enrolment against a real controller took the handler down with a
+	// panic that `net/http` caught, so the request died with no response and the log had a stack
+	// trace where an error message should have been.
+	//
+	// EC rather than RSA: smaller keys, faster handshakes, and it is what `ziti edge enroll`
+	// defaults to, so an identity enrolled here matches one enrolled with the CLI.
+	var alg ziti.KeyAlgVar
+	if err := alg.Set("EC"); err != nil {
+		return "", fmt.Errorf("selecting the key algorithm: %w", err)
+	}
+
 	idCfg, err := enroll.Enroll(enroll.EnrollmentFlags{
 		Token:     claims,
 		JwtToken:  token,
 		JwtString: jwtToken,
 		IDName:    name,
+		KeyAlg:    alg,
 	})
 	if err != nil {
 		return "", fmt.Errorf("the controller refused the enrolment: %w", err)
