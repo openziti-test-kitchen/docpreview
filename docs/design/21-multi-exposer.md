@@ -70,14 +70,89 @@ CREATE TABLE publications (
 `build_id = ''` for the preview's current publication keeps one table rather than two, and the primary key is the
 thing that makes "one publication per exposer per build" a database rule rather than a convention.
 
-**The open question this plan does not answer:** whether `previews.url` and `builds.url` stay as the primary
-exposer's publication — backwards compatible, every existing query keeps working, one exposer stays privileged —
-or move out entirely, which is cleaner and changes every read path and the dashboard payload at once. The second is
-right and the first is what makes the migration survivable on a live database. Decide before writing the migration,
-not during.
+## Changing a project's exposer: pause, purge, resume
 
-Whichever, the migration has to be tested against a copy of a real database. The live instance has 29 publications
-in it, and a migration that loses them loses every URL in every open pull request comment.
+**The decision: an exposer cannot be changed under a live project.** Pausing the project is the first step, the
+purge is automatic and total, and only then can the exposer change. Resuming rebuilds from scratch.
+
+That is a deliberate choice of a loud, explicit, destructive operation over a quiet, clever one. The alternatives
+were all worse in the same way:
+
+- **Re-point the existing publications.** The old exposer's shares have to be withdrawn, the new one's created,
+  every URL in every comment rewritten, and if any step fails halfway the database describes a world that does not
+  exist. Every failure mode is partial.
+- **Leave the old publications and let reap sort it out.** That is the per-exposer keep-set problem above, run
+  at the worst possible moment — the one restart where the set of exposers is not what the publications were
+  recorded against.
+- **Migrate.** Nothing to migrate, if the state is deleted first.
+
+Pausing already exists in shape: a project can be disabled, and a pull request can be unlinked. This joins them
+into one operation with a defined end state — **nothing published, nothing queued, nothing cached** — from which
+changing the exposer is not a change at all. There is no state to be consistent with.
+
+### What the purge removes
+
+All of it, and the list is the specification:
+
+| | Why it goes |
+|---|---|
+| Queued jobs for the project | A job that runs after the exposer changed publishes through the wrong one |
+| Every publication and its share | The old exposer owns them; nothing else will ever reap them once it is disabled |
+| Reserved names on the old exposer | They cost quota and hold a URL nothing serves. **The only part that is not obviously right** — a name is what keeps a URL stable, so releasing it means the URL is not reserved if the project ever moves back |
+| Built artifacts | They are rebuilt on resume, and keeping them invites republishing under the new exposer without a build, which skips the base-URL check |
+| Build logs | They belong to builds that no longer have a publication |
+| The package-manager cache | Not strictly necessary. Included because "purge" that leaves something behind is the kind of half-measure this exists to avoid, and the cost is one slow build |
+| The pull request comment | Retracted, not left pointing at a dead URL |
+
+### What it does not remove
+
+The project row, its settings, its credentials, and the record that a pull request was unlinked. Purging is about
+published state, not about configuration — an operator changing an exposer is not asking to re-enter a token.
+
+### The flow
+
+1. **Pause** the project. It stops accepting webhook deliveries and its queued work is dequeued.
+2. **Purge** runs, and reports what it removed. It is not a separate button: a paused project with published
+   state is exactly the inconsistent middle this design exists to eliminate.
+3. **Change the exposer**, per project or installation-wide. Nothing is published, so nothing can be wrong.
+4. **Resume.** The scan queues the open pull requests and the branch preview, and they build fresh.
+
+The confirmation must say the two things an operator will otherwise discover afterwards: every preview URL for
+this project changes, and every open pull request comment is rewritten when its build finishes. Neither is
+recoverable by pausing again.
+
+### Why this makes multi-exposer simpler, not harder
+
+With this in place the publications table stops needing to survive an exposer change at all. It only ever holds
+publications for exposers that are currently enabled on projects that are currently live, because the only way to
+change either is through a purge. The per-exposer keep-set invariant still holds and is still worth its test, but
+it no longer has to be correct across a transition — there is no transition.
+
+### There is no migration, and that is the point
+
+The first draft of this plan treated moving `previews.url` and `builds.url` into the new table as the risky part —
+a migration on a live database, tested against a copy, losing every URL in every open comment if it went wrong.
+
+It does not need to happen. **A publication is a cache, not a fact.** The facts are the preview's *name* and its
+artifacts on disk, and every URL is reproducible from the name: `Reap` then republish is what startup already
+does on every restart, and it produces the same names and therefore the same URLs it produced last time. That is
+why a restart does not change anybody's links.
+
+So the migration is: **create the table empty**. Recovery fills it on the first start, exactly as it fills the
+exposer with shares, and the old columns are dropped once nothing reads them.
+
+Two consequences, both acceptable and both worth knowing:
+
+- **The first start after the change reaps everything and republishes it.** The keep-set is built from
+  publications, and there are none yet, so that start is the slow path — one exposer round trip per preview, the
+  behaviour from before adoption existed. One restart, and only the first.
+- **A URL that is *not* reproducible changes once.** Under zrok it is: the name is derived from the preview and
+  the reserved name outlives the share. Under Frontdoor a share id is assigned by the tenant, so those URLs are
+  new after this lands, and the comments are rewritten to match on the first status change.
+
+Changing which exposers are enabled has the same shape and needs no special handling: publications belonging to
+an exposer that is no longer enabled are deleted by that exposer's own reap, and the enabled ones republish. That
+is the ordinary startup path, not a migration.
 
 ## The comment
 
@@ -112,17 +187,20 @@ refuses publishes that are fine. `Daemon.releaseNames` similarly releases per ex
 
 ## The order to build it in
 
-1. **Schema and fan-out.** Publications table, migration, `Daemon` holds a set of exposers, per-exposer keep-sets,
-   recovery loops over the set. No UI change and no comment change: with one exposer in the set the behaviour is
-   identical, which is what makes this stage reviewable.
-2. **The two-exposer reap test**, before anything else uses the fan-out. Two fake exposers, publish through both,
+1. **Pause and purge, on the exposer that exists today.** It stands alone and is useful before any of the rest:
+   it is the honest answer to "I switched exposer and my comments are full of dead links", which has already
+   happened once by accident. Ship it, use it, and the risky part of every later stage is gone.
+2. **Schema and fan-out.** Publications table created empty, `Daemon` holds a set of exposers, per-exposer
+   keep-sets, recovery loops over the set. No migration — see above. No UI change and no comment change: with one
+   exposer in the set the behaviour is identical, which is what makes this stage reviewable.
+3. **The two-exposer reap test**, before anything else uses the fan-out. Two fake exposers, publish through both,
    reap, assert both survive.
-3. **The comment.** One row per publication, labelled, stable order. Exercised against the demo's four projects.
-4. **Per-project selection**, on the projects page.
-5. **The exposer panel becomes checkboxes.** `Enable` means "add to the set" rather than "replace", and the panel
+4. **The comment.** One row per publication, labelled, stable order. Exercised against the demo's four projects.
+5. **Per-project selection**, on the projects page, gated on the project being paused.
+6. **The exposer panel becomes checkboxes.** `Enable` means "add to the set" rather than "replace", and the panel
    stops implying a choice of one — which it currently does correctly, because it currently is one.
 
-Stages 1 and 2 are one commit. Landing the fan-out without the reap test is landing the footgun.
+Stages 2 and 3 are one commit. Landing the fan-out without the reap test is landing the footgun.
 
 ## What this does not change
 

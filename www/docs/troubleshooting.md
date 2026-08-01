@@ -580,3 +580,36 @@ curl http://127.0.0.1:8471/readyz
 
 `/readyz` rather than `/status` because it answers without a login. With a console password set, `/status` from a
 terminal returns `401 {"error":"not logged in"}` — which is the gate working, not a fault.
+
+---
+
+## Known issues
+
+Open defects, with whatever workaround exists. Each one is reproducible and none has a fix yet.
+
+### The log pane does not always start tailing a build that begins while you are watching
+
+**Workaround: reload the page.** The pane then follows the running build normally.
+
+A row open on a finished build, a new build starts underneath it, and the pane keeps showing the old one. It is
+the most-reported defect in the dashboard, and a reload always fixes it — which points at state the render path
+does not recompute rather than at anything on the daemon's side. The build itself is unaffected: it runs, it
+publishes, and the comment updates.
+
+Five shapes of the sequence are covered by `tools/dashboardtest/newbuild.mjs` and all five behave correctly,
+including the one where the server replays a finished build and then switches the same connection to the live one.
+So the cause is not in any of them, and the next step is watching it happen against a live daemon rather than a
+stubbed `EventSource`. Progress is tracked in `TODO.md`.
+
+If you hit it, the useful thing to report is the exact sequence: which page, which row, how it was expanded — by
+clicking the row or an activity entry — and whether the build came from a push, a **Rebuild**, or the startup
+scan.
+
+### Switching exposer rewrites every open pull request comment
+
+**Working as designed, and worth knowing before you press it.** Each exposer publishes at its own addresses, so
+changing which one is enabled republishes every preview at a new URL and rewrites the comment on every open pull
+request to match, at the next restart. The dashboard asks first and says so.
+
+Switching back restores the previous URLs under zrok, where a preview's name is reserved and its URL is derived
+from it. Under Frontdoor the share id is assigned by the tenant, so those URLs do not come back.
