@@ -38,13 +38,22 @@ somewhere different:
       failed with "the webhook payload was missing installation.id" — a message about a webhook, for a build that
       never had one. `installationOf` looks the installation up when the pull request carries none, which also
       covers the scan and link paths.
-- [ ] **Decide what happens on a push to the default branch.** A push delivery is not a pull request event and is
-      ignored entirely, so the permanent preview goes stale until somebody presses Rebuild or the daemon restarts.
-      Handling `push` for the default branch only is the smallest version, and it is what makes "always current"
-      true rather than "current as of the last time somebody asked".
-- [ ] **A failed branch preview is not retried.** `backfillBranchPreviews` only builds where a preview is *absent*,
-      deliberately — rebuilding a broken one on every restart would hide it. But a permanent preview stuck failed
-      is exactly the state that most wants attention, and nothing surfaces it beyond the project card.
+- [x] **A push to the default branch rebuilds its preview**, on both platforms — GitHub's `push` and Bitbucket's
+      `repo:push`. This is what makes "always current" true rather than "current as of the last time somebody
+      asked". Both are **opt-in on the platform side**: the event is not subscribed by default, which is now in
+      the App runbook and in troubleshooting.
+
+      Three refusals, each with a test. A push to a branch that is not the default is ignored — a branch with a
+      pull request open already arrives as its own event, and one without is somebody's work in progress. A tag
+      or a deletion is ignored. And a push to a repository with **no branch preview** is ignored: the event
+      carries `Refresh`, which means "rebuild this if it exists", because otherwise installing the App would
+      publish a permanent `main` preview for every repository it can see the first time anyone pushed.
+- [x] **A failed branch preview is retried at the next startup.** The backfill skipped any project that had a
+      branch preview *row*, and a failed build leaves one — so `main` stayed broken until somebody pressed
+      Rebuild on the one preview nobody looks at, because the point of it is that it sits there working. A
+      restart is the natural moment to try again, and the cost of being wrong is one build. A *working* preview
+      is still left alone, which the test asserts as well: rebuilding every branch preview on every restart
+      would be a build per project per restart.
 
 **The log pane now follows a running build selected from the picker. Fixed**, 31 July 2026, and covered by
 `tools/dashboardtest/logtail.mjs` — six scenarios, including the two that were broken.
@@ -516,6 +525,15 @@ revocation story**.
 - [ ] `docpreview serve` graceful SIGINT has not been exercised interactively on Windows; background processes
       there are killed hard. `BaseContext` is now wired so SSE handlers unblock, and
       `TestOverlayIngressStopsWhenClosed` covers the shutdown path, but a human Ctrl-C has not been watched.
+- [ ] **The push path has not seen a real delivery.** Both handlers are covered by tests over captured payload
+      shapes, and neither has been exercised by an actual push — which is also the first thing that would reveal
+      a field GitHub or Atlassian spells differently from the fixture. Subscribe the event on one repository and
+      push a no-op commit to its default branch; the log line to look for is `the default branch moved`.
+- [x] **`doctor` says who may write over an overlay listener.** It reports `admin_identities`, and names the
+      read-only default explicitly — an operator who enrolled an identity, added it nowhere, and found the
+      dashboard read-only previously had nothing to check. It also reports whether a login is required and
+      whether the exposer came from the dashboard rather than the config file, both being things that now change
+      behaviour invisibly.
 - [ ] A real Ziti Desktop Edge import against a `configure ziti`-provisioned network. The SDK dial is the
       equivalent proof minus DNS and TUN, and ZDEW was confirmed manually in the earlier trial, but not
       against the provisioned objects.
@@ -546,16 +564,36 @@ What is already known, and what each harness does *not* cover:
 - `clicks.mjs` drives clicks, not the event stream, so the arrival of a new build is outside it too.
 - The daemon's side is exercised: a stream opened while a build is queued waits for it rather than 404ing.
 
-- [ ] **Reproduce it in a harness first.** A row open on a finished build, then a `status` event carrying that
-      preview as `building` with a new build id — the way the daemon actually announces it. Assert the picker
-      gains the build, the pane switches to the live stream, and `Following` is on. That test is the deliverable
-      whether or not the fix follows in the same commit.
-- [ ] **Then check the two seams the scripted test bypasses**: whether `updateBody` reacts to a preview becoming
-      live under an open row at all, and whether the `loadBuilds` response can arrive after the render that
-      needed it — a late response repopulating the picker for the *previous* build would produce exactly the
-      reported symptom.
-- [ ] **Watch it happen against the live instance** with `Push-Change.ps1`, since every earlier reproduction
-      attempt used a fixture and the report comes from real use.
+- [x] **Reproduce it in a harness.** Done, and it did **not** reproduce — `tools/dashboardtest/newbuild.mjs`
+      drives five shapes of the sequence through `applyStatus`, the same function the EventSource handler calls,
+      and the pane switches correctly in all five. That is a real result: it eliminates the obvious explanations
+      and it is why the next attempt must start from a live observation rather than another guess.
+
+      Eliminated, each with a passing case in `newbuild.mjs` — **do not re-diagnose these**:
+
+      | Shape | Verdict |
+      |---|---|
+      | Row open on the previous build's replay, push arrives | switches and follows |
+      | Reader chose an older build, push arrives | correctly left alone, picker gains the build |
+      | The real `ready → queued → building` transition, not a jump straight to building | follows through |
+      | A preview's **first** build, with no previous log to replay | tailed |
+      | **Two `start` events on one stream** — the server replays a finished build, waits in `awaitLive`, then switches the same connection to live | pane cleared, following re-armed, banner correct |
+
+      The last one was the strongest suspect and is the one no earlier harness sent: every other file emits
+      exactly one `start` per stream, while `stream.go` deliberately sends a second.
+
+- [ ] **Watch it happen against a live daemon.** The remaining difference between the harness and reality is the
+      transport: jsdom has no `EventSource`, so every harness stubs it, and the stub cannot reproduce a real
+      connection's timing, buffering, reconnection or a proxy in between. A ~40-line `EventSource` over
+      `http.get` would let the page run against a real daemon with a real build happening under it.
+
+      **Use the demo daemon on :8493, not the live one.** A rebuild on :8471 edits a real pull request comment.
+      `Start-Demo.ps1` refuses to run while any docpreview process is alive, so this needs the live one stopped
+      first — which is the whole reason it has not been done yet, and is worth scripting once rather than
+      improvising each time.
+- [ ] **If a live run still does not show it, get the operator's exact sequence**: which page, which row, expanded
+      how, and whether the build was a push, a Rebuild, or the startup scan. Five shapes are ruled out; the
+      report is real; the difference is in a detail nobody has written down yet.
 
 ## Namespace hygiene
 

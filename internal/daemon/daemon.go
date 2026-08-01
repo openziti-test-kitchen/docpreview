@@ -677,11 +677,24 @@ func (d *Daemon) backfillBranchPreviews(ctx context.Context) {
 	// One pass over the previews rather than a lookup per project: this runs at every
 	// startup, and a query per project on an installation with fifty of them is fifty
 	// queries to answer one question.
+	//
+	// A *failed* branch preview does not count as having one. The row exists, so the old test
+	// skipped it, and the permanent preview of `main` stayed broken until somebody noticed and
+	// pressed Rebuild — on the one preview nobody looks at, because the whole point of it is
+	// that it sits there working. A restart is the natural moment to try again: whatever broke
+	// the build may have been the thing that was just restarted, and the cost of being wrong is
+	// one build.
 	has := map[model.Repo]bool{}
+	failed := map[model.Repo]bool{}
 	for _, p := range previews {
-		if p.PR.IsBranch() {
-			has[p.PR.Repo] = true
+		if !p.PR.IsBranch() {
+			continue
 		}
+		if p.State == scm.StateFailed {
+			failed[p.PR.Repo] = true
+			continue
+		}
+		has[p.PR.Repo] = true
 	}
 
 	for _, p := range projects {
@@ -691,6 +704,9 @@ func (d *Daemon) backfillBranchPreviews(ctx context.Context) {
 		repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
 		if has[repo] {
 			continue
+		}
+		if failed[repo] {
+			d.log.Info("retrying a branch preview that last failed", "project", repo.String())
 		}
 		// Cancellation means the daemon is shutting down, not that this project is fine.
 		if ctx.Err() != nil {
@@ -1863,9 +1879,53 @@ func (d *Daemon) LinkPR(ctx context.Context, repo model.Repo, number int) error 
 	return fmt.Errorf("%s has no open pull request #%d", repo.String(), number)
 }
 
+// previewExists reports whether a preview id is one the daemon already has.
+//
+// A scan of ListPreviews rather than a new store query: the table holds one row per open pull
+// request plus one per branch preview, which is tens of rows on the busiest installation this has
+// run on, and it is read on a push to a default branch rather than on anything hot.
+func (d *Daemon) previewExists(ctx context.Context, id string) (bool, error) {
+	previews, err := d.store.ListPreviews(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range previews {
+		if p.PreviewID == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (d *Daemon) handleBuild(ctx context.Context, ev scm.Event) error {
 	pr := ev.PR
 	id := pr.PreviewID()
+
+	// A refresh only refreshes. It rebuilds a preview that exists and does nothing otherwise.
+	//
+	// Set by the push handlers, which fire for every default-branch push on every repository the
+	// installation can see. Without this, the first push to any of them would publish a
+	// permanent `main` preview for a repository nobody asked about — the App is installed on
+	// repositories for the sake of their pull requests, and a preview is a URL, a name against
+	// a quota and a row that never expires.
+	//
+	// Checked before the unlinked test rather than after, because the cheaper question is
+	// "should this exist at all".
+	if ev.Refresh {
+		known, err := d.previewExists(ctx, id)
+		if err != nil {
+			// A read failure is not grounds for creating something. The alternative to
+			// stopping is publishing a preview because a query failed.
+			d.log.Warn("could not check whether this branch has a preview; not building",
+				"pr", pr.String(), "error", err)
+			return nil
+		}
+		if !known {
+			d.log.Debug("a push moved a branch with no preview; nothing to refresh",
+				"pr", pr.String())
+			return nil
+		}
+	}
 
 	// An unlinked pull request stops here, and this is the only place that check
 	// lives.

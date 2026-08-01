@@ -130,12 +130,127 @@ func (c *Client) VerifyWebhook(ctx context.Context, headers map[string][]string,
 	case "pullrequest:fulfilled", "pullrequest:rejected":
 		return c.teardownEvent(body, delivery)
 
+	case "repo:push":
+		return c.pushEvent(body, delivery)
+
 	default:
-		// Bitbucket's webhook form makes it easy to over-select, and pushes,
-		// approvals and comment events all arrive here. Not an error.
+		// Bitbucket's webhook form makes it easy to over-select, and approvals, comment
+		// events and build statuses all arrive here. Not an error.
 		c.log.Debug("ignoring bitbucket event", "event", event, "delivery", delivery)
 		return nil, nil
 	}
+}
+
+// pushPayload is the subset of `repo:push` this reads.
+//
+// Bitbucket's push shape is one event carrying a list of "changes", each with a `new` and an
+// `old` — a single delivery can move several branches, delete one and create another. So this is
+// a list to walk rather than a ref and a sha, which is the main difference from GitHub's.
+type pushPayload struct {
+	Push struct {
+		Changes []struct {
+			// New is nil for a deletion, which is how a delete is spelled: there is no
+			// `deleted` flag.
+			New *struct {
+				Name   string `json:"name"`
+				Type   string `json:"type"`
+				Target struct {
+					Hash string `json:"hash"`
+				} `json:"target"`
+			} `json:"new"`
+		} `json:"changes"`
+	} `json:"push"`
+
+	Repository struct {
+		Slug      string `json:"slug"`
+		FullName  string `json:"full_name"`
+		Workspace struct {
+			Slug string `json:"slug"`
+		} `json:"workspace"`
+		MainBranch *struct {
+			Name string `json:"name"`
+		} `json:"mainbranch"`
+	} `json:"repository"`
+}
+
+// pushEvent rebuilds the permanent branch preview when the default branch moves.
+//
+// The Bitbucket half of the same rule as GitHub's `push` handler, and the reasoning is there: the
+// branch preview is a claim about what `main` looks like now, and only the default branch is
+// watched, because a push to a branch with a pull request open already arrives as
+// `pullrequest:updated` and a push to one without is somebody's work in progress.
+//
+// Two shapes are Bitbucket's own. A delivery carries a **list** of changes, so a push moving
+// several branches at once has to be walked rather than read; and a deletion is spelled as a null
+// `new` rather than as a flag.
+func (c *Client) pushEvent(body []byte, delivery string) ([]scm.Event, error) {
+	var p pushPayload
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, fmt.Errorf("parsing bitbucket push payload: %w", err)
+	}
+
+	if p.Repository.MainBranch == nil || p.Repository.MainBranch.Name == "" {
+		c.log.Debug("ignoring a push whose payload names no main branch", "delivery", delivery)
+		return nil, nil
+	}
+	def := p.Repository.MainBranch.Name
+
+	owner := p.Repository.Workspace.Slug
+	name := p.Repository.Slug
+	if (owner == "" || name == "") && strings.Count(p.Repository.FullName, "/") == 1 {
+		parts := strings.SplitN(p.Repository.FullName, "/", 2)
+		if owner == "" {
+			owner = parts[0]
+		}
+		if name == "" {
+			name = parts[1]
+		}
+	}
+	if owner == "" || name == "" {
+		return nil, fmt.Errorf("bitbucket push named no repository (full_name %q)",
+			p.Repository.FullName)
+	}
+
+	for _, ch := range p.Push.Changes {
+		// A deletion, or something that is not a branch — a tag push carries type "tag".
+		if ch.New == nil || ch.New.Type != "branch" || ch.New.Name != def {
+			continue
+		}
+		if ch.New.Target.Hash == "" {
+			continue
+		}
+
+		repo := model.Repo{
+			Platform: model.PlatformBitbucket,
+			Owner:    owner,
+			Name:     name,
+			// Built rather than read from links.clone, for the reason parsePayload gives:
+			// that href carries a username whose identity depends on who asked, and
+			// inserting credentials into it produces two `@` in the authority — a git
+			// failure whose message contains the token.
+			CloneURL: "https://bitbucket.org/" + owner + "/" + name + ".git",
+		}
+		pr := model.PullRequest{
+			Repo: repo,
+			// Zero is what makes this the branch preview rather than a pull request's.
+			Number:     0,
+			Branch:     def,
+			HeadSHA:    ch.New.Target.Hash,
+			BaseBranch: def,
+		}
+		c.log.Info("the main branch moved; rebuilding its preview if there is one",
+			"repo", repo.Slug(), "branch", def, "commit", ch.New.Target.Hash, "delivery", delivery)
+		// One event, not one per change: several changes naming the default branch in one
+		// delivery would be the same preview, and Enqueue collapses them anyway.
+		//
+		// Refresh, not create — see the field's comment. A push does not mean anybody asked
+		// for a permanent preview of this repository.
+		return []scm.Event{{Kind: scm.EventBuild, PR: pr, Delivery: delivery, Refresh: true}}, nil
+	}
+
+	c.log.Debug("a push touched no branch worth rebuilding",
+		"default", def, "changes", len(p.Push.Changes), "delivery", delivery)
+	return nil, nil
 }
 
 func (c *Client) buildEvent(ctx context.Context, body []byte, delivery string) ([]scm.Event, error) {

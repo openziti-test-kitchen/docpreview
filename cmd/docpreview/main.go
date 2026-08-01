@@ -1023,7 +1023,17 @@ func cmdDoctor(args []string) error {
 	defer w.Close()
 
 	fmt.Printf("data:    %s\n", w.cfg.DataDir)
-	fmt.Printf("exposer: %s\n", w.cfg.Exposer.Kind)
+	// `w.cfg` already carries the stored overrides — setup applies them before anything reads
+	// the exposer — so this is what the daemon will actually use. Where that came from is worth
+	// saying: an operator comparing this line against config.yml and finding them different
+	// should not have to discover the settings table to explain it.
+	from := ""
+	if stored, _, err := w.store.Setting(context.Background(), store.SettingExposerKind); err == nil {
+		if stored = strings.TrimSpace(stored); stored != "" {
+			from = " (selected on the dashboard, not from the config file)"
+		}
+	}
+	fmt.Printf("exposer: %s%s\n", w.cfg.Exposer.Kind, from)
 	fmt.Printf("driver:  %s\n", w.cfg.Build.Driver)
 
 	for i, l := range w.cfg.Listeners {
@@ -1032,6 +1042,25 @@ func cmdDoctor(args []string) error {
 			label = "        "
 		}
 		fmt.Printf("%s %s\n", label, l.Describe())
+
+		// Who may write through an overlay listener, which was previously answerable only by
+		// reading the config file.
+		//
+		// It is the one grant on this daemon that is neither a password nor a network
+		// boundary — the overlay authenticated the dialer, and this list decides which of
+		// those dialers may change a credential or a project. An empty list is the default
+		// and means read-only, which is a safe answer and an easily surprising one: an
+		// operator who enrolled an identity, added it nowhere, and then found the dashboard
+		// read-only had nothing to check.
+		if l.Ziti == nil {
+			continue
+		}
+		if len(l.Ziti.AdminIdentities) == 0 {
+			fmt.Printf("         read-only over this listener: admin_identities names nobody\n")
+			fmt.Printf("         (add an identity id there to allow credential and project writes)\n")
+			continue
+		}
+		fmt.Printf("         may write: %s\n", strings.Join(l.Ziti.AdminIdentities, ", "))
 	}
 
 	// Report the vault only if something needed it. Opening it here purely to
@@ -1047,6 +1076,32 @@ func cmdDoctor(args []string) error {
 		fmt.Printf("key:     none — the daemon starts locked and is unlocked from the dashboard\n")
 	} else {
 		fmt.Printf("key:     %s\n", src.Describe())
+	}
+
+	// Whether the dashboard asks for a login.
+	//
+	// Reported here because `doctor` is what somebody runs to answer "is this thing exposed",
+	// and the answer changed: it used to be decided entirely by the listeners above, and is now
+	// decided by whether a viewer password exists. A daemon behind a public share with no
+	// password is a dashboard on the internet, and nothing else in this output says so.
+	ctx := context.Background()
+	admin, adminErr := daemon.ConsolePasswordSet(ctx, w.store, daemon.RoleAdmin)
+	viewer, viewerErr := daemon.ConsolePasswordSet(ctx, w.store, daemon.RoleViewer)
+	if adminErr == nil && viewerErr == nil {
+		switch {
+		case viewer:
+			who := "the viewer password"
+			if admin {
+				who = "either password"
+			}
+			fmt.Printf("login:   required — %s reaches the dashboard\n", who)
+		case admin:
+			fmt.Printf("login:   reading is open to anyone who can reach this daemon; " +
+				"the admin password gates writes\n")
+		default:
+			fmt.Printf("login:   none — anyone who can reach this daemon can read it " +
+				"(docpreview console password -role viewer)\n")
+		}
 	}
 
 	// Read from the config rather than from w.clients. With app_id set and the

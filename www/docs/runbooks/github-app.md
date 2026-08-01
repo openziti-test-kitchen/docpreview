@@ -112,8 +112,17 @@ justify.
 Under **Subscribe to events**, tick:
 
 - ✅ **Pull request**
+- ✅ **Push** — only if you want the permanent preview of the default branch kept current
 
-That is all. docpreview ignores everything else; over-subscribing just wastes deliveries.
+Nothing else. docpreview ignores every other event; over-subscribing just wastes deliveries.
+
+**Push** is optional and does one thing: when the default branch moves, the branch preview of it is
+rebuilt. Without it that preview is refreshed only when the daemon restarts or somebody presses
+Rebuild, so it shows whatever `main` looked like the last time one of those happened.
+
+A push to any *other* branch is ignored — a branch with an open pull request already arrives as
+`synchronize`, and one without is somebody's work in progress. A push to a repository that has no
+branch preview is also ignored: pushes refresh a preview, they never create one.
 
 Under **Where can this GitHub App be installed?** choose **Only on this account** unless you have a reason
 not to.

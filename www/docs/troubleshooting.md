@@ -234,6 +234,30 @@ build host. See [Projects](reference/projects.md) and [the security model](refer
 
 ---
 
+## The preview of `main` is out of date
+
+The permanent branch preview is refreshed when the default branch moves, and that needs a **push**
+delivery. It is not subscribed by default, so a fresh installation gets pull request previews and a
+`main` preview that only updates when the daemon restarts or somebody presses **Rebuild**.
+
+| Platform | Where |
+|---|---|
+| GitHub | The App's **Subscribe to events** → tick **Push**. See the [App runbook](./runbooks/github-app.md). |
+| Bitbucket | The repository's **Webhooks** → tick **Repository → Push** on the existing hook. |
+
+Three things are ignored on purpose, so subscribing does not mean building constantly:
+
+- **A push to any other branch.** A branch with an open pull request already arrives as its own
+  event, so building here too would build it twice; a branch without one is somebody's work in
+  progress, and previewing every pushed branch would publish a URL per branch per contributor.
+- **A push to a repository with no branch preview.** Pushes refresh a preview, they never create
+  one — otherwise installing the App would publish a `main` preview for every repository it can see
+  the first time anyone pushed. Create one from the project's card, or by adding the project.
+- **A tag, and a deletion of the default branch.** Neither is a branch that can be built.
+
+Check it arrived at all: the log line is `the default branch moved; rebuilding its preview if there
+is one`, and a delivery that was ignored says which of the above it was at debug level.
+
 ## It says "Skipped — no documentation changes"
 
 Detection matched nothing. The comment names the count of changed files; the debug log names the patterns.

@@ -181,6 +181,18 @@ type Event struct {
 	// Delivery is the platform's delivery ID, carried into logs so a report of
 	// "nothing happened when I pushed" can be traced to a specific request.
 	Delivery string
+
+	// Refresh means "rebuild this if it already exists, otherwise do nothing".
+	//
+	// Set by the push handlers, and only by them. A push to a default branch says the branch
+	// moved; it does not say anybody wants a permanent preview of that repository. Without
+	// this, installing the App on a repository would silently publish a `main` preview for it
+	// the first time anyone pushed — for every repository the App can see, whether or not it
+	// has a project row or has ever been previewed.
+	//
+	// Creating a branch preview stays where it was: adding a project, the startup backfill, and
+	// the button on the project card. All three are somebody asking.
+	Refresh bool
 }
 
 // RepoChecker is implemented by clients that can verify their credential reaches one
