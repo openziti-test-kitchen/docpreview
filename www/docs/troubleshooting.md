@@ -430,7 +430,7 @@ restart.
 
 Startup deletes every share it recognises as its own, so two installations sharing a zrok account delete each
 other's live previews. Give the second one `docpreview zrok use project` and its own enrolment — and a
-[name prefix](../reference/cli.md), so their names cannot collide either.
+[name prefix](./reference/cli.md), so their names cannot collide either.
 
 :::
 
