@@ -4,6 +4,11 @@ Live list of what is outstanding. Ordered roughly by what would be picked up nex
 
 Related: `www/docs/future/ziti-native-previews.md` holds the design research that is not yet a feature.
 
+**Wanted next, out of order:** [the log pane not tailing a build that starts while you are
+watching](#the-log-pane-still-does-not-start-tailing-a-build-that-begins-while-you-are-watching). It is under
+Verification gaps because the first deliverable is a test, but it is the most-reported defect in the dashboard and
+three attempts to diagnose it by reading the code were all wrong.
+
 ## In flight
 
 **Branch previews, and a permanent one for the default branch. Shipped and exercised live**, 31 July 2026: `main`
@@ -514,12 +519,43 @@ revocation story**.
 - [ ] A real Ziti Desktop Edge import against a `configure ziti`-provisioned network. The SDK dial is the
       equivalent proof minus DNS and TUN, and ZDEW was confirmed manually in the earlier trial, but not
       against the provisioned objects.
-- [ ] **`clicks.mjs` reports three failures against live state, and they predate the login work** — confirmed by
-      running it against `git show HEAD:internal/daemon/dashboard.html` with the same payload, which fails the
-      same three ways plus two the working tree has since fixed. All three are the log pane losing its place when
-      a status tick re-renders underneath it: the picker jumps from `(live)` to a stored build, and the pane
-      switches to a different preview's stream. Reproduces only with several previews building at once, which is
-      why the fixture never showed it. Needs `DOCPREVIEW_PASSWORD` to see at all — see `tools/dashboardtest/live.mjs`.
+- [x] **`clicks.mjs` reported four failures against live state: the log pane lost its place on every re-render.**
+      Cause was the branch-preview exclusion. `inList` drops a *finished* branch preview, so clicking its activity
+      entry pinned a preview the list excludes; the next render decided the pin was stale, reset it to the
+      project's newest, and the pane jumped to a different preview's log. One tick of working, then silently
+      undone. Fixed with the `pinned()` exception in `groups()`, and `feedrows.mjs` now asserts both halves — the
+      pin survives a render, and the preview leaves the list again when deselected. Only reproduced against live
+      state, where one project has a branch preview *and* several pull requests.
+
+### The log pane still does not start tailing a build that begins while you are watching
+
+**Open, and the most-reported defect in the dashboard.** Not the same bug as the pinning one above, which is
+fixed: this is a row already open on a finished build when a *new* build starts underneath it. The pane should
+switch to the running build and follow it. Reported repeatedly as "it doesn't tail properly", and a reload always
+fixes it — which is the signature of state the render path does not recompute.
+
+Three diagnoses of this have been wrong, all made by reading the code, which is why the next attempt should start
+by reproducing it rather than by explaining it.
+
+What is already known, and what each harness does *not* cover:
+
+- `logtail.mjs` passes the scripted version of exactly this sequence, so the mechanism works when driven
+  directly. It calls `showBuild` and stubs `EventSource` per stream — it never exercises the path where a
+  **status event announces the new build** under an open row. That gap is the obvious suspect: `updateBody`
+  refreshes the picker from `loadBuilds`, which is async, and nothing there decides "a build started, follow it".
+- `clicks.mjs` drives clicks, not the event stream, so the arrival of a new build is outside it too.
+- The daemon's side is exercised: a stream opened while a build is queued waits for it rather than 404ing.
+
+- [ ] **Reproduce it in a harness first.** A row open on a finished build, then a `status` event carrying that
+      preview as `building` with a new build id — the way the daemon actually announces it. Assert the picker
+      gains the build, the pane switches to the live stream, and `Following` is on. That test is the deliverable
+      whether or not the fix follows in the same commit.
+- [ ] **Then check the two seams the scripted test bypasses**: whether `updateBody` reacts to a preview becoming
+      live under an open row at all, and whether the `loadBuilds` response can arrive after the render that
+      needed it — a late response repopulating the picker for the *previous* build would produce exactly the
+      reported symptom.
+- [ ] **Watch it happen against the live instance** with `Push-Change.ps1`, since every earlier reproduction
+      attempt used a fixture and the report comes from real use.
 
 ## Namespace hygiene
 

@@ -197,7 +197,7 @@ vault:
   key_source: "file:/etc/docpreview/master.key"   # or "exec:op read op://ops/docpreview/master-key"
 ```
 
-Or unlock it by hand from the dashboard's **Secrets** page. The daemon rewires itself when the vault opens; no
+Or unlock it by hand from the dashboard's **Settings** page. The daemon rewires itself when the vault opens; no
 restart is needed.
 
 `docpreview doctor` reports which of these applies. With no key source it prints

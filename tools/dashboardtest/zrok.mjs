@@ -807,6 +807,73 @@ console.log("\nziti enrols from a pasted JWT");
   } else ok("it posts the token, the service and the domain together");
 }
 
+console.log("\nthe ziti section offers the CLI commands, generated from the fields");
+{
+  // The escape hatch. Somebody with a controller open in another tab wants the commands, not a
+  // form — they may have naming conventions, an existing service, or no permission to create one
+  // and a colleague who does.
+  const {doc} = await load(zrokState({
+    ziti: {service: "docpreview-previews", domain: "preview.ziti"},
+    others: [
+      {kind: "frontdoor", label: "NetFoundry Frontdoor", in_use: false, ready: false,
+       needs: "the API token", what: "…", setup: "frontdoor"},
+      {kind: "ziti", label: "OpenZiti", in_use: false, ready: false,
+       needs: "exposer.ziti.identity_file", what: "…", setup: "ziti"},
+      {kind: "local", label: "This daemon only", in_use: true, ready: true, what: "…"},
+    ],
+  }));
+
+  const cli = doc.getElementById("ziti-cli-text");
+  if (!cli) {
+    fail("no CLI commands offered");
+  } else {
+    ok("the commands are there");
+
+    // Generated from the fields, not a fixed block. Commands naming a different service than the
+    // one on screen create the wrong objects — successfully, which is the problem.
+    if (!cli.textContent.includes("docpreview-previews")) {
+      fail("the commands do not name the service from the form");
+    } else ok("they name the service on screen");
+
+    // The attribute is the part people get wrong by hand: the Bind policy grants to `#docpreview`,
+    // so an identity created without `-a docpreview` enrols fine and then binds nothing.
+    if (!/create identity docpreview -a docpreview/.test(cli.textContent)) {
+      fail("the identity command omits the role attribute the Bind policy needs");
+    } else ok("the identity carries the attribute the policy grants to");
+
+    // Typing a different service regenerates them.
+    const svc = doc.getElementById("ziti-service");
+    svc.value = "my-own-service";
+    svc.dispatchEvent(new (doc.defaultView).Event("input", {bubbles: true}));
+    await new Promise(r => setTimeout(r, 40));
+    if (!cli.textContent.includes("my-own-service")) {
+      fail("editing the service did not regenerate the commands");
+    } else ok("they follow the fields as they are typed");
+  }
+}
+
+console.log("\nthe settings page is called Settings and links to Projects");
+{
+  // It stopped being only credentials when the exposer panel landed on it, and a page named for
+  // one of the two things on it is a page whose other half nobody finds. The path is unchanged:
+  // it is in runbooks, in the dashboard-only allowlist, and in bookmarks.
+  const {doc} = await load(zrokState());
+  const head = text(doc.getElementById("setup-head"));
+  if (head !== "Settings") {
+    fail(`the page heading is "${head}"`);
+  } else ok("headed Settings");
+
+  // And the two admin pages link to each other. With only a back-link each, getting between them
+  // meant going home first.
+  const across = [...doc.querySelectorAll("#setup .backlink a")].map(a => a.getAttribute("href"));
+  if (!across.includes("/projects")) {
+    fail(`no link to the other admin page: ${JSON.stringify(across)}`);
+  } else ok("it links to Projects");
+  if (!across.includes("/")) {
+    fail("it lost the way back to the previews");
+  } else ok("and still back to the previews");
+}
+
 console.log("\nthe rows are padded, not flush against the border");
 {
   // Every row lives inside a .secgroup-box, which is the only rule that gives .sec any

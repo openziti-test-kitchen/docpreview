@@ -277,7 +277,7 @@ response.
 A refused write is a `403` with the reason in it, and the daemon logs it — `refused a remote credential request` or
 `refused a remote project change`, with the remote address, method and path.
 
-The **Projects**, **Secrets** and **Clear caches** controls on the dashboard are drawn from `GET /api/admin`, which
+The **Projects**, **Settings** and **Clear caches** controls on the dashboard are drawn from `GET /api/admin`, which
 runs the same check the write endpoints run. The server decides, not the page: a `Host`-header test in the browser
 would be worthless, since `Host` is whatever the client typed. Anything other than an outright yes leaves the links
 absent — which is what happens for a viewer session, and through

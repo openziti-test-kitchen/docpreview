@@ -360,7 +360,7 @@ styles and the fetch helper to keep in step.
 | `/projects` | [Projects](./projects.md) and their environment variables. No stream either. |
 
 **The links to the last two appear only for a local request.** The page asks `/api/admin`, which runs the same
-locality check the write endpoints run, and draws **Projects**, **Secrets** and **Clear caches** only on an outright
+locality check the write endpoints run, and draws **Projects**, **Settings** and **Clear caches** only on an outright
 yes. The server decides, not the page: a `Host`-header test in the browser would be worthless, because `Host` is
 whatever the client typed. The pages themselves are still reachable if you type the path — read-only, with a banner
 saying why.
@@ -383,7 +383,7 @@ reloading under you. **If something on the page contradicts the code, reload bef
 | `GET` | `/` | The dashboard. |
 | `GET` | `/secrets` | Credential management. Its own page rather than a panel on the dashboard: a URL can be bookmarked and named in a runbook, and a distinct path is something a proxy or a later authentication layer can gate. Registered only when a credential surface is wired, so a daemon without one answers `404` rather than serving an empty page. |
 | `GET` | `/projects` | [Projects](./projects.md) and their environment variables. The third page, same embedded document, switched on the path. |
-| `GET` | `/api/admin` | Which of the two admin pages this request would be allowed to write to. The dashboard asks before drawing the **Projects**, **Secrets** and **Clear caches** controls, so the server decides and the page never offers an action that would `403`. |
+| `GET` | `/api/admin` | Which of the two admin pages this request would be allowed to write to. The dashboard asks before drawing the **Projects**, **Settings** and **Clear caches** controls, so the server decides and the page never offers an action that would `403`. |
 | `GET` | `/api/secrets` | What that page reads: names, whether the vault is unlocked, and whether this daemon may be written to at all. Never a value. |
 | `PUT` `DELETE` `POST` | `/api/secrets/…` | Store, delete, unlock, generate. Refused unless every listener is loopback *and* the request arrived from this machine carrying no forwarding header. Loopback is not local: a tunnel makes the first true while the caller is on the internet, which is what [`webhook-only`](#webhook-only) exists for. |
 | `GET` `PUT` `DELETE` | `/api/projects/…` | Project rows and their environment variables. Same two gates as `/api/secrets`, for a stronger reason: a project row decides what command runs on the build host. |
@@ -574,7 +574,7 @@ the new route is public.
 
 `/secrets`, `/projects`, `/api/secrets`, `/api/projects`, `/api/cache` and `/api/admin` are absent and therefore
 `404` through this proxy. That is the first of two layers: this proxy sets `X-Forwarded-For`, and the daemon refuses
-every write from a forwarded request regardless. The dashboard's own **Projects** and **Secrets** links come from
+every write from a forwarded request regardless. The dashboard's own **Projects** and **Settings** links come from
 `/api/admin`, so through this proxy the fetch 404s and the links are simply not drawn.
 
 :::danger There is no authentication here

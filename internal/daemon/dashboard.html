@@ -195,6 +195,20 @@ input.control::placeholder { color: var(--muted) }
 .secgroup-box[data-exposer].inuse.broken         { --edge: var(--critical) }
 /* A path is one long unbreakable token on Windows and was reaching past the border. */
 .sec .key { overflow-wrap: anywhere }
+/* The generated CLI. A terminal block, so it reads as something to paste into one, and it
+   scrolls sideways rather than wrapping — a wrapped shell command is one that cannot be
+   copied and run. */
+.ziti-cli { margin: 0.6rem 0.9rem 0.9rem 2.75rem }
+.ziti-cli > summary { cursor: pointer; font-size: 0.82rem; color: var(--muted) }
+.ziti-cli > summary:hover { color: var(--ink) }
+.ziti-cli pre {
+  background: var(--term-bg); color: var(--term-fg);
+  border-radius: 8px; padding: 0.7rem 0.8rem; margin: 0.5rem 0;
+  font: 12px/1.6 ui-monospace, Consolas, monospace;
+  overflow-x: auto; white-space: pre;
+  /* Selectable, because the fallback when the clipboard is unavailable is selecting it. */
+  user-select: text;
+}
 /* Step 2 of a two-step action, drawn as a continuation of the row above rather than as
    another row. Without this the enrolment form reads as a third directory. */
 .sec.sub {
@@ -869,7 +883,21 @@ input.control::placeholder { color: var(--muted) }
   gap: 0.6rem; align-items: center; padding: 0.22rem 0;
 }
 .field-note { text-transform: none; letter-spacing: 0; font-weight: 400 }
-.backlink { margin: 0 0 0.5rem; font-size: 0.82rem }
+/* The way out, and the way across. Two links now: back to the previews, and to the other
+   admin page — /secrets and /projects are the two halves of administering an installation, and
+   with only a back-link each, getting between them meant going home first. */
+.backlink {
+  margin: 0 0 0.5rem; font-size: 0.82rem;
+  display: flex; align-items: center; gap: 0.6rem;
+}
+/* Pushed to the far end, so it reads as a destination rather than as part of the way back. */
+.backlink .control { margin-left: auto }
+/* A section within an admin page, under its one <h2>. Introduced when the settings page grew a
+   second panel and both were <h2>, which made the page look like two pages stacked. */
+.pagesec {
+  font-size: 0.95rem; font-weight: 600; margin: 1.4rem 0 0.5rem; color: var(--ink);
+}
+.pagesec:first-of-type { margin-top: 0.9rem }
 .avafield { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap }
 /* A checkbox and its wording on one line, so the box belongs to the sentence rather than
    sitting in the label column with the words in the control column. */
@@ -1515,20 +1543,29 @@ footer {
     <!-- The way out goes above the content, not below it. Below, it is past a form
          eleven fields long and past however many project cards exist, so on any real
          page it is off screen — a page with no visible way back reads as a dead end. -->
-    <p class="backlink"><a href="/">← back to previews</a></p>
-    <h2 id="setup-head">Secrets</h2>
+    <!-- Both ways out, because this page and /projects are the two halves of administering an
+         installation and people arrive at the wrong one. Previously each linked only back to
+         the previews, so getting between them meant going home first. -->
+    <p class="backlink"><a href="/">← back to previews</a>
+      <a class="control" href="/projects">Projects</a></p>
+    <!-- "Settings", not "Secrets". This page stopped being only credentials when the exposer
+         configuration landed on it, and a heading naming one of the two things on it is a
+         heading that makes the other unfindable. The path is unchanged — it is in runbooks,
+         in the dashboard-only allowlist, and in bookmarks. -->
+    <h2 id="setup-head">Settings</h2>
+    <h3 class="pagesec">Credentials</h3>
     <div id="setup-body"></div>
 
     <!-- The exposer panel, below the credentials because it is the less frequent visit and
          because the zrok account token it produces is one of the rows above. Its own
-         heading rather than a section of Secrets: signing up for a service and storing a
-         credential are different acts, and one of them is destructive.
+         heading rather than a section of the credentials: signing up for a service and storing
+         a credential are different acts, and one of them is destructive.
 
          One section per exposer rather than a zrok panel. Only zrok can be configured from
          a browser — a ziti identity is a file from `ziti edge enroll` and a Frontdoor token
          is a vault entry — but "which of the four is this daemon using, and is it ready"
          was previously answerable only from `doctor`. -->
-    <h2 id="exposer-head">Exposer configuration</h2>
+    <h3 class="pagesec" id="exposer-head">Exposer configuration</h3>
     <div id="exposer-body"></div>
   </div>
 </div>
@@ -1537,7 +1574,9 @@ footer {
      switched on pathname, so the styles and the fetch helper exist once. -->
 <div class="setup" id="projects" hidden>
   <div class="setup-inner">
-    <p class="backlink"><a href="/">← back to previews</a></p>
+    <!-- The other half of administering an installation. See the note on the settings page. -->
+    <p class="backlink"><a href="/">← back to previews</a>
+      <a class="control" href="/secrets">Settings</a></p>
     <h2>Projects</h2>
     <div id="projects-body"></div>
   </div>
@@ -4415,7 +4454,62 @@ function zitiForm(s, o) {
       <div class="hint wide">Must match the addresses in the service's <code>intercept.v1</code>
         config, or the tunneler resolves names this daemon does not answer to — and the mismatch
         is invisible until somebody opens a link.</div>
-    </div>`;
+    </div>
+
+    <!-- The way out of the form.
+         Every field above corresponds to an object on the controller, and the operator with a
+         controller open in another tab wants the commands, not a form — they may have naming
+         conventions, an existing service, or no permission to create one and a colleague who
+         does. The commands are generated from the fields, so what is on screen is what these
+         produce. -->
+    <details class="ziti-cli">
+      <summary>Or run the ziti CLI yourself</summary>
+      <div class="hint">Generated from the fields above. <code>docpreview configure ziti</code>
+        does all of it, plus a reviewer identity, if you would rather not.</div>
+      <pre id="ziti-cli-text">${esc(zitiCliScript(s))}</pre>
+      <div class="act"><button class="btn" id="ziti-cli-copy">Copy</button></div>
+    </details>`;
+}
+
+/* zitiCliScript is the same objects the form makes, as commands.
+
+   Kept beside the form rather than in a runbook because it has to agree with the fields, and a
+   copy in the documentation would be a copy that drifts. The identity's role attribute and the
+   Bind policy have to name each other, which is the part people get wrong by hand — the policy
+   grants by attribute (`#docpreview`), not by identity name, so an identity created without
+   `-a docpreview` enrols fine and then binds nothing.
+
+   No `host.v1` config. docpreview binds the service itself through the SDK, so there is nothing
+   for a tunneler to host — that config only exists when a tunneler is the one serving. */
+function zitiCliScript(s) {
+  const svc = (s.ziti?.service || "docpreview-previews").trim();
+  const dom = (s.ziti?.domain || "preview.ziti").trim();
+  const id = "docpreview";
+  const intercept = JSON.stringify({
+    protocols: ["tcp"],
+    addresses: [`*.${dom}`],
+    portRanges: [{low: 80, high: 80}],
+  });
+
+  return [
+    `# 1. docpreview's own identity. The -a attribute is what the Bind policy grants to,`,
+    `#    so an identity created without it enrols fine and then binds nothing.`,
+    `ziti edge create identity ${id} -a ${id} -o ${id}.jwt`,
+    ``,
+    `# 2. how previews are addressed. Must match the domain above, or a tunneler resolves`,
+    `#    names this daemon does not answer to — invisible until somebody opens a link.`,
+    `ziti edge create config ${svc}-intercept intercept.v1 '${intercept}'`,
+    ``,
+    `# 3. the service. One wildcard service serves every preview, separated by the Host header.`,
+    `ziti edge create service ${svc} -a ${svc} --configs ${svc}-intercept`,
+    ``,
+    `# 4. docpreview hosts it; readers dial it. Exactly one docpreview may bind — two binders`,
+    `#    means two terminators and roughly half of all previews answering 404.`,
+    `ziti edge create service-policy ${svc}-bind Bind --service-roles "@${svc}" --identity-roles "#${id}"`,
+    `ziti edge create service-policy ${svc}-dial Dial --service-roles "@${svc}" --identity-roles "#${svc}-reader"`,
+    ``,
+    `# 5. paste the contents of ${id}.jwt into the box above. It works once.`,
+  ].join("\n");
 }
 
 /* ── The zrok setup wizard ────────────────────────────────────────────────
@@ -4858,6 +4952,46 @@ function wireZrok(s) {
       service: val("ziti-service"),
       domain: val("ziti-domain"),
     }));
+  }
+
+  // The generated CLI follows the fields as they are typed.
+  //
+  // Regenerated rather than rendered once: the commands are only useful if they name the service
+  // and domain on screen, and a block that still said `docpreview-previews` after somebody typed
+  // their own name would be a block that produces the wrong objects — silently, since the wrong
+  // ones are created successfully.
+  const cliText = document.getElementById("ziti-cli-text");
+  if (cliText) {
+    const regen = () => {
+      cliText.textContent = zitiCliScript({
+        ziti: {service: val("ziti-service"), domain: val("ziti-domain")},
+      });
+    };
+    for (const id of ["ziti-service", "ziti-domain"]) {
+      const f = document.getElementById(id);
+      if (f) f.oninput = regen;
+    }
+
+    const copy = document.getElementById("ziti-cli-copy");
+    if (copy) {
+      copy.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(cliText.textContent);
+          copy.textContent = "Copied";
+          setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+        } catch {
+          // No clipboard permission, or an insecure context. Selecting it is the fallback that
+          // always works, and saying so beats a button that does nothing.
+          const sel = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(cliText);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          copy.textContent = "Selected — press Ctrl+C";
+          setTimeout(() => { copy.textContent = "Copy"; }, 2500);
+        }
+      };
+    }
   }
 
   for (const disable of document.querySelectorAll("[data-zrok-unenrol]")) {
@@ -7312,7 +7446,12 @@ async function showAdminLinks() {
   }
   const links = [];
   if (admin.projects) links.push(`<a class="control" href="/projects">Projects</a>`);
-  if (admin.secrets) links.push(`<a class="control" href="/secrets">Secrets</a>`);
+  // "Settings", not "Secrets". The page stopped being only credentials when the exposer
+  // configuration landed on it — signing up for zrok and choosing what publishes previews are
+  // not secrets — and a link named for one of the two things behind it is a link people stop
+  // looking behind. The path stays /secrets: it is in runbooks, in the dashboard-only
+  // allowlist, and in whatever anybody has bookmarked.
+  if (admin.secrets) links.push(`<a class="control" href="/secrets">Settings</a>`);
   if (admin.projects) {
     links.push(`<button class="control" id="cache-clear"
       title="Delete every preview's cached package downloads">Clear caches</button>`);
