@@ -415,6 +415,10 @@ type ZrokConfig struct {
 }
 
 // FrontdoorConfig configures the NetFoundry Frontdoor exposer.
+//
+// NetFoundry Frontdoor, the commercial zero-trust ingress administered at nfconsole.io. zrok
+// documents a separate feature called "zrok frontdoor" that shares the name and is unrelated,
+// so every operator-facing string naming this exposer says NetFoundry.
 type FrontdoorConfig struct {
 	// APIBase is the Frontdoor gateway root, and it must include the Frontdoor instance
 	// id: `https://gateway.example/frontdoor/<frontdoorId>`. The paths under it are

@@ -162,6 +162,9 @@ func cmdInit(args []string) error {
 
 		case "frontdoor":
 			p.section("NetFoundry Frontdoor")
+			p.note("NetFoundry Frontdoor, from nfconsole.io. Not zrok's separate \"zrok frontdoor\"")
+			p.note("feature, which shares the name and issues none of these values.")
+			p.note("")
 			cfg.Exposer.Frontdoor.APIBase = p.text("API base", cfg.Exposer.Frontdoor.APIBase)
 			cfg.Exposer.Frontdoor.Frontend = p.text("Frontend name", cfg.Exposer.Frontdoor.Frontend)
 
@@ -467,6 +470,8 @@ func renderConfig(c config.Server) string {
 	fmt.Fprintf(&b, "    domain: %s\n", yamlString(c.Exposer.Ziti.Domain))
 	fmt.Fprintf(&b, "    name_template: %s\n\n", yamlString(c.Exposer.Ziti.NameTemplate))
 
+	b.WriteString("  # NetFoundry Frontdoor, from nfconsole.io. Not zrok's separate \"zrok frontdoor\"\n")
+	b.WriteString("  # feature, which shares the name and issues none of these values.\n")
 	b.WriteString("  frontdoor:\n")
 	fmt.Fprintf(&b, "    api_base: %s\n", yamlString(c.Exposer.Frontdoor.APIBase))
 	fmt.Fprintf(&b, "    frontend: %s\n", yamlString(c.Exposer.Frontdoor.Frontend))

@@ -40,6 +40,8 @@ exposer:
     oauth_provider: ""           # "google" or "github"
     oauth_email_domains: []
 
+  # NetFoundry Frontdoor, from nfconsole.io. Not zrok's separate "zrok frontdoor"
+  # feature, which shares the name and issues none of these values.
   frontdoor:
     # The instance id belongs in the path. Frontdoor's routes are unversioned and
     # carry tenancy in this segment, so an api_base without it 404s every call.
@@ -47,7 +49,7 @@ exposer:
     # A frontend ID, not a name. "public" is a name and matches no frontend, which
     # creates a share that serves nothing.
     frontend: bMTHPrtQ
-    # The enrolled Frontdoor agent's ziti identity. Required on every share; without
+    # The enrolled Frontdoor agent's ziti identity. Required on every share. Without
     # it every publish is refused, and startup says so.
     env_z_id: ijcrWb-ZOq
     agent_reachable_host: 127.0.0.1

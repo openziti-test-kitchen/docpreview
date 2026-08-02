@@ -4310,11 +4310,16 @@ function otherExposerBody(o, s) {
   return parts.join("");
 }
 
-/* frontdoorForm collects the five things Frontdoor needs.
+/* frontdoorForm collects the five things NetFoundry Frontdoor needs.
 
-   Four of them are values an operator copies out of the Frontdoor console — a browser tab —
-   and the fifth is a credential. Sending them to a YAML file for the four and to a different
+   Four of them are values an operator copies out of the NetFoundry Frontdoor console — a browser
+   tab — and the fifth is a credential. Sending them to a YAML file for the four and to a different
    panel for the fifth is where a setup flow loses people, so they are one form.
+
+   Every mention here names the vendor, because zrok documents a separate feature called "zrok
+   frontdoor" and an operator who searches the bare word lands on it. The two are unrelated, and
+   the sign-up an operator would complete off the back of the wrong one does not produce any of
+   the five values below.
 
    The token field is blank on every render and blank means "leave what is there", which is
    what makes the form re-submittable to correct a frontend id without re-pasting a token. */
@@ -4334,7 +4339,15 @@ function frontdoorForm(s, o) {
     </div>`;
 
   return `
-    ${field("fd-token", "API token", `From the Frontdoor console. Stored in the vault as
+    <div class="sec sub">
+      <div><div class="name">This is NetFoundry Frontdoor</div></div>
+      <div class="hint wide">The commercial zero-trust ingress at
+        <a href="https://nfconsole.io" target="_blank" rel="noopener noreferrer">nfconsole.io</a>, with a
+        WAF and access enforced by your own identity provider. <strong>Not</strong> zrok's separately
+        documented "zrok frontdoor" feature, which is a different thing with a confusingly similar name.
+        The five values below all come from the NetFoundry console.</div>
+    </div>
+    ${field("fd-token", "API token", `From the NetFoundry Frontdoor console. Stored in the vault as
        <code>frontdoor.api_token</code>; leave blank to keep the one already there.`, "")}
     ${field("fd-api-base", "Gateway URL", `Must include the Frontdoor id:
        <code>https://gateway.example/frontdoor/&lt;frontdoorId&gt;</code>. The paths under it are
@@ -4342,8 +4355,8 @@ function frontdoorForm(s, o) {
     ${field("fd-frontend", "Frontend id", `The <em>id</em> of the frontend that serves previews —
        something like <code>bMTHPrtQ</code>, not a name like <code>public</code>. A name here is
        accepted and matches nothing, so the share serves nothing.`, s.frontdoor?.frontend)}
-    ${field("fd-env-z-id", "Agent identity id", `The ziti identity of the enrolled Frontdoor agent
-       that hosts the share. Readable from the console; without it every publish is refused.`,
+    ${field("fd-env-z-id", "Agent identity id", `The ziti identity of the enrolled NetFoundry Frontdoor
+       agent that hosts the share. Readable from the console, and without it every publish is refused.`,
        s.frontdoor?.env_z_id)}
     ${field("fd-agent-host", "Address the agent can reach", `Frontdoor shares point at a URL rather
        than dialing an overlay listener, so previews bind a real TCP port the agent connects to.`,
@@ -4351,7 +4364,7 @@ function frontdoorForm(s, o) {
     <div class="sec sub">
       <div><div class="name">Save and check</div></div>
       <div class="hint">Testing asks the tenant whether the token works. Worth doing before
-        switching: a Frontdoor that refuses it stops every publish.</div>
+        switching: a tenant that refuses it stops every publish.</div>
       <div class="act">
         <button class="btn" id="fd-save">Save</button>
         <button class="btn" id="fd-test"${o.ready ? "" : " disabled"}>Test the token</button>

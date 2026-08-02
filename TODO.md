@@ -11,6 +11,35 @@ three attempts to diagnose it by reading the code were all wrong.
 
 ## In flight
 
+**Exercise Frontdoor against a live tenant, then delete the hedging.** Priority. Frontdoor is the answer for a
+team whose previews should be governed by the identity provider they already run, and every document currently
+says it has never been proven. That caveat is correct today and it is also the thing stopping anyone from
+choosing it.
+
+The blocker is a tenant, not code. The lifecycle — reaping, naming, retries, collision handling — is the same
+code the zrok exposer uses and is covered by the same tests. What is unverified is the wire format: endpoint
+paths and JSON field names, written from the documentation and corrected against it once. If they are wrong, the
+fix is confined to `shareRequest` and `shareResponse` in `internal/expose/frontdoor.go`.
+
+- [ ] **Get a tenant and publish one preview end to end.** `docpreview preview -build ./www` under
+      `exposer.kind: frontdoor` proves the whole path without a pull request.
+- [ ] **Confirm the three fields that fail without naming themselves.** `api_base` must end in
+      `/frontdoor/<frontdoorId>`, `frontend` is an ID rather than a name, and `env_z_id` is the enrolled agent's
+      ziti identity. Each produces a share that serves nothing rather than an error.
+- [ ] **Close the reaping gap.** Frontdoor shares carry no tag field, so `Reap` cannot recognise its own work
+      and deletes nothing, leaking one share per preview per restart. Ownership has to move into the share name.
+      This is the one item that is a code change rather than a confirmation, and it is what "ready to depend on"
+      waits for.
+- [ ] **Then remove the hedging, everywhere, in one pass.** It lives in six places and a half-done sweep is
+      worse than none, because whichever copy is left is the one a reader finds:
+      `www/docs/exposers.md` (the `### Status` warning admonition and the `frontdoor` row of the comparison
+      table), `www/docs/guides/frontdoor.md` (the `:::warning Implementation status` block near the top and the
+      `:::danger` block at the end of Step 4), `internal/expose/CLAUDE.md`, `docs/design/17-exposer-frontdoor.md`,
+      and `docs/blog/03-preview-url-is-a-security-decision.md`, which says "ready to try rather than ready to
+      depend on".
+- [ ] **Un-hedge the blog series.** `docs/blog/README.md` carries an accuracy note about Frontdoor that exists
+      only while this item is open. Delete it with the rest.
+
 **Branch previews, and a permanent one for the default branch. Shipped and exercised live**, 31 July 2026: `main`
 previews for `bitbucket:netfoundry/customer-connect-docs` and `github:openziti-test-kitchen/docpreview`, both
 serving 200, neither commenting on anything.

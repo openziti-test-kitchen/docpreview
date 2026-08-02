@@ -6,13 +6,25 @@ sidebar_position: 5
 
 # Publish previews with NetFoundry Frontdoor
 
-[Frontdoor](https://netfoundry.io/docs/frontdoor/intro/) is NetFoundry's zero-trust ingress: a globally
-distributed hardened frontend that fronts private HTTP services with no firewall changes, no port forwarding,
-and no client software for the people reading your previews.
+[NetFoundry Frontdoor](https://netfoundry.io/docs/frontdoor/intro/) is NetFoundry's zero-trust ingress: a
+globally distributed hardened frontend that fronts private HTTP services with no firewall changes, no port
+forwarding, and no client software for the people reading your previews.
 
 For docpreview it is a drop-in alternative to zrok — same `Exposer` interface, one line of config — that buys
 you three things zrok alone does not: a WAF, IdP-enforced authentication with MFA, and central management of
 who can reach what.
+
+:::danger Check which Frontdoor you are reading about
+
+This page is about **NetFoundry Frontdoor**, administered at [nfconsole.io](https://nfconsole.io). zrok
+documents an unrelated feature called [zrok frontdoor](https://netfoundry.io/docs/zrok/guides/frontdoor/), and
+a search for the bare word finds that one first.
+
+Everything below assumes the NetFoundry product. The zrok feature has its own account, its own console and its
+own free tier, and none of them issue the values Step 2 and Step 3 ask for. Working through the wrong set of
+instructions costs a sign-up and produces a configuration that cannot publish.
+
+:::
 
 :::warning Implementation status
 

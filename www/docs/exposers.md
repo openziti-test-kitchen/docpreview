@@ -118,9 +118,21 @@ See the [zrok guide](./guides/zrok2.md) for setup.
 
 ## `frontdoor`
 
-NetFoundry Frontdoor is the same idea, productized: an enrolled **agent** on the private side, a hardened
-globally-distributed **frontend**, and **shares** mapping a public route onto a private target — with a WAF
-and IdP/MFA enforcement in front, which is the part you cannot get from zrok alone.
+:::note This is NetFoundry Frontdoor, not "zrok frontdoor"
+
+Two products carry the name and they are unrelated. This exposer means
+[NetFoundry Frontdoor](https://netfoundry.io/docs/frontdoor/intro/), the commercial zero-trust ingress
+administered at [nfconsole.io](https://nfconsole.io). zrok separately documents a feature it calls
+[zrok frontdoor](https://netfoundry.io/docs/zrok/guides/frontdoor/), which is a different thing.
+
+Searching for the bare word finds the zrok one first. Nothing it tells you applies here, and the account it
+has you create issues none of the five values this exposer needs.
+
+:::
+
+NetFoundry Frontdoor is the same idea as zrok, productized: an enrolled **agent** on the private side, a
+hardened globally-distributed **frontend**, and **shares** mapping a public route onto a private target — with
+a WAF and IdP/MFA enforcement in front, which is the part you cannot get from zrok alone.
 
 Because it sits behind the same `Exposer` interface, moving from zrok to Frontdoor is one line:
 
