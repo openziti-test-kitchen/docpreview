@@ -93,7 +93,7 @@ answer, and asking costs one request, which keeps the clone at `--depth 1`.
 **Preview ID** — `sha256(platform|owner|repo|number)[:12]`.
 
 Deliberately excludes the branch and the commit. A pull request keeps one preview for its whole life, even
-through a force-push or a branch rename. This ID is what finds the comment to edit; if it moved, every push
+through a force-push or a branch rename. This ID is what finds the comment to edit. If it moved, every push
 would post a fresh comment.
 
 **Public name** — the sanitized branch name, by default.
@@ -105,7 +105,7 @@ URL.
 
 The label is then prefixed with the repository — `docs-feature-jira-123-new-guide` — because the branch alone
 is not unique across repositories, and every exposer keys a live publication on this name. Configurable via
-`name_template`; see [the reference](reference/configuration.md#name_template) for the variants worth knowing.
+`name_template`. See [the reference](reference/configuration.md#name_template) for the variants worth knowing.
 
 Each preview gets its own share, its own name and its own listener, and each is withdrawn by preview ID rather
 than by name. `Exposer.Reap` deletes anything carrying docpreview's target prefix that the database no longer
@@ -121,7 +121,7 @@ kept — see [the reference](reference/configuration.md#every-build-gets-its-own
 sqlite, with **at most one pending job per pull request**. A newer push replaces the pending job rather than
 queuing behind it, and cancels any build already running for that pull request.
 
-Both matter more than they sound. A reviewer fixing typos pushes five commits in two minutes; building all
+Both matter more than they sound. A reviewer fixing typos pushes five commits in two minutes. Building all
 five wastes four builds and publishes four previews nobody will look at before the fifth replaces them. A
 superseded build also suppresses its own report, so a late failure cannot overwrite a perfectly good "ready".
 
@@ -149,13 +149,13 @@ It is the first line of the body, so a truncated comment still identifies itself
 
 Matching accepts **both styles, always**. A daemon upgraded across a style change finds comments it wrote in the old
 one, and a matcher that knew only the new style would post a second comment on every open pull request at once —
-which is the exact failure the marker exists to prevent. A style can be added; none can ever be removed.
+which is the exact failure the marker exists to prevent. A style can be added. None can ever be removed.
 
 ## Restart behaviour
 
 On startup docpreview:
 
-1. Reaps **every** remote share it owns. Nothing was serving them; the process that created them is gone.
+1. Reaps **every** remote share it owns. Nothing was serving them. The process that created them is gone.
 2. Reads its preview table and republishes each one **from the artifacts already on disk** — the branch share
    first, then each retained build's own share.
 

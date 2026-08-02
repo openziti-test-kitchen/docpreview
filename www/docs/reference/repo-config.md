@@ -130,7 +130,7 @@ See [Troubleshooting](../troubleshooting.md).
 
 ### `env`
 
-Extra environment for the build. Literal values only; there is no vault lookup, because a pull request author
+Extra environment for the build. Literal values only. There is no vault lookup, because a pull request author
 must not be able to name a secret and have it handed to a script they wrote.
 
 Reserved names (`DOCUSAURUS_BASE_URL`, `DOCPREVIEW_BASE_URL`, `DOCPREVIEW`) are silently ignored here.

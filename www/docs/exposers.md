@@ -139,8 +139,8 @@ Nothing above the exposer changes — not the queue, not the builder, not the co
 ### The one structural difference
 
 zrok hands us a listener and we serve into it. Frontdoor's agent dials **out** to a target URL, so a Frontdoor
-preview has to bind a real TCP port the agent can connect to. That is what `agent_reachable_host` is for: if
-the agent runs on the same host, leave it at `127.0.0.1`; if it runs elsewhere, this must be an address it can
+preview has to bind a real TCP port the agent can connect to. That is what `agent_reachable_host` is for. If
+the agent runs on the same host, leave it at `127.0.0.1`. If it runs elsewhere, this must be an address it can
 actually reach.
 
 ### Status

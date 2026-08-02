@@ -232,5 +232,5 @@ failure path and the build log viewer have something to show.
   build produces.
 - **Changed files come from git, not a platform API.** `git diff --name-only base...head` — three dots, so it is
   changes since the branch diverged rather than changes since the tip of base. The hosted clients ask the
-  platform because a depth-1 clone lacks the history; here the bare repository *is* the platform and has all of
+  platform because a depth-1 clone lacks the history. Here the bare repository *is* the platform and has all of
   it. A first push with no merge base treats the whole tree as changed, which is what "opened" means.

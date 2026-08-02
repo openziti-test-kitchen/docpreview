@@ -7,7 +7,7 @@ sidebar_position: 5
 # Runbook: move an installation
 
 Moving docpreview to another machine, or into a container, is a copy of four things and one edit. There is no
-export command, because there is nothing to export that a file copy does not already give you.
+export command, because a file copy already gives you everything there is to export.
 
 :::danger Stop the old instance before starting the new one
 
@@ -24,7 +24,7 @@ A move is stop, copy, start. Never an overlap.
 | What | Where it is | |
 |---|---|---|
 | The database | `<data_dir>/docpreview.db` | **and its `-wal` file** — Step 2 |
-| The credential store | `<data_dir>/vault.age` | encrypted; useless without the key |
+| The credential store | `<data_dir>/vault.age` | encrypted — useless without the key |
 | The master key | wherever `vault.key_source` points | deliberately outside `data_dir` |
 | The zrok environment | `~/.zrok2` **or** `<data_dir>/zrok2` | the identity that owns every reserved name — Step 4 |
 | A ziti identity, if you use that exposer | `<data_dir>/ziti/*.json` | inside `data_dir`, so it travels with it |

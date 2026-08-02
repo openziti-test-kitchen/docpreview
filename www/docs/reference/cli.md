@@ -140,8 +140,8 @@ Both are computed from your answers — choose the `local` exposer and it does n
 |---|---|
 | `-config FILE` | Where to write. Default `~/.docpreview/config.yml`. |
 | `-force` | Overwrite without asking. |
-| `-advanced` | Ask about every setting, not just the two. |
-| `-yes` | Ask nothing; take every default. |
+| `-advanced` | Ask about every setting, not only the two. |
+| `-yes` | Ask nothing. Take every default. |
 | `-exposer KIND` | Set the exposer and skip that question. |
 | `-app-id N` | Set the App ID and skip that question. |
 
@@ -230,7 +230,7 @@ Next
  2. Check it:         docpreview doctor …
 ```
 
-The reviewer token is the part nobody guesses. It is not a URL and not a password; the only thing to do with
+The reviewer token is the part nobody guesses. It is not a URL and not a password — the only thing to do with
 it is import the file into a tunneler — [Ziti Desktop Edge](https://netfoundry.io/docs/openziti/how-to-guides/tunnelers/windows/)
 on Windows, `ziti-edge-tunnel add --jwt "$(cat reviewer-alice.jwt)"` elsewhere. Then
 `http://<branch>.docpreview.ziti/` resolves, and resolves nowhere else.
@@ -263,7 +263,7 @@ listeners:
       service: "docpreview-admin"
 ```
 
-Removing the TCP address would lock you out of the thing you just set up until your own tunneler is enrolled
+Removing the TCP address would lock you out of the thing you set up until your own tunneler is enrolled
 and running, which is the wrong order in which to discover a mistake. Delete the `tcp` entry once the overlay
 is proven.
 
@@ -326,9 +326,9 @@ preview — and each retained build — from the artifacts already on disk. No r
 
 :::warning Every preview URL 404s until that finishes
 
-Reap has to come first, or it deletes what it just restored. So there is a window with the shares gone and not yet
+Reap has to come first, or it deletes what it restored. So there is a window with the shares gone and not yet
 recreated, and under zrok each publication is a round trip to the controller at roughly **14 seconds**, run
-serially. Three previews is about a minute; thirty open pull requests is about seven.
+serially. Three previews is about a minute. Thirty open pull requests is about seven.
 
 Inside that window `/status` answers `200` with an empty event list, because the activity feed is re-hydrated from
 the database after recovery finishes. It looks exactly like data loss. Wait for:
@@ -476,7 +476,7 @@ the API is on the internet, and against an unlocked vault store, delete and gene
 holding the share URL.
 
 No single check inside the daemon closes that. Under a proxy it sees the connection from the local tunnel
-process, so `RemoteAddr` is loopback too and `Host` is whatever the client sent; the distinction does not exist
+process, so `RemoteAddr` is loopback too and `Host` is whatever the client sent. The distinction does not exist
 at that layer. The credential API does additionally refuse any request carrying a forwarding header, and this
 proxy sets `X-Forwarded-For` — but that is a second line, and it assumes nothing ever proxies while stripping
 those headers. Tunnel this instead and the dashboard, the previews and the credential API are reachable only from
@@ -498,8 +498,8 @@ router, not a guard — the guard is one hop further in, and a forged payload ge
 | `-path` | `/webhook/github` | The one path forwarded. |
 | `-log-level` | `info` | |
 
-A non-loopback `-upstream` is **refused**. This process exists to publish a daemon that is otherwise unreachable;
-pointing it at a remote one would make it an open relay for that daemon's webhook endpoint.
+A non-loopback `-upstream` is **refused**. This process exists to publish a daemon that is otherwise unreachable.
+Pointing it at a remote one would make it an open relay for that daemon's webhook endpoint.
 
 Without `-zrok-name` it binds `-listen` and prints the `zrok2 share public` command to point at it, for a tunnel
 you run yourself.
@@ -574,7 +574,7 @@ the new route is public.
 `/secrets`, `/projects`, `/api/secrets`, `/api/projects`, `/api/cache` and `/api/admin` are absent and therefore
 `404` through this proxy. That is the first of two layers: this proxy sets `X-Forwarded-For`, and the daemon refuses
 every write from a forwarded request regardless. The dashboard's own **Projects** and **Settings** links come from
-`/api/admin`, so through this proxy the fetch 404s and the links are simply not drawn.
+`/api/admin`, so through this proxy the fetch 404s and the links are not drawn.
 
 :::danger There is no authentication here
 
@@ -745,7 +745,7 @@ rather than a pull request.
 :::note Two things it cannot see
 
 A **leaked reserved name** — the object the quota actually counts — is invisible once its share is gone, because
-the listing is of shares. And only the `zrok2` exposer can answer at all; the others say so and point at `doctor`.
+the listing is of shares. Only the `zrok2` exposer can answer at all — the others say so and point at `doctor`.
 
 :::
 
@@ -801,7 +801,7 @@ directory.
 
 ### `zrok register <link-or-token>`
 
-Creates the account and enrols this host. Takes the whole emailed link or just the token at the end of it.
+Creates the account and enrols this host. Takes the whole emailed link or only the token at the end of it.
 
 The **zrok account password** is read from stdin, never an argument. It is not stored here — it is how you reset
 that account later, so keep it somewhere.
@@ -848,8 +848,8 @@ push with a bare curl error.
 
 Every simulated repository, with its branch count.
 
-There is no `sim rm`. Delete the `.git` directory under `local.repos_dir`; previews built from it expire on
-`preview.ttl`, or delete the branch and push to tear them down immediately.
+There is no `sim rm`. Delete the `.git` directory under `local.repos_dir` — previews built from it expire on
+`preview.ttl` — or delete the branch and push to tear them down immediately.
 
 ## `vault`
 
@@ -869,7 +869,7 @@ values, encrypted as one blob — so the file leaks neither the values nor which
 docpreview vault keygen [-out FILE] [-shell SHELL] [-quiet]
 ```
 
-Generates a new [age X25519 identity](../background/age.md#how-it-works). Three output shapes; all three keep
+Generates a new [age X25519 identity](../background/age.md#how-it-works). Three output shapes, all three keep
 the key out of your shell history. `-out` and `-shell` together are refused — they are the same job done two
 ways.
 
@@ -925,11 +925,11 @@ straight into the session. Everything explanatory goes to stderr, where the pipe
 still read it.
 
 This keeps the key out of your shell history. Pasting `$env:DOCPREVIEW_MASTER_KEY = 'AGE-SECRET-KEY-1...'`
-records the key; piping records only the pipeline.
+records the key. Piping records only the pipeline.
 
 It still sets an environment variable, which is the least preferred of the three sources — readable by every
 process under the same user, and present in service definitions, process listings and crash dumps. Fine for a
-shell session you are about to close; prefer `-out` or `exec:` for a daemon.
+shell session you are about to close. Prefer `-out` or `exec:` for a daemon.
 
 | `-shell` value | Emits |
 |---|---|
@@ -1017,6 +1017,6 @@ docpreview vault delete frontdoor.api_token
 |---|---|
 | `0` | Success. Also what `-h` on a subcommand exits with, after printing that subcommand's flags. |
 | `1` | The command ran and failed, with the reason on stderr. |
-| `2` | The command line itself was wrong — an unknown flag, or a flag a subcommand does not have. Go's flag package prints the usage and exits; docpreview never sees it. |
+| `2` | The command line itself was wrong — an unknown flag, or a flag a subcommand does not have. Go's flag package prints the usage and exits. docpreview never sees it. |
 
 `unknown command` is `1`, not `2`: the binary got that far and answered.

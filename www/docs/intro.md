@@ -6,7 +6,7 @@ sidebar_position: 1
 
 # docpreview
 
-You push a commit to a branch. A minute later a bot comment appears on the pull request with a link, you
+You push a commit to a branch. A minute later a bot comment appears on the pull request with a link. You
 click it, and there is your documentation site — built from that branch, running at its own URL, ready to
 read. When you push again the same comment updates in place. When the pull request closes, the preview
 disappears.

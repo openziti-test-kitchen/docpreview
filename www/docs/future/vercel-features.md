@@ -28,7 +28,7 @@ integration, the single edited comment, the lifecycle. This page is everything e
 | 5 | [Immutable per-commit URLs](#5-immutable-per-commit-urls) | Shipped — one follow-up |
 | 6 | [A framework build cache, not just a package cache](#6-a-framework-build-cache-not-just-a-package-cache) | Build it now |
 | 7 | [Several documentation sites in one repository](#7-several-documentation-sites-in-one-repository) | Build it when a second site appears |
-| 8 | [Checks that grade the build](#8-checks-that-grade-the-build) | Build the link checker; skip the scores |
+| 8 | [Checks that grade the build](#8-checks-that-grade-the-build) | Build the link checker. Skip the scores |
 | 9 | [What changed on the site](#9-what-changed-on-the-site) | Build it when branch previews land |
 | 10 | [Log drains](#10-log-drains) | Skip |
 | 11 | [Retention, and what must never be deleted](#11-retention-and-what-must-never-be-deleted) | Build the exception list |
@@ -54,7 +54,7 @@ at all.
 **What it costs.** An identity model for reviewers, which docpreview does not have in any form. The zrok exposer
 can put an OAuth gate in front of a share, and the ziti exposer knows the dialing identity is *some* holder of the
 `docpreview-reader` attribute — neither yields a person to attribute a comment to. Vercel's requirement that
-commenters hold a Vercel account is not incidental; it is the cheapest way out of exactly this problem, and
+commenters hold a Vercel account is not incidental. It is the cheapest way out of exactly this problem, and
 docpreview has no equivalent account to require. Building this means building authentication first, and the
 dashboard [does not have any either](../reference/security.md).
 
@@ -64,11 +64,11 @@ code host either, and that is an argument for sending people to the one that is.
 
 ## 2. Deployment protection, decided per project
 
-**What Vercel does.** Deployment Protection is configured per project, as a **method** crossed with a **scope**:
-Vercel Authentication on all plans, Passport (your own IdP) and Trusted IPs on Enterprise, and Password Protection
-on Enterprise or as a $150/month Pro add-on; scoped to everything except production domains, or to everything
-([Deployment Protection](https://vercel.com/docs/deployment-protection)). A generated preview URL is public by
-default until one of those is turned on
+**What Vercel does.** Deployment Protection is configured per project, as a **method** crossed with a **scope**.
+The method is Vercel Authentication on all plans, Passport (your own IdP) and Trusted IPs on Enterprise, or
+Password Protection on Enterprise or as a $150/month Pro add-on. The scope is everything except production
+domains, or everything ([Deployment Protection](https://vercel.com/docs/deployment-protection)). A generated
+preview URL is public by default until one of those is turned on
 ([Generated URLs](https://vercel.com/docs/deployments/generated-urls)).
 
 **What it would mean here.** Most of it exists and is in the wrong place. `internal/expose/zrok.go` already sends
@@ -94,7 +94,7 @@ claim. This is the smallest change that makes the stated purpose true.
 
 **What Vercel does.** Two escape hatches from the gate above. Protection Bypass for Automation is a per-project
 secret sent as the `x-vercel-protection-bypass` header or query parameter, optionally with
-`x-vercel-set-bypass-cookie: true` so a browser session inherits it; the current secret is injected into the build
+`x-vercel-set-bypass-cookie: true` so a browser session inherits it. The current secret is injected into the build
 as `VERCEL_AUTOMATION_BYPASS_SECRET`, and rotating it invalidates deployments built before the rotation
 ([Protection Bypass for Automation](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation)).
 Sharable links are the human version: with protection on, "Anyone with the link" mints a URL that carries the
@@ -150,7 +150,7 @@ Doing it before the switch means writing the expensive version of a cheap featur
 ## 5. Immutable per-commit URLs
 
 **What Vercel does.** Two generated URLs per branch, and the distinction is the point.
-`<project>-<hash>-<scope>.vercel.app` is pinned to one commit forever; `<project>-git-<branch>-<scope>.vercel.app`
+`<project>-<hash>-<scope>.vercel.app` is pinned to one commit forever. `<project>-git-<branch>-<scope>.vercel.app`
 always serves the branch's newest build. The pull request's **View deployment** button goes to the commit URL and
 the comment's **Visit Preview** goes to the branch URL. Anything longer than 63 characters before the suffix is
 truncated, and Pro and Enterprise can replace `vercel.app` with a custom domain as a Preview Deployment Suffix
@@ -175,7 +175,7 @@ one entry from here, which is the thing to verify before relying on it.
 
 Vercel's Preview Deployment Suffix is the same wish this project already has and cannot buy: the
 `<sha7>.docpreview.shares.zrok.io` shape needs a delegated namespace, which on hosted zrok.io is admin-only and a
-commercial conversation rather than an API call. Vercel gates it behind a plan; zrok gates it behind a sales call.
+commercial conversation rather than an API call. Vercel gates it behind a plan — zrok gates it behind a sales call.
 Both are the same answer, which is worth knowing before anyone spends time on it.
 
 **Verdict: shipped.** The follow-up is two names on one share, once there is a live account to try it against.
@@ -203,11 +203,11 @@ docpreview discards. Treat that as unverified: it comes from a Docusaurus issue 
 documentation, whose per-framework table is rendered client-side and could not be read.
 
 **What it costs.** Correctness, in the one direction that is expensive to debug. A stale package cache produces a
-slow build; a stale framework cache can produce a *wrong site* — the failure mode is a preview that renders the
+slow build. A stale framework cache can produce a *wrong site* — the failure mode is a preview that renders the
 previous commit's content and looks entirely healthy, which is precisely the class of bug the base-URL check
 exists to catch loudly rather than quietly. So this needs what Vercel has and docpreview does not: a key that
 includes everything a build's output depends on, and a documented way to bypass it. Vercel offers three
-(`VERCEL_FORCE_NO_BUILD_CACHE=1`, `vercel --force`, and an unchecked box on redeploy); here it would be a checkbox
+(`VERCEL_FORCE_NO_BUILD_CACHE=1`, `vercel --force`, and an unchecked box on redeploy). Here it would be a checkbox
 on the Rebuild button. It also needs the byte cap this project has
 [not written yet](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md), because a persistent volume per
 preview with no ceiling is the disk problem again.
@@ -218,7 +218,7 @@ what turns it into a support conversation.
 
 ## 7. Several documentation sites in one repository
 
-**What Vercel does.** A monorepo is not one project with several sites; it is several **Projects** pointed at one
+**What Vercel does.** A monorepo is not one project with several sites. It is several **Projects** pointed at one
 repository, each with its own Root Directory, and the pull request comment lists every one with its own URL. Every
 commit would deploy all of them, so Vercel derives the workspace dependency graph from `package.json` and
 `pnpm-workspace.yaml` and skips projects the commit did not affect — GitHub only, and only for repositories that
@@ -264,7 +264,7 @@ against the previous deployment** — `output.metrics` carries `LCP`, `CLS`, `FC
 [Speed Insights](https://vercel.com/docs/speed-insights)). The checks themselves are marketplace integrations
 rather than built-in, and only an OAuth2 integration may register one.
 
-**Where the gate actually sits is the detail worth stealing.** A blocking check does not hold the build; it holds
+**Where the gate actually sits is the detail worth stealing.** A blocking check does not hold the build. It holds
 **domain assignment**. While checks run, the per-commit deployment URL resolves and the branch URL and custom
 domains do not — so the artifact is always inspectable, and only the shared address waits. docpreview already has
 that exact split: a build share pinned to the commit, and a branch share the pull request comment advertises. The
@@ -307,7 +307,7 @@ saying "built, and these six links are broken" is more useful to a reviewer than
 ## 9. What changed on the site
 
 **What Vercel does.** Not this, and the negative result is worth recording. Vercel ships no native screenshot or
-visual diff between deployments; nothing in its documentation offers one. What it offers instead is the Checks API
+visual diff between deployments. Nothing in its documentation offers one. What it offers instead is the Checks API
 above plus the marketplace's testing category, so visual regression is Percy, Chromatic or Argos running as a
 check — and the closest first-party thing is a Chrome extension for attaching screenshots to a
 [comment](https://vercel.com/docs/comments) by hand.
@@ -325,7 +325,7 @@ sidebar reorder, a broken MDX component that silently renders nothing, a changed
 from a one-line commit.
 
 **What it costs.** A baseline, which is the one thing missing. Diffing against the branch's previous build answers
-"what did my last push change", which is not the review question; diffing against the default branch answers
+"what did my last push change", which is not the review question. Diffing against the default branch answers
 "what does this pull request change", and that needs a default-branch build to exist. That is exactly the
 **branch previews** work in flight at the top of the backlog — a permanent preview of the default branch, kept
 current, with its artifacts on disk. Everything else is HTML-to-text extraction and a route-set
@@ -335,8 +335,8 @@ public comment.
 
 Pixel diffing, if it is ever wanted, is the same feature with a screenshot step, and it is a different order of
 cost: headless Chromium in the build image, one image per route per build against the disk cap this project has not
-set yet, and antialiasing noise to threshold. Text first. It is most of the value at a fraction of the cost, and it makes the pixel version an
-increment rather than a project.
+set yet, and antialiasing noise to threshold. Text first. It is most of the value at a fraction of the cost, and it
+makes the pixel version an increment rather than a project.
 
 **Verdict: build it when branch previews land**, and treat it as the reason to finish them. This is the largest
 reviewer-facing win on this page and the only one that needs no new dependency, no identity model and no second
@@ -349,7 +349,7 @@ Speed Insights, analytics, audit logs — to a custom HTTP endpoint or a native 
 billed by volume ([Working with Drains](https://vercel.com/docs/drains)).
 
 **What it would mean here.** A sink configuration and a fan-out. `buildlog.Writer` already multiplexes a build's
-output to disk and to live subscribers, so a drain is a third subscriber; the daemon's own log already tees
+output to disk and to live subscribers, so a drain is a third subscriber. The daemon's own log already tees
 through an `io.MultiWriter` to a file.
 
 **What it costs.** Little, and it answers a question nobody here is asking. Vercel needs drains because the logs
@@ -376,13 +376,13 @@ production alias, or if it is **the latest preview deployment of a branch whose 
 **What it would mean here.** `preview.keep_builds` (default 10) and `build.keep_logs` are the count-based half,
 and they already refuse to prune the build that just published — a clock stepping backwards would otherwise delete
 what is being served. What is absent is everything the exception list encodes. `PruneBuilds` and the artifact prune
-count rows; they do not know that one of those builds is the one the branch share currently serves, or that a
+count rows. They do not know that one of those builds is the one the branch share currently serves, or that a
 build's log is the only evidence of a failure somebody is reading right now.
 
 The other half worth taking is the report, not the policy. Setting `VERCEL_BUILD_SYSTEM_REPORT=1` makes every build
 print a breakdown of source, `node_modules` and output sizes and flag files over 100 MB
 ([Build features](https://vercel.com/docs/builds/build-features)). That is three lines at the end of
-`Builder.Build` here, it is the number the byte cap needs in order to be set to anything defensible, and it answers
+`Builder.Build` here. It is the number the byte cap needs to be set to anything defensible, and it answers
 the dashboard gap already filed as "a dashboard that does not say how much disk the previews are using is a
 dashboard nobody can use to decide what to delete".
 
@@ -390,11 +390,11 @@ dashboard nobody can use to decide what to delete".
 exists in the right shape — `Exposer.Reap` takes exactly this kind of set, and the rule that an incompletely
 assembled keep-set **skips the sweep** rather than under-deleting is the precedent to copy, because an incomplete
 set does not delete too little, it deletes live shares. The byte and total caps are the harder, already-filed
-half; they need a documented eviction order, and Vercel's answer is the model: cap by policy, then exempt by role.
+half. They need a documented eviction order, and Vercel's answer is the model: cap by policy, then exempt by role.
 
 Two things here are worth not copying. The 410-plus-recovery-window is a hosted service's answer to accidental
 deletion, and a self-hosted tool with the artifacts on a local disk and a backup story has no use for a tombstone.
-And Vercel's unlimited-retention default is only affordable to somebody billing for storage; this project's
+And Vercel's unlimited-retention default is only affordable to somebody billing for storage. This project's
 problem is the opposite, and its
 [open item](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md) is a ceiling, not a floor.
 
@@ -410,7 +410,7 @@ reachable for a configurable maximum age that defaults to one day
 routing middleware are the rest of the platform: request-time behaviour, in Vercel's runtime, in Vercel's regions.
 
 **What it would mean here.** Nothing, and the reason is structural rather than a matter of effort. Skew
-protection exists because a client holds JavaScript that talks to a server contract; a documentation site is HTML,
+protection exists because a client holds JavaScript that talks to a server contract. A documentation site is HTML,
 CSS and assets whose only "API" is more files, so the failure it prevents cannot occur. And what it does
 mechanically — keep older deployments individually addressable — docpreview already has as per-build shares, for a
 different reason.
@@ -489,10 +489,10 @@ preview diffing as false, and idea 9 is not a copy of anything.
 
 **The per-framework build-cache path list.** Vercel's table of which directories each framework preset caches is
 rendered client-side and could not be read. `.next/cache` for Next.js and `.cache` for Gatsby are confirmed
-elsewhere; the claim that Docusaurus is not among them comes from a Docusaurus issue thread, not from Vercel.
+elsewhere. The claim that Docusaurus is not among them comes from a Docusaurus issue thread, not from Vercel.
 
 **Comment drafts, and sharable-link expiry.** Neither is documented. What Comments documents is resolve,
-follow/unfollow and notification levels; what Sharable Links documents is creation and manual revocation, with no
+follow/unfollow and notification levels. What Sharable Links documents is creation and manual revocation, with no
 time-to-live. Do not design against either.
 
 ## Related

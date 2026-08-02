@@ -136,7 +136,7 @@ the underlay at all** — the same posture the `ziti` exposer gives previews, ap
 | `service` | The service to bind. |
 | `admin_identities` | Identity **ids** allowed to edit projects and store credentials through this listener. Empty — the default — means the dashboard is read-only over it. |
 
-The first two are required; a `ziti` listener missing either is a config error at startup, not a surprise on the
+The first two are required. A `ziti` listener missing either is a config error at startup, not a surprise on the
 first request. `docpreview doctor` goes further and actually binds each one, which is the only way to catch an
 identity that will not authenticate or a service with no Bind policy naming it.
 
@@ -179,7 +179,7 @@ an instance that knows nothing about them. Give a second instance its own servic
 :::
 
 This matters more for the admin surface than for previews. `/status` and the dashboard enumerate every open
-documentation pull request; the previews themselves are one branch each.
+documentation pull request. The previews themselves are one branch each.
 
 ## `exposer`
 
@@ -206,7 +206,7 @@ GitHub but not in DNS cannot produce an invalid hostname.
 
 Every exposer keys a live publication on this name. Two previews that render to the same one collide, and the
 collision is not always loud: zrok and Frontdoor refuse it and fail the build with a message naming the other
-preview, but the `local` exposer has no namespace to conflict in and simply replaces the listener — which
+preview, but the `local` exposer has no namespace to conflict in and replaces the listener — which
 looks like a `ready` preview whose link answers connection-refused.
 
 The default includes the repository for exactly this reason. `{{.Name}}` alone reads better and was the
@@ -235,7 +235,7 @@ reasonable thing to want, and is not the default.
 | Field | Notes |
 |---|---|
 | `identity_file` | docpreview's own enrolled identity, named by a Bind policy on the service. |
-| `service` | One wildcard service carries every preview; requests are separated by `Host`. |
+| `service` | One wildcard service carries every preview — requests are separated by `Host`. |
 | `domain` | Must match the addresses in the service's `intercept.v1` config, or the tunneler resolves names docpreview does not answer to. |
 | `name_template` | As above. |
 
@@ -365,7 +365,7 @@ curl.exe -X DELETE http://127.0.0.1:8471/api/cache/9f2a1c4b7e01
 curl -X DELETE http://127.0.0.1:8471/api/cache/9f2a1c4b7e01
 ```
 
-The preview ID is the twelve hex characters shown on its card and in `/status`; anything else is refused. Either
+The preview ID is the twelve hex characters shown on its card and in `/status`. Anything else is refused. Either
 form empties `npm/`, `yarn/` and `pnpm/` and recreates them, and never touches `cache_dir` itself. With no
 `cache_dir` configured — which cannot happen through the loader, only by constructing a config another way — it
 answers `409` and says there is no cache to clear.
@@ -392,7 +392,7 @@ push access to a branch. Whether that is a meaningful limit depends on your repo
 
 A pull request has one **branch** URL that always serves whatever built last, and one URL per **build** pinned to
 the commit it was built from. Five builds of a branch means six URLs. The pull request comment links to the branch
-URL, because that is the one that stays current; the dashboard's build picker has an **Open build ↗** button beside
+URL, because that is the one that stays current. The dashboard's build picker has an **Open build ↗** button beside
 it for the rest.
 
 The build's name is the branch's name with the short commit appended — `docs-new-guide` becomes
@@ -408,7 +408,7 @@ keeps doing so here, and the two names sort next to each other in any list of sh
 
 This is why `keep_builds` exists. Artifacts are stored per build so an older commit still has something to serve,
 which means disk use grows with every push instead of staying at one built site per pull request. When the limit is
-reached the oldest build's artifacts are deleted; the build that just published is never pruned. Its log survives
+reached the oldest build's artifacts are deleted. The build that just published is never pruned. Its log survives
 independently, under `build.keep_logs`, so a build whose site is gone can still be read for why it failed.
 
 An activity entry whose build has been cleaned up stops being clickable and says so, rather than offering a link to
@@ -454,7 +454,7 @@ dead link in a comment for most of a working day.
 `keep_builds` deletes artifact directories. It does not withdraw that build's share or release its name — those are
 tidied at the next startup, when the recorded URL is dropped and the share is reaped. In between the name still
 counts against your zrok quota and the URL still resolves, onto a directory that is gone. The dashboard marks such a
-build as no longer openable; a link somebody saved does not.
+build as no longer openable. A link somebody saved does not.
 
 Restart the daemon if that matters to you. It is on the backlog, not in the code.
 

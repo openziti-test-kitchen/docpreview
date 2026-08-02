@@ -6,7 +6,7 @@ sidebar_position: 1
 
 # How Vercel previews work
 
-docpreview is a deliberate imitation, so it is worth being precise about what is being imitated. This is the
+docpreview is a deliberate imitation, so this page is precise about what is being imitated. This is the
 mechanism, as documented by Vercel, stripped of the parts that only matter at their scale.
 
 ## The Git integration
@@ -65,7 +65,7 @@ persistent zrok name and rebinds it on each rebuild, so the link a reviewer book
 on Thursday. That is only possible because zrok v2 decoupled names from shares — see
 [Exposers](../exposers.md).
 
-**Check Runs, not the Deployments API.** A GitHub deployment is a claim that code is running somewhere; the
+**Check Runs, not the Deployments API.** A GitHub deployment is a claim that code is running somewhere. The
 Environments UI treats it as part of the repository's release history. A documentation preview is not a
 release. A check run says "this commit was examined and here is the result", which is what actually happened.
 

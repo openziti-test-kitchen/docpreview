@@ -28,8 +28,7 @@ extra failure modes.
 
 A Docusaurus build peaks in prerendering, and a 2 GB box kills it there. The failure is
 `ENOMEM` — or the build being killed with no message at all — after two minutes of successful
-`npm ci`, which reads like a broken repository rather than a small machine. This was learned on a
-2 GB instance that could never build one particular site.
+`npm ci`, which reads like a broken repository rather than a small machine.
 
 :::
 
@@ -205,7 +204,7 @@ sudo -u docpreview /usr/local/bin/docpreview zrok register '<the link from that 
 ```
 
 `register` asks for a password on stdin. That is the password for the **zrok account**, not for
-docpreview; it is not stored here, and it is how that account is recovered.
+docpreview. It is not stored here, and it is how that account is recovered.
 
 Already have a zrok account? `docpreview zrok enable -token-stdin -config $D`.
 

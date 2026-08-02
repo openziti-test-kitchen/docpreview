@@ -6,9 +6,9 @@ sidebar_position: 2
 
 # Runbook: zrok v2
 
-There are two ways to get from nothing to a working zrok environment. docpreview can do the whole thing itself —
+Two ways get you from nothing to a working zrok environment. docpreview can do the whole thing itself —
 sign up, enrol, and tell you it worked — or you can use the `zrok2` CLI and point docpreview at the result. The
-first is fewer steps; the second is what you want if you already have a zrok account for something else.
+first is fewer steps. The second is what you want if you already have a zrok account for something else.
 
 ## The short way: let docpreview do it
 
@@ -45,7 +45,7 @@ zrok keeps its account token and enrolled identity in a directory. There can be 
 
 | | Path | |
 |---|---|---|
-| **this machine** | `~/.zrok2` | what the `zrok2` CLI uses; you very likely already have this |
+| **this machine** | `~/.zrok2` | what the `zrok2` CLI uses — you very likely already have this |
 | **this installation** | `<data_dir>/zrok2` | docpreview's own, beside the vault |
 
 Both existing is the ordinary case on a developer's machine, and they are different zrok accounts. This matters more
@@ -107,7 +107,7 @@ This enrolls **this machine** as a zrok environment: it registers an OpenZiti id
 `~/.zrok2`. docpreview loads that identity at startup — it never sees your account token in its own config.
 
 Done this way, the environment is the **system** one, and a daemon that finds it enabled and has no stored choice
-adopts it and records that. So this keeps working with no further action.
+adopts it and records that. So the daemon keeps working with no further action.
 
 Check it took:
 
@@ -190,11 +190,11 @@ Set `exposer.zrok2.namespace` in the config, or give the environment a default n
 
 **`creating zrok share "..." — name already in use`**
 Something else holds that name. docpreview tries once to reclaim a name held by one of its own orphaned
-shares and retries; if that fails, the name belongs to something it did not create. Check `zrok2 list shares`.
+shares and retries. If that fails, the name belongs to something it did not create. Check `zrok2 list shares`.
 
 **`registering zrok name "..." in namespace "...": names limit reached; cannot reserve additional names`**
 The account is out of reserved names. `zrok2 list names`, then close pull requests or lower
-`preview.keep_builds`. Note that the same `409` status also carries "failed profanity or DNS check" for an
+`preview.keep_builds`. The same `409` status also carries "failed profanity or DNS check" for an
 unusable name — the message distinguishes them, the status does not.
 
 **`could not release an exposer name; it stays counted against the account's limit until it is deleted by hand`**

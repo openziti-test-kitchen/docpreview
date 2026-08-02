@@ -32,7 +32,7 @@ than shown as a default, because the card is for your decisions and not for the 
 | **Edit** | Expands the build settings for that project, in place |
 | **Settings** | Expands its environment variables, with a count when it has any |
 | **Delete** | Removes the row. Existing previews are left alone |
-| **Disable** | Inside **Edit**. A disabled project stops building; the row and its settings stay |
+| **Disable** | Inside **Edit**. A disabled project stops building. The row and its settings stay |
 | **Open ↗** | On the branch strip. Goes to this project's default-branch preview |
 | **Rebuild** | On the branch strip. Builds the default branch again, at its current tip |
 | **Link an unlinked PR…** | Appears only when the project is skipping something. See below |
@@ -52,13 +52,13 @@ It differs from a pull request's preview in four ways, and each matters:
 
 - **It never comments.** There is no pull request to comment on.
 - **Closing a pull request cannot remove it**, even one whose head is that same branch.
-- **It does not expire.** The preview TTL exists because a pull request's preview outlives its usefulness; `main`
-  is still `main` after a quiet fortnight.
+- **It does not expire.** The preview TTL exists because a pull request's preview outlives its usefulness.
+  `main` is still `main` after a quiet fortnight.
 - **Rebuild takes the branch's current tip**, not the commit it last built — the opposite of a pull request's
   rebuild, which repeats the commit under review.
 
 A project that has no branch preview yet says so and offers to build one. That covers a project added before this
-existed, or one added while the platform was unreachable; the daemon also builds any that are missing at startup.
+existed, or one added while the platform was unreachable. The daemon also builds any that are missing at startup.
 
 :::note A push does not yet refresh it
 
@@ -97,11 +97,11 @@ those credentials are not the same for every project on the daemon. So they belo
 
 A variable added here is:
 
-- **injected into every build of that repository**, under the name you gave it;
+- **injected into every build of that repository**, under the name you gave it
 - **redacted from every build log** and from the text of every error, so a build that prints its own environment —
-  which npm does on failure, and any script run under `set -x` does always — produces asterisks;
+  which npm does on failure, and any script run under `set -x` does always — produces asterisks
 - **stored in the vault**, under a namespace derived from the project, so two projects can use the same variable
-  name with different values;
+  name with different values
 - **never readable back**. Nothing in the API or the UI returns a value. Removing one means finding the token
   again wherever it came from.
 
