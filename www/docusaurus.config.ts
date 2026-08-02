@@ -48,7 +48,9 @@ const config: Config = {
   url: siteUrl,
   baseUrl,
 
-  organizationName: 'netfoundry',
+  // The repository the site is published from. These two name the GitHub Pages target, so they
+  // have to match repoUrl above — a mismatch points the deploy at a repository that is not this one.
+  organizationName: 'openziti-test-kitchen',
   projectName: 'docpreview',
 
   // Broken links in a preview are worth failing the build over: the whole
