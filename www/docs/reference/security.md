@@ -133,8 +133,8 @@ two levels of the same thing:
 | `admin` | Everything, from anywhere the daemon is reachable |
 | `viewer` | Read everything, change nothing |
 
-Set them with [`docpreview console password`](./cli.md). Until a **viewer** password exists nothing is gated, which
-is what every installation had before this existed — a feature that locks people out on upgrade is not shippable.
+Set them with [`docpreview console password`](./cli.md). Until a **viewer** password exists nothing is gated: an
+installation that has set no password is not locked out of its own dashboard by an upgrade.
 
 What is never gated, and each for a load-bearing reason:
 
@@ -147,11 +147,11 @@ What is never gated, and each for a load-bearing reason:
 
 :::danger Loopback is not exempt
 
-It was, briefly. A request from this machine was admitted as admin with no session, on the reasoning that anyone who
-can reach `127.0.0.1` can already run the binary — true, and the wrong rule, because "from this machine" is not
-something the daemon can establish. A tunnel in proxy mode connects from a local process, so `RemoteAddr` is
-loopback for a request that arrived from the internet. Betting the login on that hands every visitor an admin
-session the moment something proxies without setting a forwarding header.
+Admitting a request from this machine as admin with no session sounds defensible — anyone who can reach
+`127.0.0.1` can already run the binary — and it is the wrong rule, because "from this machine" is not something the
+daemon can establish. A tunnel in proxy mode connects from a local process, so `RemoteAddr` is loopback for a
+request that arrived from the internet. Betting the login on that hands every visitor an admin session the moment
+something proxies without setting a forwarding header.
 
 :::
 
@@ -188,8 +188,8 @@ are is a property of your deployment, not of the code. **One of these must hold*
 (`internal/daemon/secrets.go`):
 
 - **The request carries an admin session.** This is authentication, and it is the only one of the three that can be
-  true from another machine — which is the point of having a password, and the reason "managing credentials remotely
-  is unsupported" is no longer the answer.
+  true from another machine — which is the point of having a password, and what makes managing credentials
+  remotely supported at all.
 - **The request arrived over an OpenZiti listener from an identity in `admin_identities`.** See below.
 - **The request arrived locally** — a loopback `RemoteAddr` **and** no `X-Forwarded-For`, `X-Forwarded-Host`,
   `X-Real-Ip` or `Forwarded` header — *and* every configured listener is loopback or a ziti listener naming
@@ -202,9 +202,9 @@ than nothing. It is refused with a reason the page shows.
 ### Why the locality route needs both halves
 
 Checking where the daemon listens is not enough, and the gap is a tunnel. `zrok2 share public
-http://127.0.0.1:8471` publishes every route the daemon serves while the listener is still loopback, so the listener
-test answered yes with `/api/secrets` on the internet — and with the vault unlocked, `PUT`, `DELETE` and generate
-would all have succeeded for anyone holding the share URL.
+http://127.0.0.1:8471` publishes every route the daemon serves while the listener is still loopback, so a listener
+test alone answers yes with `/api/secrets` on the internet — and with the vault unlocked, `PUT`, `DELETE` and
+generate would all succeed for anyone holding the share URL.
 
 `RemoteAddr` alone cannot tell the difference. In zrok's proxy mode the daemon sees the connection from the local
 tunnel process, so the address is loopback too, and `Host` is whatever the client sent. The forwarding-header test
@@ -218,12 +218,12 @@ Taken on its own, the locality test is not a credential check. It answers "did t
 machine" from evidence the network arrangement supplies rather than from anything the caller proves, and it assumes
 nothing proxies to the daemon while stripping forwarding headers.
 
-That is why it is now one of three routes rather than the only one. **Set an admin password and the surface has real
-authentication**; the locality route remains so that a fresh installation with no password can be set up from the
+That is why it is one of three routes rather than the only one. **Set an admin password and the surface has
+authentication**; the locality route exists so that a fresh installation with no password can be set up from the
 machine it is on, where the boundary is the same one that already protects `docpreview vault set` — anyone who can
-reach `127.0.0.1` can run the binary, and the API adds no reach a shell did not already have.
+reach `127.0.0.1` can run the binary, and the API adds no reach a shell does not already have.
 
-Managing credentials from another machine is supported now, with the admin password. Without one it is not.
+Managing credentials from another machine requires the admin password. Without one it is not supported.
 
 ### Over an OpenZiti listener, the gate is an identity instead
 
@@ -302,24 +302,23 @@ Git echoes the remote URL in several of its error messages. Build output is atta
 comment. Without intervention, a clone failure would publish a live GitHub credential **to the pull request**.
 
 So every byte of git output is scrubbed: any `scheme://userinfo@host` becomes
-`scheme://***REDACTED***@host`. Tested, including that the scrubber terminates — an earlier version rescanned
-from the start after each replacement and spun forever on a line it had already redacted.
+`scheme://***REDACTED***@host`. Tested, including that the scrubber terminates: rescanning from the start after
+each replacement would spin forever on a line it had already redacted.
 
-### It leaked the token it existed to hide
+### Userinfo ends at the last `@`, not the first
 
-Worth knowing, because it is the failure this section is here to prevent and it shipped anyway. The scrubber found
-userinfo by splitting on the **first** `@`. A Bitbucket credential is authenticated with an email address as the
-username, so on
+Splitting on the first `@` leaks the token it was meant to hide. A Bitbucket credential authenticates with an email
+address as the username, so on
 
 ```text
 https://someone@example.com:TOKEN@bitbucket.org/ws/docs.git
 ```
 
-it redacted `someone` and emitted `:TOKEN@bitbucket.org/ws/docs.git` verbatim — into the build log, and from there
-into the pull request comment.
+that rule redacts `someone` and emits `:TOKEN@bitbucket.org/ws/docs.git` verbatim — into the build log, and from
+there into the pull request comment.
 
-The rule is now RFC 3986's (`internal/pipeline/clone.go:161`): after `://`, the authority ends at the first `/`,
-`?`, `#` or whitespace, and userinfo is everything before the **last** `@` inside it. Whitespace, because these are
+The rule is RFC 3986's (`internal/pipeline/clone.go:161`): after `://`, the authority ends at the first `/`, `?`,
+`#` or whitespace, and userinfo is everything before the **last** `@` inside it. Whitespace, because these are
 prose lines with URLs embedded in them rather than bare URLs. An unescaped `@` in userinfo is not legal, but git
 accepts it and people write it, so the scrubber has to be right for input that is wrong.
 `internal/pipeline/clone_test.go` covers the email-username case and two credentialed URLs on one line, and

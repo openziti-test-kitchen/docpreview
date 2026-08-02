@@ -284,11 +284,10 @@ was already consumed, the command says so and suggests a different `-reviewer` n
 
 Runs the daemon: webhook ingress, build workers, and the reaper.
 
-With no source control configured no webhook can ever arrive, and this used to be fatal on the reasoning that a
-daemon nothing can reach is the worst kind of failure: healthy-looking and inert. It made the setup page
-unreachable. Configuring GitHub means storing a private key and a webhook secret, [`/secrets`](#endpoints) is
-where you now do that, and refusing to boot until it is done left a terminal as the only route back. So it starts,
-and says plainly on the way up that nothing can arrive yet:
+With no source control configured no webhook can ever arrive, which makes for a daemon that looks healthy and is
+inert. It starts anyway. Configuring GitHub means storing a private key and a webhook secret, and
+[`/secrets`](#endpoints) is where you do that — so refusing to boot until it is done would leave a terminal as the
+only route back. Instead it starts, and says plainly on the way up that nothing can arrive yet:
 
 ```text
 level=WARN msg="no source control is configured, so no webhooks can arrive"

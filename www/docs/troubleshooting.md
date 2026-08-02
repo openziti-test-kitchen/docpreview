@@ -518,7 +518,7 @@ than three absolute references in `index.html`, which is below the threshold for
 
 ## Every preview 404s for the first minute after a restart
 
-**Expected. Wait for it.** This is the single most misleading thing docpreview does, and it has cost an afternoon.
+**Expected. Wait for it.** This is the single most misleading thing docpreview does.
 
 On startup, in this order:
 
