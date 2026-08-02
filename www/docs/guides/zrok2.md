@@ -1,10 +1,10 @@
 ---
 id: zrok2
-title: Runbook — zrok v2
-sidebar_position: 2
+title: Publish previews with zrok v2
+sidebar_position: 4
 ---
 
-# Runbook: zrok v2
+# Publish previews with zrok v2
 
 Two ways get you from nothing to a working zrok environment. docpreview can do the whole thing itself —
 sign up, enrol, and tell you it worked — or you can use the `zrok2` CLI and point docpreview at the result. The
@@ -151,7 +151,7 @@ A **name is an object with its own quota**, separate from a share, and docprevie
 Two names per pull request, not one: the branch and, per build, the branch name with the short commit appended.
 
 You do not need to pre-create names for branches. You **do** want a reserved name for the webhook ingress and
-another for the public dashboard — see the [webhook tunnel runbook](./webhook-tunnel.md) — because those URLs live
+another for the public dashboard — see the [webhook tunnel guide](./webhook-tunnel.md) — because those URLs live
 in somebody else's settings and you do not want to edit them on every restart. Those two are yours, created by hand,
 and docpreview never releases them.
 

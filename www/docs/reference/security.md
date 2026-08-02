@@ -261,7 +261,7 @@ run against a live network, treat the overlay grant as untried rather than as lo
 The architectural half of the fix, and the one that matters more than the header check. `docpreview webhook-only`
 forwards exactly `POST /webhook/github` and answers 404 to everything else, so the credential API is not
 reachable through the tunnel at all and the locality gate becomes a second line rather than the only one. With
-`-zrok-name` it binds no local TCP port either. See the [webhook tunnel runbook](../runbooks/webhook-tunnel.md).
+`-zrok-name` it binds no local TCP port either. See the [webhook tunnel guide](../guides/webhook-tunnel.md).
 
 ### Reading is open to anyone who got past the login
 
@@ -385,7 +385,7 @@ Only `GET` and `HEAD` are allowed — everything else is `405`. Path traversal i
 also rejects the Windows device names and alternate separators a hand-crafted request might try.
 
 These are hardening, not a WAF. For content you genuinely do not trust, put
-[Frontdoor](../runbooks/frontdoor.md) in front.
+[Frontdoor](../guides/frontdoor.md) in front.
 
 ## GitHub App permissions
 
@@ -411,11 +411,11 @@ exists nothing is gated, and `docpreview console status` says what is set and wh
 
 **Bind loopback, and do not share the daemon.** Default `listen` is `127.0.0.1:8471`. Publish
 `docpreview webhook-only` and point the tunnel at that: a share of the daemon publishes the dashboard, every
-preview and `/api/secrets` alongside the webhook. See the [webhook tunnel runbook](../runbooks/webhook-tunnel.md).
+preview and `/api/secrets` alongside the webhook. See the [webhook tunnel guide](../guides/webhook-tunnel.md).
 The login is a second line here, not a substitute — `dashboard-only` publishes a read-path allowlist that does not
 include `/api/admin` at all.
 
-**Rotate the private key.** See the [GitHub App runbook](../runbooks/github-app.md). Zero-downtime, and the
+**Rotate the private key.** See the [GitHub App guide](../guides/github-app.md). Zero-downtime, and the
 step people forget is deleting the old key afterwards.
 
 **Keep the master key out of the config file.** `vault.key_source` names where to read it from — a command or a

@@ -53,7 +53,7 @@ func TestVerifyBaseURLIgnoresNavigationLinks(t *testing.T) {
 <a href=/docs/exposers>Exposers</a>
 <a href=/docs/reference/cli>CLI</a>
 <a href=/docs/reference/security>Security</a>
-<a href=/docs/runbooks/github-app>Runbook</a>
+<a href=/docs/guides/github-app>Runbook</a>
 </body></html>`)
 
 	if err := verifyBaseURL(dir, "/"); err != nil {

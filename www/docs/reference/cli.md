@@ -787,7 +787,7 @@ process-wide setting read once at startup.
 
 With nothing recorded, a daemon adopts whichever is enabled and writes that down. With **both** enabled it uses
 `project`, warns, and records nothing — so the dashboard keeps asking. See
-[Runbook — zrok v2](../runbooks/zrok2.md) for why that is not a default worth guessing.
+[Publish previews with zrok v2](../guides/zrok2.md) for why that is not a default worth guessing.
 
 ### `zrok invite <email>`
 

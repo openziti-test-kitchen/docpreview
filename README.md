@@ -44,7 +44,7 @@ command like `op read`, which is what lets the daemon come back from a reboot on
 boots with a locked vault and waits for a person — the only arrangement with no key at rest anywhere. Background:
 [`www/docs/background/age.md`](www/docs/background/age.md).
 
-Then expose the webhook — [`www/docs/runbooks/webhook-tunnel.md`](www/docs/runbooks/webhook-tunnel.md) — and open
+Then expose the webhook — [`www/docs/guides/webhook-tunnel.md`](www/docs/guides/webhook-tunnel.md) — and open
 a pull request touching `docs/`.
 
 > **Documentation preview**
@@ -134,10 +134,10 @@ Then, at `http://localhost:3000`:
 | age — the credential vault | `/docs/background/age` | `www/docs/background/age.md` |
 | **Architecture** | `/docs/architecture` | `www/docs/architecture.md` |
 | **Exposers** — zrok2 / Frontdoor | `/docs/exposers` | `www/docs/exposers.md` |
-| **GitHub App runbook** | `/docs/runbooks/github-app` | `www/docs/runbooks/github-app.md` |
-| **Expose the webhook** | `/docs/runbooks/webhook-tunnel` | `www/docs/runbooks/webhook-tunnel.md` |
-| zrok v2 runbook | `/docs/runbooks/zrok2` | `www/docs/runbooks/zrok2.md` |
-| Frontdoor runbook | `/docs/runbooks/frontdoor` | `www/docs/runbooks/frontdoor.md` |
+| **Create the GitHub App** | `/docs/guides/github-app` | `www/docs/guides/github-app.md` |
+| **Expose the webhook** | `/docs/guides/webhook-tunnel` | `www/docs/guides/webhook-tunnel.md` |
+| Publish previews with zrok v2 | `/docs/guides/zrok2` | `www/docs/guides/zrok2.md` |
+| Publish previews with Frontdoor | `/docs/guides/frontdoor` | `www/docs/guides/frontdoor.md` |
 | Server configuration | `/docs/reference/configuration` | `www/docs/reference/configuration.md` |
 | Repository configuration | `/docs/reference/repo-config` | `www/docs/reference/repo-config.md` |
 | CLI reference | `/docs/reference/cli` | `www/docs/reference/cli.md` |

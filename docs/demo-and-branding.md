@@ -24,7 +24,7 @@ GitHub → the organization → **Settings** → **Developer settings** → **Gi
 | **Description** | `Documentation previews for pull requests. Builds the docs on every push and comments with a URL. Self-hosted, over zrok.` | Shown on the install screen, which is the one moment somebody decides whether to trust it |
 | **Homepage URL** | the published docs site | Not the repository. Somebody clicking this wants to know what it does, not to read Go |
 | **Webhook URL** | your tunnel's `/webhook/github` | |
-| **Webhook secret** | generated in docpreview, pasted here | See the [App runbook](../www/docs/runbooks/github-app.md) |
+| **Webhook secret** | generated in docpreview, pasted here | See the [App runbook](../www/docs/guides/github-app.md) |
 
 Permissions and events are in the runbook; nothing here changes them.
 
@@ -62,7 +62,7 @@ Worth stating because it is invisible until it is embarrassing: Bitbucket posts 
 token**, and shows the token's name beside it on every pull request. A token called `mytoken2` says that on every
 documentation review the team does, and renaming means creating a new token and re-storing it.
 
-Call it `docpreview`. This is now in the [Bitbucket runbook](../www/docs/runbooks/bitbucket.md).
+Call it `docpreview`. This is now in the [Bitbucket runbook](../www/docs/guides/bitbucket.md).
 
 ## Part 2 — The demo
 

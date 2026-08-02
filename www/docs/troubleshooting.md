@@ -242,7 +242,7 @@ delivery. It is not subscribed by default, so a fresh installation gets pull req
 
 | Platform | Where |
 |---|---|
-| GitHub | The App's **Subscribe to events** → tick **Push**. See the [App runbook](./runbooks/github-app.md). |
+| GitHub | The App's **Subscribe to events** → tick **Push**. See the [App guide](./guides/github-app.md). |
 | Bitbucket | The repository's **Webhooks** → tick **Repository → Push** on the existing hook. |
 
 Three things are ignored on purpose, so subscribing does not mean building constantly:

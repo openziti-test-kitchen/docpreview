@@ -1,10 +1,10 @@
 ---
 id: move-an-installation
-title: Runbook — move an installation
-sidebar_position: 5
+title: Move an installation
+sidebar_position: 8
 ---
 
-# Runbook: move an installation
+# Move an installation
 
 Moving docpreview to another machine, or into a container, is a copy of four things and one edit. There is no
 export command, because a file copy already gives you everything there is to export.
@@ -52,7 +52,7 @@ Get-Process docpreview | Stop-Process
 pkill docpreview
 ```
 
-Confirm nothing answers before continuing. A daemon still running is the one failure mode in this runbook that
+Confirm nothing answers before continuing. A daemon still running is the one failure mode in this guide that
 destroys something:
 
 ```powershell
@@ -143,7 +143,7 @@ durable.
 
 Enabling a fresh environment on the new machine does not merely lose the preview URLs. The reserved names are
 objects owned by the old environment and counted against the account's quota, and nothing on the new machine can
-reclaim or delete them. See [Runbook — zrok v2](./zrok2.md).
+reclaim or delete them. See [Publish previews with zrok v2](./zrok2.md).
 
 :::
 
@@ -228,4 +228,4 @@ outside the container.** The daemon asks the host's docker daemon to bind-mount 
 container, so that path is resolved on the host. Mount the data elsewhere internally and every build gets an empty
 workspace — which fails as a missing `package.json` and looks nothing like a mount problem.
 
-See [Runbook — the container](./container.md).
+See [Run in a container](./container.md).

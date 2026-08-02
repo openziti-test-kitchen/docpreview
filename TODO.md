@@ -232,7 +232,7 @@ for the full state.
       `Ingress.SetClient` make `scm.Client` swappable, and `rewireGitHub` installs the GitHub client from the
       `rearm` callback once the vault opens. Until then `/webhook/github` answers 501.
 - [x] A tunnel to `127.0.0.1:8471/webhook/github`, then update the App's webhook URL. `docpreview webhook-only`
-      over a named zrok share, per [www/docs/runbooks/webhook-tunnel.md](www/docs/runbooks/webhook-tunnel.md).
+      over a named zrok share, per [www/docs/guides/webhook-tunnel.md](www/docs/guides/webhook-tunnel.md).
 - [x] Install on the test repository and open a pull request. Deliveries arrive, builds run, the comment is
       upserted, and previews publish over `exposer.kind: zrok2`. Everything in "Fixed by running it for real"
       below came out of this.
@@ -368,7 +368,7 @@ test having been the next thing to do rather than more tests.
 
 - [x] **Docs are current with the code**, and `CLAUDE.md` exists per directory (root, `cmd/docpreview`,
       `internal/daemon`, `internal/vault`, `internal/expose`, `internal/scm`, `demo`, `www`). New:
-      [www/docs/runbooks/webhook-tunnel.md](www/docs/runbooks/webhook-tunnel.md), the procedure for exposing the
+      [www/docs/guides/webhook-tunnel.md](www/docs/guides/webhook-tunnel.md), the procedure for exposing the
       webhook and proving it works before GitHub is configured.
 
 ### The webhook tunnel

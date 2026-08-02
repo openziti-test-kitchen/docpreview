@@ -303,7 +303,7 @@ func (a *ZrokAdmin) otherExposers(ctx context.Context) []exposerInfo {
 			Ready: frontdoorReady, Needs: frontdoorNeeds,
 			What: "Public preview URLs through a NetFoundry Frontdoor tenant. The agent dials " +
 				"out, so this one binds a real local TCP port.",
-			Doc:    "www/docs/runbooks/frontdoor.md",
+			Doc:    "www/docs/guides/frontdoor.md",
 			Setup:  "frontdoor",
 			Detail: frontdoorDetail,
 		},

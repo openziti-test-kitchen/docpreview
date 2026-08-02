@@ -1,6 +1,6 @@
 # Moving this installation off the laptop
 
-The specific version of [the move runbook](../www/docs/runbooks/move-an-installation.md), with this
+The specific version of [the move runbook](../www/docs/guides/move-an-installation.md), with this
 installation's actual paths in it. The runbook is the general procedure; this is the shopping list.
 
 Delete this file once the move is done.
@@ -50,7 +50,7 @@ The zrok scope is the one that makes this move more than a file copy.
 
 ### 1. Prepare the VM
 
-[The install runbook](../www/docs/runbooks/linux-service.md), steps 1 to 3: docker, the binary, and
+[The install runbook](../www/docs/guides/linux-service.md), steps 1 to 3: docker, the binary, and
 `install.sh`. Stop before writing a config — this installation brings its own.
 
 Cross-compile from the laptop rather than installing Go on the VM:
