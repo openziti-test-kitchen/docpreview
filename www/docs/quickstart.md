@@ -19,7 +19,7 @@ Do part 1 before deciding whether you want part 2.
 | **Go 1.26+** | To build docpreview. |
 | **git** | To clone it. |
 | **Node 20+** | To run the documentation build. Not needed if you set the Docker build driver. |
-| **A zrok v2 account** | Only for a *public* URL. Skip it and choose the `local` exposer to get a loopback URL and nothing else to sign up for. See the [zrok runbook](./runbooks/zrok2.md). |
+| **A zrok v2 account** | Only for a *public* URL. Skip it and choose the `local` exposer to get a loopback URL and nothing else to sign up for. See the [zrok guide](./guides/zrok2.md). |
 
 ## Part 2 additionally needs
 
@@ -269,7 +269,7 @@ anything long-running: a passphrase a human can remember is one a wordlist can t
 
 ### 6. Create the GitHub App
 
-Follow the [GitHub App runbook](./runbooks/github-app.md) end to end. You will come back with:
+Follow the [GitHub App guide](./guides/github-app.md) end to end. You will come back with:
 
 - `github.app_id` — set it in `~/.docpreview/config.yml`, replacing the `0`
 - `github.private_key` in the vault

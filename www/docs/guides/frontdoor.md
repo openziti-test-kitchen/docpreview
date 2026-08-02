@@ -1,10 +1,10 @@
 ---
 id: frontdoor
-title: Runbook — NetFoundry Frontdoor
-sidebar_position: 3
+title: Publish previews with NetFoundry Frontdoor
+sidebar_position: 5
 ---
 
-# Runbook: NetFoundry Frontdoor
+# Publish previews with NetFoundry Frontdoor
 
 [Frontdoor](https://netfoundry.io/docs/frontdoor/intro/) is NetFoundry's zero-trust ingress: a globally
 distributed hardened frontend that fronts private HTTP services with no firewall changes, no port forwarding,
@@ -100,7 +100,7 @@ right.
 
 Everything above the wire format — the lifecycle, reaping, naming, retries, the collision rule — is covered by the
 same tests as the working zrok exposer. The wire format itself was written from Frontdoor's documentation and
-corrected against it once. No request in this runbook has been observed succeeding.
+corrected against it once. No request in this guide has been observed succeeding.
 
 It is instrumented to fail loudly rather than quietly: a create whose response cannot be read is an error naming
 the two structs to fix, a listing that decodes to nothing errors rather than reporting an empty account, and a

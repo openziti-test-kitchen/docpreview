@@ -1,10 +1,10 @@
 ---
 id: linux-service
-title: Runbook — install on a Linux VM
-sidebar_position: 0
+title: Install on a Linux VM
+sidebar_position: 6
 ---
 
-# Runbook: install on a Linux VM
+# Install on a Linux VM
 
 From a freshly provisioned cloud VM to a preview URL on a pull request. Ten steps, most of them one
 command.
@@ -251,7 +251,7 @@ The webhook tunnel prints the public URL it claimed. That is what goes into the 
 
 ## Step 9 — Connect your source control
 
-Follow [the GitHub App runbook](./github-app.md), or add a Bitbucket webhook, pointing at the URL
+Follow [the GitHub App guide](./github-app.md), or add a Bitbucket webhook, pointing at the URL
 from Step 8:
 
 ```text
@@ -290,7 +290,7 @@ sudo systemctl enable --now docpreview-dashboard
 | Logs | `journalctl -u docpreview -f`, and the same for the two tunnels |
 | Restart | `sudo systemctl restart docpreview` — previews republish and come back at the same URLs |
 | Back up | `/var/lib/docpreview` and `/etc/docpreview/master.key`. That is everything |
-| Move it | [Runbook — move an installation](./move-an-installation.md) |
+| Move it | [Move an installation](./move-an-installation.md) |
 
 :::danger One daemon per zrok account
 

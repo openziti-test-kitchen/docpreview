@@ -1,28 +1,28 @@
 ---
 id: webhook-tunnel
-title: Runbook — expose the webhook
-sidebar_position: 4
+title: Expose the webhook
+sidebar_position: 3
 ---
 
-# Runbook: expose the webhook
+# Expose the webhook
 
 The daemon binds loopback. GitHub is on the internet. Something has to bridge those two, and the shape of that
 bridge is the whole security story of this deployment — so it is a separate process publishing exactly one route,
 not a tunnel pointed at the daemon.
 
-Work through this **before** the [GitHub App runbook](./github-app.md) asks you for a Webhook URL. At the end you
+Work through this **before** the [GitHub App guide](./github-app.md) asks you for a Webhook URL. At the end you
 will have a URL that survives restarts and a `PASS` that proves a signed delivery is accepted end to end.
 
 ## Before you start
 
-- zrok v2 installed and this machine enrolled — see [the zrok v2 runbook](./zrok2.md).
+- zrok v2 installed and this machine enrolled — see [the zrok v2 guide](./zrok2.md).
 - `github.webhook_secret` already in the vault. `webhook-check` reads it from there, so store it first:
 
   ```powershell
   "paste-the-secret-here" | docpreview vault set github.webhook_secret
   ```
 
-  If you have not generated one yet, [step 2 of the GitHub App runbook](./github-app.md#step-2--create-the-app)
+  If you have not generated one yet, [step 2 of the GitHub App guide](./github-app.md#step-2--create-the-app)
   has the command. The same value goes into the App later.
 
 ## Step 1 — reserve a name
@@ -183,13 +183,13 @@ When it fails, it says which hop:
 
 ## Step 4 — give GitHub the URL
 
-Now go to the [GitHub App runbook](./github-app.md). Two fields take what you built here:
+Now go to the [GitHub App guide](./github-app.md). Two fields take what you built here:
 
 - **Webhook URL** — `https://docpreview.shares.zrok.io/webhook/github`, the exact URL `webhook-check` passed on.
 - **Webhook secret** — the same value that is in the vault under `github.webhook_secret`. A mismatch here is the
   `401` in the table above, arriving from GitHub's side instead of yours.
 
-Everything else — permissions, events, the private key, installation — is unchanged. Follow that runbook from
+Everything else — permissions, events, the private key, installation — is unchanged. Follow that guide from
 [step 2](./github-app.md#step-2--create-the-app).
 
 ## `GET` on the webhook URL answers 405. That is correct.
@@ -239,7 +239,7 @@ the reserved name and this filtering proxy are how deliveries arrive.
 
 ## Related
 
-- [zrok v2 runbook](./zrok2.md)
+- [zrok v2 guide](./zrok2.md)
 - [Create the GitHub App](./github-app.md)
 - [CLI reference](../reference/cli.md)
 - [Security model](../reference/security.md)

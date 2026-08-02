@@ -62,7 +62,7 @@ access token show up under a synthetic bot address of the form `…@bots.bitbuck
 which is the property that keeps a comment from looking like a maintainer wrote it.
 
 What it costs an operator, in full — this is the shape of the Bitbucket sibling to
-[the GitHub App runbook](../../www/docs/runbooks/github-app.md):
+[the GitHub App runbook](../../www/docs/guides/github-app.md):
 
 | Step | Where | Produces |
 |---|---|---|
@@ -971,7 +971,7 @@ URL constructed rather than decorated. Builds now succeed.
 **Stage 8 — build statuses**, last, and only when `localOrigin` is non-empty, because `url` is a required field.
 Everything above works without them.
 
-**Stage 9 — documentation.** A `www/docs/runbooks/bitbucket.md` sibling to the GitHub App runbook, including the
+**Stage 9 — documentation.** A `www/docs/guides/bitbucket.md` sibling to the GitHub App runbook, including the
 attribution warning and the per-repository-webhook limit; then `docs/design/09-scm.md` (whose Bitbucket section says
 "interface only"), `docs/design/README.md`, `README.md:187`, `www/docs/quickstart.md:31`, and the `TODO.md`
 checklist. And fold this document into 09-scm.md, per the rule in `CLAUDE.md` that a plan which lands is deleted.

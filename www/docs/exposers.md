@@ -95,7 +95,7 @@ share docpreview created from one you made by hand in another terminal.
 A name is registered before the share, left untouched by every rebuild, and deleted when the preview is torn down.
 Both halves matter to an operator: the first is what makes a reviewer's bookmark keep working, and the second is
 what stops the account's reserved-name allowance filling up one push at a time. See
-[what docpreview does with names](./runbooks/zrok2.md#what-docpreview-does-with-names).
+[what docpreview does with names](./guides/zrok2.md#what-docpreview-does-with-names).
 
 ### Configuration
 
@@ -114,7 +114,7 @@ exposer:
 `open: true` means anyone with the URL can read the preview. For unreleased documentation, set `open: false`
 and list reviewers in `access_grants`, or put an OAuth provider in front.
 
-See the [zrok runbook](./runbooks/zrok2.md) for setup.
+See the [zrok guide](./guides/zrok2.md) for setup.
 
 ## `frontdoor`
 
@@ -157,7 +157,7 @@ exposers use. If the field names turn out to be different, the fix is confined t
 
 :::
 
-See the [Frontdoor runbook](./runbooks/frontdoor.md).
+See the [Frontdoor guide](./guides/frontdoor.md).
 
 ## `ziti`
 

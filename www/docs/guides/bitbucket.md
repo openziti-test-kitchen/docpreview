@@ -1,10 +1,10 @@
 ---
 id: bitbucket
-title: Runbook — Bitbucket Cloud
+title: Connect Bitbucket Cloud
 sidebar_position: 2
 ---
 
-# Runbook: Bitbucket Cloud
+# Connect Bitbucket Cloud
 
 Four steps: a token, a webhook secret, the webhook, and a project row. Bitbucket has no App to install, so
 everything here is per repository or per workspace and there is no click-through to sit out.

@@ -1,10 +1,10 @@
 ---
 id: container
-title: Runbook — the container
-sidebar_position: 6
+title: Run in a container
+sidebar_position: 7
 ---
 
-# Runbook: the container
+# Run in a container
 
 :::tip Try the systemd service first
 
@@ -112,8 +112,8 @@ docker run --rm -v zrok:/dest -v "$env:USERPROFILE\.zrok2:/src:ro" `
   --entrypoint sh docpreview:latest -c "cp -a /src/. /dest/"
 ```
 
-See [Runbook — zrok v2](./zrok2.md) for what the environment is and why losing it is not recoverable from the new
-machine.
+See [Publish previews with zrok v2](./zrok2.md) for what the environment is and why losing it is not
+recoverable from the new machine.
 
 ## Step 5 — Start it
 
@@ -156,4 +156,4 @@ docker compose up -d
 
 Compose stops the old containers before starting the new ones, which is what the one-daemon-per-account rule
 requires. Never run the new image alongside the old instance — see
-[Runbook — move an installation](./move-an-installation.md).
+[Move an installation](./move-an-installation.md).

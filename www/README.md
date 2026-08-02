@@ -30,9 +30,9 @@ Once the dev server is up:
 | age — the credential vault | http://localhost:3000/docs/background/age |
 | **Architecture** | http://localhost:3000/docs/architecture |
 | **Exposers** — zrok2 / Frontdoor | http://localhost:3000/docs/exposers |
-| **GitHub App runbook** | http://localhost:3000/docs/runbooks/github-app |
-| zrok v2 runbook | http://localhost:3000/docs/runbooks/zrok2 |
-| Frontdoor runbook | http://localhost:3000/docs/runbooks/frontdoor |
+| **GitHub App guide** | http://localhost:3000/docs/guides/github-app |
+| zrok v2 guide | http://localhost:3000/docs/guides/zrok2 |
+| Frontdoor guide | http://localhost:3000/docs/guides/frontdoor |
 | Server configuration | http://localhost:3000/docs/reference/configuration |
 | Repository configuration | http://localhost:3000/docs/reference/repo-config |
 | CLI reference | http://localhost:3000/docs/reference/cli |
@@ -83,7 +83,7 @@ docs/
   exposers.md                 zrok2, Frontdoor, local
   troubleshooting.md          the baseUrl trap, and everything else
   background/                 Vercel, Jamstack, Docusaurus, age
-  runbooks/                   GitHub App, zrok2, Frontdoor
+  guides/                   GitHub App, zrok2, Frontdoor
   reference/                  configuration, repo-config, CLI, security
 sidebars.ts                   hand-written; reading order is deliberate
 docusaurus.config.ts          note the baseUrl line

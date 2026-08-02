@@ -27,11 +27,11 @@ import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 // Matching the theme rather than styling our own means the left nav here reads like
 // the rest of the NetFoundry documentation, which is the point.
 //
-// # Files did not move
+// # The sidebar is free to disagree with the directory layout
 //
-// Only the reading order changed. Moving pages on disk would change their URLs, and
-// this documentation is already linked from pull request comments and runbooks. A
-// sidebar is free to disagree with the directory layout, so it does.
+// Grouping here costs nothing, while moving a page on disk changes its URL — and these
+// pages are linked from pull request comments and from each other. So reading order is
+// expressed here and the files stay where they are.
 const section = (label: string) => ({
   type: 'link' as const,
   label,
@@ -46,21 +46,24 @@ const sidebars: SidebarsConfig = {
     'quickstart',
 
     // Task-oriented. Every one of these has a human following it with a browser
-    // open, so they are ordered by when that human needs them: connect the App,
-    // reach the daemon, choose how previews are served, then what to do when it
-    // breaks.
+    // open, so they are ordered by when that human needs them: connect a source
+    // control host, reach the daemon, choose how previews are served, put it on a
+    // server, then what to do when it breaks.
+    //
+    // Every page in docs/guides/ belongs here. A guide absent from this list is
+    // reachable only by search, which for a procedure somebody is part-way through
+    // is the same as missing.
     section('HOW-TO'),
-    'runbooks/github-app',
-    // Was missing from the sidebar entirely — the page existed and nothing linked
-    // to it, which for the one runbook covering the hardest step is the worst page
-    // to lose.
-    'runbooks/webhook-tunnel',
-    'runbooks/zrok2',
-    'runbooks/frontdoor',
-    // Deployment, after the pages about getting one instance working: nobody containerises
-    // or moves an installation they have not run yet.
-    'runbooks/container',
-    'runbooks/move-an-installation',
+    'guides/github-app',
+    'guides/bitbucket',
+    'guides/webhook-tunnel',
+    'guides/zrok2',
+    'guides/frontdoor',
+    // Deployment, after the pages about getting one instance working: nobody installs
+    // a service, containerises or moves an installation they have not run yet.
+    'guides/linux-service',
+    'guides/container',
+    'guides/move-an-installation',
     'troubleshooting',
 
     // Understanding-oriented: read when deciding whether to use this, or before

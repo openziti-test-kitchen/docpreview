@@ -66,7 +66,7 @@ rather than being noticed months later.
 ## Where to go next
 
 - [Quickstart](./quickstart.md) — running locally in about ten minutes, no account needed
-- [Install on a Linux VM](./runbooks/linux-service.md) — a cloud VM to a preview URL, as a systemd service
+- [Install on a Linux VM](./guides/linux-service.md) — a cloud VM to a preview URL, as a systemd service
 - [Architecture](./architecture.md) — how the pieces fit and why they are shaped that way
-- [GitHub App runbook](./runbooks/github-app.md) — the click-through you cannot avoid
+- [GitHub App guide](./guides/github-app.md) — the click-through you cannot avoid
 - [age](./background/age.md) — what the credential vault is, if that name is unfamiliar

@@ -1,10 +1,10 @@
 ---
 id: github-app
-title: Runbook — create the GitHub App
+title: Create the GitHub App
 sidebar_position: 1
 ---
 
-# Runbook: create the GitHub App
+# Create the GitHub App
 
 This is the one part nobody can automate for you: creating a GitHub App requires a human in a browser. Budget
 ten minutes. At the end you will have three values in the vault and a working webhook.
@@ -39,7 +39,7 @@ ten minutes. At the end you will have three values in the vault and a working we
 ## Step 1 — get a public webhook URL first
 
 GitHub validates the webhook URL when you save the App, so have it working before you start clicking. That is a
-runbook of its own: **[expose the webhook](./webhook-tunnel.md)**. Work through it now and come back with two
+guide of its own: **[expose the webhook](./webhook-tunnel.md)**. Work through it now and come back with two
 things.
 
 1. A URL like `https://docpreview.shares.zrok.io/webhook/github`, stable across restarts because it is bound to a
@@ -50,9 +50,9 @@ things.
 Do not point a share at the daemon directly. `zrok2 share public http://127.0.0.1:8471` publishes every route
 including `/api/secrets`, putting the credential API on the internet. `docpreview webhook-only` publishes one
 route and nothing else. The reasoning is in
-[that runbook](./webhook-tunnel.md#why-this-exists-rather-than-sharing-the-daemon).
+[that guide](./webhook-tunnel.md#why-this-exists-rather-than-sharing-the-daemon).
 
-That runbook also has you store `github.webhook_secret` in the vault first, since `webhook-check` reads it from
+That guide also has you store `github.webhook_secret` in the vault first, since `webhook-check` reads it from
 there. Use that same value in step 2 below.
 
 Leave `webhook-only` running in its own terminal.

@@ -14,7 +14,7 @@ replacement for the abstraction it lives inside.
 
 Frontdoor and zrok solve the same problem with the same three primitives — an enrolled agent on the private
 side, a hardened global frontend, and a share mapping a public route onto a private target
-(`www/docs/runbooks/frontdoor.md:29`). The `Exposer` interface exists so that switching between them is a
+(`www/docs/guides/frontdoor.md:29`). The `Exposer` interface exists so that switching between them is a
 one-line config change and nothing upstream can tell the difference
 (`internal/expose/frontdoor.go:34`).
 
@@ -219,7 +219,7 @@ permission mode, access grants, and optionally an OAuth provider with email patt
 
 So: whatever the named frontend's default policy is, that is the policy. If the frontend is open, every preview
 is public to anyone with the URL, and the URL is guessable — it is the repository name and the branch. The
-runbook sells Frontdoor precisely on IdP-enforced authentication and MFA (`www/docs/runbooks/frontdoor.md:83`),
+runbook sells Frontdoor precisely on IdP-enforced authentication and MFA (`www/docs/guides/frontdoor.md:83`),
 and that is a truthful description of the product and not of this integration: the protection is entirely a
 property of a frontend somebody configured elsewhere, docpreview neither sets it nor checks it, and there is no
 per-preview access control of any kind. That is a weaker position than `zrok2` with `open: false`, and much
@@ -286,7 +286,7 @@ looks (`TODO.md:105`).
 ## Operational requirements
 
 An account with API access, a token minted for it, and an enrolled agent that can reach the docpreview host
-(`www/docs/runbooks/frontdoor.md:35`). The agent is a separate process, not part of docpreview, and where it
+(`www/docs/guides/frontdoor.md:35`). The agent is a separate process, not part of docpreview, and where it
 runs is the whole deployment decision:
 
 - **Same host** — `agent_reachable_host: 127.0.0.1` and nothing else is reachable from anywhere. This is the
@@ -426,7 +426,7 @@ Everything in this section is inference or recollection, not something read out 
   be invented. The endpoint paths and field names that *are* in the code are themselves flagged unverified by
   their own author (`internal/expose/frontdoor.go:38`).
 - That the agent runs as a separate process on Linux, and the co-located/sidecar/separate-host taxonomy, comes
-  from `www/docs/runbooks/frontdoor.md` rather than from anything executable.
+  from `www/docs/guides/frontdoor.md` rather than from anything executable.
 - The claim that an orphaned share can block a republish depends on names being unique per tenant. If they are
   not, the name-collision refusal in `Publish` is local bookkeeping only and `reapName`'s absence costs nothing.
 - Port-exhaustion sizing is arithmetic about ephemeral ranges, not a measurement. Nobody has run a hundred
