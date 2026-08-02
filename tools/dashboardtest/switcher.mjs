@@ -3,14 +3,13 @@
 //
 // # Why this exists
 //
-// It replaced a <select>, and a select came with the browser's behaviour for free —
-// keyboard, type-ahead, click-away, one open at a time. A hand-built panel has none of
-// that unless somebody writes it, and every one of those is invisible in a screenshot.
+// Not a <select>: a select gets the browser's behaviour for free — keyboard, type-ahead,
+// click-away, one open at a time. A hand-built panel has none of that unless something
+// here provides it, and every one of those is invisible in a screenshot.
 //
-// It also covers the join this page now performs: previews say which projects have
-// activity, `status.projects` says what each is called and what badge it carries, and a
-// project with no previews at all must still be listed — "I added it and it is not in the
-// list" was a real report.
+// It also covers the join this page performs: previews say which projects have activity,
+// `status.projects` says what each is called and what badge it carries, and a project
+// with no previews at all must still be listed.
 //
 //   npm install --prefix tools/dashboardtest
 //   node tools/dashboardtest/switcher.mjs
@@ -26,8 +25,9 @@ let failures = 0;
 const fail = msg => { failures++; console.log(`   FAIL: ${msg}`); };
 const ok = msg => console.log(`   ok: ${msg}`);
 
-// Three projects: two with previews, and one configured with none — the case that used
-// to be invisible. One carries an uploaded badge, one a display name, one neither.
+// Three projects: two with previews, and one configured with none — the case a join
+// keyed only on previews would drop. One carries an uploaded badge, one a display
+// name, one neither.
 const status = {
   exposer: "zrok2", instance: "test", pending: 0, running: 0,
   projects: [
@@ -119,8 +119,7 @@ console.log("\nthe list");
   if ($("#projpick-panel").hidden) fail("clicking the trigger did not open the panel");
 
   const labels = rows().map(r => r.textContent.replace(/\s+/g, " ").trim());
-  // Every configured project, including the one with no previews — the report this
-  // exists for. Plus "All projects".
+  // Every configured project, including the one with no previews, plus "All projects".
   for (const want of ["Unified Doc", "docpreview", "Customer Connect"]) {
     if (!labels.some(l => l.includes(want))) {
       fail(`${want} is missing from the list: ${JSON.stringify(labels)}`);

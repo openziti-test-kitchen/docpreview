@@ -11,10 +11,10 @@ import (
 
 // A preview whose republish failed must not go on advertising its URL.
 //
-// This is the live failure of 2026-07-30 reduced to the row it left behind: the build
-// succeeded, so the row says `ready` with the URL that build published, and after a
-// restore that could not bind a share nothing answers there. The dashboard and the pull
-// request comment both read this row, so the row is where it has to be fixed.
+// A build can succeed and leave a row saying `ready` with the URL it published, and a
+// later restore can then fail to bind a share, leaving nothing answering at that URL. The
+// dashboard and the pull request comment both read this row, so the row is where the
+// failure has to be reflected.
 func TestFailPreviewLeavesNoURLToOffer(t *testing.T) {
 	ctx := context.Background()
 	st := testStore(t)

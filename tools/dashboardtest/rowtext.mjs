@@ -17,8 +17,8 @@ const status = await statusFetcher(daemon)();
 const vc = new VirtualConsole();
 vc.on("jsdomError", e => console.log("PAGE ERROR:", e.message));
 
-// Resolved from this file rather than from the working directory, which made it runnable
-// only from the repository root and only by somebody who knew that.
+// Resolved from this file rather than from the working directory, so it runs from any
+// directory rather than only from the repository root.
 const dom = new JSDOM(readFileSync(
   join(here, "..", "..", "internal", "daemon", "dashboard.html"), "utf8"), {
   runScripts: "dangerously", url: `${daemon}/`, virtualConsole: vc,

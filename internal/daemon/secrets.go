@@ -168,16 +168,13 @@ func isLocalRequest(r *http.Request) (bool, string) {
 // Every listener must be one of two things: loopback, or a ziti service that names the
 // identities allowed to write through it.
 //
-// The ziti case used to be an outright refusal, on the reasoning that "enrolled at all" is
-// not authorization for a credential write. That reasoning was right and the refusal was the
-// wrong shape: it made a daemon reachable *only* over the overlay permanently read-only, and
-// it refused loopback writes too, because one ziti listener disqualified the whole daemon.
+// "Enrolled at all" is not authorization for a credential write, so a ziti listener is read-only unless
+// it grants write access explicitly. Refusing the whole daemon whenever any listener is ziti would make
+// loopback writes fail too, on a daemon that also has a loopback listener.
 //
-// What replaced it is an explicit grant. `admin_identities` on the listener names the
-// identity ids that may write, the accept path records which identity dialed, and
-// isLocalRequest checks one against the other. A listener with no list is still refused —
-// the default is read-only, and that is the same answer as before for anybody who has not
-// opted in.
+// The grant is explicit. `admin_identities` on the listener names the identity ids that may write, the
+// accept path records which identity dialed, and isLocalRequest checks one against the other. A listener
+// with no list is still refused — the default is read-only.
 //
 // This is a property of the daemon, not of a request. See isLocalRequest for the
 // per-request half, and why one without the other is not sufficient.
@@ -255,11 +252,9 @@ type secretsState struct {
 // into every build as an environment variable and is readable by whatever the pull
 // request's own build script chooses to do.
 //
-// One flat list put a GitHub App private key three rows above a Docusaurus API key
-// with nothing between them, which is how six tokens came to be stored in the belief
-// that storing them was enough. The rule that separates them is
-// vault.IsBuildEnvKey: shell-shaped names are build variables, dotted names are the
-// daemon's own.
+// A single flat list would put a GitHub App private key next to a Docusaurus API key with nothing marking
+// the difference between them. The rule that separates the two groups is vault.IsBuildEnvKey: shell-shaped
+// names are build variables, dotted names are the daemon's own.
 const (
 	GroupDaemon = "daemon"
 	GroupBuild  = "build"
@@ -365,11 +360,9 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 
 	// Then whatever else is in there, and each one says what it is for.
 	//
-	// A shell-shaped key is injected into every build under its own name — that is the
-	// rule vault.IsBuildEnvKey states, and saying so here is not decoration. Without it
-	// this list was a set of names with no indication whether any of them did anything,
-	// which is exactly how six tokens came to be stored in the belief that storing them
-	// was enough.
+	// A shell-shaped key is injected into every build under its own name — the rule vault.IsBuildEnvKey
+	// states. A row listed with no indication of whether it does anything invites storing a token in the
+	// belief that storing it is enough.
 	var rest []string
 	for k := range have {
 		rest = append(rest, k)
@@ -378,9 +371,8 @@ func (a *SecretsAdmin) snapshot(r *http.Request) secretsState {
 	for _, k := range rest {
 		view := secretView{Key: k, Set: true, Label: k, Group: GroupBuild}
 		if vault.IsBuildEnvKey(k) {
-			// EnvVar alone. The page turns this into a one-word chip and states the rule
-			// once above the list: as a per-row sentence it wrapped to three lines on every
-			// entry, and a list of six tokens became a wall of the same paragraph repeated.
+			// EnvVar alone. The page turns this into a one-word chip and states the rule once above the
+			// list, rather than as a per-row sentence that would repeat for every entry.
 			view.EnvVar = k
 		} else {
 			// Not shell-shaped, not mapped by build.secrets, and not one of the known
@@ -404,13 +396,12 @@ type knownKey struct {
 	// optional distinguishes "usable here but not needed" from "not needed at all", for
 	// keys that are neither required nor irrelevant.
 	//
-	// Two states were not enough once a Bitbucket token could live on a project instead.
-	// A workspace-wide token is genuinely useful and genuinely optional: an operator whose
-	// administrator refuses wide tokens will never store one, and flagging it `missing` in
-	// red sent them looking for a credential they cannot create. Flagging it `not needed`
-	// is the opposite lie — it is the thing that saves setting a token per project.
+	// A workspace-wide Bitbucket token is genuinely useful and genuinely optional, because a project can
+	// carry its own token instead. Flagging it `missing` in red sends an operator looking for a credential
+	// their administrator refuses to issue. Flagging it `not needed` is the opposite lie: it hides the
+	// token that would save setting one per project.
 	//
-	// Nil means "never optional", which is every key that predates this.
+	// Nil means "never optional".
 	optional func(config.Server) bool
 }
 
@@ -426,8 +417,8 @@ func knownKeys() []knownKey {
 			"only for exposer.kind: frontdoor",
 			func(c config.Server) bool { return c.Exposer.Kind == "frontdoor" }, nil},
 
-		// The zrok account token, listed here because this is where a credential belongs and
-		// listing it here is what let the exposer panel stop carrying a row of its own for it.
+		// The zrok account token belongs here, not on the exposer panel, because this is where every other
+		// credential lives.
 		//
 		// Never required: zrok keeps its own copy in its environment directory and the exposer
 		// authenticates from there, so previews work whether or not this is set. What it buys is
@@ -447,12 +438,10 @@ func knownKeys() []knownKey {
 		{vault.KeyBitbucketHookSec, "Bitbucket webhook secret",
 			"generate it here, then paste the same value into Repository settings → Webhooks",
 			usingBitbucket, nil},
-		// The three Bitbucket credentials are optional, never required, and that is a
-		// consequence of where a Bitbucket token can live. It is scoped to a repository
-		// unless a workspace administrator permits the wider kinds, so an operator may
-		// legitimately have nothing to put here and a token on each project instead.
-		// Marking these `missing` in red sent people looking for a credential their admin
-		// will not issue.
+		// The three Bitbucket credentials are optional, never required: a Bitbucket token is scoped to a
+		// repository unless a workspace administrator permits the wider kinds, so an operator may
+		// legitimately have nothing to put here and a token on each project instead. Marking these
+		// `missing` in red would send them looking for a credential their admin will not issue.
 		{vault.KeyBitbucketAccessToken, "Bitbucket access token",
 			"a workspace or project access token, used by every Bitbucket project that has " +
 				"none of its own. Scopes: repository, pullrequest:write. Optional — a " +
@@ -483,10 +472,9 @@ func usingBitbucket(c config.Server) bool { return c.Bitbucket.Enabled }
 
 // Handler routes the secrets API.
 //
-// Absolute patterns, not StripPrefix. Stripping "/api/secrets" from a request
-// for exactly "/api/secrets" leaves an empty path, which ServeMux answers with
-// a 307 to "/" — so the listing endpoint redirected to the dashboard instead of
-// returning anything.
+// Absolute patterns, not StripPrefix. Stripping "/api/secrets" from a request for exactly "/api/secrets"
+// leaves an empty path, which ServeMux answers with a 307 to "/" — routing the listing endpoint to the
+// dashboard instead of its own response.
 func (a *SecretsAdmin) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/secrets", a.get)
@@ -504,14 +492,12 @@ func (a *SecretsAdmin) Handler() http.Handler {
 // returns what it just created, in the response to the call that created it,
 // and there is no way to ask for it again.
 //
-// It exists because the alternative did not work. A webhook secret has to be
-// identical in two places — GitHub's form and this vault — and a UI that can
-// only accept values requires the operator to produce one elsewhere, keep it on
-// a clipboard across an app-creation flow, and paste it twice. Told to "paste
-// the value you generated earlier", the honest answer is "from where?".
+// A webhook secret has to be identical in two places — GitHub's form and this vault. A UI that only
+// accepts values would require the operator to produce one elsewhere, keep it on a clipboard across an
+// app-creation flow, and paste it twice, with no way to retrieve it if that flow is interrupted.
 //
-// So: press a button, copy what appears, paste it into GitHub. The same shape
-// GitHub itself uses for personal access tokens, for the same reason.
+// So: press a button, copy what appears, paste it into GitHub. The same shape GitHub itself uses for
+// personal access tokens, for the same reason.
 func (a *SecretsAdmin) generate(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	if !validKey(key) {
@@ -617,16 +603,11 @@ func (a *SecretsAdmin) unlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Commit a brand-new vault to disk immediately.
-	//
-	// Open on a missing file returns an empty vault in memory and writes
-	// nothing — reasonably, since there is nothing to write. But the button
-	// says "Create", and it did not: the file first appeared when you stored a
-	// secret, so a restart before that silently discarded the passphrase and
-	// the page offered to create a vault all over again. It looks exactly like
-	// the vault was wiped.
-	//
-	// Saving an empty vault costs one small file and makes the promise true.
+	// Commit a brand-new vault to disk immediately, so the button labeled "Create" actually creates
+	// something. Open on a missing file returns an empty vault in memory and writes nothing on its own. If
+	// nothing forced a save here, a restart before the first secret was stored would silently discard the
+	// passphrase and the page would offer to create the vault again, indistinguishable from the vault
+	// having been wiped.
 	if !vaultExists(a.path) {
 		if err := v.Save(); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{

@@ -31,10 +31,8 @@ func projectFormFixture(t *testing.T) (http.Handler, *store.Store) {
 	return NewProjectsAdmin(st, cfg, slog.New(slog.DiscardHandler)).Handler(), st
 }
 
-// TestABaseURLIsCorrectedRatherThanRefused. The slashes are mandatory and this code
-// knows where they go, so "/docs" saves as "/docs/" instead of coming back as an
-// error somebody has to read and retype. Ten stacked copies of that error is what
-// this replaced.
+// TestABaseURLIsCorrectedRatherThanRefused. The slashes are mandatory and this code knows where they go,
+// so "/docs" saves as "/docs/" instead of coming back as an error somebody has to read and retype.
 func TestABaseURLIsCorrectedRatherThanRefused(t *testing.T) {
 	h, st := projectFormFixture(t)
 

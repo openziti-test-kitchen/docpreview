@@ -2,13 +2,10 @@
 //
 // # Why this exists when logtail.mjs already opens a row and starts a build under it
 //
-// Because logtail asserts the *picker* learns about the new build, and stops there. The complaint
-// is about the pane: "it doesn't start tailing a new build properly", every time, fixed by a
-// reload. A reload fixing it is the signature of state the render path does not recompute, and no
-// harness asserted the recompute.
-//
-// Three diagnoses of this were made by reading the code and all three were wrong. So this file
-// reproduces the operator's sequence instead, in the three shapes it actually happens in:
+// logtail asserts the *picker* learns about the new build, and stops there. This file asserts
+// the *pane*: that it starts tailing the new build without a reload. A bug that a reload fixes
+// is state the render path fails to recompute, which reading the code does not reveal — so this
+// file reproduces the sequence instead, in the three shapes it actually happens in:
 //
 //   A. The row is open on the previous build's replay — the picker says "(live)" — and a push
 //      arrives. The pane must switch to the new build and follow it.
@@ -193,7 +190,7 @@ console.log("A. the row is open on the last build, and a push arrives");
     fail("no stream is open, so nothing is being tailed");
   } else ok("a stream is open");
 
-  // The actual complaint. The pane must show the *new* build without anything being clicked.
+  // The pane must show the *new* build without anything being clicked.
   if (!s.head.includes(NEW) && !s.last.includes(NEW)) {
     fail(`the pane is still showing "${s.head}" — it never switched to ${NEW}`);
   } else ok(`the pane switched to ${NEW} on its own`);

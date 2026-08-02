@@ -45,12 +45,13 @@ func storedPreview(t *testing.T, d *Daemon, st *store.Store, pr model.PullReques
 	return p
 }
 
-// TestAFailedRepublishStopsAdvertisingItsURL covers the live failure of 2026-07-30.
+// TestAFailedRepublishStopsAdvertisingItsURL asserts that a preview whose republish fails stops
+// advertising the URL it can no longer serve.
 //
-// A preview that had built perfectly failed to restore at startup when `CreateShare` timed
-// out, and `/status` went on reporting `state: ready` with a URL that answered 502. Nothing
-// in the recovery path wrote anything to the row, so the dashboard, the status payload and
-// the pull request comment all went on offering an address with no listener behind it.
+// A preview that built perfectly can still fail to restore at startup, if `CreateShare` times out.
+// Without a write to the row here, `/status` would go on reporting `state: ready` with a URL that
+// answers 502, and the dashboard, the status payload and the pull request comment would all go on
+// offering an address with no listener behind it.
 //
 // The URL is the assertion that matters rather than the state, because the dashboard's Open
 // button is enabled by the presence of a URL and not by the state — a rebuild leaves the

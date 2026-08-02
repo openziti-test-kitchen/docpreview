@@ -4,16 +4,14 @@
 //
 // # Why this exists
 //
-// The projects page was reported as unusable, and the causes were not in the page's
-// logic — they were in what it rendered and where its errors went. Two of them are
-// invisible from reading the JavaScript:
+// Two rules the page depends on that are invisible from reading the JavaScript:
 //
 //   - `.wrap` sets `display: grid`, which beats `[hidden]`'s `display: none`. So
-//     `el.hidden = true` did nothing and the previews and activity sections rendered
-//     under both admin pages with nothing in them.
-//   - `run()` rendered every result through the *secrets* renderer and prepended its
-//     errors to `#setup-body`, which is hidden on this page. A failed project save
-//     therefore did nothing and said nothing.
+//     `el.hidden = true` alone would do nothing, and the previews and activity sections
+//     would render under both admin pages with nothing in them.
+//   - `run()` must render its result through this page's own renderer and print its
+//     errors to `#projects-body`, not to `#setup-body`, which is hidden here. A failed
+//     project save otherwise does nothing and says nothing.
 //
 // Both are asserted below, because both will come back the moment someone adds a
 // third page.
@@ -39,7 +37,8 @@ const ok = msg => console.log(`   ok: ${msg}`);
 
 // Two projects: one that states most of its build and holds two of its own
 // environment variables, and one that defers entirely to its repository and is
-// disabled. The second is the row that used to render as a bare line of text.
+// disabled. The second is the row a bare line of text would render as, if the
+// disabled state were not carried through.
 const state = () => ({
   can_write: true,
   secrets_available: true,
@@ -293,10 +292,10 @@ console.log("\nidentity: badge, name, platform label");
 
 console.log("\nadding is reachable without scrolling past every project");
 {
-  // Both the button and the form it opens used to be below the list. Fine for three
-  // projects and wrong for thirty: adding one meant scrolling past every project that
-  // already existed, and the form then appeared where the button had been — the bottom of
-  // a long page — so the fields to fill in were somewhere the eye had never been.
+  // Both the button and the form it opens must stay above the list. Below it, adding a
+  // project on a page of thirty would mean scrolling past every one that already exists,
+  // and the form would then open where the button was — the bottom of a long page —
+  // putting the fields to fill in somewhere the eye had never been.
   const body = $("#projects-body");
   const btnEl = $("#p-new");
   const firstCard = $(".pcard");
@@ -330,7 +329,7 @@ console.log("\nthe add form is a dialog, not the bottom of the page");
     ok("opens in a modal dialog");
   }
   // Wide, because a build command is a shell line and a container image is a registry
-  // path: the report dialog's 34rem turns both into boxes you scroll sideways to read.
+  // path: a narrower dialog turns both into boxes you scroll sideways to read.
   if (modal && !modal.querySelector(".modal-card.wide")) {
     fail("the project dialog uses the narrow card");
   }
@@ -517,7 +516,7 @@ console.log("\na framework preset fills the fields it knows");
       fail(`switching presets left the placeholder at ${JSON.stringify(cmd.placeholder)}`);
     }
 
-    // And back to none, which is how a project defers to the repository entirely.
+    // Back to none: a blank preset is how a project defers to the repository entirely.
     sel.value = "";
     sel.dispatchEvent(new win.Event("change", {bubbles: true}));
     await settle();
@@ -983,9 +982,9 @@ console.log("\nsaving an edit closes the form and says so");
   if ($(".pcard .panel")) {
     fail("the form is still open after saving, which looks identical to nothing happening");
   }
-  // A toast, over the page. An inline notice landed where the form used to be — which is
-  // where the eye has already stopped looking — so a successful save read as nothing
-  // happening.
+  // A toast, over the page. An inline notice would land where the form was — where the
+  // eye has already stopped looking once the panel closes — so a successful save would
+  // read as nothing happening.
   const note = $("#toasts .toast");
   if (!note || !note.textContent.includes("Saved")) {
     fail(`no confirmation after saving: ${JSON.stringify(note?.textContent || null)}`);
@@ -1133,10 +1132,10 @@ console.log("\na failure is reported where it can be seen");
   doc.getElementById(`s-val-${key}`).value = "a-token-value";
   await click(btn("Add variable"));
 
-  // A toast, not a notice in the panel. Ten rejected saves used to leave ten stacked
-  // red boxes above the form, pushing the fields being corrected off the screen — so
-  // this asserts both halves: the message is shown, and the document did not grow a
-  // permanent notice to show it.
+  // A toast, not a notice in the panel. A notice in the panel would leave a stacked red
+  // box above the form for every rejected save, pushing the fields being corrected off
+  // the screen — so this asserts both halves: the message is shown, and the document
+  // did not grow a permanent notice to show it.
   const t = $("#toasts .toast.bad");
   if (!t) {
     fail("a failed call reported nothing on the page it happened on");
@@ -1169,8 +1168,8 @@ console.log("\nunlinked pull requests are listed, and can be linked back");
   const cards = $$(".pcard");
   const bb = cards[1];
 
-  // Only where there is something to say. The first version put a line on every card
-  // saying everything was being built — true, unasked, and one more line to read past.
+  // Only where there is something to say. A line on every card stating that everything
+  // is being built would be true, unasked, and one more line to read past.
   if (cards[0].querySelector(".pcard-links")) {
     fail("a project with nothing unlinked still renders the strip");
   } else ok("silent on a project that is building everything");

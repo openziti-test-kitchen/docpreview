@@ -15,11 +15,10 @@ import (
 
 // buildDocker end to end, against a real daemon, with no node involved.
 //
-// The driver's job is: get the source in, run the command, get the output back,
-// and put the build's own words in the log. Every one of those was broken at some
-// point today, and each break looked like a different problem — a bad mount, an
-// empty log, a missing output directory. One test that exercises the whole path is
-// what would have caught all three at once.
+// The driver's job is: get the source in, run the command, get the output back, and
+// put the build's own words in the log. Each of those can fail independently and looks
+// like a different problem — a bad mount, an empty log, a missing output directory — so
+// one test exercising the whole path catches all three at once.
 //
 // alpine and `cp`, not node and npm: this is testing the driver, and pulling a
 // node image to run a real install would make it slow enough to skip.

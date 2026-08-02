@@ -13,13 +13,10 @@ import (
 // Status composes three sources: the preview table, the job queue, and the map
 // of builds currently running. Only the first is on disk.
 //
-// It used to read the table alone, and the table only ever holds committed
-// states — a preview row is written when a build succeeds and left untouched
-// while the next one runs. So `building` and `queued` could not appear in the
-// payload at all: the dashboard's Building counter read 0 while a build was
-// visibly running, and a branch building for the first time had no row
-// anywhere. The activity feed said "building" because events carry the state
-// directly, which is what made the disagreement visible.
+// Reading the preview table alone is not enough: a preview row is written when a build succeeds and left
+// untouched while the next one runs, so the table alone never carries `building` or `queued`. Without the
+// job queue and the running-build map, the dashboard's Building counter would read 0 while a build was
+// visibly running, and a branch building for the first time would have no row anywhere.
 
 func testPR(repo string, number int, branch string) model.PullRequest {
 	return model.PullRequest{

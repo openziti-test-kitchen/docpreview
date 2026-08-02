@@ -273,9 +273,9 @@ func TestFrontdoorRefusesToDeleteAnEmptyID(t *testing.T) {
 }
 
 func TestFrontdoorConstructsWithAnUnreadableToken(t *testing.T) {
-	// The boot-order fix. NewFrontdoor used to take the token itself, so wiring
-	// this exposer opened the vault — and with the vault locked the daemon
-	// refused to start, hiding the page that unlocks it. Construction must now
+	// NewFrontdoor must not resolve the token itself: doing so at construction
+	// would open the vault during wiring, and a locked vault would then refuse
+	// the daemon start, hiding the page that unlocks it. Construction must
 	// succeed with a provider that cannot answer yet.
 	locked := func() (vault.Secret, error) {
 		return vault.Secret{}, errors.New("vault is locked")
@@ -431,10 +431,10 @@ func TestFrontdoorReadsTheDocumentedResponseFields(t *testing.T) {
 }
 
 func TestFrontdoorGivesABareHostnameAScheme(t *testing.T) {
-	// zrok's controller reports "name.share.zrok.io" rather than a URL, and that
-	// cost a round of broken pull request comments: without a scheme the link is
-	// relative, so GitHub resolves it against github.com and 404s there. Nobody
-	// has seen what Frontdoor puts in frontendEndpoint, so it is defended against.
+	// zrok's controller reports "name.share.zrok.io" rather than a URL, and without
+	// a scheme the link is relative, so GitHub resolves it against github.com and
+	// 404s there. Nobody has seen what Frontdoor puts in frontendEndpoint, so it
+	// is defended against here too.
 	fake := &fakeFrontdoor{
 		createResponse: `{"id":"abc123","frontendEndpoint":"my-branch.shares.netfoundry.io"}`,
 	}
@@ -481,7 +481,7 @@ func TestFrontdoorRejectsAnAPIBaseWithNoFrontdoorID(t *testing.T) {
 	t.Cleanup(func() { fd.Close() })
 }
 
-// --- The share listing, whose wrong shape used to be silent ----------------
+// --- The share listing, whose wrong shape would otherwise fail silently -----
 
 func TestDecodeShareListingAcceptsEveryPlausibleEnvelope(t *testing.T) {
 	// One of these is right and nobody knows which. The documented answer for
@@ -705,9 +705,9 @@ func TestFrontdoorReapReportsATagThatDidNotRoundTrip(t *testing.T) {
 // --- Retry ------------------------------------------------------------------
 
 func TestFrontdoorRetriesAGatewayFailure(t *testing.T) {
-	// Frontdoor had no retry at all. A publish that fails here fails the build, so
-	// a 503 from a load balancer that never reached the thing behind it cost a
-	// documentation preview.
+	// A publish that fails here fails the build, so a 503 from a load balancer
+	// that never reached the thing behind it must not cost a documentation
+	// preview without at least one retry.
 	noBackoff(t)
 
 	fake := &fakeFrontdoor{createStatus: []int{http.StatusServiceUnavailable}}
@@ -815,8 +815,7 @@ func TestFrontdoorSurvivesTheDaemonsReplaceThenCloseOrder(t *testing.T) {
 	// The daemon publishes the replacement and then closes the old Publication, in
 	// that order. A close that deleted by key alone would delete the remote share
 	// its own replacement had just created — so the preview would not merely 404,
-	// it would stop existing on the tenant. `local` has this test; the path where
-	// getting it wrong costs a remote object did not.
+	// it would stop existing on the tenant.
 	fake := &fakeFrontdoor{}
 	fd, _ := newTestFrontdoor(t, fake)
 
@@ -886,8 +885,8 @@ func TestFrontdoorNameCollisionKeepsTheRefusedPreviewsOwnShare(t *testing.T) {
 	if !strings.Contains(err.Error(), "p1") {
 		t.Errorf("the error does not name the preview holding the name: %v", err)
 	}
-	// The suggested template used to be config.DefaultNameTemplate itself, so the
-	// advice was to change nothing.
+	// The suggested template must differ from config.DefaultNameTemplate, or the
+	// advice would be to change nothing.
 	if !strings.Contains(err.Error(), "{{.Repo.Owner}}") {
 		t.Errorf("the error suggests a template that is already the default: %v", err)
 	}

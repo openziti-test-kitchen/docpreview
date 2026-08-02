@@ -8,11 +8,8 @@ import (
 
 // TestAGlobalSecretReachesEveryBuild.
 //
-// A credential stored from the dashboard used to do nothing. It was in the vault, the page
-// said "set", and no build ever saw it — because injection came only from `build.secrets`
-// in a YAML file on the host, which the page cannot edit. Six tokens were stored that way
-// in the belief that storing them was the job, and the build would have failed with every
-// clone falling back to SSH and nothing anywhere explaining why.
+// A credential stored from the dashboard must reach every build, not only builds whose config
+// file has an explicit `build.secrets` mapping — the dashboard cannot edit that file.
 //
 // So a vault key shaped like an environment variable is injected under its own name. The
 // shape is the discriminator, which is what keeps github.private_key out of every build's

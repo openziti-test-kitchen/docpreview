@@ -107,11 +107,11 @@ func TestClaimIsFIFO(t *testing.T) {
 }
 
 func TestPendingJobsCarryTheirEnqueueTime(t *testing.T) {
-	// The dashboard renders a queued row's age against this. It used to have
-	// nothing better than the preview record's own updated_at, which for a
-	// rebuilt preview is whenever its *last* build finished — so a job queued
-	// seconds ago displayed as hours old, on the one screen someone watches to
-	// see whether the queue is moving.
+	// The dashboard renders a queued row's age against this. Falling back to the
+	// preview record's own updated_at would be wrong for a rebuilt preview, where
+	// that timestamp is whenever its *last* build finished: a job queued seconds
+	// ago would display as hours old, on the one screen someone watches to see
+	// whether the queue is moving.
 	ctx := context.Background()
 	st := testStore(t)
 

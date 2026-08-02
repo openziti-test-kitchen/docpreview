@@ -51,8 +51,8 @@ consistent with these documents; a CLAUDE.md that contradicts a design doc is wo
 
 ## How to read a rule in these documents
 
-Most of the non-obvious rules exist because the obvious version was tried and produced a specific failure. Where
-that is true it is written down, because a rule with no stated reason is a rule the next person deletes.
+**Reasoning lives here, not in the code.** Comments in the source describe what the code does; where a rule needs
+a paragraph of justification, that paragraph belongs in one of these documents and the comment states the rule.
 
 A claim of the form "X must not Y" is normally guarded by a test. Where it is not, it says so.
 

@@ -44,9 +44,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+        # --notes-file, then --generate-notes to append the pull request list under the Changelog
+        # heading the file ends with. Generated notes alone are a list of PR titles, which for this
+        # project reads "round 3 updates / Round 5 / round 6 pr" — no use to somebody arriving at
+        # the release page, which is the first thing anybody sees.
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
+            --notes-file dist/NOTES.md \
             --generate-notes \
             --verify-tag \
             dist/*.tar.gz dist/*.zip dist/SHA256SUMS

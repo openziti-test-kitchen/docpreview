@@ -369,11 +369,9 @@ func writeSharesTable(out io.Writer, rows []shareRow, tally shareTally) {
 			"keeping\nwhat the database claims; nothing in this command deletes anything.\n")
 	}
 	if tally.Missing > 0 {
-		// The second sentence is here because the first real run of this command found
-		// exactly that case and it would otherwise read as a broken link. Rebuilding a
-		// commit produces a new build id, while the build share's name embeds the commit
-		// and so is unchanged — see expose.Collides. Both build rows then carry one URL,
-		// one of them holds the share, and the other is a record that has lost its share
+		// Rebuilding a commit produces a new build id, while the build share's name embeds
+		// the commit and so is unchanged — see expose.Collides. Both build rows then carry
+		// one URL: one holds the share, and the other is a record that has lost its share
 		// rather than a preview a reviewer cannot open.
 		fmt.Fprintf(out, "\nA recorded publication with no share is a URL that a pull request comment "+
 			"or the\ndashboard still offers and that now 404s. Rebuild the preview from the "+

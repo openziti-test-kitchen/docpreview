@@ -51,8 +51,7 @@ func loginGet(h http.Handler, method, path string, cookie string) *httptest.Resp
 	return w
 }
 
-// With no viewer password nothing is gated, which is what every installation had before this
-// existed. A feature that locks people out on upgrade is not shippable.
+// With no viewer password nothing is gated. A feature that locks people out on upgrade is not shippable.
 func TestWithNoViewerPasswordEverythingIsOpen(t *testing.T) {
 	_, h := loginFixture(t)
 	for _, p := range []string{"/", "/status", "/logs/abc", "/pr"} {
@@ -100,15 +99,13 @@ func TestAViewerPasswordGatesTheDashboardButNotTheExemptions(t *testing.T) {
 
 // A request from the machine itself must not skip the login.
 //
-// It used to, as a bootstrap convenience, and the reasoning was that anyone who can reach
-// 127.0.0.1 can already run the binary. The hole is that "from the machine itself" is not
-// something the daemon can establish: a tunnel in proxy mode connects from a local process, so
-// RemoteAddr is loopback for a request that arrived from the internet. Anything that proxies
-// without setting a forwarding header therefore hands every visitor an admin session.
+// "From the machine itself" is not something the daemon can establish: a tunnel in proxy mode connects
+// from a local process, so RemoteAddr is loopback for a request that arrived from the internet. Exempting
+// loopback would hand every visitor an admin session the moment something proxies without setting a
+// forwarding header.
 //
-// Both forms are asserted, because the earlier version admitted the plain loopback request and
-// only the forwarding header stopped it — so testing the header alone would have passed against
-// the code this test exists to keep deleted.
+// Both forms are asserted — plain loopback and loopback behind a proxy — so that testing the forwarding
+// header alone cannot pass while the plain loopback request is still admitted without a login.
 func TestLoopbackIsNotExemptFromTheLogin(t *testing.T) {
 	i, h := loginFixture(t)
 	if err := SetConsolePassword(context.Background(), i.console.store, RoleViewer, "a-viewer-password"); err != nil {
@@ -142,9 +139,8 @@ func TestLoopbackIsNotExemptFromTheLogin(t *testing.T) {
 	}
 }
 
-// The bootstrap the loopback exemption was there for still works: until a password exists, the
-// local operator reaches everything. That is what makes removing the exemption safe rather than
-// a lockout on upgrade.
+// Until a password exists, the local operator reaches everything, so the daemon does not need a
+// loopback exemption from the login to be safe on a fresh install or an upgrade.
 func TestLoopbackIsOpenUntilAPasswordExists(t *testing.T) {
 	_, h := loginFixture(t)
 

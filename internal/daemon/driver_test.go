@@ -51,10 +51,9 @@ func TestLocalDriverIsRefusedUnlessEnabled(t *testing.T) {
 	}
 }
 
-// TestDockerIsTheShippedDefault — the default used to be local, which meant every
-// install that never touched the key was running branch-authored build scripts on the
-// host. A default is what most deployments get, so this is the single most consequential
-// line in the config package.
+// TestDockerIsTheShippedDefault — the default must be docker, because most deployments never touch this key,
+// and a local default would run branch-authored build scripts directly on the host. This is the single most
+// consequential line in the config package.
 func TestDockerIsTheShippedDefault(t *testing.T) {
 	c := config.DefaultServer()
 	if c.Build.Driver != config.DriverDocker {
@@ -65,16 +64,11 @@ func TestDockerIsTheShippedDefault(t *testing.T) {
 	}
 }
 
-// TestLocalDriverDropsBranchSuppliedCode is the control the documentation promised and
-// the code did not have.
-//
-// `www/docs/reference/repo-config.md` said build.command was ignored under the local
-// driver "because it would be arbitrary shell on the host". Nothing implemented it:
-// buildLocal ran the value through cmd /c. The detect script was worse — it ran on the
-// host under *either* driver, before the driver was even resolved.
-//
-// This does not make the local driver safe, and the comment on confineToDriver says so.
-// It closes the narrower channel and makes the promise true.
+// TestLocalDriverDropsBranchSuppliedCode enforces the promise in
+// `www/docs/reference/repo-config.md`: build.command is ignored under the local driver because it would run
+// as arbitrary shell on the host. confineToDriver strips a branch-supplied command before buildLocal runs it
+// through cmd /c. The detect script still runs on the host under either driver, before the driver is
+// resolved, so this does not make the local driver safe on its own — see the comment on confineToDriver.
 func TestLocalDriverDropsBranchSuppliedCode(t *testing.T) {
 	_, d, _ := testIngress(t, &fakeClient{})
 	ctx := t.Context()

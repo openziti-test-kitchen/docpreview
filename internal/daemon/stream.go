@@ -16,9 +16,9 @@ import (
 	"github.com/netfoundry/docpreview/internal/store"
 )
 
-// Server-sent events, replacing what used to be a one-second poll.
+// Server-sent events, one connection per open tab instead of a poll from each.
 //
-// Polling was wrong in both directions at once. It is too slow to feel live —
+// A one-second poll is wrong in both directions at once. It is too slow to feel live —
 // a build that starts and finishes between two polls is never seen at all — and
 // too fast when nothing is happening, since an idle daemon with a tab open
 // still answers a request every second forever. SSE inverts that: the browser
@@ -38,11 +38,9 @@ const heartbeatInterval = 20 * time.Second
 
 // statusPollInterval is how often the daemon's state is re-read for a stream.
 //
-// Be clear about what SSE did and did not buy here, because the first version
-// of this comment claimed a saving it does not make. The ticker below lives in
-// the per-request handler, so the database is still read once per connected
-// browser, and at 700ms that is *more* database work than the one-second poll
-// it replaced.
+// SSE does not reduce database reads here. The ticker below lives in the per-request handler, so the
+// database is still read once per connected browser, and at 700ms that is *more* database work than a
+// one-second poll would be.
 //
 // What changed is on the other side of the wire. The browser holds one
 // connection instead of opening a request per second; it is told when something
@@ -185,10 +183,10 @@ func (i *Ingress) streamStatus(w http.ResponseWriter, r *http.Request) {
 
 	// The role, resolved once for the life of the connection.
 	//
-	// The dashboard reads its state from this stream, not from `/status` — which is polled only
-	// as a fallback — so a field set on the one and not the other is a field the page never
-	// sees. That is exactly what happened to `Role`: the sign-out control stayed hidden after a
-	// successful login because the payload carrying the role was the one nobody reads.
+	// The dashboard reads its state from this stream, not from `/status` — which is polled only as a
+	// fallback — so a field set on the one and not the other is a field the page never sees. If `Role`
+	// carried the login state only on `/status`, the sign-out control would stay hidden after a
+	// successful login.
 	//
 	// Taken from the request context rather than re-derived per send: the session was decided
 	// when this connection was accepted, and a cookie cannot change mid-stream.
@@ -299,12 +297,11 @@ func (i *Ingress) streamLog(w http.ResponseWriter, r *http.Request) {
 		// marked Queued with nothing distinguishing the two. It reads as the
 		// queued build having already produced all of that, which is the
 		// opposite of what the row is saying.
-		// How long it took travels with the announcement.
-		//
-		// It used to be a clause on every entry of the build picker, which made a
-		// dropdown of five builds five lines of three facts each. The banner above the
-		// pane already names this build and says nothing is running; the duration is the
-		// other thing worth knowing about a finished build, and there it costs no width.
+		// How long it took travels with the announcement, rather than as a clause on every entry of
+		// the build picker, which would make a dropdown of five builds five lines of three facts
+		// each. The banner above the pane already names this build and says nothing is running; the
+		// duration is the other thing worth knowing about a finished build, and there it costs no
+		// width.
 		start := map[string]any{"build_id": meta.BuildID, "live": false}
 		if secs := i.buildSeconds(ctx, previewID, meta.BuildID); secs > 0 {
 			start["seconds"] = secs
@@ -320,20 +317,19 @@ func (i *Ingress) streamLog(w http.ResponseWriter, r *http.Request) {
 
 		// Then wait — but only when a build is actually coming.
 		//
-		// This is what makes Rebuild show its own build. The stream used to return here, so
-		// a build starting a moment later — which is exactly what Rebuild does, since the
-		// job is queued first and claimed by a worker a second or two afterwards — had
-		// nobody listening. The pane sat on the previous build's log under a banner saying
-		// nothing was running, until the row was collapsed and reopened.
+		// This is what makes Rebuild show its own build. If the stream returned here instead, a build
+		// starting a moment later — which is exactly what Rebuild does, since the job is queued first
+		// and claimed by a worker a second or two afterwards — would have nobody listening: the pane
+		// would sit on the previous build's log under a banner saying nothing was running, until the
+		// row was collapsed and reopened.
 		//
-		// Fixed here rather than in the page, because the page cannot win that race: it
-		// connects, learns "not live", and cannot know when that stops being true except by
-		// reconnecting on a guess. The server knows precisely.
+		// Waiting here rather than in the page, because the page cannot win that race: it connects,
+		// learns "not live", and cannot know when that stops being true except by reconnecting on a
+		// guess. The server knows precisely.
 		//
-		// Conditional on Expecting, because closing is right for the other case: a tab
-		// opening the log of yesterday's failure must not hold a connection open for a
-		// build that is never going to happen. `TestStreamLogReplaysAFinishedBuild` is that
-		// case, and it caught this change waiting unconditionally.
+		// Conditional on Expecting, because closing is right for the other case: a tab opening the log
+		// of an old failure must not hold a connection open for a build that is never going to happen.
+		// `TestStreamLogReplaysAFinishedBuild` is that case.
 		if !i.daemon.Expecting(ctx, previewID) {
 			return
 		}
@@ -457,11 +453,10 @@ func (i *Ingress) downloadLog(w http.ResponseWriter, r *http.Request) {
 
 	// CopyN, not Copy, and bounded by the length just declared.
 	//
-	// The size was measured when the log was opened, and a build that is still
-	// running keeps appending — so Copy sent more bytes than the header promised
-	// and net/http rejected the write with "wrote more than the declared
-	// Content-Length". Downloading a live build's log is an ordinary thing to do,
-	// which made this reachable from the dashboard's own Download button.
+	// The size was measured when the log was opened, and a build that is still running keeps appending.
+	// Copy would send more bytes than the header promised, and net/http rejects a write that exceeds
+	// the declared Content-Length. Downloading a live build's log from the dashboard's own Download
+	// button is an ordinary thing to do, so this has to hold for a build in flight too.
 	//
 	// A download of a running build is a snapshot either way. Bounding it makes
 	// the snapshot exactly the one the header describes.

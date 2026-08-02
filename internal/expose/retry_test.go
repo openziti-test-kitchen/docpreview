@@ -14,7 +14,7 @@ import (
 
 // A single controller timeout must not be fatal.
 //
-// It used to be, for the two tunnel commands, and the consequence was worse than a failed
+// For the two tunnel commands the consequence of treating it as fatal is worse than a failed
 // start: the zrok share record outlives the process, so the frontend answers 502 for a backend
 // that is gone, with nothing on the machine indicating which of the three processes died.
 func TestOneTimeoutIsRetriedRatherThanReturned(t *testing.T) {

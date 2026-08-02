@@ -14,14 +14,12 @@ import (
 //
 // `PullRequest.InstallationID` is filled in from a webhook payload, and every path that
 // starts with an operator instead has a zero there: a project scan, a linked pull request,
-// and a branch preview. Branch previews shipped with that unhandled, and every GitHub one
-// failed at the clone with "the webhook payload was missing installation.id" — a message
-// about a webhook, for a build that never had one, which sends whoever reads it to look at
-// delivery logs that do not exist.
+// and a branch preview. Without a lookup, each of those fails at the clone with "the webhook
+// payload was missing installation.id" — a message about a webhook, for a build that never
+// had one, which sends whoever reads it to look at delivery logs that do not exist.
 //
-// Both live GitHub projects failed this way on the first run. The fix is `installationOf`,
-// which looks the installation up when the pull request does not carry one, and these tests
-// are what stop it being removed as redundant.
+// `installationOf` looks the installation up when the pull request does not carry one, and
+// these tests are what stop it being removed as redundant.
 func TestCloneURLWorksWithoutAWebhookInstallationID(t *testing.T) {
 	f := newAPIFixture(t)
 	var lookups int
@@ -86,9 +84,8 @@ func TestAWebhookDeliveryDoesNotLookUpTheInstallation(t *testing.T) {
 
 // And the failure when the App genuinely is not installed still says so.
 //
-// This is the case the original error message was written for, and it must survive the fix:
-// a repository nobody installed the App on is the commonest reason a project added by hand
-// never builds.
+// A repository nobody installed the App on is the commonest reason a project added by hand
+// never builds, and the message must say so.
 func TestAnUninstalledRepositoryStillSaysSo(t *testing.T) {
 	f := newAPIFixture(t)
 	f.handler = func(w http.ResponseWriter, _ *http.Request) {
@@ -105,9 +102,8 @@ func TestAnUninstalledRepositoryStillSaysSo(t *testing.T) {
 	if err == nil {
 		t.Fatal("a repository with no installation produced a clone URL")
 	}
-	// The message has to name the repository and the fix rather than the mechanism. It used
-	// to talk about a webhook payload, which is the wrong subject for an operator who never
-	// sent one.
+	// The message has to name the repository and the fix rather than the mechanism — not a
+	// webhook payload, the wrong subject for an operator who never sent one.
 	if !strings.Contains(err.Error(), "acme/docs") {
 		t.Errorf("the error does not name the repository: %v", err)
 	}

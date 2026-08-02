@@ -342,9 +342,9 @@ func (s *Store) PendingCount(ctx context.Context) (int, error) {
 //
 // The timestamp is carried out of the store because the dashboard shows a
 // relative age against it, and "how long has this been waiting" is the question
-// somebody watching a queue is actually asking. Without it the status assembly
-// had nothing better to show for a re-queued preview than whatever its last
-// finished build left behind, which read as hours old the moment it was enqueued.
+// somebody watching a queue is actually asking. Without it, status assembly has
+// nothing better to show for a re-queued preview than whatever its last finished
+// build left behind, which reads as hours old the moment it is enqueued.
 type PendingJob struct {
 	PR         model.PullRequest
 	EnqueuedAt time.Time
@@ -356,10 +356,10 @@ type PendingJob struct {
 // context cancellation and touches nothing here; a queued one has no context to cancel, so
 // the only way to stop it is to take it out of the queue before a worker claims it.
 //
-// Teardown is the second caller, and the reason this is not only about a button. Claim used
-// to be the only statement that removed a job, so tearing a preview down left its queued
-// build behind for a worker to pick up minutes later — rebuilding, recording and
-// republishing a preview an operator had deliberately deleted. See Daemon.teardown.
+// Teardown is the second caller, and the reason this is not only about a button. Without it,
+// tearing a preview down would leave its queued build behind for a worker to pick up minutes
+// later — rebuilding, recording and republishing a preview an operator had deliberately
+// deleted. See Daemon.teardown.
 //
 // It reports what it did rather than returning nothing, because of the race with Claim: a
 // worker can take the job between the dashboard drawing the button and the click arriving,
@@ -458,8 +458,8 @@ type Project struct {
 	// Per project because the right value is a property of what is being built, not of
 	// the host: a single Docusaurus site is done in two minutes and a repository that
 	// clones seven others and builds each one is not. Raising the server default to
-	// suit the slowest project is what this replaces, and it left every other project
-	// able to hang for the same 45 minutes before anybody was told.
+	// suit the slowest project instead would let every other project hang for the same
+	// 45 minutes before anybody was told.
 	//
 	// A string rather than a duration, because it is stored and redisplayed exactly as
 	// it was typed. Parsed at the point of use; an unparseable value is refused when
@@ -778,7 +778,7 @@ func (s *Store) SavePreview(ctx context.Context, p Preview) error {
 // so it says `ready` and carries the URL that build published — and after a failed
 // restore nothing is bound to that address, so `/status` offers a link that answers 502
 // and the pull request comment advertises the same one. Both read this row, which is why
-// emptying it is what fixes both. Seen live on 2026-07-30, when `CreateShare` timed out.
+// emptying it is what fixes both.
 //
 // An UPDATE rather than a delete, because the artifacts are still on disk and still
 // good: the failure is a controller round trip that may work on the next attempt, and a

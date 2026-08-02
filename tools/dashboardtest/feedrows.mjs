@@ -1,9 +1,9 @@
-// Two rules about what the operations dashboard shows, and both were reported as noise.
+// Two rules about what the operations dashboard shows.
 //
-// 1. **One activity entry per attempt**, changing state in place. The feed used to keep a
-//    row per terminal event, so a commit that failed and was rebuilt kept both, and
-//    re-attempting anything grew the rail. Reported as "i don't want n entries for queued,
-//    building, success|fail".
+// 1. **One activity entry per attempt**, changing state in place. Keeping a row per
+//    terminal event would mean a commit that failed and was rebuilt keeps both, and
+//    re-attempting anything grows the rail: the row is meant to change from queued to
+//    building to its outcome, not accumulate one row per state.
 //
 // 2. **A finished branch preview is not in the previews list.** It is permanent by design,
 //    which makes it the one row nobody needs: always green, always there. It lives on its
@@ -11,8 +11,7 @@
 //    pane opens from a row and without one there would be nowhere to watch a branch build.
 //
 // Both are properties of a render over a given payload, which is why they are tested here
-// rather than reasoned about — see the note in internal/daemon/CLAUDE.md about three
-// consecutive wrong diagnoses of one feed bug.
+// rather than reasoned about.
 //
 //   npm install --prefix tools/dashboardtest
 //   node tools/dashboardtest/feedrows.mjs
@@ -142,8 +141,8 @@ console.log("one activity entry per attempt");
 
 console.log("\nthe row changes state in place");
 {
-  // Same attempt, one poll later: still one row, now further along. This is the behaviour
-  // the report asked for — not a new row per transition.
+  // Same attempt, one poll later: still one row, now further along, not a new row per
+  // transition.
   const queuedFirst = {
     ...status,
     events: [{at: "2026-07-31T10:00:00Z", kind: "queued", repo: REPO, preview_id: "aaa",
@@ -197,7 +196,7 @@ console.log("\nrows are newest first, whatever order the daemon sent");
 console.log("\na branch preview is not written as #0");
 {
   // Number 0 means "no pull request" — see model.PullRequest.IsBranch — and rendering it as
-  // "#0" reads as a bug rather than as a branch. That is exactly how it was reported.
+  // "#0" would read as a bug rather than as a branch.
   const text = rowText().join(" ");
   if (text.includes("#0")) {
     fail(`a branch build renders as #0: ${JSON.stringify(text)}`);
@@ -241,11 +240,9 @@ console.log("\nthe message is not in the row");
 
 console.log("\na finished branch preview is not in the previews list");
 {
-  // Asserted against the *preview picker*, not the row headers — which is where a branch
-  // preview actually lived, and the first version of this test got that wrong and passed
-  // against the unfixed page. Rows are one per project, carrying whichever preview ranks
-  // highest, so a second preview of one project was never its own row: it was an option in
-  // that row's dropdown, plus a number in the counters.
+  // Asserted against the *preview picker*, not the row headers. Rows are one per project,
+  // carrying whichever preview ranks highest, so a second preview of one project is never
+  // its own row: it is an option in that row's dropdown, plus a number in the counters.
   const head = $$(".item .head").find(h => h.textContent.includes("docs"));
   if (head) head.dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
   await settle();
@@ -299,14 +296,13 @@ console.log("\na branch preview that is building does appear");
 
 console.log("\na selected branch preview survives the next render");
 {
-  // The bug the exclusion above created, and the reason `pinned()` exists.
+  // The reason `pinned()` exists.
   //
-  // Clicking an activity entry for a finished branch build pins that preview. The pin then
-  // pointed at a preview `inList` excludes, so the very next render decided it was stale,
-  // reset it to the project's newest, and the pane jumped to a different preview's log while
-  // somebody was reading it. One tick of working, then silently undone — reported as the log
-  // pane "not tailing properly", and diagnosed wrongly twice before clicks.mjs caught it
-  // against live state, where a project has a branch preview *and* several pull requests.
+  // Clicking an activity entry for a finished branch build pins that preview. Without
+  // `pinned()`, the pin would point at a preview `inList` excludes, so the very next
+  // render would decide it was stale, reset it to the project's newest, and jump the
+  // pane to a different preview's log while somebody was reading it — a click that
+  // works for one tick and then silently undoes itself.
   const ui = win.eval("ui");
   ui.pick = {};
   ui.open = null;

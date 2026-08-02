@@ -251,13 +251,11 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 			cfg.Build.Output, config.RepoConfigName, out)
 	}
 
-	// Here rather than inside buildDocker, which is where it used to be and where it
-	// only ever covered one of the two drivers. What it defends against has nothing to
-	// do with containers: this directory is served by an http.FileServer, and
-	// http.Dir follows a symlink straight out of its own root. A build that writes
-	// `dist/secrets -> /home/daemon/.docpreview` publishes the vault at a preview URL.
-	// The local driver produced exactly the same servable directory and was never
-	// checked.
+	// Checked here rather than inside buildDocker, since the hazard applies to both
+	// drivers and has nothing to do with containers: this directory is served by an
+	// http.FileServer, and http.Dir follows a symlink straight out of its own root. A
+	// build that writes `dist/secrets -> /home/daemon/.docpreview` publishes the vault
+	// at a preview URL.
 	if err := rejectSymlinks(outputDir); err != nil {
 		return nil, fmt.Errorf("%w\n%s", err, out)
 	}
@@ -267,10 +265,10 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 		//
 		// Every failure here is wrapped with the whole build log, because a pull request
 		// comment quotes it — which means whatever writes this to the build log has to
-		// truncate, or the log ends up containing itself twice. Truncating took the mismatch
-		// down to its first line: "the site was built for a different base URL than the
-		// preview will serve", with neither base URL shown. The four lines that follow are
-		// the entire value of the check, and they were the part being thrown away.
+		// truncate, or the log ends up containing itself twice. Truncating to the mismatch's
+		// first line — "the site was built for a different base URL than the preview will
+		// serve" — would drop both base URLs, and the four lines that state them are the
+		// entire value of the check.
 		return nil, &BaseURLError{Diagnosis: err.Error(), Output: out, err: err}
 	}
 
@@ -436,8 +434,8 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 	if image == "" {
 		// The same default as config.DefaultImage, and it has to stay that way: this
 		// branch is reached by a Builder constructed without defaults, which is every
-		// test and any future caller that forgets. It used to be the -slim variant, so a
-		// build reaching here had no git and failed on the first clone.
+		// test and any future caller that forgets. A -slim image reaching here has no git
+		// and fails on the first clone.
 		image = config.DefaultImage
 	}
 
@@ -537,12 +535,9 @@ func (b *Builder) createArgs(
 		// --mount, not --volume: --volume's fields are colon-separated, so a
 		// Windows source path collides with its own separator.
 		"--mount", "type=bind,source=" + source + ",target=/workspace",
-		// node_modules gets a volume, so npm writes it to the container's own
-		// filesystem instead of through the bind mount. This is not a small
-		// optimisation: measured on this project's www/, `npm ci` takes 5m46s
-		// writing node_modules across the mount and 14s writing it to a volume,
-		// with an identical warm package cache. 1325 packages is tens of thousands
-		// of small files, and every one of them was crossing WSL into NTFS.
+		// node_modules gets a volume so npm writes to the container's filesystem rather
+		// than through the bind mount: 14s versus 5m46s for 1325 packages, with an
+		// identical warm cache, since every file in a bind mount crosses WSL into NTFS.
 		//
 		// Under the build directory, not the workspace root: npm resolves
 		// node_modules from the directory it runs in, so a volume anywhere else is
@@ -560,12 +555,11 @@ func (b *Builder) createArgs(
 		"--workdir", containerDir,
 	}
 
-	// Capped, but not at the hardcoded 2 CPUs and 4 GB this used to be.
+	// Configurable rather than fixed; see config.BuildDefaults.
 	//
 	// A Docusaurus build prerenders every route and parallelises across cores, so the cap is
-	// the ceiling on the longest phase of the build — measured at fifty seconds of silence
-	// on a machine with twenty cores, two of which it was allowed to use. Configurable now;
-	// see config.BuildDefaults.
+	// the ceiling on the longest phase of the build: capping a twenty-core machine at two
+	// cores leaves that phase running fifty seconds longer than it needs to.
 	//
 	// Still capped, because a build is somebody else's code: a container able to take every
 	// core can stall the daemon that is supposed to be reporting on it. Zero means no flag
@@ -626,9 +620,8 @@ func buildScript(install, build, reown string) string {
 // `artifacts/`, and cannot remove the workspace afterwards. Every one of those fails with
 // `permission denied` at a point where the build log says the build succeeded.
 //
-// Invisible on Docker Desktop, which maps ownership on the way through, so this survived every
-// local run and failed the first time the test suite ran on Linux —
-// `TestDockerMountRoundTrip`, "the build output is not on the host".
+// Invisible on Docker Desktop, which maps ownership on the way through, so this must be
+// exercised on Linux to catch a regression — see TestDockerMountRoundTrip.
 //
 // # Why not --user
 //
@@ -744,11 +737,10 @@ func (b *Builder) writeEnvFile(pr model.PullRequest, cfg config.RepoConfig) (
 //
 // # Why the names are printed
 //
-// Twice in one evening a build failed because a variable was stored under a name the build
-// script does not read — `GH_ZITI_CI_REPO_ACCESS_PAT_NF` against the script's
-// `GH_ZITI_CI_REPO_ACCESS_PAT`. Both times the visible symptom was several steps removed
-// from the cause: the script fell back to SSH, the container has no key, and the log said
-// "Host key verification failed", which names neither the variable nor the fallback.
+// A build script that expects `GH_ZITI_CI_REPO_ACCESS_PAT` and gets nothing because the
+// operator stored `GH_ZITI_CI_REPO_ACCESS_PAT_NF` instead fails several steps removed from
+// the cause: the script falls back to SSH, the container has no key, and the log says "Host
+// key verification failed" — naming neither the missing variable nor the fallback.
 //
 // A build cannot tell anyone which variables it *expected*, but docpreview knows exactly
 // which ones it supplied, and printing them turns that hunt into a glance.
@@ -825,9 +817,8 @@ func runShell(ctx context.Context, dir string, env []string, line string, out io
 //
 //	<link href=/zrok/assets/css/styles.160a45a5.css rel=stylesheet>
 //
-// A pattern that only matched href="..." found zero references in every real
-// build, which meant the base URL check silently passed on exactly the sites it
-// exists to protect.
+// A pattern that only matched href="..." would find zero references in output like this,
+// and the base URL check would silently pass on exactly the sites it exists to protect.
 var absoluteRef = regexp.MustCompile(`(?:href|src)=(?:"(/[^"]*)"|'(/[^']*)'|(/[^\s>]*))`)
 
 // refsFrom extracts the root-relative href and src values from HTML.
@@ -926,15 +917,14 @@ func verifyBaseURL(outputDir, baseURL string) error {
 	// When a prefix is expected, the direct question is answerable: do the
 	// references actually start with it? Inference cannot answer this, because
 	// it only ever reports the first path segment — so a site correctly built
-	// for "/preview/handbook-new-install-guide/" infers as "/preview/" and gets
-	// rejected for a mismatch that does not exist. That is not hypothetical; it
-	// failed every build the first time previews moved onto a path.
+	// for "/preview/handbook-new-install-guide/" would infer as "/preview/" and
+	// get rejected for a mismatch that does not exist.
 	//
 	// When "/" is expected there is nothing to prefix-match — every absolute
 	// path starts with "/" — so the check has to run the other way round and
-	// infer whether the site really wanted a prefix nobody configured. An
-	// earlier version used prefix matching for both, which made the "/" case
-	// vacuously true and let the trap it exists to catch through.
+	// infer whether the site really wanted a prefix nobody configured. Prefix
+	// matching for both cases would make the "/" case vacuously true, letting
+	// through exactly the mismatch the check exists to catch.
 	if baseURL != "" && baseURL != "/" {
 		// A majority, not all of them. A hand-written href="/" in a footer is
 		// legal and common, and failing a correct build over one of them would
@@ -965,10 +955,10 @@ func verifyBaseURL(outputDir, baseURL string) error {
 	//
 	// Dominance alone is not enough. It works because a site served at "/" scatters
 	// its references across many first segments — /assets/, /img/, /docs/, /blog/ —
-	// so none of them dominates. A landing page that links into /docs/ a dozen
-	// times breaks that assumption: "docs" dominated, a site correctly built for
-	// "/" was reported as built for "/docs/", and the build was refused. The error
-	// even quoted /img/favicon.ico, which is not under /docs/ at all.
+	// so none of them dominates. A landing page that links into /docs/ a dozen times
+	// breaks that assumption: "docs" would dominate, and a site correctly built for
+	// "/" would be reported as built for "/docs/" and refused — quoting an asset like
+	// /img/favicon.ico that is not under /docs/ at all as the proof.
 	//
 	// A real base prefix contains the assets — at "/zrok/" the stylesheet is at
 	// /zrok/assets/…. A dominant segment the assets do not share is a route
@@ -977,8 +967,8 @@ func verifyBaseURL(outputDir, baseURL string) error {
 	// And it contains a route as well, which is the other half of the same argument.
 	// Without that half the corroboration reads the same evidence as the dominance: a site
 	// built at "/" whose index.html is mostly /assets/css/… infers "/assets/", and asking
-	// whether the assets are under "/assets/" cannot say no. Every plain Docusaurus site
-	// built at the root was refused with a built-in base URL of "/assets/" — see
+	// whether the assets are under "/assets/" cannot say no. A plain Docusaurus site built
+	// at the root would then be refused with a built-in base URL of "/assets/" — see
 	// routeUnder, and TestVerifyBaseURLAcceptsARootSiteWhoseRefsAreMostlyAssets.
 	if !assetsUnder(refs, built) || !routeUnder(refs, built) {
 		return nil
@@ -1095,13 +1085,12 @@ func inferBaseURL(refs []string) string {
 
 // routeUnder reports whether any reference that is *not* an asset lies under prefix.
 //
-// The second half of the corroboration, and the half that was missing. `assetsUnder` asks
-// whether the assets share the inferred prefix, which cannot fail when the inferred prefix
-// *is* the asset directory: a site built at "/" whose index.html is mostly
-// /assets/css/styles.css infers "/assets/", and then "are the assets under /assets/" is
-// trivially yes. Dominance and corroboration were reading the same evidence twice, and
-// every plain Docusaurus site built at the root was refused with a built-in base URL of
-// "/assets/" — a value no site has ever been built for.
+// The second half of the corroboration. `assetsUnder` alone asks whether the assets share
+// the inferred prefix, which cannot fail when the inferred prefix *is* the asset directory:
+// a site built at "/" whose index.html is mostly /assets/css/styles.css infers "/assets/",
+// and then "are the assets under /assets/" is trivially yes. Checking only that would read
+// the same evidence twice and refuse a plain Docusaurus site built at the root with a
+// built-in base URL of "/assets/" — a value no site has ever been built for.
 //
 // A real base prefix contains the routes as well: at "/zrok/" the stylesheet is at
 // /zrok/assets/… *and* a page is at /zrok/docs/intro. Requiring one non-asset reference

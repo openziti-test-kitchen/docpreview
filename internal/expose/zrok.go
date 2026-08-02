@@ -99,10 +99,10 @@ func (z *Zrok) Kind() string { return "zrok2" }
 // converts that into a startup error with a fix in it.
 func (z *Zrok) Validate(ctx context.Context) error {
 	if !z.root.IsEnabled() {
-		// Names the built-in path first. The old message named `zrok2 enable`, which meant
-		// installing a second binary and finding an account before anything here could work —
-		// and it was the same sentence whether the problem was no account, the wrong
-		// environment directory, or a revoked token.
+		// Names the built-in path first, rather than `zrok2 enable`, which needs a second
+		// binary and its own account. The same message covers no account, the wrong
+		// environment directory, and a revoked token — Validate cannot tell those apart
+		// from IsEnabled alone.
 		return errors.New("no zrok environment is enrolled here; sign up and enrol from the " +
 			"dashboard at /secrets, or run 'docpreview zrok invite <email>'. If you already " +
 			"have an environment, 'docpreview zrok status' says which directory this " +
@@ -537,12 +537,12 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 
 	// Deleted concurrently, bounded.
 	//
-	// Serially this was the slowest thing the daemon does: each DeleteShare is a client
+	// Serially this is the slowest thing the daemon does: each DeleteShare is a client
 	// construction, a version check and the call itself — five to fifteen seconds against
 	// the hosted controller — and startup does not finish, so no worker starts and no
-	// queued build runs, until every one of them has returned. Nine leftover build shares
-	// meant minutes of a daemon that looked started and would not build anything, which
-	// read as a stuck queue every time.
+	// queued build runs, until every one of them has returned. A handful of leftover
+	// build shares would then cost minutes of a daemon that looks started and will not
+	// build anything, which reads as a stuck queue.
 	//
 	// Safe to parallelise because each deletion is independent: a share token is only ever
 	// in this list once, nothing here reads shared state after the list is built, and the
@@ -578,11 +578,12 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 				// A 404 on a retry means the attempt that timed out actually worked.
 				//
 				// The deadline is the client's, not the controller's, so a timed-out
-				// delete has usually already happened — measured live: every retried
-				// unshare came back "unshareNotFound", and reporting those as failures
-				// turned four successful deletions into four startup errors. Only on a
-				// retry: a 404 on the *first* attempt means the share was already gone
-				// when the reap listed it, which is worth knowing about.
+				// delete has usually already happened, and the retry then sees the
+				// controller's "unshareNotFound" for a deletion that already succeeded.
+				// Treating that as a failure would turn a successful deletion into a
+				// startup error. Only on a retry: a 404 on the *first* attempt means the
+				// share was already gone when the reap listed it, which is worth knowing
+				// about.
 				if attempts > 1 && isNotFound(err) {
 					return nil
 				}
@@ -606,20 +607,17 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 // CreateShare takes no context, so the deadline is its own HTTP client's and cannot be
 // lengthened from here. Retrying is the only lever available.
 //
-// Matched on the message because that is what the SDK returns: these arrive as a
-// url.Error wrapping the client's deadline, not as a typed controller error, and the
-// 4xx answers that must *not* be retried are typed. So an unrecognised error is not
-// retried, which is the safe default — a permission failure or a quota refusal retried
-// three times is three times the same refusal.
+// Matched on the message: the SDK returns these as a url.Error wrapping the client's
+// deadline rather than a typed error. Unrecognised errors are not retried, so a
+// permission failure or quota refusal fails once rather than three times.
 func transient(err error) bool { return TransientZrok(err) }
 
 // TransientZrok is the same test, exported for the tunnel commands.
 //
 // `webhook-only` and `dashboard-only` create shares of their own through the same SDK against the
-// same controller, and had no retry at all: a controller that did not answer in time killed the
-// process outright, leaving the share record behind so the frontend answered 502 for a backend
-// that no longer existed. That happened three times in one afternoon before the output was being
-// captured to notice it.
+// same controller. Without a retry, a controller that does not answer in time kills the process
+// outright, leaving the share record behind so the frontend answers 502 for a backend that no
+// longer exists.
 //
 // Exported rather than copied because "which failures are worth retrying" is a judgement that
 // must not exist twice — a second copy is one that will not learn the next symptom.
@@ -749,13 +747,12 @@ func (z *Zrok) ensureName(ctx context.Context, name string) error {
 //	non-empty  "… is not a valid share name; failed profanity or DNS check"
 //	non-empty  a stale-frontend-mapping conflict
 //
-// All four arrive as *share.CreateShareNameConflict, so matching the type alone —
-// which this did — reported a registered name to an account that had hit its
-// reserved-name quota. The CreateShare that followed then failed for a reason that
-// never mentioned quotas, which is a bad afternoon.
+// All four arrive as *share.CreateShareNameConflict, so matching the type alone would
+// report a registered name to an account that has hit its reserved-name quota. The
+// CreateShare that follows would then fail for a reason that never mentions quotas.
 //
-// One name per commit reaches a name limit far sooner than one per branch did, so
-// this went from theoretical to likely the moment builds got their own shares.
+// One name per commit reaches a name limit far sooner than one per branch, so build
+// shares make this failure mode likely rather than theoretical.
 //
 // It still cannot tell a name this account owns from one another account holds:
 // nothing can, given the empty body. Treating both as success is safe because the
@@ -765,9 +762,9 @@ func isNameAlreadyExists(err error) bool {
 	return errors.As(err, &conflict) && conflict.Payload == ""
 }
 
-// ReleaseName gives up a reserved name, which is the other half of ensureName and
-// was missing for long enough to leak one name per branch — and, once builds got
-// their own shares, one per commit.
+// ReleaseName gives up a reserved name, the other half of ensureName. Skipping it
+// leaks one name per preview name ever published — one per branch, and one per
+// commit once build shares exist.
 //
 // # Why this is not part of withdrawing a share
 //

@@ -35,10 +35,10 @@ func TestVerifyBaseURLAcceptsMatchingSite(t *testing.T) {
 }
 
 func TestVerifyBaseURLIgnoresNavigationLinks(t *testing.T) {
-	// The shape that broke a correct build. A landing page links into /docs/ many
-	// times, so counting every href made "docs" the dominant first path segment
-	// and a site built for "/" was reported as built for "/docs/" — while the
-	// asset the error quoted, /img/favicon.ico, was not under /docs/ at all.
+	// The shape that would break a correct build. A landing page links into /docs/ many
+	// times, so counting every href would make "docs" the dominant first path segment,
+	// reporting a site built for "/" as built for "/docs/" — while the asset the error
+	// would quote, /img/favicon.ico, is not under /docs/ at all.
 	//
 	// Nav links outnumber assets here on purpose; that is what a landing page
 	// looks like.
@@ -115,14 +115,11 @@ func TestVerifyBaseURLAcceptsMatchingPrefixedSite(t *testing.T) {
 }
 
 func TestVerifyBaseURLAcceptsAMultiSegmentBase(t *testing.T) {
-	// The path-mounting exposer serves previews at /preview/<name>/, which is
-	// two segments. The check used to infer the built-in base URL and compare
-	// it for equality, and inference only ever reports the *first* segment — so
-	// a site built correctly for /preview/handbook-new-install-guide/ inferred
-	// as /preview/ and was rejected for a mismatch that did not exist.
-	//
-	// Every build failed the moment previews moved onto a path, with an error
-	// message confidently naming two base URLs that were the same one.
+	// The path-mounting exposer serves previews at /preview/<name>/, which is two
+	// segments. Inference only ever reports the *first* segment, so comparing an
+	// inferred base URL for equality instead of checking the prefix directly would
+	// infer /preview/handbook-new-install-guide/ as /preview/ and reject it for a
+	// mismatch that does not exist — naming two base URLs that are the same one.
 	base := "/preview/handbook-new-install-guide/"
 	dir := writeIndex(t, `<html><head>
 <link rel="stylesheet" href="`+base+`assets/css/styles.abc.css">
@@ -169,21 +166,19 @@ func TestVerifyBaseURLCatchesTheClassicMismatch(t *testing.T) {
 	}
 }
 
-// TestVerifyBaseURLAcceptsARootSiteWhoseRefsAreMostlyAssets.
-//
-// The false refusal this exists for, seen on a real Bitbucket build of
-// netfoundry/customer-connect-docs on 2026-07-30. The site is built at "/", its index.html
-// is mostly asset references under /assets/, and the check reported:
+// TestVerifyBaseURLAcceptsARootSiteWhoseRefsAreMostlyAssets guards against a false
+// refusal: a site built at "/" whose index.html is mostly asset references under
+// /assets/ would otherwise fail with a diagnosis like:
 //
 //	preview base URL:    /
 //	built-in base URL:   /assets/
 //	asset in index.html: /assets/css/styles.68c3c27c.css
 //
-// "/assets/" is not a base URL any site has been built for. `assets` dominated the first
+// "/assets/" is not a base URL any site has been built for. `assets` dominates the first
 // path segment, and the corroborating question — are the assets under /assets/ — cannot
-// answer no, so dominance and corroboration were the same evidence counted twice.
-//
-// The fix is `routeUnder`: a real base prefix contains a route as well as the assets.
+// answer no on its own, so dominance and corroboration alone read the same evidence twice.
+// `routeUnder` is what breaks the tie: a real base prefix contains a route as well as the
+// assets.
 func TestVerifyBaseURLAcceptsARootSiteWhoseRefsAreMostlyAssets(t *testing.T) {
 	dir := writeIndex(t, `<html><head>
 <link rel="stylesheet" href="/assets/css/styles.68c3c27c.css">
@@ -246,9 +241,8 @@ func TestVerifyBaseURLIgnoresRelativeAndExternalRefs(t *testing.T) {
 // with unquoted attribute values. Captured from a real `docusaurus build` with
 // DOCUSAURUS_BASE_URL=/zrok/.
 //
-// The first version of the reference scanner only matched href="...", found
-// zero references in output like this, and therefore skipped the base URL check
-// on every real site it was pointed at.
+// A reference scanner that only matched href="..." would find zero references in output
+// like this, and would skip the base URL check on every real site.
 const realDocusaurusIndex = `<!doctype html><html lang=en dir=ltr><head><meta charset=UTF-8>` +
 	`<link rel=icon href=/zrok/img/favicon.ico><title>docpreview</title>` +
 	`<link rel=canonical href=https://docpreview.example.com/zrok/>` +

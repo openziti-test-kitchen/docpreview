@@ -42,9 +42,8 @@ const maxLineLength = 64 * 1024
 // stampWidth is what a timestamp prefix costs, in bytes: "15:04:05.000 ".
 //
 // Subtracted from the split length rather than ignored. The cap is on the line a reader
-// gets, and the stamp is added after the split — so splitting at maxLineLength produced
-// lines thirteen bytes over it, which is exactly the writer-and-reader mismatch the
-// readBufferSize comment below was written about the first time.
+// gets, and the stamp is added after the split, so splitting at maxLineLength would leave
+// every line thirteen bytes over the cap the reader enforces.
 const stampWidth = len("15:04:05.000 ")
 
 // splitLength is where an unterminated line is broken, leaving room for its stamp.
@@ -53,13 +52,11 @@ const splitLength = maxLineLength - stampWidth
 // readBufferSize is the cap the reader allows, and it is deliberately larger
 // than maxLineLength.
 //
-// The producer and the consumer of this file were originally given the same
-// constant with opposite semantics — "flush once at least this much" on one
-// side, "reject anything longer than this" on the other. The result was that
-// every overlong line written was one byte too long to read back, so a single
-// unterminated 64 KiB line made bufio.Scanner return ErrTooLong and Tail
-// discard the entire log. Any constant shared between a writer and a reader
-// needs slack on the reading side.
+// The writer's cap means "flush once at least this much" and the reader's cap means "reject
+// anything longer than this". Sharing one constant between the two would make a maximum-length
+// line exactly as long as the reader's rejection threshold, so bufio.Scanner would return
+// ErrTooLong and Tail would discard the entire log. A constant shared between a writer and a
+// reader needs slack on the reading side.
 const readBufferSize = maxLineLength + 4096
 
 // Writer accepts build output and distributes it, redacted.

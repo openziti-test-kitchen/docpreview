@@ -21,11 +21,9 @@ func unlinkPR() model.PullRequest {
 
 // An unlinked pull request must not be built, whatever asks for the build.
 //
-// The check lives in handleBuild precisely because every route to a build passes through
-// it — a webhook delivery, the scan that runs when a project is added, an operator's
-// rebuild. A check in any one caller would leave the others rediscovering the pull request
-// an operator had removed, which is what "you keep finding PRs and adding a build for
-// stuff I don't want" described.
+// The check lives in handleBuild precisely because every route to a build passes through it — a webhook
+// delivery, the scan that runs when a project is added, an operator's rebuild. A check in any one caller
+// would leave the others rediscovering a pull request an operator had deliberately removed.
 func TestAnUnlinkedPullRequestIsNotBuilt(t *testing.T) {
 	_, d, st := testIngress(t, &fakeClient{})
 	ctx := context.Background()

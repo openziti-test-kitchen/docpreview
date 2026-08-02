@@ -11,9 +11,8 @@ import (
 	"time"
 )
 
-// The docker driver had no test, which is how it shipped unable to reach the
-// workspace at all: it handed the daemon a Windows path, and the daemon is Linux
-// and has no drive letters. See hostMountPath.
+// These tests catch the docker driver handing the daemon a Windows path it cannot use:
+// the daemon is Linux and has no drive letters. See hostMountPath.
 //
 // These run docker for real, and they cannot be shell-driven: Git Bash rewrites
 // container paths on the way through, which is a property of the shell rather than
@@ -95,10 +94,10 @@ func TestDockerMountRoundTrip(t *testing.T) {
 	//
 	// Built with buildScript rather than hand-written, because the thing being asserted below —
 	// that the host can read what the container wrote — is only true *because* of that chown on
-	// Linux. A hand-written command tests a contract the driver does not actually have: the
-	// container runs as root, so without the chown the output is root-owned and this process
-	// cannot read it. Docker Desktop maps ownership on the way through, which is why the
-	// hand-written version passed here for months and failed the first time it ran on Linux.
+	// Linux. A hand-written command without it would test a contract the driver does not
+	// actually have: the container runs as root, so without the chown the output is root-owned
+	// and this process cannot read it. Docker Desktop maps ownership on the way through, which
+	// is what would let that version pass on Windows or macOS and fail only on Linux.
 	script := buildScript(
 		"mkdir -p out/deep/deeper && cp input.txt out/copied.txt",
 		"cp deep/deeper/nested.txt out/deep/deeper/nested.txt",

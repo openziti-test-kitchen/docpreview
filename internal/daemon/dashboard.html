@@ -486,10 +486,9 @@ input.control::placeholder { color: var(--muted) }
 }
 
 /* ── The confirm dialog ─────────────────────────────────────────────────────
-   `confirm()` was what stood here, and it was the wrong control twice over. It is
-   drawn by the browser, so it cannot show the one thing worth showing — what is about
-   to be deleted and what comes back — and it renders newlines as a wall of plain text
-   that reads as a warning rather than as an answer.
+   A browser `confirm()` cannot show the one thing worth showing — what is about to be
+   deleted and what comes back — and it renders newlines as a wall of plain text that
+   reads as a warning rather than as an answer.
 
    This dialog is the explanation *and* the decision. The question anybody asks before
    pressing Unlink is "what does this actually do, and can I undo it", so the answer is
@@ -590,11 +589,10 @@ input.control::placeholder { color: var(--muted) }
   margin: 0.55rem 0 0; font-size: 0.72rem;
 }
 /* Stages are text with a leading mark, not bordered pills.
-   Pills were the first attempt and they were read as buttons — a rounded box with a
-   border and a label is a button everywhere else on this page, so three of them in a
-   row invited clicks that do nothing. Nothing here is interactive: it is a sentence
-   about what the daemon is doing, so it is styled as one. The mark carries the state,
-   which also survives being read without colour. */
+   A rounded box with a border and a label is a button everywhere else on this page, so
+   three of them in a row would invite clicks that do nothing. Nothing here is
+   interactive: it is a sentence about what the daemon is doing, so it is styled as one.
+   The mark carries the state, which also survives being read without colour. */
 .step { color: var(--muted); display: inline-flex; align-items: center; gap: 0.35rem }
 .step::before { content: "○"; font-size: 0.85em }
 .step.done { color: var(--ink-2) }
@@ -612,11 +610,10 @@ input.control::placeholder { color: var(--muted) }
 /* No ::before for the current stage — it carries a real element instead, so the ring is
    not competing with the mark the other two states use. */
 .step.now::before { content: none }
-/* The ring is an element, not a pseudo-element, and its border avoids color-mix().
-   Both were bugs in the first version: as a ::before it inherited the pending mark's
-   font sizing, and `border: 2px solid color-mix(…)` is one declaration — an engine that
-   cannot parse the colour drops the whole thing, leaving a 0.72em box with no border and
-   nothing visible. Two flat colours cannot fail that way. */
+/* The ring is an element, not a pseudo-element, so it does not inherit the pending mark's
+   font sizing. Its border avoids color-mix(): `border: 2px solid color-mix(…)` is one
+   declaration, so an engine that cannot parse the colour drops the whole thing, leaving
+   a 0.72em box with no border and nothing visible. Two flat colours cannot fail that way. */
 .spinner {
   width: 0.8em; height: 0.8em; flex: none; border-radius: 50%;
   border: 2px solid var(--hairline);
@@ -1086,10 +1083,9 @@ input.control::placeholder { color: var(--muted) }
   border-left: 3px solid var(--edge, var(--idle));
 }
 
-/* The per-state count chips that used to sit here are gone. They said how many of a
-   project's previews were ready or failed, beside a pill already naming the state of the
-   one preview the row shows — two answers to different questions in one line, and nobody
-   acted on the second. The empty cell in the grid above is now the spacer. */
+/* No per-state count chips here: a count of ready or failed previews beside a pill that
+   already names the state of the one preview the row shows would answer two different
+   questions in one line. The empty cell in the grid above is the spacer. */
 .row .head .grow { min-width: 0 }
 
 /* ── Under 1000px ───────────────────────────────────────────────────────────
@@ -1194,8 +1190,7 @@ input.control::placeholder { color: var(--muted) }
      Deliberately not color-mix() for the track. --edge is set inline and its
      value is itself a var(), and color-mix does not reliably resolve that
      second indirection — when it fails the whole border declaration is
-     dropped, leaving an 11px transparent box and no spinner at all. That is
-     the bug this replaced. */
+     dropped, leaving an 11px transparent box and no spinner at all. */
   border: 2px solid transparent;
   border-top-color: var(--edge, var(--idle));
   border-right-color: var(--edge, var(--idle));
@@ -1223,8 +1218,7 @@ input.control::placeholder { color: var(--muted) }
 .logbar .grow { flex: 1 }
 
 /* The view controls, under the pane they act on. Separated from the row's Open
-   button, which is the control anybody reaches for most and used to sit a few
-   pixels away — see the markup for why that mattered. */
+   button, which is the control anybody reaches for most. */
 .logfoot {
   display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
   padding: 0.5rem 0 0;
@@ -1415,8 +1409,8 @@ button.ev.sel { background: var(--raised) }
 /* An entry with nothing left to open. Dimmed rather than removed: the history is
    the point of the rail, and a build that ran is worth knowing about after its
    artifacts have been pruned. Dimmed rather than merely non-clickable, because a
-   row that looks identical to its clickable neighbours and does nothing is the
-   thing this whole rail was reported for twice. */
+   row that looks identical to its clickable neighbours but does nothing reads as
+   broken rather than as finished. */
 div.ev { opacity: 0.55 }
 div.ev .k { font-weight: 500 }
 .ev .t {
@@ -1455,14 +1449,12 @@ footer {
 .session .who { font-size: 0.72rem; color: var(--muted) }
 
 /* Last in the sheet, and !important, because `[hidden]` loses to any author rule
-   that sets display — and .wrap sets grid. So `el.hidden = true` on it did nothing,
-   and the previews and activity sections rendered under both admin pages with
-   nothing in them: half a page of empty operations chrome below a form, which was
-   most of why /projects read as noise.
+   that sets display — and .wrap sets grid. `el.hidden = true` alone would leave the
+   previews and activity sections rendered under both admin pages with nothing in them.
 
    !important alone is enough in a browser. Last as well, because the DOM used by
-   tools/dashboardtest/projects.mjs resolves the cascade by document order and would
-   otherwise disagree with every real browser about whether this page is correct. */
+   tools/dashboardtest/projects.mjs resolves the cascade by document order and must
+   agree with every real browser about whether this page is correct. */
 [hidden] { display: none !important }
 </style>
 </head>
@@ -1510,13 +1502,11 @@ footer {
          answer 403. -->
     <span class="admin-nav" id="admin-nav" hidden></span>
 
-    <!-- Who is signed in, and the way out — in the header rather than the footer, where the
-         first version put it and where nobody found it. Somebody on a shared or borrowed
-         machine looking for "how do I sign out" looks at the top right.
+    <!-- Who is signed in, and the way out — in the header, top right, where somebody on a
+         shared or borrowed machine looks for "how do I sign out".
 
          A form, because logging out is a POST: a GET would let any page on the internet sign
-         an operator out with an <img> tag. Harmless as mischief, and the kind of thing that
-         costs an afternoon to diagnose.
+         an operator out with an <img> tag.
 
          Hidden when nothing is signed in, which is every installation with no viewer
          password — a sign-out offered to somebody who never signed in is a control that does
@@ -1544,8 +1534,7 @@ footer {
          eleven fields long and past however many project cards exist, so on any real
          page it is off screen — a page with no visible way back reads as a dead end. -->
     <!-- Both ways out, because this page and /projects are the two halves of administering an
-         installation and people arrive at the wrong one. Previously each linked only back to
-         the previews, so getting between them meant going home first. -->
+         installation and people arrive at the wrong one. -->
     <p class="backlink"><a href="/">← back to previews</a>
       <a class="control" href="/projects">Projects</a></p>
     <!-- "Settings", not "Secrets". This page stopped being only credentials when the exposer
@@ -1564,7 +1553,7 @@ footer {
          One section per exposer rather than a zrok panel. Only zrok can be configured from
          a browser — a ziti identity is a file from `ziti edge enroll` and a Frontdoor token
          is a vault entry — but "which of the four is this daemon using, and is it ready"
-         was previously answerable only from `doctor`. -->
+         belongs on this page rather than only in `doctor`. -->
     <h3 class="pagesec" id="exposer-head">Exposer configuration</h3>
     <div id="exposer-body"></div>
   </div>
@@ -1616,22 +1605,13 @@ footer {
 <footer>
   <span id="conn" class="live">connecting…</span> ·
   <a href="/status">/status</a> · <a href="/pr">/pr</a>
-  <!-- The startup report, on request rather than in the way.
-       It used to open by itself on the first load after a restart, which was right when a
-       restart took four and a half minutes and wrong the moment adoption made it three
-       seconds: a dialog to dismiss to be told that nothing went wrong. As a footer link it
-       is available for as long as the daemon runs, beside the other two things nobody needs
-       until they need them — and the label carries the duration, so the number the report
-       exists to give is readable without opening it. -->
+  <!-- The startup report, on request rather than in the way: a footer link, available for
+       as long as the daemon runs, beside the other two things nobody needs until they need
+       them. The label carries the duration, so the number the report exists to give is
+       readable without opening it. -->
   <span id="boot-link" hidden> · <button class="footlink" id="boot-open"></button></span>
-  <!-- Who you are signed in as, and the way out. Hidden when no login was needed, which is
-       every installation that has set no viewer password.
-
-       A form rather than a link, because logging out is a POST: a GET would let any page on
-       the internet sign an operator out with an <img> tag. Harmless as mischief, and the kind
-       of thing that costs an afternoon to diagnose. -->
-  <!-- The sign-out is in the header, not here. This footer is where it started and where
-       nobody looked for it. -->
+  <!-- Who you are signed in as, and the way out live in the header, not here. Hidden when no
+       login was needed, which is every installation that has set no viewer password. -->
 </footer>
 
 <script>
@@ -1661,18 +1641,14 @@ const safeURL = u => /^https?:\/\//i.test(String(u ?? "")) ? String(u) : "";
 
 const clock = iso => new Date(iso).toLocaleTimeString([], {hour12: false});
 
-/* stamp is when something finished, written as a time that does not move.
+/* stamp is when something finished, written as a time that does not move. A relative age
+   ("40s ago") would count up once a second beside a status line that says the build took
+   1m 9s — two numbers moving at once, one of them meaningless. The wall-clock time answers
+   "when" and never changes, and the duration beside it answers "how long".
 
-   A finished build used to render its relative age, which under a minute counts up once a
-   second — so a preview that had been ready for forty seconds looked like it was still being
-   timed, beside a status line that said it took 1m 9s. Two numbers moving at once, one of
-   them meaningless. The wall-clock time answers "when" and never changes, and the duration
-   beside it answers "how long".
-
-   Always dated, and always the same width. The first version dropped the date for anything
-   built today, on the reasoning that most of the page is — but these sit in a right-aligned
-   column, so one row reading "07:03:07" beside others reading "Jul 30 15:33:07" made that
-   row's whole line shift. A column of timestamps has to be one width or it is not a column.
+   Always dated, and always the same width: these sit in a right-aligned column, so a row
+   reading "07:03:07" beside one reading "Jul 30 15:33:07" would shift depending on whether
+   the date is shown. A column of timestamps has to be one width or it is not a column.
    Day padded for the same reason: "Jul 3" and "Jul 30" are different widths. */
 const stamp = iso => {
   const d = new Date(iso);
@@ -1706,8 +1682,8 @@ const elapsed = iso => {
 };
 
 /* rowWhen picks between the two: a stopwatch while it runs, the finishing time once
-   it is over. Only one of the two ticks, which is how the row says whether anything
-   is happening without reading the words. */
+   it is over. Only one of the two ticks, so the row shows whether anything is
+   happening without the reader having to read the words. */
 const rowWhen = p => isLive(p.state) ? elapsed(p.updated_at) : stamp(p.updated_at);
 
 /* pickerWhen is the same choice inside a sentence: "Building · 04m 12s" for one in
@@ -1731,9 +1707,9 @@ const project = p => String(p.repo || "").split("/").pop() || "unknown";
 
 /* prLabel is what follows the project name: "#42", or "@main" for a branch preview.
 
-   Number 0 is a branch preview — see model.PullRequest.IsBranch — and rendering it as "#0" read
-   as a bug rather than as a branch, which is exactly what it was reported as. The Go side already
-   spells these "repo@main" in every log line; this is the same rule on the page. */
+   Number 0 is a branch preview — see model.PullRequest.IsBranch — and rendering it as "#0" would
+   read as a bug rather than as a branch. The Go side already spells these "repo@main" in every
+   log line; this is the same rule on the page. */
 const prLabel = p => p.number > 0 ? `#${p.number}` : `@${p.branch || "branch"}`;
 
 
@@ -1754,7 +1730,7 @@ const ui = {
   // Marked in the feed because there are clicks that change nothing else: every
   // preview of one repository shares a project row, so an entry naming the build
   // already showing leaves the page identical. Without a mark, those clicks are
-  // indistinguishable from a dead button — which is how they were reported.
+  // indistinguishable from a dead button.
   //
   // Keyed on the timestamp, which is unique per entry, rather than on preview and
   // commit. An attempt that is still running has two entries — queued and building
@@ -1835,14 +1811,10 @@ const inList = p => p.number > 0 || isLive(p.state);
 /* pinned reports whether this preview is the one a reader has selected in its project.
 
    The exception that keeps `inList` from breaking the log pane. Clicking an activity entry
-   for a finished branch build pins that preview — and the pin then pointed at a preview the
-   list excludes, so the very next render decided the pin was stale, reset it to the project's
-   newest, and the pane jumped to a different preview's log while somebody was reading it.
-
-   From the reader's side that is a click that worked for one tick and then undid itself. It
-   was reported as the log pane "not tailing properly" and diagnosed wrongly twice before
-   `clicks.mjs` caught it against live state, where a project has both a branch preview and
-   several pull requests. */
+   for a finished branch build pins that preview. Without this check the pin would point at a
+   preview the list excludes, so the very next render would decide the pin was stale, reset it
+   to the project's newest, and jump the pane to a different preview's log while somebody was
+   reading it — a click that works for one tick and then undoes itself. */
 const pinned = p => ui.pick[project(p)] === p.preview_id;
 
 function groups() {
@@ -2129,13 +2101,11 @@ function renderList() {
 
     // Set outside updateHead, and unconditionally.
     //
-    // It used to live at the end of updateHead, past two early returns — and
-    // one of them fires exactly when this matters. Clicking the row makes the
-    // button the active element, the focus guard then skipped the whole
-    // function, and the class never went on. `term()` selects `.item.open
-    // .term`, so it found nothing, and the first expand of any row showed an
-    // empty log until some other click moved focus and let the next render
-    // through.
+    // updateHead's focus guard returns early when the row's own button is the active
+    // element — which clicking the row causes. Setting the class inside updateHead would
+    // then skip it on exactly the click that opens the row, and `term()` selects
+    // `.item.open .term`, so it would find nothing and the log would render empty until
+    // some other click moved focus.
     //
     // A class that other code queries by is state, not markup. It does not
     // belong behind a repaint optimisation.
@@ -2165,12 +2135,11 @@ function updateHead(item, g) {
 
   // No per-state count chips on the row.
   //
-  // They were three or four coloured pills saying how many of this project's previews were
-  // ready, failed or building — beside a pill already naming the state of the one preview
-  // the row is showing. Nobody acted on the numbers: the question a row answers is "what is
-  // this branch doing", and the counts answered a question about a set the row does not
-  // otherwise represent. Removed rather than moved; the state of each preview is on its own
-  // line in the picker.
+  // Three or four coloured pills saying how many of this project's previews are ready, failed
+  // or building would sit beside a pill already naming the state of the one preview the row
+  // shows. The question a row answers is "what is this branch doing", and such counts would
+  // answer a question about a set the row does not otherwise represent. The state of each
+  // preview is on its own line in the picker instead.
 
   // p.url is in the signature because the row now carries the link: a republish
   // that moves the URL without changing the state would otherwise leave the
@@ -2265,12 +2234,12 @@ function platformIcon(platform) {
 // why.
 // updateGoLink points a row's Open button at the preview.
 //
-// A URL, not a state, decides whether this is clickable. It used to require
-// state === "ready", which greyed the button on every rebuild — but a rebuild does
-// not withdraw anything: the previous build is still published and still serving,
-// which is the whole point of building the new one beside it rather than in place.
-// The button went grey exactly when somebody was most likely to be watching a
-// build and wanting to look at what is live.
+// A URL, not a state, decides whether this is clickable. Requiring state === "ready"
+// would grey the button on every rebuild, but a rebuild does not withdraw anything:
+// the previous build is still published and still serving, which is the whole point
+// of building the new one beside it rather than in place. Greying the button on a
+// rebuild would do it exactly when somebody is most likely to be watching a build
+// and wanting to look at what is live.
 //
 // A preview with no URL is a different case and still greys: nothing has ever been
 // published for it, or it has been withdrawn.
@@ -2308,19 +2277,18 @@ function updateBody(item, g) {
     body = document.createElement("div");
     body.className = "body";
     body.innerHTML = `
-      <!-- Above the log: what you are looking at. Below it: how you are looking at
-           it. They used to share one bar, which put Following, Expand and Download
-           a few pixels from the row's Open button — the one control here anybody
-           reaches for often — so the cost of a misclick was landing on a different
-           preview or losing your place in a live log.
+      <!-- Above the log: what you are looking at. Below it: how you are looking at it.
+           Sharing one bar would put Following, Expand and Download a few pixels from the
+           row's Open button — the one control here anybody reaches for often — so a
+           misclick could land on a different preview or lose your place in a live log.
 
            The selects stay on top because they are navigation and belong with the
-           row's own controls. The view toggles move under the pane they act on,
+           row's own controls. The view toggles sit under the pane they act on,
            where nothing destructive is adjacent to them.
 
-           No cache control in either: it was per row, which put the same button on
-           every open row and made a rare repair look like part of reading a log. It
-           lives once, in the top bar. -->
+           No cache control in either bar: a control per open row would put the same
+           button on every open row and make a rare repair look like part of reading a
+           log. It lives once, in the top bar. -->
       <div class="logbar">
         <select class="control sm" data-role="pick" aria-label="Preview"></select>
         <select class="control sm" data-role="build" aria-label="Build"></select>
@@ -2425,10 +2393,9 @@ function updateBody(item, g) {
     // rewriting one closes its open list under the pointer with no visible cause. The
     // cost is that a build which starts while the reader is holding the dropdown open
     // is missing from the list they are reading — they watch the build on the row,
-    // look in the dropdown, and it is not there. Reloading the page was the only way
-    // out, which is how this was reported. A blur re-render fixes it as they let go,
-    // which is when they look; the one-second tick would do it eventually, and
-    // "eventually" is what made it look broken.
+    // look in the dropdown, and it is not there. A blur re-render fixes it as they let
+    // go, which is when they look; the one-second tick would do it eventually, but
+    // "eventually" reads as broken.
     // render() rather than loadBuilds(id): the same round trip happens inside
     // updateBody, and going through render keeps this from depending on which preview
     // the closure captured when the row was first drawn.
@@ -2628,13 +2595,12 @@ function updateBody(item, g) {
 
   // The preview link lives on the row, not here. See updateGoLink.
 
-  // Three cases, and the middle one is the bug this replaced.
+  // Three cases matter here, not just "did the preview change".
   //
   // A filter that hides a project removes its row; clearing the filter builds a
   // fresh one, so the <pre> is new and empty. `ui.logFor` still names the same
-  // preview, so the old test — reopen only when the preview changed — did
-  // nothing, and the pane sat blank until you collapsed and reopened it. That
-  // is what "no logs show" was.
+  // preview, so a test that reopens only when the preview changed would do
+  // nothing here, leaving the pane blank until you collapsed and reopened it.
   if (ui.logFor !== p.preview_id) {
     openLog(p.preview_id);
   } else if (fresh) {
@@ -2807,13 +2773,13 @@ async function showBuild(previewID, buildID) {
     //
     // Every other route through this function is a reader stepping back to a build
     // that has finished, which turns following off deliberately. Asking for the live
-    // build is the opposite request — "show me what is happening" — and it used to
-    // inherit the paused state left behind by whichever stored build was on screen
-    // before it. The stream opened, the lines arrived, and the viewport never moved:
-    // the log appeared to stop at the exact instant it was selected, with the rest
-    // piling up below the fold. That is the whole of "the black log is NOT
-    // updated/tailing properly", and it is why this is a separate concern from
-    // opening the stream at all — tools/dashboardtest/logtail.mjs asserts both.
+    // build is the opposite request — "show me what is happening" — so it must force
+    // following back on rather than inherit the paused state left behind by whichever
+    // stored build was on screen before it. Without this, the stream opens, lines
+    // arrive, and the viewport never moves — the log looks stopped at the exact
+    // instant it was selected, with the rest piling up below the fold. This is a
+    // separate concern from opening the stream at all — tools/dashboardtest/logtail.mjs
+    // asserts both.
     setFollow(true);
     openLog(previewID);
     return;
@@ -2867,11 +2833,10 @@ function updateBuildPicker(previewID) {
 
   // Shown from the first build, not the second.
   //
-  // It was hidden below two entries on the reasoning that a one-item picker is
-  // useless. That was wrong: the entry carries the outcome and the age, so with
-  // one build it is not a picker at all, it is the only place the dashboard says
-  // whether that build succeeded. Hiding it left a failed build with no visible
-  // result beside the row.
+  // Hiding it below two entries would treat a one-item picker as useless, but the
+  // entry carries the outcome and the age. With one build this is not a picker at
+  // all, it is the only place the dashboard says whether that build succeeded.
+  // Hiding it would leave a failed build with no visible result beside the row.
   sel.hidden = builds.length === 0;
   if (builds.length === 0) return;
 
@@ -2896,8 +2861,8 @@ function updateBuildPicker(previewID) {
     // started_at, not mod_time: mod_time is the log file's, which advances with every
     // line the build writes, so a stopwatch driven from it would read a few seconds
     // old for the whole build.
-    // No duration here. It was a third fact on every option — outcome, id, age, took —
-    // and a picker of five builds became five unreadable lines. The banner under the
+    // No duration here. A third fact on every option — outcome, id, age, took — would
+    // make a picker of five builds five unreadable lines. The banner under the
     // picker says how long the selected build took, where it costs no width.
     `${esc(isLive(b.state) ? elapsed(b.started_at || b.mod_time) : stamp(b.mod_time))}` +
     `</option>`).join("");
@@ -2991,10 +2956,9 @@ function openLog(previewID) {
     //
     // One connection can announce twice. Press Rebuild and the stream opens while the build
     // is still queued: the server replays the *previous* build, says done, then waits and
-    // sends a second start when the new build begins. Without this, the new output appended
-    // below the old log and its "— end of log —" line, so the pane showed two builds
-    // spliced together under a banner that flipped halfway down. Which is what "not tailing
-    // properly" looked like.
+    // sends a second start when the new build begins. Without this, the new output would
+    // append below the old log and its "— end of log —" line, splicing two builds together
+    // under a banner that flips halfway down.
     //
     // Safe on the first start too: it arrives before any line, so there is nothing to lose.
     resetPane();
@@ -3165,20 +3129,19 @@ function renderFeedFilters(events) {
 //
 // One pass, newest first, which is the order the daemon sends. A non-terminal entry
 // is dropped only when a *newer* terminal entry for the same attempt has already
-// been seen. Collecting every terminal key up front instead — the first version of
-// this — dropped a queued entry whose terminal entry was older, so re-running a
-// commit that had already finished lost the row saying the new attempt was waiting.
-// That row is the one thing somebody watching a rebuild is looking for.
+// been seen. Collecting every terminal key up front instead would drop a queued
+// entry whose terminal entry is older, losing the row saying a re-run of an
+// already-finished commit is waiting — the one thing somebody watching a rebuild
+// is looking for.
 function collapse(events) {
   // One row per attempt, showing where that attempt has got to. Not a history of
   // every state it passed through.
   //
-  // This used to drop only the *non-terminal* entries of a settled attempt, which
-  // left one row per terminal event — so a commit that failed and was then rebuilt
-  // successfully kept both, and the feed grew a row every time anything was
-  // re-attempted. Reported as "i don't want n entries for queued, building,
-  // success|fail": the row is supposed to change from queued to building to its
-  // outcome, in place.
+  // Dropping only the *non-terminal* entries of a settled attempt would leave one
+  // row per terminal event, so a commit that failed and was then rebuilt
+  // successfully would keep both, and the feed would grow a row every time
+  // anything is re-attempted. The row is supposed to change from queued to
+  // building to its outcome, in place.
   //
   // Newest wins, and the events arrive newest first, so the first entry seen for a
   // key is the one kept. That is also what makes the row appear to change state:
@@ -3220,7 +3183,7 @@ function renderEvents() {
     // The feed is a ring buffer and its order is *insertion*, which is the same thing as time
     // only while every event arrives as it happens. It does not: the history is reloaded from
     // the builds table at startup, and a startup scan then appends builds of its own — so a
-    // restart could put an event from 07:19 above one from 07:48, which is what was reported.
+    // restart can put an event from 07:19 above one from 07:48 unless this sorts them.
     //
     // Newest first, and collapse() below depends on that: it keeps the first entry it sees for
     // an attempt, so "first" has to mean "newest" or a row would settle on a stale state.
@@ -3240,10 +3203,10 @@ function renderEvents() {
   // text once there is not. A link that looks live and goes nowhere is worse than
   // one that never offered.
   //
-  // The server decides. It used to be "does the preview still exist", checked here,
-  // which was the right question only while a preview had exactly one build: now
-  // retention prunes older builds, so an entry can name a live preview and a build
-  // that is gone. Only the daemon knows what is still on disk — see markOpenable.
+  // The server decides. "Does the preview still exist", checked here, is the right
+  // question only while a preview has exactly one build: retention prunes older
+  // builds, so an entry can name a live preview and a build that is gone. Only the
+  // daemon knows what is still on disk — see markOpenable.
   //
   // The preview check stays as well, because an entry whose preview has been torn
   // down cannot be revealed no matter what the server says about its build.
@@ -3261,16 +3224,15 @@ function renderEvents() {
     // the one thing a reader wants — which push was this — was the one thing the
     // feed had and did not show.
     //
-    // The message is gone from the row.
+    // The message is not on the row.
     //
-    // It was kept whenever it said more than the label — "ready in 24s", a skip
-    // reason, a failure summary — on the reasoning that those three are worth a
-    // line. In practice the useful ones are rare and the row paid for them on every
-    // entry: "nearly never useful", and it is the widest thing in a rail 21rem wide.
+    // Showing it whenever it says more than the label — "ready in 24s", a skip reason,
+    // a failure summary — would make every entry pay for the rare case: the message
+    // is the widest thing in a rail 21rem wide and is nearly never useful.
     //
     // Not deleted, moved: it is the row's tooltip, so the one entry in fifty where it
-    // matters still has it, and a failure's real detail was never here anyway — that
-    // is the build log, which is what clicking the entry opens.
+    // matters still has it, and a failure's real detail is not here anyway — that is
+    // the build log, which is what clicking the entry opens.
     const detail = [
       // Not repeated when the label above already is the branch. A branch preview's
       // label is "@main", so the row read "docusaurus-shared@main main · c251f11" — the
@@ -3373,12 +3335,11 @@ function renderEvents() {
 // three minutes ago, and expanding a row that is not on screen looks like
 // nothing happened at all.
 //
-// The commit matters as much as the preview, and used to be ignored. Every
-// preview of one repository lands in a single group, so clicking an entry only
-// changed which preview was picked inside a row that was usually already open —
-// and clicking an entry for the preview already showing did nothing at all,
-// while the button's own tooltip promised to open that build. Selecting the
-// build the entry names is what the tooltip always said this did.
+// The commit matters as much as the preview. Every preview of one repository lands
+// in a single group, so picking only the preview would leave an entry for the
+// preview already showing doing nothing at all, while the button's own tooltip
+// promises to open that build. Selecting the build the entry names is what the
+// tooltip says this does.
 function reveal(previewID, commit, at, kind) {
   const p = ui.previews.find(x => x.preview_id === previewID);
   if (!p) return;
@@ -3436,9 +3397,8 @@ function reveal(previewID, commit, at, kind) {
 // that build — so that falls through to the stream, and clicking a building row
 // shows the build running. Anything else with no log file has none to show: a
 // skipped build never writes one, and an old one may have been pruned. Falling
-// through there silently swapped in the newest build's log, so the picker moved
-// while the pane did not change — which is precisely how this was reported. Say so
-// instead.
+// through there would silently swap in the newest build's log, moving the picker
+// while the pane stays the same. Say so instead.
 async function selectBuildForCommit(previewID, commit, kind) {
   if (!ui.builds[previewID]) await loadBuilds(previewID);
 
@@ -3693,9 +3653,9 @@ function renderSetup(s) {
   ];
 
   /* Adding a value goes inside Build variables, as its last row.
-     It used to sit below the card under its own heading, which put the form for creating
-     a build variable outside the section that lists them — and made the page's last
-     control belong to nothing. Its name field decides which group the result lands in,
+     Sitting below the card under its own heading would put the form for creating a
+     build variable outside the section that lists them, so the page's last control
+     would belong to nothing. Its name field decides which group the result lands in,
      so the section that explains that rule is where it belongs.
 
      Rendered even when that group is empty, which is a fresh install: a group that
@@ -3705,13 +3665,14 @@ function renderSetup(s) {
       <div><div class="name">New entry</div></div>
       <div class="newline">
         <!-- Labels beside the boxes, not above them, and both boxes on one line.
-             Stacked with a label over each, one entry was four lines tall and the Save
-             button in the next grid cell sat level with the first label rather than with
-             anything it acts on. Inline labels put everything on one baseline.
+             Stacked with a label over each, one entry would be four lines tall and the
+             Save button in the next grid cell would sit level with the first label
+             rather than with anything it acts on. Inline labels put everything on one
+             baseline.
 
-             Labelled rather than explained: the paragraph that used to be here said what
-             an UPPER_CASE name does and what happens to anything else — true, and already
-             stated under the group heading two lines above.
+             Labelled rather than explained: a paragraph saying what an UPPER_CASE name
+             does and what happens to anything else would repeat what is already stated
+             under the group heading two lines above.
 
              No placeholder on the name. A greyed-out example there reads as a value
              already filled in, and this is the field where getting it wrong is silent:
@@ -3965,10 +3926,9 @@ function save(key, field, btn) {
 // failure next to the button rather than in a console nobody has open.
 //
 // The renderer and the place errors land are arguments because two pages share this.
-// They used to be hardcoded to the secrets panel, so a failed project save rendered
-// project state through the credential renderer and then printed the resulting
-// exception into an element that is hidden on /projects — an action that silently did
-// nothing and said nothing.
+// Hardcoding them to the secrets panel would render a failed project save through the
+// credential renderer and print the resulting exception into an element that is hidden
+// on /projects — an action that silently does nothing and says nothing.
 async function run(btn, fn, opts) {
   const render = opts?.render || renderSetup;
   const bodyID = opts?.body || "setup-body";
@@ -3995,9 +3955,9 @@ async function run(btn, fn, opts) {
 const runProject = (btn, fn) =>
   run(btn, fn, {render: renderProjectsPage, body: "projects-body"});
 
-// runZrok is run, aimed at the zrok panel. Without it a failed enrolment renders zrok
-// state through the credential renderer and prints the exception into a hidden element —
-// the exact bug `run`'s arguments were added to stop, one panel later.
+// runZrok is run, aimed at the zrok panel. Without it a failed enrolment would render
+// zrok state through the credential renderer and print the exception into a hidden
+// element — the failure mode `run`'s arguments exist to prevent, on this panel too.
 const runZrok = (btn, fn) =>
   run(btn, fn, {render: renderZrok, body: "exposer-body"});
 
@@ -4076,13 +4036,13 @@ function zrokRootRow(s, which, info, label) {
 
   // The actions this row owns, and only the ones it can actually perform.
   //
-  // They used to be a separate row below both directories, which made "un-enrol this host"
-  // a button with no visible subject — the complaint, and a fair one. Un-enrolling acts on
-  // the directory the process has loaded, so it appears on that row and nowhere else.
+  // A separate row below both directories would make "un-enrol this host" a button with
+  // no visible subject. Un-enrolling acts on the directory the process has loaded, so it
+  // appears on that row and nowhere else.
   const acts = [];
   if (s.can_write && info.enabled && !stored) {
-    // Only for a directory that has something in it. "Use this one" over an empty directory
-    // was the earlier version and it was meaningless: nothing is there to use.
+    // Only for a directory that has something in it. "Use this one" over an empty
+    // directory would be meaningless: nothing is there to use.
     acts.push(`<button class="btn" data-zrok-use="${esc(which)}"
       title="Publish previews through this environment, from the next restart.">Use this
       one</button>`);
@@ -4136,9 +4096,9 @@ function zrokRootRow(s, which, info, label) {
    groups use.
 
    Not decoration. `.sec` carries no horizontal padding of its own — `.secgroup-box .sec`
-   adds it — so rows placed straight into a `.secbox` render flush against the border,
-   which is exactly how the first version of this panel looked. Reusing the group box
-   fixes that and gets the caret, the keyboard behaviour and the stripe for free.
+   adds it — so rows placed straight into a `.secbox` would render flush against the
+   border. Reusing the group box avoids that and gets the caret, the keyboard behaviour
+   and the stripe for free.
 
    Open when it is the exposer in use, because that is the one section anybody arriving
    here wants, and the other three are reference. */
@@ -4298,16 +4258,16 @@ function otherChips(o, s) {
    where the others have one reads as a control that failed to render.
 
    It writes a stored setting rather than the config file, which is hand-written and whose
-   comments are the part that survives being copied to another machine — so switching exposers
-   used to be "edit YAML and restart" on a page built to avoid exactly that.
+   comments are the part that survives being copied to another machine — editing it to switch
+   exposers would be exactly the "edit YAML and restart" workflow this page exists to avoid.
 
    Disabled when the exposer cannot work. The server refuses it anyway, and for a reason worth
    stating: recording an exposer with no credential produces a daemon that will not start, and
    the page that would fix it is served by that daemon. */
 function useExposerButton(s, kind, inUse, ready, canWrite) {
-  // Chosen but not yet running. This is the state that made the button look inert: the chips
-  // are drawn from the *running* exposer, which does not change until a restart, so pressing
-  // Enable and watching nothing move read as nothing having happened.
+  // Chosen but not yet running. The chips are drawn from the *running* exposer, which does
+  // not change until a restart, so without this the button would look inert: pressing
+  // Enable and watching nothing move reads as nothing having happened.
   const pending = s.exposer_stored === kind && !inUse;
   if (pending) {
     return `<span class="flag opt">enabled at the next restart</span>`;
@@ -5051,8 +5011,8 @@ async function loadProjects() {
 }
 
 /* Which project's detail is open, and which panel of it. One at a time: the page
-   is a list to scan, and a dozen expanded cards is the same wall of fields the
-   permanently-open form used to be. Kept outside render so a refresh after a save
+   is a list to scan, and a dozen expanded cards would be the same wall of fields a
+   permanently-open form would be. Kept outside render so a refresh after a save
    comes back to where you were. */
 let projOpen = {key: null, tab: null};
 
@@ -5080,10 +5040,10 @@ let projFlash = "";
 
 /* toast says something happened, over the page rather than in it.
 
-   An inline notice was the first attempt and it was too easy to miss: it landed where the
-   form had been, which is where the form no longer is, so the eye had already moved. This
-   sits in a fixed corner, outside the document flow, so nothing below it shifts — a banner
-   that pushes a list down is its own small confusion.
+   An inline notice is too easy to miss: it would land where the form had been, which after
+   a save is not where the eye is looking. This sits in a fixed corner, outside the document
+   flow, so nothing below it shifts — a banner that pushes a list down is its own small
+   confusion.
 
    Detached from any render. The element removes itself on a timer, because clearing it by
    re-rendering would throw away whatever somebody had started typing in another panel. */
@@ -5153,7 +5113,7 @@ function ask(o) {
     const wrap = document.createElement("div");
     // `.modal ask`, not `.modal` alone: the boot report is also a .modal and is in the
     // document from the start, so a selector of `.modal` finds that one and anything
-    // reasoning about "the dialog" reads the wrong element. The harness did.
+    // reasoning about "the dialog" reads the wrong element.
     wrap.className = "modal ask";
     wrap.setAttribute("role", "dialog");
     wrap.setAttribute("aria-modal", "true");
@@ -5354,7 +5314,7 @@ const platformLabel = p => p === "local" ? "filesystem" : p;
 //
 // A monogram and a colour derived from the name when nothing is set, so a list of ten
 // projects is scannable with no configuration at all — the point is telling rows
-// apart, and that should not require an afternoon of choosing emoji. An operator who
+// apart, and that should not require picking an icon for each one. An operator who
 // wants a specific one sets it and it wins.
 //
 // Deliberately not an image URL. The dashboard is served by a loopback daemon with no
@@ -5383,11 +5343,11 @@ function avatarHTML(p) {
 // imagePicker is the container image field: a text box that is also a search box, over a
 // list of the images known to work here.
 //
-// A <datalist> was the first attempt and it is not this. Its dropdown is the browser's,
-// which means no descriptions, no styling, no way to say which one is the default, and on
-// some browsers no way to see the list at all without typing a character that matches. The
-// list is short and opinionated, and the interesting part is *why* one entry differs from
-// another — which needs a row you can put a sentence in.
+// Not a <datalist>. Its dropdown is the browser's, which means no descriptions, no
+// styling, no way to say which one is the default, and on some browsers no way to see
+// the list at all without typing a character that matches. The list is short and
+// opinionated, and the interesting part is *why* one entry differs from another — which
+// needs a row you can put a sentence in.
 //
 // Free text is preserved on purpose: the value is whatever the operator types, and a
 // private registry mirror is the normal answer in an enterprise. The list is a shortcut,
@@ -5495,11 +5455,11 @@ const projSecretsOpen = new Set();
 
 /* secretsSection is the project's own environment variables, as an accordion.
 
-   It was a `Secrets` button beside `Edit`, which made a project's tokens a *mode* the
-   card had to be switched into — and the two modes were mutually exclusive, so checking
-   a variable meant leaving the form. Same styling as the credential page's groups, and
-   the same green stripe, because these are the same kind of thing: values injected into
-   a build. A reader who has seen one page knows what this is. */
+   Not a `Secrets` button beside `Edit`: that would make a project's tokens a *mode* the
+   card has to be switched into, mutually exclusive with editing, so checking a variable
+   would mean leaving the form. Same styling as the credential page's groups, and the same
+   green stripe, because these are the same kind of thing: values injected into a build.
+   A reader who has seen one page knows what this is. */
 function secretsSection(p, s) {
   const key = projectKey(p);
   const own = (p.secrets || []).length;
@@ -5650,10 +5610,10 @@ function scmCredentialFields(s, p, id) {
   /* A new project gets the question and not the boxes.
 
      Pasting a token into a form for a project that does not exist yet means the token has
-     nowhere to be stored until the row is written, so the save became two requests where
-     the second could fail on its own — and did, reporting "failed to fetch" about a project
-     that had been created. It also put three credential fields in front of somebody whose
-     next click is Create.
+     nowhere to be stored until the row is written, so the save would become two requests,
+     the second able to fail on its own and report "failed to fetch" about a project that
+     had already been created. Three credential fields would also sit in front of somebody
+     whose next click is Create.
 
      So: say whether it is private, create it, and then paste the token into the row that
      now exists. The card says which credential is missing until one is there. */
@@ -5874,15 +5834,14 @@ function branchStrip(p, ro) {
 /* unlinkedSection says this project is skipping pull requests, and opens the picker.
 
    Nothing at all when nothing is unlinked, which is the ordinary state of every project.
-   The first version said "Every open pull request on this repository is built" on every
-   card — true, unasked, and one more line to read past on all of them. A strip that appears
-   only when there is something to say is also a signal by its presence.
+   Saying "Every open pull request on this repository is built" on every card would be true,
+   unasked, and one more line to read past on all of them. A strip that appears only when
+   there is something to say is also a signal by its presence.
 
    The count and not the numbers: which pull requests, when each was unlinked and what branch
    it was on is four facts per row, and a card is not where four-by-N belongs. The picker is.
-   Also gone is the free-number box that used to sit here — building an arbitrary pull
-   request by typing its number is still an API call, but it was a control nobody reached
-   for beside one they do. */
+   No free-number box here either — building an arbitrary pull request by typing its number
+   is still an API call, but it is a control nobody reaches for beside the picker. */
 function unlinkedSection(p, ro) {
   if (ro) return "";
   const key = projectKey(p);
@@ -6689,7 +6648,7 @@ function wireProjectHandlers(s) {
   }
 
   // One expanded panel at a time, and clicking the open one closes it. A page of
-  // expanded cards is the wall of fields this replaced.
+  // expanded cards would be a wall of fields.
   for (const b of el.querySelectorAll("[data-tab]")) {
     b.onclick = () => {
       if (!confirmDiscard()) return;
@@ -6737,8 +6696,8 @@ function wireProjectHandlers(s) {
 
       // A private repository with no credential is noted, not blocked.
       //
-      // This was a confirm() — a modal asking permission to save something the operator had
-      // just asked to save, whose only useful answer was OK. Marking a repository private
+      // A confirm() here would be a modal asking permission to save something the operator
+      // just asked to save, whose only useful answer is OK. Marking a repository private
       // before pasting its token is the *normal order*: the project has to exist before it
       // has credential rows to fill in. So the save proceeds and the toast afterwards says
       // what is still needed.
@@ -6797,10 +6756,9 @@ function wireProjectHandlers(s) {
         // guard fires on a form the server has already accepted.
         formDirty = false;
 
-        // Close the panel and say so. Leaving it open was meant to keep somebody in
-        // place for a second edit, and instead made a successful save look like nothing
-        // had happened — the form it left on screen is indistinguishable from the form
-        // that was there before the click.
+        // Close the panel and say so. Leaving it open to keep somebody in place for a
+        // second edit would make a successful save look like nothing happened — the form
+        // on screen would be indistinguishable from the form before the click.
         if (editing) {
           projOpen = {key: null, tab: null};
           projFlash = needsToken
@@ -6872,9 +6830,9 @@ function wireProjectHandlers(s) {
     };
   }
 
-  // No handler for a Build open PRs button any more — the button is gone. The scan itself
-  // is not: adding a project still runs it, which is where it earns its place, and the
-  // route is unchanged for anything calling the API.
+  // No button here queues every open pull request on demand. The scan itself still runs
+  // when a project is added, which is where it earns its place, and the route stays
+  // unchanged for anything calling the API directly.
 
   // The hostname prefix. Live example as it is typed, because "a" tells nobody what they
   // are about to get and `a-docs-main` is the string that ends up in a URL.
@@ -7054,9 +7012,8 @@ function applyStatus(d) {
   }
 
   // While the daemon is recovering there are no workers, so a queued build cannot start.
-  // Said out loud, because "Queued" with nothing happening is indistinguishable from a
-  // stuck queue — which is exactly how it was reported, twice, both times a minute after a
-  // restart.
+  // Said out loud, because "Queued" with nothing happening for a minute after a restart is
+  // indistinguishable from a stuck queue.
   showStarting(d.starting, d.startup);
   // Only once the daemon says it has finished: while it is still recovering, the banner
   // above is the live account of the same thing and the footer would contradict it with a
@@ -7084,10 +7041,10 @@ function applyStatus(d) {
 // daemon's own state is reported.
 /* renderBootLink puts the startup report in the footer, and nothing on the screen.
 
-   It used to open by itself, gated on an instance stamp in sessionStorage so a reload would
-   not re-announce a restart from an hour ago. That machinery is gone with the auto-open:
-   nothing appears unasked, so nothing has to remember whether it already has, and the report
-   stays reachable for as long as the daemon runs rather than being spent on one load.
+   Nothing appears unasked, so nothing has to remember whether it already has and the report
+   stays reachable for as long as the daemon runs rather than being spent on one load. Opening
+   it automatically would need an instance stamp in sessionStorage to avoid re-announcing an
+   old restart on every reload — machinery this design has no need for.
 
    The label carries the duration. A link reading "startup report" makes somebody open a
    dialog to learn a number that fits in the link. */
@@ -7116,10 +7073,10 @@ function openBootReport(r) {
   const adopted = (r.adopted_previews || 0) + (r.adopted_builds || 0);
   const created = (r.created_previews || 0) + (r.created_builds || 0);
 
-  // No suppression rule here any more. It used to refuse to open for a startup under ten
-  // seconds with nothing created — the right call for something that opened itself, and
-  // wrong for something asked for: a reader who clicks the link wants the report, including
-  // the one that says everything went well.
+  // No suppression rule here: refusing to open for a startup under ten seconds with nothing
+  // created would be the right call for something that opened itself, but this is asked
+  // for. A reader who clicks the link wants the report, including the one that says
+  // everything went well.
 
   const shares = adopted + created;
   // One row per fact, and only for facts that happened. A tile reading "0 created" is a
@@ -7136,8 +7093,8 @@ function openBootReport(r) {
     row("Queued builds", r.pending ? String(r.pending) : "", "warn"),
   ].join("");
 
-  // The headline is labelled. It was a bare "3s" above a sentence, and the one number
-  // the report exists to give was read as decoration — "I didn't see a total time".
+  // The headline is labelled. A bare "3s" above a sentence would read as decoration, and
+  // the one number the report exists to give would go unread.
   document.getElementById("boot-body").innerHTML = `
     <div class="boot-hero">
       <div class="boot-hero-k">Startup took</div>
@@ -7190,24 +7147,22 @@ function showStarting(starting, startup) {
 
   // The page's own content stays on screen.
   //
-  // Hiding it was tried, on the reasoning that during recovery the Open links point at
-  // shares that do not exist yet and the feed is empty until backfill — so the content
-  // contradicts the banner. What it actually produced was a dashboard whose entire
-  // visible contents were one notice, which reads as a broken page rather than as a
-  // careful one. The rows are true: they come from the database, and their state is
-  // what it says. The dead-link window is a real problem and is a separate fix, listed
-  // in TODO.md — it is not solved by showing nothing at all.
+  // Hiding it during recovery, when the Open links point at shares that do not exist yet
+  // and the feed is empty until backfill, would leave a dashboard whose entire visible
+  // contents are one notice — a page that reads as broken rather than as careful. The
+  // rows are true: they come from the database, and their state is what it says. The
+  // dead-link window is a real problem and is a separate fix, listed in TODO.md — it is
+  // not solved by showing nothing at all.
   if (!el) {
     el = document.createElement("div");
     el.id = "starting";
     el.className = "notice warn";
     // A sibling of .wrap, never a child of it.
     //
-    // This banner used to be prepended into .wrap — which is a two-column grid, so the
-    // banner became its first cell, the previews list was pushed into the 21rem rail
-    // column, and the activity rail took the wide one. Every row in the list then
-    // overlapped itself in a third of the width it was designed for, which read as
-    // broken row CSS and is not: prepending into a grid shifts every sibling by one.
+    // .wrap is a two-column grid. Prepending the banner into it would make the banner its
+    // first cell, push the previews list into the 21rem rail column, and give the activity
+    // rail the wide one — every row in the list overlapping itself in a third of the width
+    // it was designed for. Prepending into a grid shifts every sibling by one.
     wrap.parentNode.insertBefore(el, wrap);
   }
 
@@ -7230,7 +7185,7 @@ function showStarting(starting, startup) {
   // rather than marking them all complete.
   // Newest first, capped. The daemon sends up to forty and the interesting ones are the
   // last few — a banner that grows a forty-line list pushes the page it is describing off
-  // the screen, which is the failure the hidden-content version had.
+  // the screen.
   const items = (startup && startup.items ? startup.items : [])
     .slice(-6).reverse()
     .map(t => `<div class="starting-item">${esc(t)}</div>`).join("");
@@ -7472,10 +7427,9 @@ let admin = {};
 // changes.
 //
 // This page is one embedded file with no cache busting, so a tab left open across a
-// rebuild keeps running the code it loaded. That produced three false bug reports in
-// one afternoon — a layout that had already moved, a filter that had already been
-// fixed, a row that was already collapsed — each costing a diagnosis before somebody
-// thought to reload.
+// rebuild keeps running the code it loaded. A layout that has since moved, a filter
+// that has since been fixed, a row that is already collapsed elsewhere — all can look
+// like a bug in the running page when the real fix is a reload.
 //
 // Not an automatic reload. The reader may be part-way through a log, or have a
 // selection they are copying, and a page that reloads itself under them is worse
@@ -7501,10 +7455,10 @@ function checkInstance(seen) {
 
 // wireClearCache wires the one cache control, in the top bar.
 //
-// One button rather than one per row. Per row it appeared on every open row at once,
-// which reads as part of looking at a log rather than as the rare repair it is — and
-// a cache is deleted with its preview anyway, so the manual version exists only for
-// the pull request whose next build has to work now.
+// One button rather than one per row. Per row it would appear on every open row at
+// once, reading as part of looking at a log rather than as the rare repair it is —
+// and a cache is deleted with its preview anyway, so the manual version exists only
+// for the pull request whose next build has to work now.
 //
 // Confirmed, unlike the per-row version. It clears every preview's cache, so the
 // next build of everything currently open pays for it, and that is not visible from

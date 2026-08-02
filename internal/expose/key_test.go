@@ -28,13 +28,13 @@ func TestSpecKey(t *testing.T) {
 	}
 }
 
-// TestRebuildingOneCommitTakesItsOwnBuildShare covers the collision that greyed out
-// "Open build" on a build that had just succeeded.
+// TestRebuildingOneCommitTakesItsOwnBuildShare covers a collision that would leave
+// "Open build" greyed out for a build that just succeeded.
 //
 // A build share's name embeds the commit, so rebuilding the same commit asks for the
 // same name under a new build id — and a check that refused every key it did not
-// recognise refused the preview its own name. The build succeeded, the share was not
-// created, and the dashboard had no URL to offer for it.
+// recognise would refuse the preview its own name. The build would succeed, the
+// share would not be created, and the dashboard would have no URL to offer for it.
 func TestRebuildingOneCommitTakesItsOwnBuildShare(t *testing.T) {
 	l := NewLocal(slog.New(slog.DiscardHandler), "")
 	t.Cleanup(func() { l.Close() })
@@ -109,10 +109,11 @@ func TestOneNameForTwoPreviewsIsStillRefused(t *testing.T) {
 
 // TestTwoPublicationsPerPreview is the property the key exists for.
 //
-// Publish withdraws whatever holds the key before taking it, so while the key was
-// the preview id, publishing a build share tore down the branch share it was meant
-// to sit beside — one live share per preview, by construction. The local exposer
-// stands in for all four here: they share this structure, and it needs no network.
+// Publish withdraws whatever holds the key before taking it, so if the key were the
+// preview id alone, publishing a build share would tear down the branch share it is
+// meant to sit beside — one live share per preview, by construction. The local
+// exposer stands in for all four here: they share this structure, and it needs no
+// network.
 func TestTwoPublicationsPerPreview(t *testing.T) {
 	l := NewLocal(slog.New(slog.DiscardHandler), "")
 	t.Cleanup(func() { l.Close() })
@@ -147,9 +148,9 @@ func TestTwoPublicationsPerPreview(t *testing.T) {
 		t.Fatalf("publishing a second build share: %v", err)
 	}
 
-	// All three live at once, at three distinct URLs. Before the key change the
-	// second Publish deleted the first and the third deleted the second, leaving
-	// one.
+	// All three live at once, at three distinct URLs. Keyed by preview id alone, the
+	// second Publish would delete the first and the third would delete the second,
+	// leaving one.
 	urls := map[string]bool{branch.URL: true, first.URL: true, second.URL: true}
 	if len(urls) != 3 {
 		t.Errorf("three publications produced %d distinct URLs: %v", len(urls), urls)

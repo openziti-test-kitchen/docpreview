@@ -198,8 +198,8 @@ Binding creates a ziti *terminator*. Two instances binding the same service crea
 load-balances between them — each holding a disjoint routing table, so every preview works about half the
 time and 404s the rest. It presents as a flaky network rather than a configuration error.
 
-Give a second instance its own service and domain. (Found the hard way: a `docpreview preview` left running
-in another terminal made the integration tests fail intermittently.)
+Give a second instance its own service and domain. A `docpreview preview` left running in another terminal is
+enough to make the integration tests fail intermittently.
 
 :::
 

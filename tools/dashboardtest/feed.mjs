@@ -1,9 +1,9 @@
 // Renders the activity feed under several states and reports how many rows appear.
 //
-// Written for a specific report: while a build is queued the feed showed only the
-// queued entry, and everything else came back once the build started. The feed is
-// filtered in three places — the project scope, the kind filter, and collapse() —
-// and reading them proves nothing about which one is dropping rows.
+// Checks that a queued build does not hide every other entry in the feed: the daemon
+// always sends recent history alongside the queued event, so the feed should show all
+// of it. The feed is filtered in three places — the project scope, the kind filter, and
+// collapse() — and reading them proves nothing about which one is dropping rows.
 //
 //   npm install --prefix tools/dashboardtest
 //   node tools/dashboardtest/feed.mjs
@@ -17,9 +17,9 @@ import {liveStatus} from "./live.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const daemon = process.env.DOCPREVIEW_URL || "http://127.0.0.1:8471";
 
-// Through live.mjs because /status is behind the login now. A 401 body is valid JSON, so
-// the previous version handed the page an object with no previews and the error came out
-// of the page rather than out of here.
+// Through live.mjs because /status is behind the login. A 401 body is valid JSON, so
+// fetching it directly would hand the page an object with no previews, and the error
+// would surface from inside the page instead of from here.
 const {status: base, source} = await liveStatus(daemon);
 console.log(`state: ${source}\n`);
 
@@ -48,10 +48,9 @@ const win = dom.window;
 await new Promise(r => win.addEventListener("load", r));
 const ui = win.eval("ui");
 
-// The reported scenario: an attempt that is queued and nothing more. Deliberately
-// no building event and no terminal event for its commit — the earlier harness
-// always added a building entry beside the queued one, which is why it never
-// reproduced this.
+// An attempt that is queued and nothing more. Deliberately no building event and no
+// terminal event for its commit, so a filter that only works once a second event
+// exists for the same attempt cannot hide behind one.
 function withQueuedOnly(status) {
   const s = structuredClone(status);
   const p = s.previews[0];
@@ -123,14 +122,13 @@ let failures = 0;
 // The collapsed row count the baseline produced, whatever the data source. Set on the first
 // scenario and used as the floor for the rest.
 let floor = null;
-// "then building" wants **no** queued row, which is a reversal of what this harness
-// asserted when it was written.
+// "then building" wants **no** queued row.
 //
-// The feed now shows one row per attempt, carrying the state that attempt has reached:
-// queued, then building, then success or failed, in place. It used to append a row per
-// transition, which meant three rows for one build and a feed that was mostly its own
-// history — "i dont want n entries for queued, building, success|fail". So a queued row
-// surviving next to the building row for the same attempt is now the bug, not the fix.
+// The feed shows one row per attempt, carrying the state that attempt has reached:
+// queued, then building, then success or failed, in place. Appending a row per
+// transition would mean three rows for one build and a feed that is mostly its own
+// history. A queued row surviving next to the building row for the same attempt is
+// the bug this guards against.
 //
 // The queued-only and requeue cases still want one, because there is no later state for
 // that attempt to collapse into.

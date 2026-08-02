@@ -11,9 +11,9 @@ import (
 
 // /readyz answers without a login, because the thing that waits on a restart is a script.
 //
-// Gating it was a wait loop that never returned: the only payload reporting recovery was
-// `/status`, which went behind the login with everything else, so `Restart-Docpreview.ps1` polled
-// a redirect to a form until it timed out. A restart that looked like a hang.
+// If it were gated, `Restart-Docpreview.ps1` would poll a redirect to the login form until it
+// times out, since `/status` — the only payload reporting recovery — sits behind the login with
+// everything else. Gating /readyz turns a restart into a wait loop that never returns.
 func TestReadyzAnswersWithoutALogin(t *testing.T) {
 	ingress, d, _ := testIngress(t, &fakeClient{})
 	if _, err := ingress.WithLogin(d.store); err != nil {

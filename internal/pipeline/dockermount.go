@@ -200,13 +200,12 @@ func hostMountPath(dir string) (string, error) {
 // is created per commit and pruned with its siblings, so nothing inside it
 // survives a push.
 //
-// **It is not the speed win, and this comment used to claim it was.** Measured on this
-// project's own www/: 4m28s cold against 4m21s warm — inside the noise. The whole
-// saving was node_modules, which moved off the bind mount onto a volume and took the
-// install from 5m46s to 14s (see the mount comments in build.go). What the cache buys
-// is network: the same tarballs are not fetched again on the second push to a branch,
-// which matters on a metered or slow link and not at all to the clock here. Keep it for
-// that reason, and do not credit it with the other one.
+// **This buys network, not build time.** A cold build takes 4m28s against 4m21s warm —
+// inside the noise. The actual speedup comes from node_modules living on a volume rather
+// than the bind mount, which takes the install from 5m46s to 14s on its own (see the
+// mount comments in build.go). What this cache buys instead is not re-fetching the same
+// tarballs on the second push to a branch, which matters on a metered or slow link and
+// not at all to the clock here.
 //
 // # One cache per pull request
 //
@@ -258,12 +257,12 @@ func (b *Builder) cacheMounts(pr model.PullRequest) ([]string, error) {
 //
 // # Why a volume and not a directory on the host
 //
-// It was a bind mount, and on Windows that made the cache the slowest part of a build
-// rather than the thing that speeds one up. Measured while watching a real yarn install
-// fetch packages into it: **0.4 MB/s**, against the 100+ MB/s the same disk does natively.
-// A package cache is tens of thousands of small files, and every one of them was crossing
-// the WSL to NTFS boundary — the identical penalty that made `npm ci` take 5m46s writing
-// node_modules through a mount and 14s writing it to a volume.
+// A bind mount on Windows makes the cache the slowest part of a build rather than the
+// thing that speeds one up: a yarn install fetching packages into one fills it at
+// **0.4 MB/s**, against the 100+ MB/s the same disk does natively. A package cache is tens
+// of thousands of small files, and every one of them crosses the WSL to NTFS boundary —
+// the same penalty that makes `npm ci` take 5m46s writing node_modules through a mount and
+// 14s writing it to a volume.
 //
 // A named volume lives in the docker VM's own filesystem, so the writes are native. It is
 // still per preview, so it still has the lifetime of everything else a pull request owns,

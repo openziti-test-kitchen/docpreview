@@ -24,10 +24,10 @@ import (
 //     read as a signature problem.
 //   - **`/healthz`** is what a supervisor or a container healthcheck polls. Gating it means a
 //     password change silently restarts the daemon in a loop.
-//   - **`/readyz`** is what a restart script waits on. Gating it turned a restart into a wait
-//     loop that never returned, because the only payload reporting recovery was `/status`. It
-//     carries counts and a stage name and nothing that identifies a repository or a preview —
-//     see the note on it in ingress.go, which is the rule for anything added to it.
+//   - **`/readyz`** is what a restart script waits on. Gating it would turn a restart into a wait loop
+//     that never returns, since `/status` is the only payload reporting recovery. It carries counts and a
+//     stage name and nothing that identifies a repository or a preview — see the note on it in ingress.go,
+//     which is the rule for anything added to it.
 //   - **The previews themselves** — `expose.MountPrefix`, under the `local` exposer. A preview
 //     URL is meant to be pasted into a pull request and opened by a reviewer who has no login
 //     and should not need one. Previews served by zrok, Frontdoor or ziti never reach this mux
@@ -36,14 +36,12 @@ import (
 //
 // # Loopback is not exempt
 //
-// It was, briefly: a request from the machine itself was admitted as admin with no session, on
-// the reasoning that anyone who can reach `127.0.0.1` can already run the binary. That is true
-// and it is still the wrong rule, because "the machine itself" is not a property this daemon can
-// establish. A tunnel in proxy mode connects from a local process, so `RemoteAddr` is loopback
-// for a request that came from the internet — the same hole documented at length for the
-// credential surface, which is the reason `isLocalRequest` also demands the absence of
-// forwarding headers. Betting the whole login on it makes every visitor an admin the moment
-// something proxies without setting one.
+// "The machine itself" is not a property this daemon can establish, so admitting a loopback request as
+// admin with no session is the wrong rule even though anyone who can reach `127.0.0.1` can already run
+// the binary. A tunnel in proxy mode connects from a local process, so `RemoteAddr` is loopback for a
+// request that arrived from the internet — the same hole documented at length for the credential surface,
+// which is why `isLocalRequest` also demands the absence of forwarding headers. Betting the whole login on
+// loopback alone would make every visitor an admin the moment something proxies without setting one.
 //
 // The bootstrap does not need the exemption. `loginRequired` is false until a password exists,
 // so a fresh installation is open at 127.0.0.1 exactly as before, and the CLI that sets the
@@ -109,8 +107,7 @@ func (i *Ingress) requireLogin(next http.Handler) http.Handler {
 			return
 		}
 
-		// No viewer password means reading is open, which is what every installation had
-		// before this existed. The write surfaces are still gated by their own rules.
+		// No viewer password means reading is open. The write surfaces are still gated by their own rules.
 		if !i.console.loginRequired(r.Context()) {
 			next.ServeHTTP(w, r)
 			return
@@ -173,8 +170,7 @@ func (i *Ingress) login(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	// Nothing to log into. Saying so beats a form that refuses every password, which is what
-	// this looked like before the check existed.
+	// Nothing to log into. Saying so beats a form that refuses every password with no explanation.
 	if !i.console.anyPasswordSet(ctx) {
 		i.serveLogin(w, "", "No password is set on this daemon, so there is nothing to log in to. "+
 			"Set one with: docpreview console password -role viewer", http.StatusOK)
@@ -220,8 +216,8 @@ func (i *Ingress) login(w http.ResponseWriter, r *http.Request) {
 
 // logout clears the session.
 //
-// POST only. A GET would let any page on the internet log an operator out with an `<img>` tag —
-// harmless as mischief, and the kind of thing that wastes an afternoon being diagnosed.
+// POST only. A GET would let any page on the internet log an operator out with an `<img>` tag — harmless,
+// but a hard thing to diagnose from the symptom alone.
 func (i *Ingress) logout(w http.ResponseWriter, r *http.Request) {
 	clearConsoleCookie(w)
 	if wantsJSON(r) {
@@ -239,18 +235,17 @@ func (i *Ingress) logout(w http.ResponseWriter, r *http.Request) {
 //
 // # Every comment about this page belongs here, not in the markup
 //
-// An HTML comment is served. The rationale for these fields was originally written inline and
-// therefore printed the two valid usernames into the page source of a login form reachable from
-// the internet — the same defect as the placeholder that was removed from the username field,
-// arriving by a route nobody looks at. Explanations live in Go; the template carries markup.
+// An HTML comment is served. Writing the rationale for these fields inline in the template would print
+// the two valid usernames into the page source of a login form reachable from the internet. Explanations
+// live in Go; the template carries markup.
 //
 // # The username field
 //
-// A username as well as a password, and the username *is* the role. Two reasons. A password-only
-// form gives a password manager nothing to label the entry with, so an operator's admin and
-// viewer passwords collapse into one indistinguishable item — the reported complaint. And it
-// makes the role something the person asked for rather than something inferred from which of two
-// hashes happened to match, which is clearer and leaves less to get wrong.
+// A username as well as a password, and the username *is* the role. Two reasons. A password-only form
+// gives a password manager nothing to label the entry with, so an operator's admin and viewer passwords
+// would collapse into one indistinguishable item. And it makes the role something the person asked for
+// rather than something inferred from which of two hashes happened to match, which leaves less to get
+// wrong.
 //
 // `autocomplete="username"` beside `current-password` is what makes a manager treat the two as
 // one credential and offer to save it.

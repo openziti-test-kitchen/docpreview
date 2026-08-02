@@ -22,14 +22,13 @@
 //     recommended over an account API token: the blast radius of a leak is one
 //     repository rather than an account.
 //
-//     **Two different mechanisms keep it out of the open, and this comment used to
-//     name the wrong one.** It is *not* registered with `internal/redact`, the
-//     value-based redactor compiled from `build.secrets` — that one only ever sees
-//     shell-shaped keys (`vault.IsBuildEnvKey`), and every credential here is
-//     dotted, so it is excluded by construction and deliberately never reaches a
-//     build. What actually covers it is `pipeline.scrub`, which strips RFC 3986
-//     userinfo from git's own output, plus `vault.Secret`'s redacting String,
-//     Format, GoString and MarshalJSON.
+//     **Two different mechanisms keep it out of the open.** It is *not* registered with
+//     `internal/redact`, the value-based redactor compiled from `build.secrets` — that
+//     one only ever sees shell-shaped keys (`vault.IsBuildEnvKey`), and every credential
+//     here is dotted, so it is excluded by construction and deliberately never reaches a
+//     build. What actually covers it is `pipeline.scrub`, which strips RFC 3986 userinfo
+//     from git's own output, plus `vault.Secret`'s redacting String, Format, GoString and
+//     MarshalJSON.
 //
 //     The distinction matters for anything added later: a new code path that
 //     printed CloneURL's result on the assumption that "the redactor has this
@@ -215,15 +214,12 @@ func New(cfg config.BitbucketConfig, v *vault.Vault, log *slog.Logger) (*Client,
 		webhookSecret: secret,
 	}
 
-	// The global credential is optional, and that is a change from how this started.
-	//
-	// It was required, on the reasoning that a client with no credential cannot do
-	// anything. True of a *repository*, not of the client: Bitbucket access tokens are
-	// scoped to a repository unless an administrator permits the wider kinds, and one who
-	// does not leaves an operator with a token per project and nothing global to store.
-	// Requiring one here meant the daemon refused to build a Bitbucket client at all in
-	// exactly that case, so the projects page could not be used to supply the tokens that
-	// would have made it work.
+	// The global credential is optional: true of a *repository*, not of the client.
+	// Bitbucket access tokens are scoped to a repository unless an administrator permits
+	// the wider kinds, and one who does not leaves an operator with a token per project
+	// and nothing global to store. Requiring one here would refuse to build a Bitbucket
+	// client at all in exactly that case, so the projects page could not be used to supply
+	// the tokens that would make it work.
 	//
 	// So: absent is fine, and a repository with neither its own credential nor a global
 	// one fails at the point of use, naming both places it could come from.
@@ -251,9 +247,8 @@ func New(cfg config.BitbucketConfig, v *vault.Vault, log *slog.Logger) (*Client,
 
 // ipv4First is a transport that dials IPv4 before IPv6.
 //
-// Observed on this machine, and the reason the operator's own curl needed `--ipv4`: a
-// connection to api.bitbucket.org over IPv6 is accepted, gets through the TLS handshake,
-// and is then reset mid-response —
+// A connection to api.bitbucket.org over IPv6 can be accepted, get through the TLS
+// handshake, and then be reset mid-response —
 //
 //	read tcp [2603:…]:65086->[2401:1d80:…]:443: wsarecv: An existing connection was
 //	forcibly closed by the remote host
@@ -281,7 +276,7 @@ func ipv4First() http.RoundTripper {
 	return t
 }
 
-// checkAPIBase refuses the base URL that used to work.
+// checkAPIBase refuses api calls aimed at bitbucket.org itself.
 //
 // Encoded rather than discovered: since 4 May 2026 authenticated REST calls must go
 // to api.bitbucket.org, and a call to bitbucket.org/api answers 403 with a body that
@@ -365,9 +360,9 @@ func (c *Client) CloneURL(_ context.Context, pr model.PullRequest) (string, erro
 	if err != nil {
 		return "", err
 	}
-	// Both halves escaped. An unescaped email contains an `@`, which used to defeat
-	// the log scrubber outright; that is fixed in pipeline.scrubLine, and escaping
-	// here is the difference between a defence and a convention.
+	// Both halves escaped. An unescaped email contains an `@`, which would defeat
+	// pipeline.scrubLine's log scrubber outright; escaping here is the difference
+	// between a defence and a convention.
 	return fmt.Sprintf("https://%s:%s@bitbucket.org/%s/%s.git",
 		url.QueryEscape(cred.user), url.QueryEscape(string(cred.pass.Reveal())),
 		pr.Repo.Owner, pr.Repo.Name), nil
@@ -917,17 +912,17 @@ func (c *Client) forgetComment(previewID string) {
 	delete(c.comments, previewID)
 }
 
-// do issues one request, retrying what is worth retrying.
-//
-// Written fresh rather than shared with the GitHub client: the error envelope and the
-// rate-limit signalling are different enough that a shared implementation would be a
-// switch on platform wearing a trenchcoat.
-// do issues a request as the credential belonging to one repository.
+// do issues a request as the credential belonging to one repository, retrying what is
+// worth retrying.
 //
 // owner and repo are parameters rather than being parsed back out of the path because the
 // credential depends on them and a path is not a reliable place to find them — /2.0/user
 // has none at all, and a mis-parse would silently authenticate as the wrong identity.
 // Empty owner means "no repository", which uses the global credential.
+//
+// Written fresh rather than shared with the GitHub client: the error envelope and the
+// rate-limit signalling are different enough that a shared implementation would be a
+// switch on platform wearing a trenchcoat.
 func (c *Client) do(ctx context.Context, owner, repo, method, path string, in, out any) error {
 	const attempts = 3
 

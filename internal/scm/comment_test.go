@@ -66,9 +66,8 @@ func TestFailureCommentLinksToTheBuildLogWhenItCan(t *testing.T) {
 
 // Every URL the comment publishes must be a markdown link.
 //
-// GitHub autolinks a bare URL and Bitbucket does not, so a bare URL in a table cell
-// looked correct in review and shipped as unclickable text on Bitbucket — which is the
-// only thing the comment is for.
+// GitHub autolinks a bare URL in a table cell; Bitbucket does not, and renders one as
+// unclickable text — which is the only thing the comment is for.
 func TestEveryURLInTheCommentIsALink(t *testing.T) {
 	ready := testReport(StateReady)
 	ready.URL = "https://docs-feature-x-b400e0.shares.zrok.io/"

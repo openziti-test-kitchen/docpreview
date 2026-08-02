@@ -24,17 +24,13 @@ const MountPrefix = "/preview/"
 // zrok or Frontdoor implementations misbehave you have something to compare
 // against.
 //
-// It used to bind an ephemeral port per preview, and that was wrong in three
-// ways at once. A port is not stable across a restart, so every URL recorded in
-// the database went dead the moment the daemon was restarted while the row
-// still claimed `ready`. A hundred open pull requests meant a hundred
-// listeners. And `http://127.0.0.1:62725/` tells a reader nothing about which
-// preview they are looking at.
-//
-// One path per preview instead: `/preview/<name>/`, on the address docpreview
-// already serves the dashboard from. The URL survives restarts because it is
-// derived from the name rather than from whatever the kernel handed out, it
-// says what it points at, and there is exactly one listener.
+// Each preview gets a path, `/preview/<name>/`, on the address docpreview already
+// serves the dashboard from — not an ephemeral port of its own. A port-per-preview
+// design is not stable across a restart, so a URL recorded in the database with the
+// row still claiming `ready` would go dead the moment the daemon restarted. A hundred
+// open pull requests would mean a hundred listeners, and `http://127.0.0.1:62725/`
+// tells a reader nothing about which preview they are looking at. A path derived from
+// the name survives restarts, names what it points at, and needs exactly one listener.
 //
 // Local also carries the port-binding logic that the Frontdoor exposer builds
 // on — see serve — since Frontdoor reaches previews over the network from an
@@ -54,11 +50,11 @@ type Local struct {
 
 	// mounted is keyed by preview id and holds the path-served previews.
 	//
-	// Keyed by id, not by name: a name is the branch by default, branch names
-	// are not unique across repositories, and keying by name meant every
-	// publish tore down a different project's preview. The name still decides
-	// the path, and a second preview claiming a name another one holds is
-	// refused rather than allowed to take it.
+	// Keyed by id, not by name: a name is the branch by default, and branch names
+	// are not unique across repositories, so keying by name would let a publish
+	// tear down a different project's preview. The name still decides the path,
+	// and a second preview claiming a name another one holds is refused rather
+	// than allowed to take it.
 	mu      sync.Mutex
 	mounted map[string]*mount
 
@@ -201,9 +197,8 @@ func (l *Local) Publish(_ context.Context, spec Spec, h http.Handler) (*Publicat
 // The identity check is the whole function. The daemon replaces a preview by
 // publishing the new one and then closing the old Publication, in that order —
 // so a close that deleted by key alone would remove the mount its own
-// replacement had just installed. Every rebuilt preview went 404 while the
-// database still said `ready`, and only previews nobody had pushed to twice
-// kept working.
+// replacement had just installed, and a rebuilt preview would 404 while the
+// database still said `ready`.
 //
 // The same shape guards d.running in the daemon and z.live in the ziti exposer,
 // for the same reason: an object that outlives its successor must not be able
@@ -275,10 +270,9 @@ func closeLocal(entry *localShare) error {
 
 // Reap drops mounts whose previews the database no longer recognises.
 //
-// It used to be a no-op, on the reasoning that a loopback listener cannot
-// outlive its process. That held while every preview owned a port; a mount is
-// a map entry, and a map entry left behind after a preview is deleted keeps
-// serving a URL nothing records — which is the same leak, in memory.
+// A mount is a map entry rather than a listener, and an entry left behind after
+// its preview is deleted keeps serving a URL nothing records — a leak in memory
+// rather than on a controller, but a leak either way.
 //
 // A nil keep set means "keep nothing", matching the startup call.
 func (l *Local) Reap(_ context.Context, keep map[string]bool) error {

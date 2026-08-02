@@ -205,9 +205,8 @@ func cmdConsoleOAuthDomains(args []string) error {
 
 // cmdConsoleStatus says whether a password is set, without revealing anything about it.
 //
-// It exists because the honest answer to "is my admin surface protected" was previously "read
-// the config and reason about your listeners", and because a hash in a database is not
-// something an operator can eyeball.
+// Reading the config and reasoning about listeners answers only half of "is my admin surface
+// protected", and a hash in a database is not something an operator can eyeball.
 func cmdConsoleStatus(args []string) error {
 	fs := flag.NewFlagSet("console status", flag.ExitOnError)
 	configPath := fs.String("config", defaultConfigPath(), "path to the server config file")

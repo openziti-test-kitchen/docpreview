@@ -286,10 +286,10 @@ func (c *Client) BranchTip(ctx context.Context, repo model.Repo, branch string) 
 // preview are all started by an operator, and a zero id there is not an error, it is the
 // absence of a webhook.
 //
-// This existed as a bug rather than as a decision. Branch previews built a pull request with
-// no id and every GitHub one failed at the clone with "the webhook payload was missing
-// installation.id" — a message about a webhook, for a build that never had one, which is
-// exactly the kind of error that sends somebody to read delivery logs that do not exist.
+// Without this lookup, a branch preview's pull request with no installation id fails at
+// the clone with "the webhook payload was missing installation.id" — a message about a
+// webhook, for a build that never had one, which sends somebody to read delivery logs
+// that do not exist.
 //
 // One extra App-authenticated call in that case, and none in the webhook case.
 func (c *Client) installationOf(ctx context.Context, pr model.PullRequest) (int64, error) {
@@ -465,11 +465,10 @@ func (c *Client) Publish(ctx context.Context, r scm.Report) error {
 // marker search is the fallback. Both halves are needed.
 //
 // Searching alone is not enough: GitHub's list-comments endpoint is not
-// read-your-writes consistent. A `queued` report created a comment and the
-// `building` report 182 ms later listed the comments, did not see it, and created
-// a second — leaving one comment stranded on "Building" forever while the other
-// went on updating. Any two reports close together hit that window, so moving
-// where reports are emitted would hide this rather than fix it.
+// read-your-writes consistent, so a `queued` report followed closely by a
+// `building` report can list the comments, not see the one just created, and
+// create a second — leaving one comment stranded on "Building" forever while
+// the other keeps updating. Any two reports close together can hit that window.
 //
 // Remembering alone is not enough either: the map is process-local, so a restart
 // or a rebuilt database must still be able to find the comment. That is what the
@@ -725,10 +724,8 @@ const rateLimitFallback = 5 * time.Second
 // and not a counter.
 //
 // **A rate limit, up to rateLimitAttempts times, waiting as long as GitHub asks.**
-// This is the half that was missing: APIError has carried RateLimited and
-// RetryAfter and a Retryable method since it was written, and nothing called
-// them, so a burst rejection went straight to a failed build and a comment stuck
-// on "Building".
+// Without this, a burst rejection goes straight to a failed build and a comment
+// stuck on "Building".
 //
 // A 5xx is deliberately **not** retried even though Retryable says it could be.
 // A rate limit is refused before GitHub acts, so repeating it cannot repeat an
@@ -876,8 +873,7 @@ func errorFromResponse(resp *http.Response) error {
 		apiErr.Message = strings.TrimSpace(string(raw))
 	}
 
-	// GitHub signals a rate limit three ways, and only the first was recognised
-	// here originally.
+	// GitHub signals a rate limit three ways.
 	//
 	// The primary limit is 403 or 429 with a remaining count of zero. Treating
 	// every 403 as retryable would spin forever on a genuine permissions
@@ -918,9 +914,9 @@ func isSecondaryLimitMessage(msg string) bool {
 //
 // Two headers, in this order. `Retry-After` is what GitHub sends with a
 // secondary limit and is authoritative when present. `X-RateLimit-Reset` covers
-// the primary limit and is **epoch seconds** — it was previously parsed as
-// RFC3339, which never matches, so every rate-limited response reported a zero
-// wait and any caller acting on it would have retried immediately into the same
+// the primary limit and must be parsed as **epoch seconds**, not RFC3339: parsed
+// as RFC3339 it never matches, so every rate-limited response would report a
+// zero wait and any caller acting on it would retry immediately into the same
 // limit.
 //
 // The second return says whether GitHub actually told us. A zero duration with

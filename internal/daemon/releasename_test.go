@@ -46,12 +46,10 @@ func (r *releasingExposer) names() []string {
 // TestRebuildMustNotReleaseTheName is the assertion that guards the whole name
 // lifecycle.
 //
-// A name outliving its share is the feature, not the leak: it is what keeps a
-// reviewer's URL working across every rebuild and restart. Releasing it on the
-// withdraw that a rebuild performs would rehost the preview at a new address on every
-// push, silently, while the pull request comment kept advertising the old one — worse
-// than the leak and much harder to notice, which is why this is a test and not a
-// comment.
+// A name outliving its share is the feature, not the leak: it is what keeps a reviewer's URL working
+// across every rebuild and restart. Releasing it on the withdraw that a rebuild performs would rehost the
+// preview at a new address on every push, silently, while the pull request comment kept advertising the
+// old one — worse than the leak and much harder to notice.
 func TestRebuildMustNotReleaseTheName(t *testing.T) {
 	_, d, _ := testIngress(t, &fakeClient{})
 	ex := &releasingExposer{Exposer: d.exposer}

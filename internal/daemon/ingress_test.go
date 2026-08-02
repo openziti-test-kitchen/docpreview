@@ -124,8 +124,7 @@ func testIngress(t *testing.T, client *fakeClient) (*Ingress, *Daemon, *store.St
 	clients := map[model.Platform]scm.Client{model.PlatformGitHub: client}
 	d := New(cfg, st, ex, clients, log)
 	// No docker in tests. Teardown removes the docker cache volumes, and the real call is a
-	// `docker volume rm` subprocess per torn-down preview — which turned the daemon suite
-	// from thirty seconds into a timeout while a real build was occupying the daemon.
+	// `docker volume rm` subprocess per torn-down preview, too slow to run for every test in this suite.
 	d.removeCacheVolumes = func(context.Context, string) error { return nil }
 	ingress := NewIngress(d, clients, st, log)
 
@@ -165,12 +164,10 @@ func TestIngressRejectsUnverifiedWebhook(t *testing.T) {
 }
 
 func TestIngressRejectsUnverifiedWebhookOnEveryPlatform(t *testing.T) {
-	// The sentinel used to live in the github package and the ingress tested for
-	// that one, so a bad signature anywhere else answered 400 — which tells a
-	// caller guessing at the secret that its guess was structurally fine, and
-	// distinguishes a wrong secret from a malformed body for free.
-	//
-	// scm.ErrBadSignature is shared now, and this asserts every route honours it.
+	// scm.ErrBadSignature is shared across platforms, and every route must honour it. A platform-specific
+	// sentinel would let a bad signature on some other route answer 400, which tells a caller guessing at
+	// the secret that its guess was structurally fine instead of distinguishing a wrong secret from a
+	// malformed body.
 	for _, route := range []string{"/webhook/github", "/webhook/bitbucket", "/webhook/local"} {
 		t.Run(route, func(t *testing.T) {
 			client := &fakeClient{verifyErr: scm.ErrBadSignature}
@@ -454,9 +451,8 @@ func TestDashboardIsServed(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("Content-Type = %q", ct)
 	}
-	// Markup only the current layout has. go:embed guarantees bytes are
-	// present; this checks they are the right bytes, which a stale file left
-	// behind after the two layouts were merged would not be.
+	// Markup only the current layout has. go:embed guarantees the embedded bytes are present; this checks
+	// they are the right bytes, which a stale dashboard file would not be.
 	for _, want := range []string{
 		`<div class="seg" id="counters">`,
 		`<div class="feed-filters" id="feed-filters">`,
@@ -468,8 +464,7 @@ func TestDashboardIsServed(t *testing.T) {
 }
 
 func TestV2RedirectsToTheDashboard(t *testing.T) {
-	// /v2 was the second layout while both existed. It replaced the original,
-	// and the path is in browser histories and was linked from the old footer.
+	// /v2 must redirect to /: the path is in browser histories and bookmarks.
 	ingress, _, _ := testIngress(t, &fakeClient{})
 
 	rec := get(t, ingress.Handler(), "/v2")

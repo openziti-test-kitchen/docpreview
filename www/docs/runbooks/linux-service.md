@@ -59,13 +59,17 @@ A published release is the short way. The installer downloads it, **verifies it 
 `SHA256SUMS` published with the release**, and refuses to install anything that does not match:
 
 ```bash
-curl -fsSLO https://github.com/openziti-test-kitchen/docpreview/releases/latest/download/install.sh
+curl -fsSLO https://raw.githubusercontent.com/openziti-test-kitchen/docpreview/v0.1.0/install/install.sh
 chmod +x install.sh
-sudo ./install.sh --version v0.3.0
+sudo ./install.sh --version v0.1.0
 ```
 
-Releases carry `linux/amd64`, `linux/arm64`, `darwin/arm64` and `windows/amd64`, and the Linux
-archives include the systemd units and this installer.
+The installer comes from the repository at that tag, not from inside an archive — one file with one
+source. It downloads the right archive for the machine, checks it, and reads the systemd units out
+of it.
+
+Releases carry `linux/amd64`, `linux/arm64`, `darwin/arm64` and `windows/amd64`. The
+[release page](https://github.com/openziti-test-kitchen/docpreview/releases) lists them.
 
 Building it yourself works the same, from the VM or from your laptop:
 

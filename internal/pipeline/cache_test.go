@@ -22,10 +22,9 @@ func testPR(owner, repo string, number int) model.PullRequest {
 // because the workspace they would otherwise cache into is created per commit and
 // pruned with its siblings.
 //
-// A **volume**, not a bind mount, and that is the interesting half. As a bind mount on
-// Windows the cache was measured filling at 0.4 MB/s — every package tarball crossing
-// WSL to NTFS — which made the thing meant to speed builds up the slowest part of one.
-// See CacheVolume.
+// A **volume**, not a bind mount, and that is the interesting half. A bind mount on
+// Windows fills the cache at 0.4 MB/s, since every package tarball crosses WSL to NTFS —
+// making the thing meant to speed builds up the slowest part of one. See CacheVolume.
 func TestCacheMountsPointEachManagerAtItsOwnVolume(t *testing.T) {
 	b := &Builder{log: slog.New(slog.DiscardHandler)}
 
@@ -55,8 +54,8 @@ func TestCacheMountsPointEachManagerAtItsOwnVolume(t *testing.T) {
 		}
 	}
 
-	// No host path anywhere: a bind source is what this replaced, and one reappearing is
-	// the regression that costs twenty minutes a build on Windows.
+	// No host path anywhere: a bind mount here would cost twenty minutes a build on
+	// Windows, which is the regression this guards against.
 	if strings.Contains(joined, "type=bind") {
 		t.Errorf("a cache is still bind-mounted from the host:\n%s", joined)
 	}

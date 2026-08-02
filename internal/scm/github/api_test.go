@@ -24,8 +24,7 @@ import (
 // These tests stand a fake api.github.com in front of the client, injected
 // through the existing api_base config field. They exist because the paths they
 // cover — rate-limit classification and installation-token revocation — are
-// reachable only from GitHub's own responses, and this App has never run against
-// GitHub. Every one of them was a live defect when it was written.
+// reachable only from GitHub's own responses.
 
 // apiFixture is a fake GitHub API and a client pointed at it.
 type apiFixture struct {
@@ -99,10 +98,9 @@ func testPEM(t *testing.T, key *rsa.PrivateKey) vault.Secret {
 }
 
 func TestRateLimitResetIsEpochSeconds(t *testing.T) {
-	// X-RateLimit-Reset is a Unix timestamp. It was parsed with
-	// time.Parse(time.RFC3339, ...), which never matches, so RetryAfter was
-	// always zero and any caller acting on it would retry straight back into
-	// the same limit.
+	// X-RateLimit-Reset is a Unix timestamp, not RFC3339: parsed as RFC3339 it
+	// never matches, so RetryAfter would always be zero and any caller acting
+	// on it would retry straight back into the same limit.
 	f := newAPIFixture(t)
 	reset := time.Now().Add(90 * time.Second).Unix()
 	f.handler = func(w http.ResponseWriter, _ *http.Request) {
@@ -204,9 +202,7 @@ func TestGenuinePermissionErrorIsNotRetryable(t *testing.T) {
 }
 
 func TestRateLimitIsRetriedAndSucceeds(t *testing.T) {
-	// The half that was missing. APIError carried RateLimited, RetryAfter and
-	// Retryable from the day it was written and nothing called them, so a burst
-	// rejection went straight to a failed build.
+	// Without retrying, a burst rejection goes straight to a failed build.
 	//
 	// Retry-After: 0 so the test does not sleep. Zero is a legal delay-seconds
 	// value and exercises the same path a real wait would.

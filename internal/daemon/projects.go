@@ -92,9 +92,9 @@ type ProjectsAdmin struct {
 	// The docker volume operations behind the cache controls, injectable because they are
 	// destructive and reach the real docker daemon.
 	//
-	// A test that called the real ones deleted the cache volumes of every live preview on
-	// the machine it ran on — which is what happened the first time this shipped, and is
-	// why they are fields rather than direct calls. Defaulted in NewProjectsAdmin.
+	// A test that called the real ones would delete the cache volumes of every live preview on the
+	// machine it ran on, which is why they are fields rather than direct calls. Defaulted in
+	// NewProjectsAdmin.
 	listVolumes   func(ctx context.Context) ([]string, error)
 	removeVolumes func(ctx context.Context, previewID string) error
 }
@@ -593,9 +593,9 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 			for _, k := range v.KeysWithPrefix(prefix) {
 				name := strings.TrimPrefix(k, prefix)
 				// The two kinds share a prefix and are listed separately, because one is
-				// injected into every build and the other is what the daemon clones with.
-				// Before this split, a project's access token appeared in the page's list
-				// of build variables — which is both wrong and alarming.
+				// injected into every build and the other is what the daemon clones with. Listing
+				// them together would show a project's access token in the page's list of build
+				// variables, which is both wrong and alarming.
 				if vault.IsProjectSCMKey(name) {
 					view.SCM = append(view.SCM, name)
 					continue
@@ -759,11 +759,9 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 	// 404, and the build verifies it against the built output — so this is enforced
 	// before a form is saved rather than twenty seconds into a build.
 	//
-	// Enforced by fixing it, not by refusing it. The slashes are mandatory, this code
-	// knows exactly where they go, and "/docs" is not ambiguous — so rejecting it
-	// makes the operator retype a value the server could have corrected. That is the
-	// whole of the validation that was here, and it produced a page of identical
-	// errors while somebody guessed at the punctuation.
+	// Enforced by fixing it, not by refusing it. The slashes are mandatory, this code knows exactly
+	// where they go, and "/docs" is not ambiguous, so rejecting it would only make the operator retype a
+	// value the server could correct itself.
 	p.BaseURL = normalizeBaseURL(p.BaseURL)
 	// What is left is not a punctuation slip and cannot be guessed at: a query or a
 	// fragment is not part of a path prefix, and whitespace inside one is a copy-paste
@@ -798,10 +796,9 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 
 	// A new project gets a preview of its default branch, immediately.
 	//
-	// Here rather than in the page, so it happens however the project was created — a
-	// browser, a script, a restored configuration. Adding a project used to build only what
-	// was already under review, so a repository with no open pull requests produced nothing
-	// at all and the answer to "I added it, now what" was to wait for somebody to push.
+	// Here rather than in the page, so it happens however the project was created — a browser, a script,
+	// a restored configuration. Without it, a repository with no open pull requests produces nothing at
+	// all, and the answer to "I added it, now what" is to wait for somebody to push.
 	//
 	// Inline rather than in a goroutine, and best-effort: it is two API calls and an enqueue,
 	// which is worth the wait on project creation, and a failure here must not fail the save

@@ -19,10 +19,10 @@ import (
 //
 // # Why this exists rather than "run ziti edge enroll"
 //
-// It was the last thing on the exposer panel that could not be done from a browser, and the reason
-// was a second binary rather than anything intrinsic: `ziti edge enroll` reads a JWT, generates a
-// key pair, exchanges the token with the controller and writes a JSON identity. The Go SDK docpreview
-// already depends on exposes exactly that — `enroll.Enroll` — so the whole step is this function.
+// Shelling out to it would need a second binary on the host for no intrinsic reason: `ziti edge
+// enroll` reads a JWT, generates a key pair, exchanges the token with the controller, and writes a
+// JSON identity. The Go SDK docpreview already depends on exposes exactly that — `enroll.Enroll` —
+// so the whole step is this function.
 //
 // # The one-time token, and why the write happens before anything is reported
 //
@@ -84,10 +84,7 @@ func enrollZitiIdentity(_ context.Context, cfg config.Server, jwtToken, name str
 	}
 
 	// KeyAlg is not optional, and the SDK does not say so politely: left unset, `enroll.Enroll`
-	// reaches a switch with no default and **panics** with "invalid KeyAlg specified: ". Found by
-	// running it — the first enrolment against a real controller took the handler down with a
-	// panic that `net/http` caught, so the request died with no response and the log had a stack
-	// trace where an error message should have been.
+	// reaches a switch with no default and **panics** with "invalid KeyAlg specified: ".
 	//
 	// EC rather than RSA: smaller keys, faster handshakes, and it is what `ziti edge enroll`
 	// defaults to, so an identity enrolled here matches one enrolled with the CLI.

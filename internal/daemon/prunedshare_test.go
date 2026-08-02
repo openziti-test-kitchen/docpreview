@@ -13,13 +13,12 @@ import (
 
 // TestPruningRetiresTheBuildShare.
 //
-// Retention deleted a build's artifacts and nothing else, which left a live share
-// serving a directory that no longer existed, a URL the dashboard still offered, and a
-// reserved name against the exposer account's quota.
+// Retention deletes a build's artifacts and must also withdraw the share and clear the row's URL.
+// Deleting only the artifacts leaves a live share serving a directory that no longer exists, a URL the
+// dashboard still offers, and a reserved name against the exposer account's quota.
 //
-// The leak protected itself: Reap's keep-set is built from builds with a recorded url,
-// and the row still had one — so the hourly sweep treated the dead share as something to
-// preserve. That is why this is a test rather than a comment.
+// Reap's keep-set is built from builds with a recorded url, so a row that still has one after its
+// artifacts are gone would make the hourly sweep protect the dead share instead of removing it.
 func TestPruningRetiresTheBuildShare(t *testing.T) {
 	_, d, st := testIngress(t, &fakeClient{})
 	ex := &releasingExposer{Exposer: d.exposer}

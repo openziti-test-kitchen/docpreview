@@ -8,15 +8,13 @@ import (
 	"github.com/netfoundry/docpreview/internal/vault"
 )
 
-// buildSecrets is the bridge between `build.secrets` in the config file and the
-// values the builder injects — and therefore the values the redactor is built
-// from. It shipped for a while with no caller at all: the config key parsed,
-// `docpreview init` wrote it out, the documentation described it, and nothing
-// ever read it. Builds ran with the variable unset and every log was
-// unredacted, silently, because an unredacted log looks exactly like a log with
-// no secrets in it.
+// buildSecrets is the bridge between `build.secrets` in the config file and the values the builder
+// injects, and therefore the values the redactor is built from. If nothing calls it, a configured
+// mapping parses and documents fine but never reaches a build: the variable stays unset and the
+// redactor scrubs nothing, silently, because an unredacted log looks exactly like a log with no
+// secrets in it.
 //
-// These tests exist to make that failure loud rather than invisible.
+// These tests assert that buildSecrets is wired in and resolves what it is given.
 
 func testVault(t *testing.T, entries map[string]string) string {
 	t.Helper()

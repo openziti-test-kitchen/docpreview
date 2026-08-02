@@ -172,8 +172,7 @@ func (i *Ingress) routes() http.Handler {
 	mux.HandleFunc("GET /pr", i.prIndex)
 	mux.HandleFunc("GET /pr/", i.prIndex)
 
-	// Server-sent events, replacing what used to be a one-second poll from
-	// every open tab. See stream.go.
+	// Server-sent events, one connection per open tab instead of a poll from each. See stream.go.
 	mux.HandleFunc("GET /events", i.streamStatus)
 	mux.HandleFunc("GET /logs/{preview}/stream", i.streamLog)
 	mux.HandleFunc("GET /logs/{preview}", i.listLogs)
@@ -427,14 +426,13 @@ type readyReport struct {
 
 // readyz reports whether recovery has finished and whether the queue is quiet.
 //
-// It exists because `/status` is now behind the login, and the thing that waits for a restart is
-// a script, not a person: `Restart-Docpreview.ps1` and the demo harness both poll until the
-// daemon says it has recovered. Gating `/status` locked them out, and the symptom was a wait loop
-// that never returned — a restart that looked like a hang.
+// `/status` sits behind the login, but the thing that waits for a restart is a script, not a person:
+// `Restart-Docpreview.ps1` and the demo harness both poll until the daemon says it has recovered. Gating
+// `/status` alone would lock them out, turning a restart into a wait loop that never returns.
 //
-// The alternatives were worse. Handing the scripts a password puts one in a shell history and in
-// every runbook; leaving `/status` open contradicts the whole point of the gate, since that
-// payload enumerates every open documentation pull request across every project.
+// Handing the scripts a password puts one in a shell history and in every runbook. Leaving `/status` open
+// instead would contradict the whole point of the gate, since that payload enumerates every open
+// documentation pull request across every project.
 //
 // So this is a separate, deliberately thin surface: counts and a stage name, and nothing that
 // identifies a repository, a branch, a pull request or a URL. A caller learns that the daemon is

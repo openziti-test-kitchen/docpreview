@@ -22,13 +22,12 @@ import (
 
 // A login on the whole dashboard, with two roles.
 //
-// # What this replaces
+// # What this adds on top of the locality gate
 //
-// Until now the only gate was where a request came from: loopback, no forwarding header, or a
-// named overlay identity. That is a boundary rather than authentication — it answers "did this
-// originate on this machine", not "who is this" — so administering docpreview from anywhere
-// else was unsupported, and *reading* it required publishing the dashboard to everyone who
-// found the URL.
+// The locality gate (isLocalRequest, Available) is a boundary rather than authentication — it answers "did
+// this originate on this machine", not "who is this". Login adds the second question: administering
+// docpreview from anywhere but the machine itself, and reading it without publishing it to everyone who
+// finds the URL, both need an identity check the locality gate cannot provide.
 //
 // Two roles, because those are the two audiences:
 //
@@ -224,9 +223,9 @@ func SetConsolePassword(ctx context.Context, st *store.Store, role Role, passwor
 
 // ClearConsolePassword removes one role's password.
 //
-// Clearing the admin password returns writes to loopback-only. Clearing the viewer password
-// makes the dashboard readable by anyone who can reach it — which is the behaviour every
-// installation had before this existed, and is why it has to be possible to say.
+// Clearing the admin password returns writes to loopback-only. Clearing the viewer password makes the
+// dashboard readable by anyone who can reach it, which is a deliberate, supported state, not a mistake to
+// guard against.
 func ClearConsolePassword(ctx context.Context, st *store.Store, role Role) error {
 	key, err := settingFor(role)
 	if err != nil {
@@ -256,10 +255,9 @@ func ConsolePasswordSet(ctx context.Context, st *store.Store, role Role) (bool, 
 //
 // **The hashes are deliberately not cached.** Every check reads the settings row.
 //
-// The first version held them in memory, loaded at startup, which was wrong the moment
-// `docpreview console password` existed: setting a password from the CLI on a running daemon
-// would have left the gate off until somebody restarted it. A security control that silently
-// takes effect later is worse than one that is off, because the operator believes it is on.
+// Caching them in memory at startup would leave a password set from `docpreview console password` on a
+// running daemon without effect until the next restart. A security control that silently takes effect
+// later is worse than one that is off, because the operator believes it is on.
 //
 // The cost is one indexed lookup on a local sqlite file per request. Against a dashboard whose
 // traffic is a poll every five seconds per open tab, that is nothing.
@@ -314,11 +312,11 @@ func (c *console) anyPasswordSet(ctx context.Context) bool {
 
 // RoleFromUsername maps what somebody typed into the username field.
 //
-// The form asks for a username as well as a password, and the username *is* the role. That is
-// partly a password-manager problem — a password-only form gives a manager nothing to label the
-// entry with, so an operator's admin and viewer passwords collapse into one indistinguishable
-// item, which was the reported complaint — and partly a clarity one: the role is now what the
-// person asked for rather than something inferred from which of two hashes happened to match.
+// The form asks for a username as well as a password, and the username *is* the role. That is partly a
+// password-manager problem — a password-only form gives a manager nothing to label the entry with, so an
+// operator's admin and viewer passwords would collapse into one indistinguishable item — and partly a
+// clarity one: the role is what the person asked for rather than something inferred from which of two
+// hashes happened to match.
 //
 // Case and surrounding space are forgiven. "Admin " typed into a form is not a different user.
 func RoleFromUsername(s string) Role {
@@ -334,10 +332,9 @@ func RoleFromUsername(s string) Role {
 
 // Verify checks a password against one role's stored hash.
 //
-// One role, named by the caller, rather than "try both and return whichever matched". The
-// earlier version had to check admin first so that identical passwords granted admin rather than
-// viewer, and had to check both every time so the timing did not reveal which one matched. With
-// the role stated, neither problem exists.
+// One role, named by the caller, rather than "try both and return whichever matched". Trying both would
+// require checking admin first so that identical passwords grant admin rather than viewer, and checking
+// both every time so the timing does not reveal which one matched. Stating the role avoids both problems.
 //
 // An unknown role, or one with no password set, is refused — and refused *after* the same work
 // as a wrong password, because an early return would let somebody time the difference between

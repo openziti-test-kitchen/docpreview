@@ -11,9 +11,9 @@
     This blocks until `/readyz` reports `starting: false`, printing each stage and its progress as it goes.
     The same numbers the dashboard banner shows, for when you are in a terminal rather than a browser.
 
-    `/readyz`, not `/status`: the dashboard is behind a login now, and `/status` went behind it with everything
-    else — so this loop polled, was redirected to a form, and waited forever. A restart that looked like a hang.
-    `/readyz` is the open readiness surface and carries counts only, which is all this script ever read.
+    `/readyz`, not `/status`: the dashboard requires a login, and `/status` sits behind it along with
+    everything else, so polling `/status` here would be redirected to the login form and wait forever.
+    `/readyz` is the open readiness surface and carries counts only, which is all this script needs.
 
     Exits 0 when the daemon is ready, 1 on timeout, 2 if it never answered at all. A daemon that is not
     running is the 2 case, and it is worth telling apart from a slow one: nothing will change if nothing
@@ -84,9 +84,9 @@ while ((Get-Date) -lt $deadline) {
         #
         # Recovery finishing and the daemon being *quiet* are different moments, and every
         # script that wanted the second one was hand-rolling `until the daemon says running: 0`.
-        # A startup scan now queues builds of its own — a missed webhook delivery, a branch
+        # A startup scan queues builds of its own — a missed webhook delivery, a branch
         # preview that never existed — so "ready" is routinely followed by several minutes of
-        # building, and the difference matters more than it used to.
+        # building.
         if ($Idle -and ($status.running -gt 0 -or $status.pending -gt 0)) {
             $line = "building: $($status.running) running, $($status.pending) queued"
             if ($line -ne $last) {

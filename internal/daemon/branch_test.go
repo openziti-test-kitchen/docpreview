@@ -22,11 +22,10 @@ func branchPR() model.PullRequest {
 
 // queuedForPlatform reports whether `report` handed this preview to the publisher.
 //
-// Asserted here rather than against the fake client's received reports, because writes are
-// debounced: `publisher.send` parks the payload behind a timer, so a test that read the fake
-// immediately would see nothing for a *pull request* too — and pass while reporting was
-// broken outright. That is not hypothetical; it is what the first version of these two tests
-// did. This reads the boundary the code under test actually crosses.
+// Asserted here rather than against the fake client's received reports, because writes are debounced:
+// `publisher.send` parks the payload behind a timer, so a test that read the fake immediately would see
+// nothing for a *pull request* too, and pass while reporting was broken outright. This reads the boundary
+// the code under test actually crosses.
 func queuedForPlatform(d *Daemon, previewID string) bool {
 	d.publisher.mu.Lock()
 	defer d.publisher.mu.Unlock()
@@ -219,9 +218,9 @@ func TestClosingAPullRequestLeavesTheBranchPreview(t *testing.T) {
 
 // A pull request with no preview is built at startup; one that already has a preview is not.
 //
-// This is what catches a missed delivery — the daemon stopped for a rebuild while somebody opened
-// a pull request, or the tunnel was down for the minute that mattered. Before it, the first sign
-// was a person asking why their link never appeared.
+// This is what catches a missed delivery — the daemon stopped for a rebuild while somebody opened a pull
+// request, or the tunnel was down for the minute that mattered. Without it, the first sign of a missed
+// delivery is a person asking why their link never appeared.
 func TestStartupBuildsOpenPullRequestsWithNoPreview(t *testing.T) {
 	client := &fakeClient{}
 	_, d, st := testIngress(t, client)

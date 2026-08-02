@@ -21,14 +21,12 @@ import (
 	"github.com/netfoundry/docpreview/internal/vault"
 )
 
-// The GitHub client is built from two values that live in the vault, so with
-// github.app_id set the daemon used to refuse to start until the vault was
-// open — while the page that opens it was served by that same daemon. The fix
-// is to boot without a client and install one afterwards.
+// The GitHub client depends on two values that live in the vault, so it cannot be built during wiring:
+// the page that unlocks the vault is itself served by this daemon. The daemon boots without a client and
+// installs one after unlock.
 //
-// These tests cover the sequence a person performs rather than the request
-// shape: start locked, unlock, watch the webhook endpoint come alive. Every bug
-// in this area so far was found by doing that by hand.
+// These tests cover the sequence a person performs: start locked, unlock, watch the webhook endpoint
+// come alive.
 
 func testAppKeyPEM(t *testing.T) string {
 	t.Helper()

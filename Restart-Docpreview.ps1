@@ -16,8 +16,8 @@
       4. Wait for `/readyz` to report that recovery has finished, printing the stages.
 
     Skipping step 1 is the "used by another process" build failure. Skipping step 4 is worse: a restart
-    republishes every preview, and querying the daemon inside that window returns an empty event list,
-    which has been mistaken for data loss more than once.
+    republishes every preview, and querying the daemon inside that window returns an empty event list
+    that reads as data loss.
 
     This is for the live instance in .docpreview\. The demo has its own scripts under demo\.
 
@@ -110,22 +110,18 @@ if (-not (Test-Path $exe)) { throw "$exe does not exist — build first" }
 # ── 2b. The prefix, if asked ──────────────────────────────────────────────────────────────────────
 # Before the daemon starts, and through the CLI rather than the API.
 #
-# It used to be an authenticated PUT after the wait. Once the login went in front of the whole
-# dashboard that PUT was answered with a redirect to a form, and the script reported a prefix it had
-# not set. The CLI writes the same database row the API route does, and the daemon reads the prefix
-# once at startup — so setting it here is the ordering that actually works.
+# The dashboard requires a login, so an API call made before the daemon starts gets a redirect to
+# the login form instead of applying anything. The CLI writes the same database row the API route
+# does, and the daemon reads the prefix once at startup, so setting it here through the CLI is the
+# ordering that works.
 if ($PSBoundParameters.ContainsKey('Prefix')) {
     & $exe settings prefix $Prefix -config $Config
     if ($LASTEXITCODE -ne 0) { throw "could not set the prefix to '$Prefix'" }
 }
 
 # ── 3. Start ──────────────────────────────────────────────────────────────────────────────────────
-# Every process gets its output on disk.
-#
-# The first version started all three with -WindowStyle Hidden and no redirection, which threw
-# their output away. `dashboard-only` then died three times in one afternoon and left no evidence
-# at all — the share 502s, the process is gone, and there is nothing to read. A hidden process
-# whose output goes nowhere cannot be diagnosed, only guessed at.
+# Every process gets its output on disk. A hidden process whose output goes nowhere cannot be
+# diagnosed when it dies: the share 502s, the process is gone, and there is nothing to read.
 #
 # The daemon writes its own file as well when the config sets log_file; this catches anything that
 # never reaches slog, which is exactly the class of thing that kills a process.
@@ -192,9 +188,8 @@ if (-not $NoWait) {
 
 # ── 5. Is everything still alive? ─────────────────────────────────────────────────────────────────
 # Asked explicitly, because a share that dies quietly looks like nothing at all until somebody
-# opens the URL and gets a 502 — which happened three times before this check existed. The zrok
-# share record outlives the process holding it, so the frontend keeps routing to a backend that is
-# gone.
+# opens the URL and gets a 502. The zrok share record outlives the process holding it, so the
+# frontend keeps routing to a backend that is gone.
 $expected = @{ 'serve' = $daemon }
 if (-not $NoShares) {
     $expected['webhook-only'] = $webhook
