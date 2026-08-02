@@ -102,12 +102,43 @@ It creates the `docpreview` service account, `/var/lib/docpreview` (0700) and `/
 starts nothing, and it writes no config, no key and no credential — those are decisions, and it
 prints the commands for each.
 
+### The service account
+
+Everything after this point runs as `docpreview`, and every CLI command below is `sudo -u
+docpreview` for that reason: a file written as root in the data directory is a file the daemon
+cannot read at three in the morning.
+
+| | |
+|---|---|
+| Name | `docpreview`, a system account — no login, no password |
+| Home | `/var/lib/docpreview`, the same as `data_dir` |
+| Shell | `/usr/sbin/nologin` |
+| Groups | `docker`, so builds can run containers |
+
+The home directory is not decoration. `zrok` keeps its environment under the *user's* home by
+default, so a service account without one produces an enrolment nobody can find — and the daemon
+reporting "no zrok environment is enrolled here" while `zrok2 overview` in your own shell shows a
+working one. Pointing zrok at the data directory, which Step 6 does, avoids the question entirely.
+
 :::caution The docker group is root-equivalent
 
 The service account is added to it, because that is how a build runs a container. Anyone who can
 reach the docker socket can start a container that mounts `/`, so this account is effectively root
 on this VM. That is the cost of the docker build driver, and it is the reason this VM should do
 nothing else.
+
+:::
+
+:::note Why the uid matters
+
+A build container runs as **root**, so everything it writes through the bind mount would be
+root-owned on the host — and the daemon, running as `docpreview`, could not read its own build
+output, copy it into `artifacts/`, or remove the workspace afterwards.
+
+docpreview appends a `chown` to the build's own command for exactly this, using the uid and gid the
+daemon is running as. It needs nothing from you, and it is the reason changing `User=` in the unit
+file to an account that does not own `/var/lib/docpreview` produces a daemon that builds
+successfully and then fails to publish.
 
 :::
 

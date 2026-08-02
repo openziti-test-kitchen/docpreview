@@ -91,12 +91,23 @@ func TestDockerMountRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
+	// The same script the driver runs, including the chown it appends.
+	//
+	// Built with buildScript rather than hand-written, because the thing being asserted below —
+	// that the host can read what the container wrote — is only true *because* of that chown on
+	// Linux. A hand-written command tests a contract the driver does not actually have: the
+	// container runs as root, so without the chown the output is root-owned and this process
+	// cannot read it. Docker Desktop maps ownership on the way through, which is why the
+	// hand-written version passed here for months and failed the first time it ran on Linux.
+	script := buildScript(
+		"mkdir -p out/deep/deeper && cp input.txt out/copied.txt",
+		"cp deep/deeper/nested.txt out/deep/deeper/nested.txt",
+		reownCommand("/workspace/site", os.Getuid(), os.Getgid()))
+
 	out, err := exec.CommandContext(ctx, "docker", "run", "--rm",
 		"--mount", "type=bind,source="+source+",target=/workspace",
 		"--workdir", "/workspace/site", "--memory", "512m",
-		"alpine:3", "sh", "-lc",
-		"mkdir -p out/deep/deeper && cp input.txt out/copied.txt && "+
-			"cp deep/deeper/nested.txt out/deep/deeper/nested.txt",
+		"alpine:3", "sh", "-lc", script,
 	).CombinedOutput()
 	if err != nil {
 		t.Fatalf("the container failed: %v\n%s", err, out)
