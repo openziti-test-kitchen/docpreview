@@ -1,0 +1,52 @@
+# docpreview, as a systemd service.
+#
+# Install to /etc/systemd/system/docpreview.service. See www/docs/runbooks/linux-service.md.
+[Unit]
+Description=docpreview — documentation previews for pull requests
+Documentation=https://github.com/netfoundry/docpreview
+# Builds run in docker containers, so the socket has to be there before this starts. Wants
+# rather than Requires: a daemon whose docker is down should start and say so on its dashboard,
+# not refuse to run and take the dashboard with it.
+Wants=docker.service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=docpreview
+Group=docpreview
+
+# The group that owns the docker socket. Membership is what lets builds run, and it is also
+# root-equivalent on this host — anyone who can talk to the socket can start a container that
+# mounts /. That is the trade the docker build driver makes; see the runbook.
+SupplementaryGroups=docker
+
+ExecStart=/usr/local/bin/docpreview serve -config /etc/docpreview/config.yml
+Restart=on-failure
+RestartSec=5s
+
+# A build clones, installs packages and runs a site generator, so the process tree is wide and
+# short-lived. Killing the group is what stops a killed build leaving node processes holding the
+# workspace directory open.
+KillMode=control-group
+TimeoutStopSec=30s
+
+# Journald, because the daemon logs structured lines to stderr and `journalctl -u docpreview`
+# is where somebody will look first. `log_file` in the config is for keeping a copy.
+StandardOutput=journal
+StandardError=journal
+
+# Hardening. Deliberately not the full lockdown: builds run containers, so the socket and the
+# data directory have to be writable, and a stricter profile that breaks a build six months from
+# now is worse than a looser one that is understood.
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/docpreview
+# The master key lives outside the data directory on purpose — one directory read must not yield
+# both the vault and its key — so it is granted separately and read-only.
+ReadOnlyPaths=/etc/docpreview
+
+[Install]
+WantedBy=multi-user.target

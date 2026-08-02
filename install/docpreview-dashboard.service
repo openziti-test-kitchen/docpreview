@@ -1,0 +1,36 @@
+# The dashboard tunnel. Optional, and read the note before enabling it.
+#
+# This publishes the operator dashboard on the internet. It is worth having — reading a build log
+# from a phone is the point — and it is also the one share that enumerates every open
+# documentation pull request across every project.
+#
+# **Set a viewer password before enabling this.** Until one exists nothing is gated:
+#
+#   docpreview console password -role viewer -config /etc/docpreview/config.yml
+#
+# Install to /etc/systemd/system/docpreview-dashboard.service.
+[Unit]
+Description=docpreview dashboard tunnel
+Documentation=https://github.com/netfoundry/docpreview
+After=network-online.target docpreview.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=docpreview
+Group=docpreview
+
+# Drop -zrok-home if this installation uses the machine's ~/.zrok2. A share created from a
+# different zrok account than the daemon's reserves a name the previews cannot use.
+ExecStart=/usr/local/bin/docpreview dashboard-only \
+  -zrok-name docpreview-dash \
+  -zrok-home /var/lib/docpreview/zrok2
+
+Restart=always
+RestartSec=10s
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

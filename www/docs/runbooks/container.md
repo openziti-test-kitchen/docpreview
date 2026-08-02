@@ -6,6 +6,17 @@ sidebar_position: 6
 
 # Runbook: the container
 
+:::tip Try the systemd service first
+
+[Install on a Linux VM](./linux-service.md) is the simpler path and the one to reach for. This page is worth it
+when you already run everything in compose and want docpreview to look the same.
+
+The container gives you less isolation than it appears to: the daemon talks to the **host's** docker socket, so a
+build container is a sibling on the host, not a child of this one. What you get is packaging — and two extra
+failure modes, both below.
+
+:::
+
 `Dockerfile` and `docker-compose.yml` run the daemon and its two shares as three containers from one image. The
 image carries the `docpreview` binary, `git`, and the docker **CLI** — no docker daemon, because it uses the host's.
 

@@ -1,0 +1,43 @@
+# The webhook tunnel: one public route to a daemon that binds loopback.
+#
+# Separate from docpreview.service on purpose. Sharing the daemon over a tunnel publishes every
+# route it serves — the dashboard, every preview, and the credential API — while its listener is
+# still loopback and every locality check still answers "yes". This process forwards the webhook
+# paths and answers 404 to everything else.
+#
+# Install to /etc/systemd/system/docpreview-webhook.service.
+[Unit]
+Description=docpreview webhook tunnel
+Documentation=https://github.com/netfoundry/docpreview
+# The share forwards to the daemon and logs an error per request until it answers, so it starts
+# after — but does not require it, because a share that outlives a daemon restart is fine and
+# tying them together means a daemon restart drops the public name for a few seconds.
+After=network-online.target docpreview.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=docpreview
+Group=docpreview
+
+# ZROK_HOME is not read by docpreview: -zrok-home is. This process reads no config file — that is
+# the whole reason it exists, since it holds no copy of the webhook secret — so the zrok
+# environment directory has to be an argument. Drop the flag if this installation uses the
+# machine's ~/.zrok2 rather than its own.
+ExecStart=/usr/local/bin/docpreview webhook-only \
+  -zrok-name docpreview \
+  -zrok-home /var/lib/docpreview/zrok2 \
+  -path /webhook/github \
+  -path /webhook/bitbucket
+
+# Restarted rather than left dead. The zrok controller does time out, and while the process is
+# gone the share record survives — so the frontend answers 502 for a backend that no longer
+# exists, which is invisible until somebody opens the URL.
+Restart=always
+RestartSec=10s
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

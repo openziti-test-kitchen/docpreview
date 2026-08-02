@@ -56,15 +56,17 @@ Six steps, one process, one sqlite file. No Kubernetes. Docker is optional and o
 - **Anything but static sites.** If your documentation needs a server at request time, this is the wrong
   tool. See [Jamstack](./background/jamstack.md) for why that is a feature.
 
-## This site is the test subject
+## This site is one of the repositories it builds
 
-Everything you are reading lives in `www/` in the docpreview repository and is built by docpreview itself. If
-the documentation renders, the tool works. That is not a cute trick — it is the integration test, and it is
-the reason the `baseUrl` handling described in [Troubleshooting](./troubleshooting.md) is as paranoid as it is.
+`www/` is in the docpreview repository, and docpreview previews it on its own pull requests like any other
+project. That is worth one sentence rather than a section: it means the `baseUrl` handling described in
+[Troubleshooting](./troubleshooting.md) got paranoid for a reason, and it means a broken link fails a real build
+rather than being noticed months later.
 
 ## Where to go next
 
-- [Quickstart](./quickstart.md) — running locally in about ten minutes
+- [Quickstart](./quickstart.md) — running locally in about ten minutes, no account needed
+- [Install on a Linux VM](./runbooks/linux-service.md) — a cloud VM to a preview URL, as a systemd service
 - [Architecture](./architecture.md) — how the pieces fit and why they are shaped that way
 - [GitHub App runbook](./runbooks/github-app.md) — the click-through you cannot avoid
 - [age](./background/age.md) — what the credential vault is, if that name is unfamiliar
