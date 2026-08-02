@@ -55,22 +55,43 @@ request is not a privilege — the build script arrives *in* the pull request. S
 
 ## Step 2 — Get the binary onto the VM
 
-There is no package repository yet. Build it, from the VM or from your laptop:
+A published release is the short way. The installer downloads it, **verifies it against the
+`SHA256SUMS` published with the release**, and refuses to install anything that does not match:
+
+```bash
+curl -fsSLO https://github.com/openziti-test-kitchen/docpreview/releases/latest/download/install.sh
+chmod +x install.sh
+sudo ./install.sh --version v0.3.0
+```
+
+Releases carry `linux/amd64`, `linux/arm64`, `darwin/arm64` and `windows/amd64`, and the Linux
+archives include the systemd units and this installer.
+
+Building it yourself works the same, from the VM or from your laptop:
 
 ```bash
 # on the VM, with Go installed
-git clone https://github.com/netfoundry/docpreview
+git clone https://github.com/openziti-test-kitchen/docpreview
 cd docpreview
 go build -o docpreview ./cmd/docpreview
 ```
 
 ```bash
-# or from a laptop, cross-compiled
+# or cross-compiled from a laptop
 GOOS=linux GOARCH=amd64 go build -o docpreview ./cmd/docpreview
 scp docpreview install/*.service install/install.sh you@vm:
 ```
 
+Whichever you used, `docpreview version` says exactly what you have — the tag, the commit, and
+whether the tree it was built from was dirty:
+
+```text
+docpreview v0.3.0  a162fad0ffe3  2026-08-01T16:30:48-04:00  linux/amd64  go1.26.0
+```
+
 ## Step 3 — Run the installer
+
+Skip this if `--version` already did it. Otherwise, pointing at the binary you built:
 
 ```bash
 sudo ./install.sh --binary ./docpreview

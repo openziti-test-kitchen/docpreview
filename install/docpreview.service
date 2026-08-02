@@ -3,7 +3,7 @@
 # Install to /etc/systemd/system/docpreview.service. See www/docs/runbooks/linux-service.md.
 [Unit]
 Description=docpreview — documentation previews for pull requests
-Documentation=https://github.com/netfoundry/docpreview
+Documentation=https://github.com/openziti-test-kitchen/docpreview
 # Builds run in docker containers, so the socket has to be there before this starts. Wants
 # rather than Requires: a daemon whose docker is down should start and say so on its dashboard,
 # not refuse to run and take the dashboard with it.

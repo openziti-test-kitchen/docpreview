@@ -2,6 +2,9 @@
 /bin/
 /build.claude/
 
+# Release artifacts. release.sh writes them; the workflow uploads them from here.
+/dist/
+
 # Docusaurus
 /www/node_modules/
 /www/build/

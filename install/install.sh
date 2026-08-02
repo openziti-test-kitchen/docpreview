@@ -10,6 +10,7 @@
 # What it leaves you with is a stopped service and a printed list of the four commands that start
 # it. See www/docs/runbooks/linux-service.md for the whole path including zrok and the App.
 #
+#   sudo ./install.sh --version v0.3.0      # download a release and verify its checksum
 #   sudo ./install.sh                       # binary from ./build or $PWD
 #   sudo ./install.sh --binary /tmp/docpreview
 #   sudo ./install.sh --uninstall           # units and user; keeps the data
@@ -21,16 +22,19 @@ DATA_DIR=/var/lib/docpreview
 CONF_DIR=/etc/docpreview
 BIN_DEST=/usr/local/bin/docpreview
 UNIT_DIR=/etc/systemd/system
+REPO="${DOCPREVIEW_REPO:-openziti-test-kitchen/docpreview}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 binary=""
+release=""
 uninstall=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --binary) binary="$2"; shift 2 ;;
+    --version) release="$2"; shift 2 ;;
     --uninstall) uninstall=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -64,24 +68,85 @@ if [ "$uninstall" -eq 1 ]; then
 fi
 
 # ── The binary ───────────────────────────────────────────────────────────────────────────────
+
+# download_release fetches a published build and **verifies it against SHA256SUMS** before anything
+# is unpacked.
 #
-# Found rather than downloaded. There is no release feed to download from yet, and a script that
-# invented one would be a script that stops working the day somebody makes one.
+# The verification is the point, not a formality. This script is the kind of thing that ends up
+# being piped from a URL into a shell, and an unverified download in it is an invitation: whoever
+# can interfere with one of these two requests gets to choose what runs as root on this host.
+# Checking is three lines and removes that entirely — provided the failure is fatal, which is why
+# every step below exits rather than warning.
+download_release() {
+  local version="$1" arch tmp name
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) echo "no release build for $(uname -m); build from source" >&2; exit 1 ;;
+  esac
+
+  name="docpreview_${version}_linux_${arch}.tar.gz"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+
+  local base="https://github.com/$REPO/releases/download/$version"
+  say "downloading $name"
+  curl -fSL --proto '=https' --tlsv1.2 -o "$tmp/$name" "$base/$name" || {
+    echo "could not download $base/$name" >&2
+    echo "check the version exists: https://github.com/$REPO/releases" >&2
+    exit 1
+  }
+  curl -fSL --proto '=https' --tlsv1.2 -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" || {
+    echo "the release has no SHA256SUMS; refusing to install an unverified binary" >&2
+    exit 1
+  }
+
+  say "verifying the checksum"
+  # Only this file's line, so a SHA256SUMS naming other archives does not fail the check for
+  # things that were never downloaded.
+  #
+  # `[ *]` before the name: sha256sum writes `hash  name` on Linux and `hash *name` in binary
+  # mode, and matching one spelling would verify half the releases and reject the other half.
+  ( cd "$tmp" && grep -E "[ *]${name}\$" SHA256SUMS > one.sha256 && sha256sum -c one.sha256 ) || {
+    echo >&2
+    echo "CHECKSUM MISMATCH. Not installing." >&2
+    echo "The download does not match the checksum published with the release. Either it was" >&2
+    echo "corrupted in transit, or it is not the file the release says it is." >&2
+    exit 1
+  }
+
+  tar -xzf "$tmp/$name" -C "$tmp"
+  binary="$tmp/docpreview_${version}_linux_${arch}/docpreview"
+  [ -x "$binary" ] || { echo "the archive did not contain a docpreview binary" >&2; exit 1; }
+
+  # The units too, so a downloaded install does not need the repository checked out beside it.
+  if [ -d "$tmp/docpreview_${version}_linux_${arch}/install" ]; then
+    HERE="$tmp/docpreview_${version}_linux_${arch}/install"
+  fi
+}
+
+if [ -n "$release" ]; then
+  download_release "$release"
+fi
+
+# Found locally when no version was asked for: the build you just made, or the one beside this
+# script.
 if [ -z "$binary" ]; then
   for candidate in "$HERE/../build/docpreview" "$HERE/docpreview" "$PWD/docpreview"; do
     if [ -x "$candidate" ]; then binary="$candidate"; break; fi
   done
 fi
 if [ -z "$binary" ] || [ ! -x "$binary" ]; then
-  cat >&2 <<'EOF'
-No docpreview binary found. Build one and point at it:
+  cat >&2 <<EOF
+No docpreview binary found. Three ways to get one:
+
+    sudo ./install.sh --version v0.3.0          # a published release, checksum verified
+    https://github.com/$REPO/releases           # the list of them
 
     go build -o /tmp/docpreview ./cmd/docpreview
     sudo ./install.sh --binary /tmp/docpreview
 
-Cross-compiling from another machine works too:
-
-    GOOS=linux GOARCH=amd64 go build -o docpreview ./cmd/docpreview
+    GOOS=linux GOARCH=amd64 go build -o docpreview ./cmd/docpreview   # from a laptop
 EOF
   exit 1
 fi

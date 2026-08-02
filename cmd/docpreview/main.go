@@ -79,6 +79,9 @@ func run(args []string) error {
 		return cmdZrok(args[1:])
 	case "vault":
 		return cmdVault(args[1:])
+	case "version", "-v", "--version":
+		fmt.Println(versionLine())
+		return nil
 	case "help", "-h", "--help":
 		usage()
 		return nil

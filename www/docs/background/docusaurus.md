@@ -58,7 +58,7 @@ const config: Config = {
 ```
 
 Existing deployments keep the hardcoded default; docpreview overrides it per build. This site does exactly
-that — see [`www/docusaurus.config.ts`](https://github.com/netfoundry/docpreview/blob/main/www/docusaurus.config.ts).
+that — see [`www/docusaurus.config.ts`](https://github.com/openziti-test-kitchen/docpreview/blob/main/www/docusaurus.config.ts).
 
 If you cannot change the config — someone else's repository, a vendored theme — set `build.base_url` in
 [`.docpreview.yml`](../reference/repo-config.md) to whatever the config hardcodes. docpreview will serve the
