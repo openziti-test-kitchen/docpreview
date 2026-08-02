@@ -28,7 +28,7 @@ enabling an exposer turns off whichever one was on, and at the next restart ever
 address and every open comment is rewritten to match. The dashboard asks before doing it.
 
 Publishing through several at once, and choosing per project, is designed but not built — see
-[docs/design/21-multi-exposer.md](https://github.com/netfoundry/docpreview/blob/main/docs/design/21-multi-exposer.md).
+[docs/design/21-multi-exposer.md](https://github.com/openziti-test-kitchen/docpreview/blob/main/docs/design/21-multi-exposer.md).
 
 :::
 

@@ -1,0 +1,59 @@
+# Cut a release when a version tag is pushed.
+#
+# Every decision this makes lives in ./release.sh, which runs anywhere. This file checks out
+# the code, calls it, and uploads what it produced — so a broken release can be reproduced and
+# fixed on a laptop rather than by pushing commits at CI and reading the log.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # So the build can be exercised without cutting anything. It produces the artifacts and stops
+  # short of the release, which is the half worth testing.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The build stamps the version from `git describe`, which needs the tags and enough
+          # history to reach one. A shallow clone silently produces a binary that calls itself
+          # a bare commit hash.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        # Not `./...`: demo/node_modules contains Go files belonging to other modules, and the
+        # build fails outright on them.
+        run: go test ./cmd/... ./internal/...
+
+      - name: Build
+        run: ./release.sh
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --verify-tag \
+            dist/*.tar.gz dist/*.zip dist/SHA256SUMS
+
+      - name: Keep the artifacts either way
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 14

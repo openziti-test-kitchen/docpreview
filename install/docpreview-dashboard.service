@@ -11,7 +11,7 @@
 # Install to /etc/systemd/system/docpreview-dashboard.service.
 [Unit]
 Description=docpreview dashboard tunnel
-Documentation=https://github.com/netfoundry/docpreview
+Documentation=https://github.com/openziti-test-kitchen/docpreview
 After=network-online.target docpreview.service
 Wants=network-online.target
 

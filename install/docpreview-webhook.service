@@ -8,7 +8,7 @@
 # Install to /etc/systemd/system/docpreview-webhook.service.
 [Unit]
 Description=docpreview webhook tunnel
-Documentation=https://github.com/netfoundry/docpreview
+Documentation=https://github.com/openziti-test-kitchen/docpreview
 # The share forwards to the daemon and logs an error per request until it answers, so it starts
 # after — but does not require it, because a share that outlives a daemon restart is fine and
 # tying them together means a daemon restart drops the public name for a few seconds.

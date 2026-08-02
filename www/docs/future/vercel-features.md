@@ -111,7 +111,7 @@ per-project credentials.
 outside the platform and can only reach a deployment over HTTP. Everything docpreview would point at a preview is
 *inside the same process*: a link checker reads the artifact directory off disk, the machine-readable preview
 status is a route on the daemon, and both are already designed that way in
-[`TODO.md`](https://github.com/netfoundry/docpreview/blob/main/TODO.md). A bypass header solves a problem created
+[`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md). A bypass header solves a problem created
 by being a hosted service.
 
 **Verdict: skip it, and revisit only alongside idea 2.** The half that would matter is the human half — a
@@ -131,7 +131,7 @@ operation: it triggers a complete rebuild with production environment variables 
 on disk: artifacts live at `artifacts/<preview>/<build>`, `builds.name` and `builds.url` record each build's own
 share, and the dashboard's log pane already lets an operator select an older build and open it. The missing verb
 is "make **this** build the one the branch URL serves" — which under the
-[switchable placeholder handler](https://github.com/netfoundry/docpreview/blob/main/TODO.md) is one atomic pointer
+[switchable placeholder handler](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md) is one atomic pointer
 swap in the branch publication, with no exposer call at all. Without the switchable handler it is a republish of
 the branch share against a different artifact directory, which is more expensive and hits the destructive-publish
 rule in `internal/expose/`.
@@ -160,7 +160,7 @@ truncated, and Pro and Enterprise can replace `vercel.app` with a custom domain 
 plus one share per commit built, keyed by `expose.Spec.Key()`, and the dashboard carries the two links separately
 — the row's Open for the branch, `Open build ↗` in the log pane for whichever build is selected. Written up in
 [Exposers](../exposers.md) and tracked in
-[`TODO.md`](https://github.com/netfoundry/docpreview/blob/main/TODO.md).
+[`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md).
 
 **What it costs — and what Vercel does differently.** For Vercel a generated URL is a free consequence of having
 uploaded the deployment. Here **each name is a quota-bearing object on the zrok account**, counted per account
@@ -209,7 +209,7 @@ exists to catch loudly rather than quietly. So this needs what Vercel has and do
 includes everything a build's output depends on, and a documented way to bypass it. Vercel offers three
 (`VERCEL_FORCE_NO_BUILD_CACHE=1`, `vercel --force`, and an unchecked box on redeploy); here it would be a checkbox
 on the Rebuild button. It also needs the byte cap this project has
-[not written yet](https://github.com/netfoundry/docpreview/blob/main/TODO.md), because a persistent volume per
+[not written yet](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md), because a persistent volume per
 preview with no ceiling is the disk problem again.
 
 **Verdict: build it now, with the bypass in the same commit.** The measurable win is real — prerendering is
@@ -230,7 +230,7 @@ built-in skip does not — the stated reason to prefer the built-in
 [Project settings](https://vercel.com/docs/project-configuration/project-settings)).
 
 **What it would mean here.** This is already filed as a gap in
-[`TODO.md`](https://github.com/netfoundry/docpreview/blob/main/TODO.md) and in
+[`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md) and in
 [Architecture](../architecture.md) as a deliberate limit: one `.docpreview.yml` builds one site. The shape Vercel
 uses is the right one — a project per site rather than a list inside one config — and the projects page is already
 where a project's build settings live.
@@ -280,7 +280,7 @@ sequence under a per-preview lock.
 **What it costs.** Split it by what needs a browser.
 
 The deterministic checks need nothing docpreview lacks. A post-build link checker walking the artifact tree is
-already filed in [`TODO.md`](https://github.com/netfoundry/docpreview/blob/main/TODO.md), modelled on
+already filed in [`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md), modelled on
 `pipeline.Detector` — bounded by a timeout and unable to fail the build — and it covers Vercel's Core and
 End-to-end flows for a static site, including the one failure docs actually ship: an internal link or heading
 anchor that no longer resolves. Output size and file count for the Optimization flow is a directory walk.
@@ -312,7 +312,7 @@ above plus the marketplace's testing category, so visual regression is Percy, Ch
 check — and the closest first-party thing is a Chrome extension for attaching screenshots to a
 [comment](https://vercel.com/docs/comments) by hand.
 
-**What it would mean here.** [`TODO.md`](https://github.com/netfoundry/docpreview/blob/main/TODO.md) records
+**What it would mean here.** [`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md) records
 "Preview diffing. Vercel shows what changed visually between deployments. Not attempted." The premise is worth
 correcting on two counts: Vercel does not ship it, and *visual* is the expensive answer to the question a
 documentation reviewer is actually asking, which is **which pages changed, and how**.
@@ -358,7 +358,7 @@ retained one hour on Hobby, one day on Pro and three days on Enterprise
 ([Runtime Logs](https://vercel.com/docs/logs/runtime)), so a drain is how anything is kept at all. docpreview's
 operator **is** on the machine, with `log_file` and the build logs in a directory under a retention window they
 chose. The genuinely useful part of this family is already filed and
-is not a drain: [log search](https://github.com/netfoundry/docpreview/blob/main/TODO.md), because the viewer tails
+is not a drain: [log search](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md), because the viewer tails
 and downloads, so finding a line in a 5000-line build means downloading the whole thing.
 
 **Verdict: skip it.** Build log search instead. Revisit only if docpreview ever runs somewhere its operator does
@@ -396,7 +396,7 @@ Two things here are worth not copying. The 410-plus-recovery-window is a hosted 
 deletion, and a self-hosted tool with the artifacts on a local disk and a backup story has no use for a tombstone.
 And Vercel's unlimited-retention default is only affordable to somebody billing for storage; this project's
 problem is the opposite, and its
-[open item](https://github.com/netfoundry/docpreview/blob/main/TODO.md) is a ceiling, not a floor.
+[open item](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md) is a ceiling, not a floor.
 
 **Verdict: build the exception list now, alongside the byte caps it belongs with.** Do not build the recovery
 window.

@@ -55,22 +55,43 @@ request is not a privilege — the build script arrives *in* the pull request. S
 
 ## Step 2 — Get the binary onto the VM
 
-There is no package repository yet. Build it, from the VM or from your laptop:
+A published release is the short way. The installer downloads it, **verifies it against the
+`SHA256SUMS` published with the release**, and refuses to install anything that does not match:
+
+```bash
+curl -fsSLO https://github.com/openziti-test-kitchen/docpreview/releases/latest/download/install.sh
+chmod +x install.sh
+sudo ./install.sh --version v0.3.0
+```
+
+Releases carry `linux/amd64`, `linux/arm64`, `darwin/arm64` and `windows/amd64`, and the Linux
+archives include the systemd units and this installer.
+
+Building it yourself works the same, from the VM or from your laptop:
 
 ```bash
 # on the VM, with Go installed
-git clone https://github.com/netfoundry/docpreview
+git clone https://github.com/openziti-test-kitchen/docpreview
 cd docpreview
 go build -o docpreview ./cmd/docpreview
 ```
 
 ```bash
-# or from a laptop, cross-compiled
+# or cross-compiled from a laptop
 GOOS=linux GOARCH=amd64 go build -o docpreview ./cmd/docpreview
 scp docpreview install/*.service install/install.sh you@vm:
 ```
 
+Whichever you used, `docpreview version` says exactly what you have — the tag, the commit, and
+whether the tree it was built from was dirty:
+
+```text
+docpreview v0.3.0  a162fad0ffe3  2026-08-01T16:30:48-04:00  linux/amd64  go1.26.0
+```
+
 ## Step 3 — Run the installer
+
+Skip this if `--version` already did it. Otherwise, pointing at the binary you built:
 
 ```bash
 sudo ./install.sh --binary ./docpreview
@@ -81,12 +102,43 @@ It creates the `docpreview` service account, `/var/lib/docpreview` (0700) and `/
 starts nothing, and it writes no config, no key and no credential — those are decisions, and it
 prints the commands for each.
 
+### The service account
+
+Everything after this point runs as `docpreview`, and every CLI command below is `sudo -u
+docpreview` for that reason: a file written as root in the data directory is a file the daemon
+cannot read at three in the morning.
+
+| | |
+|---|---|
+| Name | `docpreview`, a system account — no login, no password |
+| Home | `/var/lib/docpreview`, the same as `data_dir` |
+| Shell | `/usr/sbin/nologin` |
+| Groups | `docker`, so builds can run containers |
+
+The home directory is not decoration. `zrok` keeps its environment under the *user's* home by
+default, so a service account without one produces an enrolment nobody can find — and the daemon
+reporting "no zrok environment is enrolled here" while `zrok2 overview` in your own shell shows a
+working one. Pointing zrok at the data directory, which Step 6 does, avoids the question entirely.
+
 :::caution The docker group is root-equivalent
 
 The service account is added to it, because that is how a build runs a container. Anyone who can
 reach the docker socket can start a container that mounts `/`, so this account is effectively root
 on this VM. That is the cost of the docker build driver, and it is the reason this VM should do
 nothing else.
+
+:::
+
+:::note Why the uid matters
+
+A build container runs as **root**, so everything it writes through the bind mount would be
+root-owned on the host — and the daemon, running as `docpreview`, could not read its own build
+output, copy it into `artifacts/`, or remove the workspace afterwards.
+
+docpreview appends a `chown` to the build's own command for exactly this, using the uid and gid the
+daemon is running as. It needs nothing from you, and it is the reason changing `User=` in the unit
+file to an account that does not own `/var/lib/docpreview` produces a daemon that builds
+successfully and then fails to publish.
 
 :::
 

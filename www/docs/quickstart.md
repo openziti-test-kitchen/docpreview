@@ -28,7 +28,7 @@ Do part 1 before deciding whether you want part 2.
 | **A GitHub repository** | Containing a Docusaurus site, with admin rights so you can install an App on it. |
 | **A public webhook URL** | Which means the `local` exposer will not do — GitHub has to reach you. |
 
-Bitbucket is not wired up yet; see [Status](https://github.com/netfoundry/docpreview#status).
+Bitbucket is not wired up yet; see [Status](https://github.com/openziti-test-kitchen/docpreview#status).
 
 ---
 
@@ -37,7 +37,7 @@ Bitbucket is not wired up yet; see [Status](https://github.com/netfoundry/docpre
 ### 1. Build
 
 ```powershell
-git clone https://github.com/netfoundry/docpreview
+git clone https://github.com/openziti-test-kitchen/docpreview
 cd docpreview
 go build -o bin/ ./cmd/docpreview
 ```

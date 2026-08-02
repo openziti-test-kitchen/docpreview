@@ -69,10 +69,25 @@ Fill in:
 | Field | Value |
 |---|---|
 | **GitHub App name** | `docpreview` (must be globally unique — add your org if taken) |
-| **Homepage URL** | Your repository URL. Nothing reads it. |
+| **Description** | What it does, in one line. This is on the install screen, which is where somebody decides whether to trust it |
+| **Homepage URL** | Your docs site, not the repository. Somebody clicking it wants to know what this is |
 | **Webhook** | ✅ Active |
 | **Webhook URL** | The URL from step 1, e.g. `https://docpreview.shares.zrok.io/webhook/github` |
 | **Webhook secret** | The value already in the vault under `github.webhook_secret`. It must match exactly. |
+
+:::tip Own it with the organization, and give it an avatar
+
+**Owner.** An App owned by a person cannot be moved to an organization without the org accepting a transfer, and
+the account that owns it is the account that can rotate its private key. Create it under the organization from the
+start.
+
+**Avatar.** The App's name and picture are the author of every comment it writes, on every pull request anybody
+reviews. The default identicon reads as somebody's experiment. Upload a square image, 200×200 or larger, with no
+transparency — GitHub composites it onto white in some places and dark in others. It has to be legible at **20
+pixels**, which is the size on a comment and the only size most people ever see it at, so anything with a word in
+it is a grey smudge.
+
+:::
 
 If you have not generated a secret yet, do it now, paste it into this field, and store the same value in the vault
 before running `webhook-check`:

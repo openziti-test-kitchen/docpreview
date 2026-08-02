@@ -46,7 +46,7 @@ real clone, the real detector, the real builder, the real exposer, the real comm
 
 That is the point. A mock that took a shortcut past the queue would not have caught the supersede races, and a
 fake builder would not have caught the base-URL failures. Every bug listed in
-[the design documents](https://github.com/netfoundry/docpreview/tree/main/docs/design) was found through this.
+[the design documents](https://github.com/openziti-test-kitchen/docpreview/tree/main/docs/design) was found through this.
 
 ## Getting started
 
