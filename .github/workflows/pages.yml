@@ -1,0 +1,63 @@
+# Publish www/ to GitHub Pages when the documentation changes on main.
+#
+# Every decision this makes lives in ./docs-site.sh, which runs anywhere. This file checks out the
+# code, calls it, and hands the output to Pages — so a broken site can be reproduced and fixed on a
+# laptop rather than by pushing commits at CI and reading the log.
+name: pages
+
+on:
+  push:
+    branches:
+      - main
+    # The site is www/ plus the config that builds it. A commit that touches neither cannot change
+    # what gets published, and republishing it anyway spends minutes to produce identical bytes.
+    paths:
+      - "www/**"
+      - "docs-site.sh"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  # deploy-pages authenticates to the Pages API with an OIDC token rather than a secret.
+  id-token: write
+
+# One publish at a time, and a newer commit wins. cancel-in-progress is false so a deploy already
+# talking to the Pages API finishes rather than leaving the site half-swapped.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: www/package-lock.json
+
+      # No arguments: the script defaults to this repository's own Pages address. Passing them here
+      # would put the site's public URL in two places, and the one that is wrong is always the copy.
+      - name: Build
+        run: ./docs-site.sh
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: www/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
