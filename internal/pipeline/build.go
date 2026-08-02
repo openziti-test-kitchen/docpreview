@@ -586,8 +586,80 @@ func (b *Builder) createArgs(
 	// Whatever could not go in the file. See writeEnvFile: docker's env-file format has
 	// no way to express a value containing a newline.
 	args = append(args, envArgs...)
-	return append(args, image, "sh", "-lc",
-		installCommand(buildDir)+" && "+cfg.Build.Command), nil
+	return append(args, image, "sh", "-lc", buildScript(
+		installCommand(buildDir), cfg.Build.Command,
+		reownCommand(containerDir, os.Getuid(), os.Getgid()))), nil
+}
+
+// buildScript is what the container runs: install, build, and hand the output back.
+//
+// The build's own exit status is what the container exits with, whatever the chown does. Written
+// as `…; rc=$?; chown…; exit $rc` rather than `… && chown` for two reasons, and both have teeth:
+//
+//   - `&&` skips the chown when the build fails, leaving root-owned files in the workspace. The
+//     daemon cannot then remove that workspace, which breaks the *next* build of that preview
+//     rather than this one.
+//   - `;` on its own makes the shell's status the chown's, so **every failed build reports
+//     success** — a green comment on a pull request whose site did not build.
+//
+// Separated from the argument assembly so the ordering can be tested without constructing a
+// Builder, a workspace and a config. `TestTheBuildsExitStatusSurvivesTheChown` is that test, and
+// the second bullet is why it exists.
+// The chown is passed in rather than looked up, so the ordering can be tested on a platform where
+// there is no chown to append — otherwise the test that matters most would skip on the machine
+// this is developed on and run only in CI.
+func buildScript(install, build, reown string) string {
+	script := install + " && " + build
+	if reown != "" {
+		script += "; rc=$?; " + reown + "; exit $rc"
+	}
+	return script
+}
+
+// reownCommand gives the build's output back to the user the daemon runs as.
+//
+// # The problem it solves
+//
+// The container runs as root — `--user` is deliberately not passed, see below — so on Linux every
+// file it writes through the bind mount is owned by root on the host. The daemon then runs as an
+// unprivileged service account and cannot read the site it just built, cannot copy it into
+// `artifacts/`, and cannot remove the workspace afterwards. Every one of those fails with
+// `permission denied` at a point where the build log says the build succeeded.
+//
+// Invisible on Docker Desktop, which maps ownership on the way through, so this survived every
+// local run and failed the first time the test suite ran on Linux —
+// `TestDockerMountRoundTrip`, "the build output is not on the host".
+//
+// # Why not --user
+//
+// `--user $(id -u)` is the obvious fix and breaks two things. `npm` wants a writable HOME, and a
+// uid with no entry in the image's `/etc/passwd` does not have one. And the anonymous volume
+// mounted at `node_modules` is created root-owned, so the install cannot write into the one
+// directory it exists to write into. Both are solvable per image and neither is solvable for an
+// arbitrary image an operator names in a project row.
+//
+// Doing it afterwards needs no cooperation from the image at all.
+//
+// # Why the node_modules volume is pruned
+//
+// It holds tens of thousands of files, it is anonymous, and it is discarded with the container —
+// so chowning it is seconds of work to change permissions on something about to be deleted.
+//
+// # Why failure is tolerated
+//
+// `|| true`. On Windows and macOS the ids do not mean anything and the chown is pointless but
+// harmless; if it fails there, the build must not be reported as broken. On Linux a failure would
+// surface immediately as the daemon being unable to read its own output, which is a better place
+// to find out than a build marked failed after a successful compile.
+func reownCommand(containerDir string, uid, gid int) string {
+	// -1 on Windows, where this is meaningless. Taken as arguments rather than read here so a
+	// test can ask what the command looks like on a host that is not this one.
+	if uid < 0 || gid < 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"find /workspace -path %s/node_modules -prune -o -exec chown %d:%d {} + || true",
+		containerDir, uid, gid)
 }
 
 // writeEnvFile puts the build's environment in a private file and returns its path.
