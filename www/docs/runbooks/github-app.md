@@ -11,7 +11,7 @@ ten minutes. At the end you will have three values in the vault and a working we
 
 ## Before you start
 
-- Admin rights on the organization (or just a personal account, for a personal repository).
+- Admin rights on the organization (or a personal account, for a personal repository).
 - `docpreview` built and on your PATH.
 - A vault master key. The vault is one [age](../background/age.md)-encrypted file at
   `~/.docpreview/vault.age`. If you have not made a key:
@@ -48,7 +48,7 @@ things.
    and proves the whole path already accepts a signed delivery.
 
 Do not point a share at the daemon directly. `zrok2 share public http://127.0.0.1:8471` publishes every route
-including `/api/secrets`, putting the credential API on the internet; `docpreview webhook-only` publishes one
+including `/api/secrets`, putting the credential API on the internet. `docpreview webhook-only` publishes one
 route and nothing else. The reasoning is in
 [that runbook](./webhook-tunnel.md#why-this-exists-rather-than-sharing-the-daemon).
 
@@ -104,7 +104,7 @@ openssl rand -base64 32
 
 Without it, `X-Hub-Signature-256` is absent and anyone who finds your URL can post a forged `pull_request`
 payload — which is a request to clone and build a repository of their choosing. docpreview rejects unsigned
-deliveries outright, so a blank secret means nothing works; that is deliberate.
+deliveries outright, so a blank secret means nothing works — that is deliberate.
 
 :::
 
@@ -117,7 +117,7 @@ Under **Repository permissions**, set exactly these and nothing else:
 | **Contents** | Read-only | Clone the branch |
 | **Pull requests** | Read and write | Post and edit the preview comment |
 | **Checks** | Read and write | Write the check run |
-| **Metadata** | Read-only | Mandatory; GitHub adds it automatically |
+| **Metadata** | Read-only | Mandatory — GitHub adds it automatically |
 
 Leave every other permission at **No access**. Anything more is scope you did not need and now have to
 justify.
@@ -129,10 +129,10 @@ Under **Subscribe to events**, tick:
 - ✅ **Pull request**
 - ✅ **Push** — only if you want the permanent preview of the default branch kept current
 
-Nothing else. docpreview ignores every other event; over-subscribing just wastes deliveries.
+Nothing else. docpreview ignores every other event, and over-subscribing wastes deliveries.
 
-**Push** is optional and does one thing: when the default branch moves, the branch preview of it is
-rebuilt. Without it that preview is refreshed only when the daemon restarts or somebody presses
+**Push** is optional and does one thing: when the default branch moves, docpreview rebuilds its
+branch preview. Without it that preview is refreshed only when the daemon restarts or somebody presses
 Rebuild, so it shows whatever `main` looked like the last time one of those happened.
 
 A push to any *other* branch is ignored — a branch with an open pull request already arrives as

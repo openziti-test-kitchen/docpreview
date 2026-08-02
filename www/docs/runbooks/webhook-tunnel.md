@@ -44,7 +44,7 @@ That yields `docpreview.shares.zrok.io`. If your environment has no default name
 zrok2 create name -n <namespace> docpreview
 ```
 
-Confirm it, and note that `SHARE TOKEN` is empty until a share binds to it:
+Confirm it. `SHARE TOKEN` is empty until a share binds to it:
 
 ```powershell
 zrok2 list names
@@ -63,7 +63,7 @@ abandoned share still holds the name. Step 2 reclaims that automatically.
 
 Two things about zrok v2 that are worth knowing before you go looking for them:
 
-**There is no `zrok2 reserve`.** v1 made durability a property of a *share*; v2 decoupled the two. Durability is
+**There is no `zrok2 reserve`.** v1 made durability a property of a *share* — v2 decoupled the two. Durability is
 now a **name** in a namespace, carrying a reserved flag, and a share binds to it. So the thing you create ahead of
 time is a name, and shares come and go underneath it.
 
@@ -100,11 +100,11 @@ the share URL.
 
 No check inside the daemon can close that hole. In proxy mode the daemon sees the connection from the local zrok
 process, so `RemoteAddr` is loopback too, and `Host` is whatever the client sent. The distinction does not exist at
-that layer. The fix is not a smarter check, it is not putting the admin surface and the public route on one origin.
+that layer. The fix is not a smarter check — it is not putting the admin surface and the public route on one origin.
 
 So `webhook-only` forwards `POST /webhook/github` and nothing else. It does **not** verify the signature — that is
 the daemon's job, with the secret from the vault, and duplicating it here would mean a second copy of the secret in
-a second process. This is a router; the guard is one hop further in.
+a second process. This is a router — the guard is one hop further in.
 
 With `-zrok-name` it binds **no local TCP port at all**. The listener is the zrok share, so there is nothing on
 `127.0.0.1` for anything else on the machine to find. Omit the flag and it listens on `-listen`
@@ -112,7 +112,7 @@ With `-zrok-name` it binds **no local TCP port at all**. The listener is the zro
 
 ### Restarts reclaim the name
 
-A process serving a tunnel is normally ended by a kill, and a kill runs no deferred cleanup — so the share from the
+You normally end a process serving a tunnel with a kill, and a kill runs no deferred cleanup — so the share from the
 previous run outlives it and still holds the name. `webhook-only` handles that: on a name-in-use error it lists the
 shares belonging to this environment, deletes any whose leftmost DNS label matches the name, and retries. It logs
 it when it happens:
@@ -189,7 +189,7 @@ Now go to the [GitHub App runbook](./github-app.md). Two fields take what you bu
 - **Webhook secret** — the same value that is in the vault under `github.webhook_secret`. A mismatch here is the
   `401` in the table above, arriving from GitHub's side instead of yours.
 
-Everything else — permissions, events, the private key, installation — is unchanged; follow that runbook from
+Everything else — permissions, events, the private key, installation — is unchanged. Follow that runbook from
 [step 2](./github-app.md#step-2--create-the-app).
 
 ## `GET` on the webhook URL answers 405. That is correct.
@@ -210,7 +210,7 @@ distinguishable to anyone probing properly regardless.
 ## What a 502 means
 
 zrok has the share, and the backend is not attached to it yet. The share exists at the frontend the moment the
-controller creates it; the overlay listener takes a few seconds to attach after `webhook-only` starts. A 502 in
+controller creates it. The overlay listener takes a few seconds to attach after `webhook-only` starts. A 502 in
 that window resolves itself — wait and re-run `webhook-check`.
 
 A 502 that persists means `webhook-only` is not running, or it is running and the daemon behind it is not.
@@ -222,7 +222,7 @@ A 502 that persists means `webhook-only` is not running, or it is running and th
 Restart either process in any order. The URL does not change, so **the App never needs reconfiguring**. That is
 what the reserved name bought:
 
-1. Kill `webhook-only`. The share is orphaned; the name is not.
+1. Kill `webhook-only`. The share is orphaned — the name is not.
 2. Start it again. It reclaims the name, creates a new share, binds the same hostname.
 3. `docpreview webhook-check -url https://docpreview.shares.zrok.io/webhook/github` to confirm.
 

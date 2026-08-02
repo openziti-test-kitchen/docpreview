@@ -7,7 +7,7 @@ sidebar_position: 3
 # Docusaurus, in the parts that matter here
 
 [Docusaurus](https://docusaurus.io/) is a static site generator built by Meta and aimed squarely at
-documentation. You write Markdown or MDX; it produces a React-powered site with a sidebar, versioning,
+documentation. You write Markdown or MDX. It produces a React-powered site with a sidebar, versioning,
 search, dark mode, and i18n. This site is one.
 
 docpreview is not Docusaurus-specific — anything that turns a repository into a directory of static files
@@ -57,7 +57,7 @@ const config: Config = {
 };
 ```
 
-Existing deployments keep the hardcoded default; docpreview overrides it per build. This site does exactly
+Existing deployments keep the hardcoded default. docpreview overrides it per build. This site does exactly
 that — see [`www/docusaurus.config.ts`](https://github.com/openziti-test-kitchen/docpreview/blob/main/www/docusaurus.config.ts).
 
 If you cannot change the config — someone else's repository, a vendored theme — set `build.base_url` in

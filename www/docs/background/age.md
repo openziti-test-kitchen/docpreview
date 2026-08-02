@@ -57,7 +57,7 @@ docpreview supports both:
   noticeably slower to open. That is the feature, not a defect — it is what makes a guessing attack expensive.
 
 Because the file key is wrapped separately per recipient, one file can be readable by several keys without
-re-encrypting the body. docpreview uses one today; that is why "a vault shared across a team" is a small change
+re-encrypting the body. docpreview uses one today. That is why "a vault shared across a team" is a small change
 rather than a rewrite.
 
 ## Why age and not something else
@@ -79,8 +79,8 @@ expose a knob to get them wrong.
 ### Why not GPG
 
 GPG brings a keyring, a web-of-trust model, an agent, its own home directory, and thirty years of accumulated
-options, in order to solve "encrypt this one file with one key". Its answer to that question involves reading
-a manual. age's answer is one function call.
+options to solve "encrypt this one file with one key". Its answer to that question involves reading a manual.
+age's answer is one function call.
 
 ### Why not a hosted secret manager
 
@@ -135,7 +135,7 @@ options: an environment variable is readable by every process under the same use
 definitions, process listings and crash dumps.
 
 **A passphrase works instead of a key.** Anything that does not start with `AGE-SECRET-KEY-1` is treated as one
-and stretched with scrypt. Convenient for a quick trial; a generated key is better for a long-running service,
+and stretched with scrypt. Convenient for a quick trial. A generated key is better for a long-running service,
 because a passphrase a human can remember is one a wordlist can too.
 
 **With no source at all, `serve` starts anyway** with the vault locked, and the dashboard unlocks it. On a

@@ -28,7 +28,7 @@ Do part 1 before deciding whether you want part 2.
 | **A GitHub repository** | Containing a Docusaurus site, with admin rights so you can install an App on it. |
 | **A public webhook URL** | Which means the `local` exposer will not do — GitHub has to reach you. |
 
-Bitbucket is not wired up yet; see [Status](https://github.com/openziti-test-kitchen/docpreview#status).
+Bitbucket is not wired up yet. See [Status](https://github.com/openziti-test-kitchen/docpreview#status).
 
 ---
 
@@ -52,7 +52,7 @@ One question: which exposer. Take `zrok2`, or `local` if you have not enabled a 
 see the pipeline run anyway.
 
 Everything else takes a default, printed in a summary at the end so nothing is hidden. `-advanced` asks about
-all of them; `-yes` asks about none.
+all of them. `-yes` asks about none.
 
 It does **not** ask for a GitHub App ID. Source control is the last thing you wire up, and on Bitbucket you
 never will — see part 2.
@@ -90,7 +90,7 @@ preview:
 ```
 
 Every field has a default and a missing file is not an error, so anything absent here is still set. `init` does
-not currently write `preview.keep_builds`, `build.cache_dir` or `dashboard_url`; add them by hand from
+not currently write `preview.keep_builds`, `build.cache_dir` or `dashboard_url`. Add them by hand from
 [the server configuration reference](./reference/configuration.md) if you want them stated.
 
 </details>
@@ -154,7 +154,7 @@ Ctrl-C withdraws the URL.
 
 **If it refuses to publish**, complaining that the site was built for a different base URL — that is the one
 trap worth knowing about, caught before it could waste your afternoon. See
-[If your baseUrl is not `/`](#if-your-baseurl-is-not-) below, or just pass `-base-url /whatever/` to see it
+[If your baseUrl is not `/`](#if-your-baseurl-is-not-) below, or pass `-base-url /whatever/` to see it
 work now.
 
 ---
@@ -181,7 +181,7 @@ docpreview serve
 
 `configure ziti` creates every controller object docpreview needs — the intercept config, the services, the
 Bind and Dial policies, docpreview's own enrolled identity — and then writes your config file, so `serve`
-works immediately. Re-running it changes nothing; see
+works immediately. Re-running it changes nothing. See
 [`configure ziti`](./reference/cli.md#configure-ziti) for what each flag moves.
 
 It leaves two files. One is docpreview's identity, already in the config. The other is a reviewer's enrollment
@@ -229,7 +229,7 @@ Only now, and only for GitHub. Everything above already worked without it.
 The **vault** is one file — `~/.docpreview/vault.age` — holding every credential docpreview needs, encrypted
 with [age](./background/age.md). It is not a service and there is nothing to install.
 
-Mint one and set it in a single step. `-shell` emits an assignment in your shell's own syntax; the pipe
+Mint one and set it in a single step. `-shell` emits an assignment in your shell's own syntax. The pipe
 evaluates it:
 
 ```powershell
@@ -243,7 +243,7 @@ eval "$(docpreview vault keygen -shell)"
 The shell is detected from the process tree, so `-shell` on its own is right almost always. Force it with
 `-shell powershell`, `-shell sh`, `-shell fish`, or `-shell cmd`.
 
-This is not only less typing. Pasting the assignment yourself puts **the key** into your shell history; piping
+This is not only less typing. Pasting the assignment yourself puts **the key** into your shell history. Piping
 puts only the pipeline there.
 
 This command **stores nothing and creates nothing** — not the key, not the vault file. The vault appears in the
@@ -338,7 +338,7 @@ http://127.0.0.1:8471/
 ```
 
 Every preview, the activity feed, and each build's log, live. Two more pages — **Settings** and **Projects** — are
-linked from it, but only when you open it on the machine running docpreview; from anywhere else the links are absent
+linked from it, but only when you open it on the machine running docpreview. From anywhere else the links are absent
 because the daemon would refuse the writes they lead to.
 
 The link in the comment is the **branch** URL and always serves the latest build. Every build also has its own URL,

@@ -43,7 +43,7 @@ Reviewers run [Ziti Desktop Edge for Windows](https://netfoundry.io/docs/openzit
 (or `ziti-edge-tunnel`), which most NetFoundry-adjacent people already have. They open
 `https://my-branch.docpreview.ziti` and it works. Anyone else gets NXDOMAIN.
 
-For unreleased documentation that is a materially different posture from "public URL, unguessable name".
+For unreleased documentation, that is a materially different posture from "public URL, unguessable name".
 
 ## Why not zrok
 
@@ -60,7 +60,7 @@ v2. A GitHub code search for `intercept.v1 repo:openziti/zrok` returns `total_co
 
 That absence is the answer. A tunneler builds its DNS table and its intercepts from the `intercept.v1` configs
 of services it is allowed to dial. A service with no intercept config gives a tunneler nothing to resolve and
-nothing to capture. It might appear in the service list; it can never be reached by opening a URL.
+nothing to capture. It might appear in the service list. It can never be reached by opening a URL.
 
 zrok does not need intercepts because both ends of a share are SDK code:
 
@@ -84,7 +84,7 @@ management-API credentials on the underlying network can hand-author a dial poli
 it, its garbage collector reaps by zrok tags, and the tunneler still has no intercept.
 
 **Frontdoor is also not the door.** Its published OpenAPI covers shares, frontends, custom-frontends, agents
-and executions. There is no endpoint-enrollment resource. Frontdoor is a public-ingress product; this is the
+and executions. There is no endpoint-enrollment resource. Frontdoor is a public-ingress product. This is the
 opposite requirement.
 
 ## What does work
@@ -162,7 +162,7 @@ Service-per-pull-request is the wrong shape, for four separate reasons:
 - ZDEW's identity tile lists services. Twenty open PRs means twenty entries scrolling past the reviewer.
 - One bound service means one `Context.Listen` and one `http.Server`, instead of one listener per PR.
 
-The wildcard model creates **zero** management-API objects per preview. Publishing becomes a map insert;
+The wildcard model creates **zero** management-API objects per preview. Publishing becomes a map insert —
 reaping becomes a map delete.
 
 What you give up is per-preview authorization — everyone with the reader attribute can reach every preview. If
@@ -411,7 +411,7 @@ invalid TLD.
 80 inside the tunnel is defensible. Browsers increasingly treat non-HTTPS origins as second-class, though a
 static Docusaurus site probably does not care. Unverified.
 
-**The DACL on the data pipe.** ZDEW sets a DACL only on its *monitor* pipe; the data pipe is created by
+**The DACL on the data pipe.** ZDEW sets a DACL only on its *monitor* pipe. The data pipe is created by
 `ziti-edge-tunnel.exe`, whose source lives in another repository. Every indication is that a non-elevated user
 can write to it, but this is inferred. One line settles it:
 `(Get-Acl \\.\pipe\ziti-edge-tunnel.sock).Access`.
@@ -429,12 +429,12 @@ Assuming a network exists and docpreview has admin credentials for it.
 
 | Piece | Size |
 |---|---|
-| `internal/expose/ziti.go` | ~250 lines, 1–2 days. It is `local.go` plus a ziti listener; the hard part is already proven in `zrok.go`. |
+| `internal/expose/ziti.go` | ~250 lines, 1–2 days. It is `local.go` plus a ziti listener. The hard part is already proven in `zrok.go`. |
 | Config additions and the `buildExposer` case | Under an hour |
 | Management client | ~200 lines, 1 day — or much less, since `zrok/v2/controller/automation` already wraps every call |
 | `docpreview identity {add,list,remove}` | ~150 lines, half a day |
 | `docpreview identity bootstrap` | ~200 lines, 1 day. Idempotency is the fiddly part. |
-| Tests | 1 day. The management client mocks the way `frontdoor_test.go` does; Host-routing is unit-testable with no network. |
+| Tests | 1 day. The management client mocks the way `frontdoor_test.go` does. Host-routing is unit-testable with no network. |
 | Documentation | Half a day |
 | End-to-end against a real controller and a real ZDEW | 1–2 days, and this is where the surprises will be |
 

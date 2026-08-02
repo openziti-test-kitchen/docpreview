@@ -13,8 +13,8 @@ search-index write key, a private registry token — and build tools are careles
 config on failure. A script under `set -x` prints every command it runs. A failing HTTP client logs the
 request it made, credentials and all.
 
-Any of that lands in output docpreview then writes into a pull request comment, which is about the most public
-place a credential could go.
+Any of that lands in output that docpreview then writes into a pull request comment, which is about the most
+public place a credential could go.
 
 ## Giving a build a secret
 

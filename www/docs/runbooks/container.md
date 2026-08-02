@@ -77,7 +77,7 @@ docker run --rm -v //var/run/docker.sock:/var/run/docker.sock `
   --entrypoint docker docpreview:latest version
 ```
 
-Two version blocks, a client and a server, is the answer you want. A client block alone means the socket is not
+Two version blocks, a client and a server, are the answer you want. A client block alone means the socket is not
 mounted.
 
 ## Step 3 — Prepare the data directory on the host
@@ -121,7 +121,7 @@ machine.
 docker compose up -d
 ```
 
-The daemon starts first; the two shares forward to it and log errors until it answers, which is expected for the
+The daemon starts first. The two shares forward to it and log errors until it answers, which is expected for the
 first few seconds. The image's healthcheck polls `/healthz` rather than `/status`, because `/healthz` answers while
 the daemon is still recovering — a healthcheck on `/status` would kill a container that is doing its job.
 

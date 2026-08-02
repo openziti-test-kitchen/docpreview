@@ -12,7 +12,7 @@ and it comes down to three commitments.
 **Pre-rendering.** Pages are generated into static HTML at build time, not assembled per request. A visitor
 receives a file that already exists.
 
-**Decoupling.** The front end is built independently of any back end. It is a directory of files; it does not
+**Decoupling.** The front end is built independently of any back end. It is a directory of files. It does not
 know what produced it and does not talk to it at runtime.
 
 **API-driven enhancement.** Anything genuinely dynamic — search, forms, authentication — happens in the
@@ -20,7 +20,7 @@ browser against APIs or serverless functions, layered onto the static markup rat
 that renders it.
 
 Static site generators are the tool that makes this practical: Docusaurus, Hugo, Jekyll, Gatsby, Next.js in
-export mode. Feed them content and templates; get a directory of HTML.
+export mode. Feed them content and templates, and get a directory of HTML.
 
 ## Why this matters for previews
 

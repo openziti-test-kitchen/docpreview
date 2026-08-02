@@ -45,7 +45,7 @@ docpreview vault set bitbucket.access_token
 ```
 
 Or per project, on the **Projects** page, which is what a repository-scoped token wants. A project with its own
-token ignores the workspace one; a project with none falls back to it, and the panel says which is happening
+token ignores the workspace one. A project with none falls back to it, and the panel says which is happening
 rather than leaving you to guess.
 
 ## Step 3 — Generate a webhook secret

@@ -18,7 +18,7 @@ who can reach what.
 
 The Frontdoor exposer's HTTP wire format has not been verified against a live tenant. Read
 [Exposers → Status](../exposers.md#status) before relying on it. The lifecycle logic is shared with the other
-exposers and is exercised by the same tests; it is the endpoint paths and JSON field names that need checking.
+exposers and is exercised by the same tests. It is the endpoint paths and JSON field names that need checking.
 
 :::
 
@@ -76,8 +76,8 @@ Three of those five are easy to get wrong, and all three fail in ways that do no
 
 | Field | |
 |---|---|
-| `api_base` | **Must end in `/frontdoor/<frontdoorId>`.** The routes are unversioned and carry tenancy in that segment; without it every call 404s. Startup refuses an `api_base` ending in a bare `/frontdoor`. |
-| `frontend` | **A frontend ID**, like `bMTHPrtQ` — not a name like `public`. The API field is `frontendIds`; a name there is accepted and matches nothing, producing a share that serves nothing. |
+| `api_base` | **Must end in `/frontdoor/<frontdoorId>`.** The routes are unversioned and carry tenancy in that segment — without it every call 404s. Startup refuses an `api_base` ending in a bare `/frontdoor`. |
+| `frontend` | **A frontend ID**, like `bMTHPrtQ` — not a name like `public`. The API field is `frontendIds` — a name there is accepted and matches nothing, producing a share that serves nothing. |
 | `env_z_id` | The **enrolled agent's ziti identity**, from the Frontdoor console. Required on every share. Startup warns once when it is missing, because without it no publish can succeed. |
 
 `agent_reachable_host` is the one field with a real constraint. Frontdoor works the opposite way round from
@@ -100,7 +100,7 @@ right.
 
 Everything above the wire format — the lifecycle, reaping, naming, retries, the collision rule — is covered by the
 same tests as the working zrok exposer. The wire format itself was written from Frontdoor's documentation and
-corrected against it once; no request in this runbook has been observed succeeding.
+corrected against it once. No request in this runbook has been observed succeeding.
 
 It is instrumented to fail loudly rather than quietly: a create whose response cannot be read is an error naming
 the two structs to fix, a listing that decodes to nothing errors rather than reporting an empty account, and a

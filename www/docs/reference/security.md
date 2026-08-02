@@ -25,9 +25,9 @@ what is defended and what is not.
 
 **Not defended against:**
 
-- Someone already running code as the docpreview user. They have won; no file format changes that.
+- Someone already running code as the docpreview user. They have won. No file format changes that.
 - Anything that proxies to the daemon while stripping forwarding headers. The locality route below would read
-  those requests as local. Nothing docpreview ships does this; a proxy you put in front of it might.
+  those requests as local. Nothing docpreview ships does this, but a proxy you put in front of it might.
 - A guessed or shared password. There is no rate limit on `/login` and no lockout, so the password is the whole
   defence — the comparison is constant-time and the hash is argon2id, which slows an offline attack on a stolen
   database rather than an online one against the form.
@@ -51,13 +51,13 @@ Writes go to a temporary file in the same directory and are then renamed over th
 mid-write cannot leave a truncated and therefore unrecoverable vault behind.
 
 **Three things are deliberately not in the vault**, and each for the same ordering reason: the page that unlocks
-the vault is served by the daemon, so anything the daemon needs in order to serve that page cannot be inside it.
+the vault is served by the daemon, so anything the daemon needs to serve that page cannot be inside it.
 
 | | Where | Why |
 |---|---|---|
-| The console password hashes | `settings` table, argon2id | A password inside the vault could not be checked in order to reach the form that opens the vault |
+| The console password hashes | `settings` table, argon2id | A password inside the vault could not be checked to reach the form that opens the vault |
 | The session signing key | Memory, generated per process | Nothing persists it, which is why a restart signs everybody out |
-| The zrok account token's other copy | `<data_dir>/zrok2/environment.json`, plaintext | zrok writes that file and docpreview does not control its format. The vault holds a copy so re-enrolling needs no new signup; the file is why that directory sits beside the vault rather than in a home directory |
+| The zrok account token's other copy | `<data_dir>/zrok2/environment.json`, plaintext | zrok writes that file and docpreview does not control its format. The vault holds a copy so re-enrolling needs no new signup — the file is why that directory sits beside the vault rather than in a home directory |
 
 ### The master key
 
@@ -74,7 +74,7 @@ primary secret of that secrets management solution in a secondary secrets manage
 |---|---|---|
 | A command | `exec:op read op://ops/docpreview` | Recommended. The key exists in the daemon process and nowhere else on the machine. Survives a reboot if the helper can run unattended. |
 | A file | `file:/etc/docpreview/master.key` | Survives a reboot. Anyone who can read that path can read every secret in the vault. |
-| The environment | `$DOCPREVIEW_MASTER_KEY` | Works, not recommended. Readable by every process under the same user; lands in service definitions, process listings and crash dumps. |
+| The environment | `$DOCPREVIEW_MASTER_KEY` | Works, not recommended. Readable by every process under the same user, and lands in service definitions, process listings and crash dumps. |
 | A person | nothing configured | **Default.** The only option with no key at rest. The daemon boots locked and serves the dashboard until somebody unlocks it — so a reboot leaves it inert. |
 
 Mint a key straight into a file, without it passing through a clipboard or a shell history:
@@ -142,7 +142,7 @@ What is never gated, and each for a load-bearing reason:
 |---|---|
 | `/webhook/*` | Authenticated already, by an HMAC over the body, and its callers hold no cookie. A cookie gate here breaks every delivery and the failure reads as a signature problem |
 | `/healthz`, `/readyz` | What a supervisor and the restart script poll. `/readyz` carries counts and a stage name and nothing that identifies a repository — see [the CLI reference](./cli.md) |
-| The previews | A preview URL goes in a pull request for a reviewer who has no login and should not need one. Under `local` that is `/preview/…` on this listener; the other exposers never reach this mux |
+| The previews | A preview URL goes in a pull request for a reviewer who has no login and should not need one. Under `local` that is `/preview/…` on this listener — the other exposers never reach this mux |
 | `/login`, `/logout`, `/auth/*` | The form cannot be behind the form, and the OAuth callback arrives from Google carrying no cookie of ours |
 
 :::danger Loopback is not exempt
@@ -162,7 +162,7 @@ restart signs everybody out**. Twelve hours otherwise.
 
 Optional, and worth stating exactly: an address at a domain on the allow-list gets **viewer**. Admin is
 password-only, because the two are different claims — "somebody at this company" is not "the person who administers
-this installation". Configure with `docpreview console oauth-domains acme.com`; the check is an exact match on the
+this installation". Configure with `docpreview console oauth-domains acme.com`. The check is an exact match on the
 part after the last `@`, not a suffix test, so a list naming `acme.com` does not admit `evil-acme.com`.
 
 The client id and secret live in the vault, so a locked vault means the login page offers the password field alone
@@ -219,7 +219,7 @@ machine" from evidence the network arrangement supplies rather than from anythin
 nothing proxies to the daemon while stripping forwarding headers.
 
 That is why it is one of three routes rather than the only one. **Set an admin password and the surface has
-authentication**; the locality route exists so that a fresh installation with no password can be set up from the
+authentication.** The locality route exists so that a fresh installation with no password can be set up from the
 machine it is on, where the boundary is the same one that already protects `docpreview vault set` — anyone who can
 reach `127.0.0.1` can run the binary, and the API adds no reach a shell does not already have.
 
@@ -381,8 +381,8 @@ Previews render HTML that anyone who can open a pull request wrote. Served with:
 | `X-Content-Type-Options: nosniff` | |
 | `Referrer-Policy: no-referrer` | |
 
-Only `GET` and `HEAD`; everything else is `405`. Path traversal is handled by `http.Dir`, which also rejects
-the Windows device names and alternate separators a hand-crafted request might try.
+Only `GET` and `HEAD` are allowed — everything else is `405`. Path traversal is handled by `http.Dir`, which
+also rejects the Windows device names and alternate separators a hand-crafted request might try.
 
 These are hardening, not a WAF. For content you genuinely do not trust, put
 [Frontdoor](../runbooks/frontdoor.md) in front.
@@ -420,7 +420,7 @@ step people forget is deleting the old key afterwards.
 
 **Keep the master key out of the config file.** `vault.key_source` names where to read it from — a command or a
 file — so the key itself is never a config value. `exec:` is the form that keeps it out of every file on the
-machine; see [the master key](#the-master-key).
+machine. See [the master key](#the-master-key).
 
 **Close pull requests.** With `teardown_on_close: true` that withdraws the URL. Otherwise the TTL gets it in
 72 hours.

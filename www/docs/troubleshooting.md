@@ -57,7 +57,7 @@ every asset lives under `/assets/` reports its base URL as `/assets/`.
 Instead, docpreview counts the **first path segment** of each absolute reference. A root-mounted Docusaurus
 site scatters across `/assets`, `/img`, `/docs`, `/blog` — no segment dominates. A site built for
 `/my-project/` puts every single reference under one segment. If one segment accounts for 60% or more, that is
-the base URL; otherwise it is `/`. Robust to stray links in both directions.
+the base URL. Otherwise it is `/`. Stray links in either direction do not confuse it.
 
 ### The two fixes
 
@@ -130,8 +130,8 @@ secret is never printed and never reaches your shell history.
 
 ### Opening the webhook URL in a browser gives an error
 
-Nothing is wrong. A browser sends `GET`; GitHub sends `POST`, and only `POST` is served. A `GET` on the webhook
-path answers **405** with a sentence saying so; any other path answers **404** and says nothing. Use
+Nothing is wrong. A browser sends `GET`. GitHub sends `POST`, and only `POST` is served. A `GET` on the webhook
+path answers **405** with a sentence saying so. Any other path answers **404** and says nothing. Use
 `docpreview webhook-check`.
 
 ### `502` from the public URL
@@ -141,8 +141,8 @@ attaching its listener — that takes a few seconds after startup. Wait, then re
 
 ### `401` from `docpreview webhook-check`
 
-The request arrived and verification ran, so the tunnel is fine. The webhook secret in the vault you just read is
-not the one the running daemon holds. Two causes:
+The request arrived and verification ran, so the tunnel is fine. The webhook secret in the vault you read is not
+the one the running daemon holds. Two causes:
 
 - `-config` points at a different config, and therefore a different vault, than the daemon is using.
 - The secret was rotated after that daemon read it.
@@ -197,7 +197,7 @@ vault:
   key_source: "file:/etc/docpreview/master.key"   # or "exec:op read op://ops/docpreview/master-key"
 ```
 
-Or unlock it by hand from the dashboard's **Settings** page. The daemon rewires itself when the vault opens; no
+Or unlock it by hand from the dashboard's **Settings** page. The daemon rewires itself when the vault opens. No
 restart is needed.
 
 `docpreview doctor` reports which of these applies. With no key source it prints
@@ -248,7 +248,7 @@ delivery. It is not subscribed by default, so a fresh installation gets pull req
 Three things are ignored on purpose, so subscribing does not mean building constantly:
 
 - **A push to any other branch.** A branch with an open pull request already arrives as its own
-  event, so building here too would build it twice; a branch without one is somebody's work in
+  event, so building here too would build it twice. A branch without one is somebody's work in
   progress, and previewing every pushed branch would publish a URL per branch per contributor.
 - **A push to a repository with no branch preview.** Pushes refresh a preview, they never create
   one — otherwise installing the App would publish a `main` preview for every repository it can see
@@ -260,7 +260,7 @@ is one`, and a delivery that was ignored says which of the above it was at debug
 
 ## It says "Skipped — no documentation changes"
 
-Detection matched nothing. The comment names the count of changed files; the debug log names the patterns.
+Detection matched nothing. The comment names the count of changed files. The debug log names the patterns.
 
 If your documentation is not under `docs/` or `blog/`, tell it where:
 
@@ -324,7 +324,7 @@ lockfile is out of sync with `package.json` rather than absent. Regenerate it an
 
 The install command is chosen by which lockfile is committed — see
 [dependency install](reference/repo-config.md#dependency-install). Under the local driver, that package
-manager has to be on the daemon's `PATH`; under the Docker driver it has to be in the image, and
+manager has to be on the daemon's `PATH`. Under the Docker driver it has to be in the image, and
 `node:24-bookworm-slim` ships only npm. Either install it (`corepack enable`) or set `build.image` to
 something that has it.
 
@@ -364,7 +364,7 @@ The site built, and its output contains a symlink. It is refused rather than pub
 server blocks path traversal but follows symlinks out of its root — so a link to `/etc/passwd` in the output would
 be served to anyone with the preview URL.
 
-Find it and replace it with the file itself. A Docusaurus site does not normally emit one; the usual source is a
+Find it and replace it with the file itself. A Docusaurus site does not normally emit one. The usual source is a
 build script that links a shared asset directory in rather than copying it.
 
 ### A build fails cloning another private repository
@@ -446,7 +446,7 @@ There are two possible environment directories and you are looking at the other 
 docpreview zrok status
 ```
 
-`~/.zrok2` is what the `zrok2` CLI enrols into; `<data_dir>/zrok2` is docpreview's own. `zrok status` marks which
+`~/.zrok2` is what the `zrok2` CLI enrols into. `<data_dir>/zrok2` is docpreview's own. `zrok status` marks which
 one this installation uses, and `docpreview zrok use system` switches to the machine's. It takes effect on the next
 restart.
 
@@ -461,7 +461,7 @@ other's live previews. Give the second one `docpreview zrok use project` and its
 ### `name already in use`
 
 Something holds that zrok name. docpreview tries once to reclaim a name held by one of its own orphaned shares
-and retries; if that fails, it belongs to something else. Check `zrok2 list shares`.
+and retries. If that fails, it belongs to something else. Check `zrok2 list shares`.
 
 The commonest cause is **two previews rendering to the same name**. The default template includes the
 repository to prevent it, so this means a `name_template` was set that does not:
@@ -523,11 +523,11 @@ than three absolute references in `index.html`, which is below the threshold for
 On startup, in this order:
 
 1. Every remote share docpreview owns is deleted. Nothing was serving them, so by definition they are orphans from
-   the process that just exited. **From here until step 2 finishes, every preview URL 404s.**
+   the process that exited. **From here until step 2 finishes, every preview URL 404s.**
 2. Each recorded preview is republished from the artifacts already on disk — the branch share first, then each
    build's own share.
 
-Reap-before-republish is not an ordering that can be relaxed: reversed, it deletes what it just restored.
+Reap-before-republish is not an ordering that can be relaxed: reversed, it deletes what step 2 restored.
 
 Under zrok each of those is a round trip to the controller, at roughly **14 seconds each**, and it is serial. Three
 previews is about a minute. Thirty open pull requests is about seven minutes.
@@ -552,7 +552,7 @@ Do not diagnose anything before that line appears.
 |---|---|
 | `dropping preview with missing artifacts` | The artifacts directory was deleted. Push again to rebuild. |
 | `dropping preview whose artifacts cannot be served` | The directory is there and unusable. Push again. |
-| `forgetting a pruned build's URL` | Normal. A build past `keep_builds` lost its artifacts; its share is not restored. |
+| `forgetting a pruned build's URL` | Normal. A build past `keep_builds` lost its artifacts. Its share is not restored. |
 | `recovered previews_restored=0` | The database is empty. Different `data_dir`? |
 
 If the URL changed during recovery, the comment is updated to match — a comment pointing at a dead URL is
