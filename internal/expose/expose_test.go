@@ -45,11 +45,9 @@ func TestRenderNameSanitizesTheBranch(t *testing.T) {
 }
 
 func TestRenderNameEmptyTemplateIsUniquePerRepository(t *testing.T) {
-	// The fallback used to be the branch alone, matching "the URL is the branch
-	// name". It is not unique: every repository with a `main` branch renders to
-	// `main`, and whichever preview publishes second takes the first one's URL.
-	// Under the local exposer that showed up as a dashboard full of Ready rows
-	// whose links answered connection-refused.
+	// The branch alone is not unique: every repository with a `main` branch would
+	// render to `main`, and whichever preview publishes second would take the
+	// first one's URL.
 	//
 	// The fallback here must stay in step with config.DefaultNameTemplate; they
 	// are separate constants so that config does not have to import this
@@ -292,10 +290,10 @@ func TestLocalExposerURLIsStableAcrossRepublish(t *testing.T) {
 	// Someone pushing three commits in a minute is the normal case: publishing
 	// the same preview again must replace, not fail, and must not move the URL.
 	//
-	// The URL used to be an ephemeral port, so it moved on every publish and
-	// did not survive a restart at all — which left the database full of `ready`
-	// rows pointing at ports nothing was listening on. Deriving it from the name
-	// is what makes a link in a pull request comment worth writing down.
+	// An ephemeral port would move on every publish and not survive a restart at
+	// all, leaving a database row that claims `ready` while pointing at a port
+	// nothing listens on. Deriving the URL from the name is what makes a link in
+	// a pull request comment worth writing down.
 	ctx := context.Background()
 	ex := localOnServer(t)
 
@@ -332,13 +330,9 @@ func TestLocalExposerSurvivesTheDaemonsReplaceThenCloseOrder(t *testing.T) {
 	//	d.live[id] = pub
 	//
 	// Both publications carry the same preview ID, so a close that deleted by
-	// key alone tore down the mount its own replacement had just installed.
-	// Every rebuilt preview went 404 while the database still said `ready`, and
-	// the only ones that kept working were the ones nobody had pushed to twice.
-	//
-	// No existing test caught it: publishing twice was covered, and closing was
-	// covered, but not closing the superseded handle *after* the replacement
-	// was already in place.
+	// key alone would tear down the mount its own replacement had just
+	// installed, and the preview would 404 while the database still said
+	// `ready`.
 	ctx := context.Background()
 	ex := localOnServer(t)
 
@@ -373,15 +367,14 @@ func TestLocalExposerSurvivesTheDaemonsReplaceThenCloseOrder(t *testing.T) {
 
 func TestLocalExposerRefusesANameAnotherPreviewHolds(t *testing.T) {
 	// Branch names are not unique across repositories: four projects each with a
-	// `new-install-guide` branch all render to the same label. The map of live
-	// publications used to be keyed by that label, so every publish tore down a
-	// different project's preview — silently, because withdrawing a preview you
-	// believe you own is a normal thing to do. The only symptom was a dashboard
-	// full of `ready` rows whose links did not answer.
+	// `new-install-guide` branch all render to the same label. Keying live
+	// publications by that label would let a publish silently tear down a
+	// different project's preview, leaving a dashboard full of `ready` rows whose
+	// links do not answer.
 	//
-	// Now the name is the path, so the second preview cannot have it and is told
-	// so. Serving the wrong site under somebody else's URL is the one outcome
-	// worse than failing the build.
+	// The name is the path, so the second preview cannot have it and is told so.
+	// Serving the wrong site under somebody else's URL is the one outcome worse
+	// than failing the build.
 	ctx := context.Background()
 	ex := localOnServer(t)
 
@@ -442,10 +435,9 @@ func TestLocalExposerServesTwoPreviewsAtOnce(t *testing.T) {
 }
 
 func TestLocalExposerReapDropsUnknownMounts(t *testing.T) {
-	// Reap used to be a no-op here, on the reasoning that a loopback listener
-	// cannot outlive its process. That held while a preview owned a port. A
-	// mount is a map entry, and one left behind after its preview is deleted
-	// keeps serving a URL nothing records.
+	// A mount is a map entry, not a listener bound to a port, so it does not
+	// vanish with the process on its own. One left behind after its preview is
+	// deleted keeps serving a URL nothing records.
 	ctx := context.Background()
 	ex := localOnServer(t)
 

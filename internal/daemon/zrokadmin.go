@@ -151,8 +151,8 @@ func (a *ZrokAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
 //
 // Deliberately thin. These three cannot be configured from a browser — a ziti identity is a file
 // produced by `ziti edge enroll`, a Frontdoor token is a vault entry, and `local` needs nothing —
-// so the panel reports rather than offers. Reporting is still worth doing: "which exposer is this
-// daemon using, and is it ready" was previously answerable only from `doctor`.
+// so the panel reports rather than offers. Reporting is still worth doing: without it, "which exposer is
+// this daemon using, and is it ready" is answerable only from `doctor`.
 type exposerInfo struct {
 	Kind  string `json:"kind"`
 	Label string `json:"label"`
@@ -199,10 +199,9 @@ type exposerInfo struct {
 // would leave published previews pointing at one that no longer owns them — so a panel reading only
 // `a.cfg` reports a state that is already out of date the moment anything here writes a setting.
 //
-// It showed up immediately: enrolling a ziti identity stored the path, the panel went on saying
-// "needs exposer.ziti.identity_file", and Enable stayed disabled. A restart would have fixed it, and
-// the restart is only offered *after* enabling — a deadlock from the reader's side, produced
-// entirely by reporting the wrong one of two truths.
+// Reading only `a.cfg` after enrolling a ziti identity would still say "needs
+// exposer.ziti.identity_file" and leave Enable disabled, even though the identity path was just stored
+// — a deadlock, since the restart that would pick it up is only offered after enabling.
 func (a *ZrokAdmin) effectiveZiti(ctx context.Context) config.ZitiConfig {
 	z := a.cfg.Exposer.Ziti
 	for _, f := range []struct {
@@ -385,10 +384,9 @@ type zrokState struct {
 	// RunAs is the account this daemon runs as, which is what makes the machine-wide
 	// environment the machine-wide environment.
 	//
-	// "This machine" was the wrong noun and it mattered: `~/.zrok2` is per *user*. A daemon
-	// under a service account with its own home directory reports nothing enrolled while
-	// `zrok2 overview` in the operator's own terminal shows a working environment, and both
-	// statements are true. So the panel names the account.
+	// `~/.zrok2` is per *user*, not per machine. A daemon under a service account with its own home
+	// directory can report nothing enrolled while `zrok2 overview` in the operator's own terminal shows
+	// a working environment, and both statements are true. So the panel names the account.
 	RunAs string `json:"run_as,omitempty"`
 
 	// Enrolled is whether *either* root has an account. It is what the panel switches on: with
@@ -878,11 +876,11 @@ func (a *ZrokAdmin) enrollZiti(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Recovered, because this one calls into a third-party SDK that panics on bad input rather
-	// than returning an error — `enroll.Enroll` with no KeyAlg reaches a switch with no default,
-	// and the first live enrolment took the request down with a stack trace in the log and no
-	// response at all. A panic here is a bug, and the operator should be told which bug rather
-	// than watching the connection close.
+	// Recovered, because this one calls into a third-party SDK that panics on bad input rather than
+	// returning an error — `enroll.Enroll` with no KeyAlg reaches a switch with no default, and an
+	// unrecovered panic would take the request down with a stack trace in the log and no response at
+	// all. A panic here is a bug, and the operator should be told which bug rather than watching the
+	// connection close.
 	path, err := func() (p string, err error) {
 		defer func() {
 			if rec := recover(); rec != nil {

@@ -92,9 +92,9 @@ func applyStoredExposerSettings(st *store.Store, cfg *config.Server, log *slog.L
 //     enabled. A silently changing exposer account is the failure this whole mechanism exists to
 //     prevent: startup reaps every share it recognises as its own.
 //   - With no stored choice and both enabled, the project root is used and a warning says so.
-//     Refusing to start would be worse — the page that resolves the ambiguity is served by this
-//     daemon, which is the boot-order trap this codebase has now fallen into three times — and
-//     the project root is the safer default of the two, because it is the one nothing else uses.
+//     Refusing to start would be worse, since the page that resolves the ambiguity is served by
+//     this daemon, and the project root is the safer default of the two, because it is the one
+//     nothing else uses.
 //   - With neither enabled there is nothing to publish through yet. The project root is selected
 //     so that enrolling from the dashboard writes beside the vault rather than into a home
 //     directory, and nothing is recorded, because no choice has been made.

@@ -30,11 +30,10 @@ import (
 // TokenFunc resolves an exposer's API credential at the moment it is needed.
 //
 // A function rather than the value, because the value lives in a vault that may
-// be locked when the daemon starts. Fetching it during wiring meant an exposer
-// that needs a credential could not boot until the vault was already open —
-// while the page that opens the vault is served by the daemon that would not
-// start. The same shape as the GitHub client's deferred construction, for the
-// same reason.
+// be locked when the daemon starts. Resolving it during wiring would make an
+// exposer's construction depend on the vault already being unlocked, but the
+// page that unlocks the vault is itself served by this daemon. The same shape
+// as the GitHub client's deferred construction, for the same reason.
 //
 // It is called on every request rather than cached, so rotating the credential
 // from the setup page takes effect without a restart. The cost is a map lookup
@@ -72,14 +71,13 @@ type Spec struct {
 // Key identifies one publication.
 //
 // Every exposer keys its live publications and tags its remote objects with this,
-// and Reap's keep-set is expressed in it. It used to be PreviewID, which made a
-// second share for the same preview impossible by construction: Publish withdraws
-// whatever holds the key before taking it, so publishing a build share tore down
-// the branch share it was meant to sit beside.
+// and Reap's keep-set is expressed in it. Publish withdraws whatever holds a key
+// before taking it, so a build share and its preview's branch share need distinct
+// keys or publishing one would tear down the other.
 //
-// The preview id alone for the branch share, so the tag of an existing share is
-// unchanged and a daemon upgraded in place does not reap every preview it restored
-// as an orphan on the first sweep.
+// The branch share's key is the preview id alone, so the tag on a share that
+// already exists still matches: a daemon upgraded in place does not treat every
+// preview it restores as an orphan on the first sweep.
 func (s Spec) Key() string {
 	if s.BuildID == "" {
 		return s.PreviewID
@@ -104,9 +102,8 @@ func PreviewOfKey(key string) string {
 //
 // A key that differs is not by itself a collision. Rebuilding the same commit
 // produces a new build id and therefore a new key, while the build share's name
-// embeds the commit and so is unchanged — which made a preview collide with its own
-// previous build. The build succeeded, the share was refused, and "Open build" stayed
-// greyed out for the one build a reviewer had just asked for.
+// embeds the commit and so is unchanged — so a rebuild must not be refused as a
+// collision with its own previous build.
 //
 // Same preview: the newer build wins, and the caller withdraws the older publication
 // to free the name. It is the same repository at the same commit, so the name still
@@ -123,11 +120,10 @@ func Collides(key string, spec Spec) bool {
 // of their own, separate from the shares bound to them.
 //
 // Only zrok, today. A reserved zrok name survives the share it was created for —
-// which is the point, since that is what keeps a preview's URL stable across
-// rebuilds and restarts — and is also the object an account's quota counts. So
-// something has to delete it when the preview is gone for good, and nothing did:
-// docpreview leaked one name per branch, and would have leaked one per commit once
-// builds got their own shares.
+// which is what keeps a preview's URL stable across rebuilds and restarts — and it
+// is also the object an account's quota counts. A preview that is gone for good
+// must have its name released explicitly, or the account accumulates one name per
+// preview name ever published.
 //
 // Optional rather than part of Exposer, because for the other three there is no such
 // object. `local` mounts a path, `frontdoor` names the share itself, `ziti` derives a
@@ -213,12 +209,11 @@ type Exposer interface {
 	// Reap removes any published resources this exposer owns that are not in
 	// keep. It runs at startup and periodically thereafter.
 	//
-	// It used to run at startup with a nil keep-set, on the reasoning that
-	// everything it found was an orphan from a previous process. That is true of
-	// the *listener* and false of the published resource: a zrok share survives the
-	// process that made it, so deleting them all meant paying to delete thirteen
-	// shares and then paying again to create thirteen identical ones. Startup now
-	// passes what the database claims — see Adopter.
+	// A nil or empty keep-set at startup is correct only for a listener, which
+	// cannot outlive its process. A remote resource such as a zrok share does
+	// outlive it, so startup passes the keep-set the database claims rather than
+	// nil — reaping everything would delete every live share and then recreate
+	// an identical one for each. See Adopter.
 	Reap(ctx context.Context, keep map[string]bool) error
 
 	// Close shuts down every live publication.
@@ -242,12 +237,12 @@ type Adoptable struct {
 // Adopter is an exposer that can serve a publication a previous process created,
 // instead of deleting it and making an identical one.
 //
-// This exists because delete-then-recreate was measured: thirteen shares for two pull
-// requests took 85 seconds to delete and 183 seconds to recreate, and for that four and
-// a half minutes every preview URL 404s and no queued build can start. What actually
-// dies with the process is the overlay listener, and a listener can be bound to an
-// existing share by its token — so the controller work is avoidable in the common case,
-// which is a restart with an unchanged database.
+// Deleting and recreating every share on restart is expensive enough to matter: for
+// a handful of previews it costs on the order of minutes, during which every preview
+// URL 404s and no queued build can start. What actually dies with the process is the
+// overlay listener, and a listener can be bound to an existing share by its token — so
+// the controller work is avoidable in the common case, a restart with an unchanged
+// database.
 //
 // Optional. An exposer that does not implement it keeps the old behaviour, which is
 // correct for `local` (its URLs are paths on a listener that no longer exists) and

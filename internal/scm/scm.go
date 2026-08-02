@@ -92,9 +92,9 @@ type Report struct {
 // It lives here rather than in one platform's package because the ingress has to
 // distinguish "this is not authentic" from "this is malformed" — the first is a
 // 401 and gets logged as a rejection, the second is a 400 — and it cannot do
-// that by asking whether the error came from GitHub. Before this moved, a bad
-// signature on any other platform answered 400, which tells a caller probing for
-// a valid secret that its guess was structurally fine.
+// that by asking whether the error came from GitHub. A bad signature on any
+// platform must answer 401, not 400, which would tell a caller probing for a
+// valid secret that its guess was structurally fine.
 var ErrBadSignature = errors.New("webhook signature verification failed")
 
 // VerifyHMACSHA256 checks header, of the form "sha256=<hex>", against the

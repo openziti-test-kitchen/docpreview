@@ -3,20 +3,18 @@
 //
 // # Why this exists
 //
-// The dashboard is around two thousand lines of JavaScript with no other test. A
-// click bug in the activity feed was reported, diagnosed twice from reading the
-// code, and "fixed" twice — both diagnoses were wrong. This harness found the two
-// actual causes in one run:
+// Two cases in the activity feed are easy to get wrong and are not visible in the code
+// without tracing state through a render:
 //
 //   - An entry for a build that is still queued or running names a commit with no
-//     log file yet, so the build lookup found nothing and returned silently. That
-//     is the row somebody clicks precisely because they want to watch it.
+//     log file yet, so a lookup keyed on the log file finds nothing and must fall
+//     through to the live stream rather than return silently. That is the row
+//     somebody clicks precisely because they want to watch it.
 //   - Every preview of one repository shares a project row. An entry naming the
-//     build already on screen therefore left the page byte-identical, which is
-//     indistinguishable from a dead button.
+//     build already on screen must still mark itself as selected, or the click is
+//     indistinguishable from a dead button even though it worked.
 //
-// Neither is visible in the code without tracing state through a render. Both are
-// obvious the moment something clicks the rows and diffs the result.
+// Both are obvious the moment something clicks the rows and diffs the result.
 //
 // # What it asserts
 //
@@ -45,8 +43,8 @@ import {liveStatus} from "./live.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Overridable, as in logtail.mjs and for the same reason: a harness that can only load
-// the current file cannot tell a real assertion from one that would have passed before
-// the change, which is how two earlier diagnoses of this page went wrong.
+// the current file cannot tell a real assertion from one that would have passed
+// regardless of the change.
 const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
   join(here, "..", "..", "internal", "daemon", "dashboard.html");
 const daemon = process.env.DOCPREVIEW_URL || "http://127.0.0.1:8471";
@@ -103,11 +101,11 @@ const dom = new JSDOM(readFileSync(dashboard, "utf8"), {
   beforeParse(win) {
     // A working EventSource, not an inert one.
     //
-    // The first version of this stub delivered nothing, and every entry resolving to
-    // the live stream therefore showed an empty pane — which looked like the bug and
-    // was the harness. A stub that cannot distinguish "the page failed to load the
-    // log" from "the stub never sent one" is worse than no stub, because it produces
-    // confident wrong answers about which rows work.
+    // A stub that delivers nothing would make every entry resolving to the live stream
+    // show an empty pane, indistinguishable from a real bug. A stub that cannot
+    // distinguish "the page failed to load the log" from "the stub never sent one" is
+    // worse than no stub, because it produces confident wrong answers about which rows
+    // work.
     //
     // /events (status) stays silent: state is injected directly. /logs/{id}/stream
     // replays a line naming its preview, the way the daemon replays the current
@@ -216,7 +214,7 @@ console.log(`feed: ${rows.length} rows, ${clickable.length} clickable\n`);
 
 // An entry the daemon reports as not openable must be inert. Retention prunes old
 // builds, so the feed outlives what it can show, and a row that looks identical to
-// its clickable neighbours and does nothing is what this rail was reported for.
+// its clickable neighbours but does nothing reads as a dead button.
 {
   const pruned = (status.events || []).filter(e => e.openable === false).length;
   const inert = rows.length - clickable.length;
@@ -269,10 +267,9 @@ for (const row of clickable) {
   const noLog = !["queued", "building"].includes(row.dataset.kind) &&
     !(ui.builds[row.dataset.id] || []).some(b => b.build_id.endsWith("-" + row.dataset.commit));
   if (noLog) {
-    // The banner names the situation, and the *pane* explains it. It used to say
-    // "no build log" above an empty black rectangle 15rem tall, which for a skipped
-    // build is every signal except the one anybody wants: why it skipped. So the
-    // assertion is now the opposite of what it was — an empty pane is the failure.
+    // The banner names the situation, and the *pane* explains it. "No build log" above
+    // an empty black rectangle 15rem tall would give a skipped build every signal
+    // except the one anybody wants: why it skipped. An empty pane here is the failure.
     if (!/skipped|no log/i.test(after.banner)) {
       fail(`"${what}" has no log, but the banner says "${after.banner}"`);
     }

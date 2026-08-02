@@ -1,10 +1,10 @@
 // Polls /status and reports what the daemon actually sends while a build is queued.
 //
-// A report says the activity feed shows only the queued entry while a build waits,
-// and everything reappears once it starts. Neither half reproduces: the daemon always
-// sends events.recent(60), and rendering a queued event into real history adds a row
-// rather than removing fifteen. So this records the evidence instead of guessing at
-// it — run it, push, and read what came back.
+// Checks whether the activity feed can show only the queued entry while a build waits,
+// with the rest reappearing once it starts. The daemon always sends events.recent(60),
+// and rendering a queued event into real history adds a row rather than removing
+// fifteen, so this records the evidence instead of guessing at it — run it, push, and
+// read what came back.
 //
 //   $env:DOCPREVIEW_PASSWORD = "<the admin password>"
 //   node tools/dashboardtest/watchqueued.mjs

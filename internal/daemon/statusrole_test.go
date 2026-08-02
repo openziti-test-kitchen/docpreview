@@ -12,10 +12,9 @@ import (
 
 // Every payload the dashboard reads carries the session role, not just one of them.
 //
-// The page takes its state from the `/events` stream; `/status` is a fallback it polls only when
-// the stream is unavailable. So a field added to `/status` alone is a field the page never sees —
-// which is what happened here: after a correct login the sign-out control stayed hidden, because
-// the only payload carrying the role was the one nobody reads.
+// The page takes its state from the `/events` stream; `/status` is a fallback it polls only when the
+// stream is unavailable. A field added to `/status` alone is a field the page never sees: if only
+// `/status` carried the role, the sign-out control would stay hidden after a correct login.
 //
 // Asserted on both, together, so adding a third surface has an obvious pattern to follow and
 // removing it from either is a failure rather than a silent regression.

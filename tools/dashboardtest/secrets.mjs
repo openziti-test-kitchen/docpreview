@@ -7,9 +7,9 @@
 // "Platform and exposer credentials" is used by docpreview to verify a webhook, clone,
 // or comment, and is never handed to a build. Everything under "Build variables" is
 // injected into every build as an environment variable, where the pull request's own
-// script decides what to do with it. One flat list put a GitHub App private key three
-// rows above a Docusaurus API key with nothing to say which was which — which is how
-// six tokens came to be stored in the belief that storing them was enough.
+// script decides what to do with it. A flat list would put a GitHub App private key
+// beside a Docusaurus API key with nothing to say which is which, which invites storing
+// a credential as a build variable in the belief that storing it was enough.
 //
 // So the assertion that matters is not "three headings render". It is that a dotted
 // daemon key never appears under Build variables, and an UPPER_CASE key never appears

@@ -16,10 +16,9 @@ import (
 // TestReapKeepSetIncludesBuildShares is the assertion that stops the sweep deleting
 // what the publish just created.
 //
-// The keep-set is expressed in publication keys. It used to hold preview ids only,
-// which was right while a preview had exactly one share — and would now mark every
-// build share as an orphan, so the hourly sweep would withdraw each one minutes
-// after it appeared and the dashboard would offer URLs that had already gone.
+// The keep-set is expressed in publication keys, not preview ids, because a preview can hold more than one
+// share. A keep-set of preview ids alone would mark every build share as an orphan, so the hourly sweep would
+// withdraw each one minutes after it appeared and the dashboard would offer URLs that had already gone.
 func TestReapKeepSetIncludesBuildShares(t *testing.T) {
 	_, d, st := testIngress(t, &fakeClient{})
 	ctx := context.Background()

@@ -286,13 +286,10 @@ func zrokListener(name, namespace string, auth zrokFrontendAuth, log *slog.Logge
 		req.OauthRefreshInterval = 3 * time.Hour
 	}
 
-	// Retried, because the controller is a network service that does time out.
-	//
-	// This process used to die outright on "context deadline exceeded" from the create call,
-	// which is a bad failure and not a rare one: the zrok share record outlives the process
-	// holding it, so the frontend keeps routing to a backend that is gone and every visitor
-	// gets a 502 for a tunnel nobody can see is dead. It happened three times in one afternoon
-	// before the output was captured to notice why.
+	// Retried, because the controller is a network service that does time out, and a create
+	// call left to fail outright leaves the zrok share record outliving this process: the
+	// frontend keeps routing to a backend that is gone, so every visitor gets a 502 for a
+	// tunnel nobody can see is dead.
 	//
 	// context.Background() rather than a plumbed context because this runs during startup,
 	// before anything can be cancelled, and the whole budget is a few seconds.

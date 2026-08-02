@@ -37,24 +37,19 @@ import (
 //
 // # What is known about the wire format, and what is not
 //
-// The create payload's field names are read off NetFoundry's own documented
-// example (https://netfoundry.io/docs/frontdoor/learn/shares/http-shares/) and
-// the route shape off the API guides — see shareRequest and
-// checkFrontdoorAPIBase. They were previously inferred, and the inference was
-// wrong in four places at once: the path omitted the required frontdoor ID
-// segment, the target was sent as `targetUrl` rather than `target`, the frontend
-// as a single name rather than a `frontendIds` array, and `type` was not sent at
-// all. Nothing here has still been exercised against a live tenant, because
-// Frontdoor is not installed on this machine — so "documented" is the strongest
-// claim available, and two documented-but-unobserved things (the response field
-// names and the listing envelope) are read through alternates rather than
-// trusted.
+// The create payload's field names and the route shape come from NetFoundry's
+// documented example (https://netfoundry.io/docs/frontdoor/learn/shares/http-shares/)
+// and the API guides — see shareRequest and checkFrontdoorAPIBase. Nothing here
+// has been exercised against a live tenant, because Frontdoor is not installed on
+// this machine, so "documented" is the strongest claim available. Two documented-
+// but-unobserved things — the response field names and the listing envelope — are
+// read through alternates rather than trusted on a single spelling.
 //
 // The response shapes are therefore guarded rather than assumed. A create
 // response this code cannot read fails the publish naming the structs to fix (see
 // Publish), and a share listing this code cannot read fails Validate naming the
-// keys (see listShares) — the listing gets its own guard because its failure is
-// silent and unbounded rather than merely wrong.
+// keys (see listShares) — the listing gets its own guard because its failure would
+// otherwise be silent and unbounded rather than merely wrong.
 //
 // One documented fact is load-bearing and good news: a standard frontend serves a
 // share at "https://{share-name}.shares.netfoundry.io"
@@ -73,13 +68,12 @@ import (
 // refused by the gateway; Validate says so once per boot. See shareRequest.EnvZID.
 //
 // This type deliberately does not implement Adopter, and that is the largest
-// functional gap against zrok. Adoption is what took a zrok restart from four and
-// a half minutes of 404ing previews to three seconds, and the trick is that only
-// the overlay listener dies with the process while the share survives. Here the
-// share survives too — but it points at an ephemeral local port that the next
-// process will not be given again, so taking it over means rewriting the share's
-// target, and there is no verified endpoint for that. See
-// docs/design/17-exposer-frontdoor.md.
+// functional gap against zrok. Adoption lets a restart bind a listener to an
+// existing share by its token instead of deleting and recreating it, because only
+// the overlay listener — not the share — dies with the process. Here the share
+// survives too, but it points at an ephemeral local port that the next process
+// will not be given again, so taking it over means rewriting the share's target,
+// and there is no verified endpoint for that. See docs/design/17-exposer-frontdoor.md.
 type Frontdoor struct {
 	cfg   config.FrontdoorConfig
 	log   *slog.Logger
@@ -92,12 +86,11 @@ type Frontdoor struct {
 
 	// live is keyed by preview id, and name records the label each entry took.
 	//
-	// It was keyed by name, which is the branch — and branch names are not
-	// unique across repositories. Four projects each with a `new-install-guide`
-	// branch all asked for the same key, so every publish silently withdrew a
-	// different project's live share. The same defect was fixed in the ziti
-	// exposer, where the name is a hostname; here it is both a map key and the
-	// public URL, so it needs the map fixed and the collision refused.
+	// Keyed by id, not by name: a name is the branch by default, and branch names
+	// are not unique across repositories, so keying by name would let a publish
+	// from one project silently withdraw another's live share. The same shape is
+	// used by the ziti exposer, where the name is a hostname; here the name is
+	// also the public URL, so a name collision is refused rather than resolved.
 	mu   sync.Mutex
 	live map[string]*frontdoorShare
 }
@@ -174,12 +167,12 @@ func checkFrontdoorAPIBase(base string) error {
 // Validate confirms the gateway accepts our token and answers with a share
 // listing this code can read.
 //
-// It does *not* confirm the configured frontend exists — it used to claim it
-// did. Nothing here knows how to ask: `frontend` is a name docpreview sends and
-// never reads back, so a typo in it is discovered by the first publish at the
-// earliest and by a reviewer opening a dead link at the latest. Checking it needs
-// whatever the API's frontend-listing endpoint turns out to be, which is one of
-// the questions a live tenant has to answer.
+// It does *not* confirm the configured frontend exists. Nothing here knows how to
+// ask: `frontend` is a name docpreview sends and never reads back, so a typo in it
+// is discovered by the first publish at the earliest and by a reviewer opening a
+// dead link at the latest. Checking it needs whatever the API's frontend-listing
+// endpoint turns out to be, which is one of the questions a live tenant has to
+// answer.
 //
 // The listing shape is checked, and that is the part worth doing at startup: see
 // listShares for what goes wrong when it is wrong.
@@ -190,15 +183,14 @@ func (f *Frontdoor) Validate(ctx context.Context) error {
 			"this exposer cannot read: %w", err)
 	}
 
-	// Warned once per boot rather than refused, because refusing would mean this
-	// exposer cannot be constructed at all and the daemon would not start — which
-	// is the boot-order bug that was already fixed once here. A warning at startup
-	// plus a failed publish is the same shape the GitHub client uses for a
-	// credential that is not there yet.
+	// Warned once per boot rather than refused: refusing here would stop this
+	// exposer from being constructed at all, and the daemon would not start. A
+	// warning at startup plus a failed publish is the same shape the GitHub
+	// client uses for a credential that is not there yet.
 	//
-	// Conditional on the field being empty, now that there is a field. A warning that
-	// cannot be silenced by fixing what it complains about is one operators learn to
-	// scroll past — which is what this was for as long as env_z_id did not exist.
+	// Conditional on the field being empty, so the warning goes away once the
+	// operator sets it — a warning that cannot be silenced by fixing what it
+	// complains about is one operators learn to scroll past.
 	if f.cfg.EnvZID == "" {
 		f.log.Warn("frontdoor cannot publish yet: every share needs envZId, the ziti identity " +
 			"of the agent that will host it; set exposer.frontdoor.env_z_id " +
@@ -235,15 +227,15 @@ var shareCollectionKeys = []string{"content", "shareList", "shares", "data", "it
 // # Why this is stricter than it looks
 //
 // Publish already refuses a create response it cannot read, because a wrong field
-// name there produces a pull request comment linking to "/". The listing had no
-// such guard, and its failure is quieter and worse: if the collection does not
-// arrive under `_embedded.shares` — which is what this decoded, and which was a
-// guess — then every listing decodes to zero shares and reports success. Validate
-// passes. Reap finds nothing to reap, every restart, forever, while each restart
-// creates a fresh share per preview. The tenant fills with orphans that nothing
-// claims and nothing looks for, and the first symptom is a quota refusal on a
-// publish months later, which reads as a Frontdoor problem rather than a field
-// name in this file.
+// name there produces a pull request comment linking to "/". The listing needs its
+// own guard because a failure here is quieter and worse: if the collection arrives
+// under a key decodeShareListing does not recognise but this code decoded it as an
+// empty list anyway, every listing would decode to zero shares and report success.
+// Validate would pass. Reap would find nothing to reap, on every restart, while
+// each restart creates a fresh share per preview. The tenant fills with orphans
+// that nothing claims and nothing looks for, and the first symptom is a quota
+// refusal on a publish months later, which reads as a Frontdoor problem rather
+// than a field name in this file.
 //
 // So an object that carries keys but none of the recognised ones is an error
 // rather than an empty list. An empty object is not: a tenant with no shares is
@@ -254,9 +246,9 @@ var shareCollectionKeys = []string{"content", "shareList", "shares", "data", "it
 // The listing is paginated, Spring Data REST style: `GET …?page=0&size=20&sort=…`
 // answering `{"content":[…],"pageable":{…},"totalElements":2,"totalPages":1}`
 // (https://netfoundry.io/docs/frontdoor/reference/api-guides/auth-providers/).
-// The documented default size is 20. This asked for no page at all, so it saw at
-// most the first page — and Reap deletes what the listing does not contain, so
-// every orphan past the twentieth share was invisible and permanent. Frontdoor is
+// The documented default size is 20. Asking for no page at all would see at most
+// the first page, and Reap deletes what the listing does not contain — so an
+// orphan past the twentieth share would be invisible and permanent. Frontdoor is
 // the exposer most likely to exceed twenty: a preview holds one share for the
 // branch plus one per kept build, so `keep_builds: 10` reaches twenty shares at
 // the second pull request.
@@ -392,14 +384,13 @@ func decodeShareListing(raw []byte) ([]shareResponse, error) {
 //	       "frontendIds":["bMTHPrtQ"],"target":"http://backend.svc.cluster.local:8080"}' \
 //	  "https://gateway.production.netfoundry.io/frontdoor/$FRONTDOOR_ID/shares"
 //
-// Three of these were wrong before that example was read: the target was sent as
-// `targetUrl`, the frontend as a single `frontend` name, and `type` was not sent
-// at all. The first two would have been rejected or silently ignored, which for
-// `target` means a share pointing nowhere.
+// Sending the target as `targetUrl`, the frontend as a single `frontend` name, or
+// omitting `type` would be rejected or silently ignored by the gateway — for
+// `target` that means a share pointing nowhere.
 type shareRequest struct {
 	// Type is "http" for a share fronting an HTTP target, which is all docpreview
-	// publishes. Not defaulted server-side as far as the documentation says, and
-	// omitting it was one of the three original wire-format defects.
+	// publishes. Not defaulted server-side as far as the documentation says, so it
+	// must be sent explicitly.
 	Type string `json:"type"`
 
 	Name string `json:"name"`
@@ -420,8 +411,7 @@ type shareRequest struct {
 	// cannot work and is the second half of the same config problem as EnvZID.
 	FrontendIDs []string `json:"frontendIds,omitempty"`
 
-	// Target is the private URL the agent dials. Named `targetUrl` here until the
-	// documented example was read.
+	// Target is the private URL the agent dials.
 	Target string `json:"target"`
 
 	// Tag would carry the publication key so Reap can recognise its own work,
@@ -448,8 +438,9 @@ type shareRequest struct {
 //
 // Two fields are read through alternates, because the documentation shows the
 // share object's field list without showing a response body. `frontendEndpoint`
-// is what the object is documented to carry for its public address; `url` was the
-// original guess. The identifier is `id` in every documented path
+// is what the object is documented to carry for its public address; `url` is
+// accepted as a fallback in case the response uses that name instead. The
+// identifier is `id` in every documented path
 // (`DELETE /frontdoor/{frontdoorId}/{resource}/{id}`) while the share object's
 // documented field list shows `zId` — so both are decoded and ID() prefers the
 // one the paths use. Accepting an alternate costs a struct field; guessing wrong
@@ -516,11 +507,10 @@ func (f *Frontdoor) Publish(ctx context.Context, spec Spec, h http.Handler) (*Pu
 		}
 		if Collides(id, spec) {
 			f.mu.Unlock()
-			// The suggested template used to be "{{.Repo.Name}}-{{.Name}}", which is
-			// config.DefaultNameTemplate — so the fix named in the error was already
-			// in effect whenever the error appeared, and the operator's next move was
-			// to change nothing. Two previews colliding under repo-plus-branch means
-			// two repositories of the same name in different accounts, and the owner
+			// The suggested template must differ from config.DefaultNameTemplate, or the
+			// fix named in the error would already be in effect and the operator's next
+			// move would be to change nothing. Two previews colliding under repo-plus-branch
+			// means two repositories of the same name in different accounts, and the owner
 			// is what separates those.
 			return nil, fmt.Errorf("the name %q is already serving a different preview (%s); "+
 				"two previews render to the same name under this name_template — "+
@@ -614,12 +604,12 @@ func (f *Frontdoor) Publish(ctx context.Context, spec Spec, h http.Handler) (*Pu
 //
 // The field is named `url` here and might well carry a bare hostname, which is
 // what zrok's controller does — `Share.FrontendEndpoints` reports
-// "name.share.zrok.io" and not a URL. That cost a round of broken pull request
-// comments there: without a scheme, "x.example.com/docs/" is a *relative* path,
-// so every preview link rendered by GitHub resolves against github.com and 404s
-// on their side, where it looks like docpreview published a bad URL and cannot be
-// debugged from this end. Cheap to defend against and expensive to discover, so
-// it is defended against on a field whose contents nobody has seen.
+// "name.share.zrok.io" and not a URL. Without a scheme, "x.example.com/docs/" is
+// a *relative* path, so a preview link rendered by GitHub resolves against
+// github.com and 404s on their side, where it looks like docpreview published a
+// bad URL and cannot be debugged from this end. Cheap to defend against and
+// expensive to discover, so it is defended against on a field whose contents
+// nobody has seen.
 //
 // https rather than http: a hardened global frontend that terminates plain HTTP
 // is not a thing worth guessing at, and an http:// link to an https-only frontend
@@ -694,11 +684,11 @@ func (f *Frontdoor) deleteShare(ctx context.Context, id string) error {
 		// A 404 on a retry means the attempt that timed out actually worked.
 		//
 		// The deadline is this client's, not the gateway's, so a timed-out delete
-		// has usually already happened — measured against zrok, where reporting
-		// those as failures turned four successful deletions into four startup
-		// errors. Only on a retry: a 404 on the first attempt means the share was
-		// already gone when the listing named it, which is worth knowing about
-		// because it means something else is deleting docpreview's shares.
+		// has usually already happened. Treating a retried 404 as a failure would
+		// turn a successful deletion into a startup error. Only on a retry: a 404
+		// on the first attempt means the share was already gone when the listing
+		// named it, which is worth knowing about because it means something else
+		// is deleting docpreview's shares.
 		if attempt > 1 && isFrontdoorNotFound(err) {
 			return nil
 		}
@@ -763,12 +753,11 @@ func (f *Frontdoor) Reap(ctx context.Context, keep map[string]bool) error {
 		doomed = append(doomed, shr.ID())
 	}
 
-	// Deleted concurrently, bounded, for the reason measured against zrok: startup
-	// reaps and only then republishes, so nothing builds and no preview serves
-	// until the last deletion returns. Serially that made a daemon that looked
-	// started and would not build anything, which reads as a stuck queue every
-	// time — and Frontdoor has strictly more to delete than zrok did, because a
-	// preview holds one share per kept build rather than one share.
+	// Deleted concurrently, bounded. Startup reaps and only then republishes, so
+	// nothing builds and no preview serves until the last deletion returns —
+	// serially, that reads as a stuck queue for as long as the deletions take,
+	// and Frontdoor has more to delete than zrok does, because a preview holds
+	// one share per kept build rather than one share.
 	//
 	// Safe to parallelise because each deletion is independent: an id appears in
 	// this list once, nothing here reads shared state after the list is built, and
@@ -890,11 +879,11 @@ func isFrontdoorNotFound(err error) bool {
 // retry runs fn until it stops failing in a way that looks like the gateway
 // rather than the request. fn is told which attempt it is on, counting from 1.
 //
-// Frontdoor had no retry at all, and every call it makes is one a slow gateway
-// can lose: a publish that fails here fails the build, and a reap that fails
-// here leaks a share against the tenant until the next restart notices. zrok
-// grew this after the hosted controller timed out under load often enough to be
-// the normal case; the same failure is not less likely against a global ingress.
+// Every call this exposer makes is one a slow gateway can lose: a publish that
+// fails here fails the build, and a reap that fails here leaks a share against
+// the tenant until the next restart notices. A global ingress in front of the
+// gateway times out under load often enough that this is worth retrying rather
+// than treating as exceptional.
 //
 // ctx is honoured between attempts, so a shutdown does not sit through a backoff.
 func (f *Frontdoor) retry(ctx context.Context, what string, fn func(attempt int) error) error {
@@ -945,9 +934,9 @@ func (f *Frontdoor) send(ctx context.Context, method, path string, in, out any) 
 	}
 
 	// Resolved per request, not once at construction. The token lives in a vault
-	// that may still be locked when the daemon starts, and fetching it during
-	// wiring is what made exposer.kind: frontdoor refuse to boot until somebody
-	// had already unlocked the vault from a page this daemon would not serve.
+	// that may still be locked when the daemon starts, and resolving it during
+	// wiring would make exposer.kind: frontdoor refuse to boot until the vault is
+	// unlocked — from a page this same daemon would not yet be serving.
 	tok, err := f.token()
 	if err != nil {
 		return err

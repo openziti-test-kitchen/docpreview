@@ -9,8 +9,8 @@
 
     **This is destructive to URLs.** On restart every preview is republished at a new address and
     every open pull request comment is rewritten to match. That is not a side effect to discover —
-    it is the whole outcome — so the switch asks unless -Yes is passed. One unconfirmed click of
-    "This daemon only" once put `http://127.0.0.1:8471/...` into seven pull requests.
+    it is the whole outcome — so the switch asks unless -Yes is passed. An unconfirmed switch on the
+    live instance rewrites the comment on every open pull request it has.
 
 .PARAMETER Kind
     zrok2, frontdoor, ziti or local. Omit to report the current state and exit.
@@ -56,14 +56,13 @@ Set-Location $Root
 
 # The live instance needs -Live said out loud.
 #
-# Not paranoia about the switch itself, which is reversible. The cost is on the way out: this
-# installation comments on seven real pull requests, and every switch rewrites all of them — twice,
-# once going and once coming back. Testing an exposer against it churned those comments three times
-# in one evening, which is somebody else's notifications.
+# The switch itself is reversible, but the cost is on the way out: this installation comments on
+# real pull requests, and every switch rewrites all of them — twice, once going and once coming
+# back. That churn lands in somebody else's notifications.
 #
-# The demo daemon on :8493 exists for this and has no repositories behind it. -Yes deliberately does
-# not imply -Live: unattended is a reason to be *more* careful about which daemon is being changed,
-# not less.
+# The demo daemon on :8493 exists for trying an exposer out and has no repositories behind it. -Yes
+# deliberately does not imply -Live: unattended is a reason to be *more* careful about which daemon
+# is being changed, not less.
 $isLive = $Base -match ':8471(/|$)'
 if ($Kind -and $isLive -and -not $Live) {
     throw "refusing to switch the live instance at $Base without -Live. It comments on real pull " +

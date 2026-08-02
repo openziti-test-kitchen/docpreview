@@ -6,9 +6,9 @@
     Each project is its own bare repo, its own working copy, its own branches — and a real Docusaurus site
     built with `yarn build`.
 
-    The earlier stand-ins finished in five lines, which made the live log tail impossible to judge: you cannot
-    tell a working stream from a broken one when there is nothing to stream. A genuine Docusaurus build emits a
-    few hundred lines over a minute and a half, which is the thing the dashboard is actually for.
+    A genuine Docusaurus build emits a few hundred lines over a minute and a half, which is what the live log
+    tail is for: a stand-in build that finishes in five lines gives nothing to stream, so there is no way to
+    tell a working stream from a broken one.
 
     Destructive: it recreates every bare repo and every working copy from scratch.
 #>

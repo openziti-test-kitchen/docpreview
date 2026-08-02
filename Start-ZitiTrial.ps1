@@ -80,8 +80,8 @@ $jwt      = Join-Path $home_ "$Identity.jwt"
 $ctrl     = "127.0.0.1:$CtrlPort"
 $idFile   = Join-Path $Root ".docpreview\data\ziti\$Identity.json"
 
-# ASCII, not a box-drawing rule. The em-dash version rendered as mojibake in the console this is
-# actually run from, which makes every step line look like a bug.
+# ASCII, not a box-drawing rule: some consoles render em-dashes as mojibake, which makes a step
+# line look like a bug.
 function Write-Step([string] $Text) { Write-Host "-- $Text" -ForegroundColor Cyan }
 
 # ── Stopping ──────────────────────────────────────────────────────────────────────────────────────
@@ -202,12 +202,10 @@ if ($LASTEXITCODE -ne 0) { throw 'ziti edge login failed' }
 # `ziti edge create` is not idempotent — a second create answers 409 — so each object is checked
 # first. That makes the script re-runnable, which matters because the interesting failures happen at
 # step 5 and re-running everything from scratch to retry one call is how a trial stops being used.
-# Listed and matched here rather than filtered by the controller.
-#
-# The filter form is `name="x"`, whose quotes have to survive PowerShell *and* the CLI's own parser;
-# the version that did not survive returned nothing, so every object looked absent and the second
-# run failed on a duplicate name instead of skipping. Listing everything of one kind on a trial
-# network is a handful of rows.
+# Listed and matched here rather than filtered by the controller: the filter form is `name="x"`,
+# whose quotes have to survive PowerShell *and* the CLI's own parser, and if they do not, the filter
+# matches nothing, every object looks absent, and a second run fails on a duplicate name instead of
+# skipping. Listing everything of one kind on a trial network is a handful of rows.
 function Test-ZitiObject([string] $Kind, [string] $Name) {
     $json = & $ziti edge list $Kind --output-json 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $json) { return $false }

@@ -11,12 +11,11 @@ import (
 // TestQuotaConflictIsNotAnExistingName — POST /share/name answers 409 for four
 // different situations and only one of them means "the name is already there".
 //
-// Matching the generated type alone, which this used to do, reported success to an
-// account that had hit its reserved-name limit. The CreateShare a few lines later then
-// failed with an error that never mentioned quotas, so the operator was told a name
-// could not be bound and had nothing pointing at the reason. One name per commit
-// reaches that limit far sooner than one per branch, which is what made this worth a
-// test.
+// Matching the generated type alone would report success to an account that has hit
+// its reserved-name limit, and the CreateShare that follows would then fail with an
+// error that never mentions quotas — leaving the operator told a name could not be
+// bound with nothing pointing at the reason. One name per commit reaches that limit
+// far sooner than one per branch.
 //
 // The payload strings are the controller's own, from createShareName.go.
 func TestQuotaConflictIsNotAnExistingName(t *testing.T) {

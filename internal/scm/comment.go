@@ -33,10 +33,10 @@ func RenderComment(r Report) string {
 	//
 	// A link reference definition rather than an HTML comment, on every platform.
 	// `<!-- docpreview:… -->` is invisible in *rendered* markdown but visible in the raw
-	// body — which anybody sees when they quote the comment, edit it, or read it through
-	// an API — and it was reported as clutter above the heading. `[docpreview]: #<id>` is
-	// consumed by every CommonMark renderer, emits nothing, and needs no raw-HTML support,
-	// which is also why Bitbucket cannot render it as a stray paragraph.
+	// body, which anybody sees when they quote the comment, edit it, or read it through
+	// an API. `[docpreview]: #<id>` is consumed by every CommonMark renderer, emits
+	// nothing, and needs no raw-HTML support, which is also why Bitbucket cannot render
+	// it as a stray paragraph.
 	//
 	// Safe to switch precisely because HasMarker matches both forms and always will: a
 	// daemon upgraded across this change still finds the comments it wrote in the old one
@@ -50,11 +50,10 @@ func RenderComment(r Report) string {
 
 	// An explicit link, not a bare URL.
 	//
-	// GitHub autolinks a bare URL in a table cell, so this read as a link there and the
-	// bare form survived review. Bitbucket does not autolink inside a table, and rendered
-	// the preview URL as plain text that nobody could click — the one thing the whole
-	// comment exists to deliver. `[url](url)` is CommonMark, so both hosts now produce a
-	// link and the visible text is unchanged.
+	// GitHub autolinks a bare URL in a table cell, but Bitbucket does not autolink inside
+	// a table and renders the preview URL as plain text that nobody could click — the one
+	// thing the whole comment exists to deliver. `[url](url)` is CommonMark, so both hosts
+	// produce a link and the visible text is unchanged.
 	if r.URL != "" {
 		b.WriteString(fmt.Sprintf("| **Preview** | [%s](%s) |\n", r.URL, r.URL))
 	}

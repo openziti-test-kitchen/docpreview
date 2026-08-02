@@ -16,11 +16,10 @@ import (
 
 // fakeEdgeConn stands in for an accepted overlay connection.
 //
-// Only GetDialerIdentityId is read by the code under test, but `dialerOf` asserts against
-// the whole edge.ServiceConn interface — so a stub missing one method is not an overlay
-// connection at all, and every test would then pass through the "no dialing identity" branch
-// and agree with itself about the wrong thing. That is exactly what the first version of this
-// file did. A net.Pipe end supplies the net.Conn half.
+// Only GetDialerIdentityId is read by the code under test, but `dialerOf` asserts against the whole
+// edge.ServiceConn interface, so a stub missing one method is not an overlay connection at all: every
+// test would then pass through the "no dialing identity" branch and agree with itself about the wrong
+// thing. A net.Pipe end supplies the net.Conn half.
 type fakeEdgeConn struct {
 	net.Conn
 	id   string
@@ -105,9 +104,8 @@ func TestOverlayWritesFailClosed(t *testing.T) {
 		wantWhy string
 	}{
 		{
-			// The default. A listener that names nobody is read-only, which is the same
-			// answer the blanket refusal used to give and the reason this change does not
-			// widen anything for an installation that has not opted in.
+			// The default. A listener that names nobody is read-only, so this does not widen access for
+			// an installation that has not opted in.
 			name: "no admin_identities",
 			id:   "abc123",
 		},

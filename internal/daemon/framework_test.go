@@ -26,11 +26,10 @@ func bitbucketPR() model.PullRequest {
 
 // TestFrameworkPresetPrecedence is the whole contract of a preset, in one table.
 //
-// Top down: the project's explicit field, then its preset, then the repository's own
-// .docpreview.yml. The middle beating the last is the surprising half and is the one worth
-// pinning down — the repository's file says what it says, and an operator who chose
-// "Docusaurus" in the dashboard has said something more recent and more specific. Deferring
-// to the repository is what the blank preset is for, and it is the default.
+// Precedence runs top down: the project's explicit field, then its preset, then the repository's own
+// .docpreview.yml. A preset outranks the repository's file because an operator who chose "Docusaurus" in
+// the dashboard has said something more recent and more specific. The blank preset defers to the
+// repository, and it is the default.
 func TestFrameworkPresetPrecedence(t *testing.T) {
 	_, d, st := testIngress(t, &fakeClient{})
 	pr := bitbucketPR()

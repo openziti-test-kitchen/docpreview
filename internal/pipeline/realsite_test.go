@@ -9,11 +9,10 @@ import (
 // TestVerifyBaseURLOnTheRealLandingPage runs the check against this repository's
 // own built site.
 //
-// It exists because the landing page is what broke the check. The page links into
-// /docs/ thirteen times across six routes, which made "docs" the dominant first
-// path segment — so a site correctly built for "/" was reported as built for
-// "/docs/" and the build was refused, with an error quoting /img/favicon.ico as
-// evidence for a prefix it is not under.
+// The landing page is the shape that can break the check: it links into /docs/
+// thirteen times across six routes, which could make "docs" the dominant first
+// path segment and report a site correctly built for "/" as built for "/docs/" —
+// with an error quoting /img/favicon.ico as evidence for a prefix it is not under.
 //
 // Skipped when www/build is absent, which it is on a clean checkout: this asserts
 // against a real artifact rather than a fixture, and a fixture is exactly what

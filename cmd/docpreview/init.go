@@ -22,11 +22,11 @@ import (
 //
 // Two questions by default, not thirteen.
 //
-// The first version asked about every field, each with a working default, and
-// the result was a page of prompts answered by holding Enter — which teaches
-// people that the questions do not matter and that setup wizards are something
-// to skip. A question earns its place only if a reasonable person would answer
-// differently from the default. Exactly two clear that bar: which exposer, and
+// Asking about every field, each with a working default, produces a page of
+// prompts answered by holding Enter, which teaches people that the questions
+// do not matter and that setup wizards are something to skip. A question earns
+// its place only if a reasonable person would answer differently from the
+// default. Exactly two clear that bar: which exposer, and
 // the GitHub App ID, which has no sensible default because it is a number
 // GitHub assigns.
 //
@@ -103,9 +103,9 @@ func cmdInit(args []string) error {
 	//
 	// Not asked by default. Source control is the *last* thing you wire up, not
 	// the first: at init you have not created the App yet, and if you are using
-	// Bitbucket you never will. Zero means "not configured", which the daemon
-	// now handles by telling you so rather than refusing to start, and the
-	// checklist below reminds you to come back to it.
+	// Bitbucket you never will. Zero means "not configured"; the daemon reports
+	// that rather than refusing to start, and the checklist below reminds you
+	// to come back to it.
 	if *appIDFlag >= 0 {
 		cfg.GitHub.AppID = *appIDFlag
 	} else if ask(false) {
@@ -218,11 +218,10 @@ func cmdInit(args []string) error {
 
 // writeConfig validates the rendered config and then installs it.
 //
-// The ordering is the point. `init` promises to write a valid config or fail
-// without writing, and an earlier version broke that promise: it wrote the
-// file, read it back, and reported the error — leaving the operator with a
-// clobbered config *and* a failure. Overwriting something that worked with
-// something that does not is the one outcome this command must never produce.
+// The ordering is the point. `init` writes a valid config or fails without
+// writing anything, never leaving the operator with a clobbered config *and*
+// a failure. Overwriting something that worked with something that does not
+// is the one outcome this command must never produce.
 //
 // So the candidate goes to a temporary file beside the target, is loaded
 // through the real loader from there, and only then renamed into place. The
@@ -584,11 +583,10 @@ func renderListeners(b *strings.Builder, c config.Server) {
 //
 // Quoting matters for values YAML would otherwise reinterpret: an empty string,
 // a leading "*", anything that looks like a number or a boolean. Escaping
-// matters for everything else. An earlier version escaped only backslash and
-// double quote, which is fine until an answer contains a newline or a tab —
-// and every free-form answer in `init -advanced` is operator-typed, so a
-// pasted path with a stray control character produced a config file that YAML
-// could not parse.
+// matters for everything else, including a newline or a tab: every free-form
+// answer in `init -advanced` is operator-typed, so a pasted path with a stray
+// control character is ordinary, not exotic, and must still produce YAML that
+// parses.
 //
 // encoding/json does the escaping exactly. YAML 1.2's double-quoted scalars
 // accept JSON's escape set, so a JSON string literal is always a valid YAML

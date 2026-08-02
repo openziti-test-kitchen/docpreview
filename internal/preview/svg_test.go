@@ -11,12 +11,10 @@ import (
 
 // TestSiteIconsAreWellFormedXML guards a failure with no error message.
 //
-// An SVG is XML, and XML forbids two consecutive hyphens inside a comment. The
-// navbar logo shipped with a CSS custom property named in its comment — leading
-// hyphen pair and all — which made the file malformed, and a browser answers that
-// with a broken-image icon and nothing in any console. The favicon beside it, whose
-// comment happened to avoid the sequence, rendered perfectly, so the two files
-// disagreed for a reason invisible in either.
+// An SVG is XML, and XML forbids two consecutive hyphens inside a comment. A CSS custom
+// property named in a comment — leading hyphen pair and all — makes the file malformed,
+// and a browser answers that with a broken-image icon and nothing in any console. Two SVGs
+// otherwise identical in every visible way can disagree for a reason invisible in either.
 //
 // Nothing else in this project parses these files, so nothing else would notice. A
 // test that decodes them is the cheapest place to find out, and encoding/xml needs no

@@ -187,10 +187,10 @@ func TestNoCredentialAnywhereNamesBothPlaces(t *testing.T) {
 
 // TestTheClientBuildsWithNoGlobalCredential.
 //
-// It used to require one, which meant a workspace whose administrator refuses wide tokens
-// got no Bitbucket client at all — and so could not use the projects page to supply the
-// per-repository tokens that would have made it work. The webhook secret is still required,
-// because without it deliveries are unauthenticated.
+// A workspace whose administrator refuses wide tokens has no global credential to store.
+// Requiring one here would refuse to build a Bitbucket client at all, and so could not use
+// the projects page to supply the per-repository tokens that would make it work. The webhook
+// secret is still required, because without it deliveries are unauthenticated.
 func TestTheClientBuildsWithNoGlobalCredential(t *testing.T) {
 	dir := t.TempDir()
 	v, err := vault.OpenWithKey(dir+"/vault.age", "a-test-passphrase")

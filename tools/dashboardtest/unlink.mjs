@@ -3,12 +3,11 @@
 //
 // # Why this exists
 //
-// **The timestamp.** A finished preview rendered its relative age, which under a minute
-// counts up once a second. Beside a status line already saying "took 1m 9s", that read as
-// a build still being timed — reported as "it shows it was built but the timer keeps
-// ticking up". The fix is a fixed finishing time for anything finished and the stopwatch
-// only for something running, and the difference between those two is a property of a
-// render repeated a second apart. Nothing static can check it.
+// **The timestamp.** A finished preview must show a fixed finishing time, not a relative
+// age that counts up once a second — beside a status line already saying "took 1m 9s", a
+// counting age reads as a build still being timed. The stopwatch is only for something
+// running, and the difference between those two is a property of a render repeated a
+// second apart. Nothing static can check it.
 //
 // **Unlink.** It deletes a preview, its shares and its pull request comment, and records
 // that the pull request must not be built again. A button that renders correctly and posts
@@ -149,7 +148,7 @@ console.log("a finished build's time does not tick");
   } else ok(`a running build still counts: ${liveBefore} -> ${liveAfter}`);
 
   // Shape, not just stability: "8s ago" would also be stable if the render stopped, and
-  // the whole complaint was about a value that reads like a duration.
+  // the point being checked is a value that does not read like a duration.
   if (/\bago\b|^\d+[smhd]$/.test(String(readyAfter))) {
     fail(`a finished preview reads as an age: ${JSON.stringify(readyAfter)}`);
   } else ok("it reads as a time, not an age");

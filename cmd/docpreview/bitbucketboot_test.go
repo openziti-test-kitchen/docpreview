@@ -15,20 +15,14 @@ import (
 
 // TestBitbucketWithNoCredentialsMustNotStopTheDaemon.
 //
-// The deadlock this guards against has now been created three times in this codebase,
-// twice for GitHub and once here: something reads the vault during wiring and refuses
-// to start, while the page that fixes the vault is served by the process that will not
-// start.
+// The daemon must not read the vault during wiring: a failed New() must be survivable, leaving a daemon
+// with no Bitbucket client so /webhook/bitbucket answers 501 rather than pretending to verify.
 //
-// Bitbucket's version is worse than GitHub's, because the missing credential is one
-// the daemon *generates*: /secrets has a Generate button for the webhook secret, so a
-// daemon that will not boot without that secret cannot be used to create it. The
-// operator's only way out is `docpreview vault set` in a terminal — which is exactly
-// what the setup page exists to avoid.
+// The webhook secret is one the daemon generates, via a Generate button on /secrets, so a daemon that
+// refuses to boot without it cannot be used to create it — the operator's only way out would be
+// `docpreview vault set` in a terminal, which the setup page exists to avoid.
 //
-// This test asserts the shape rather than calling setup(): what must hold is that a
-// New() failure is survivable, and that the surviving daemon has no Bitbucket client
-// so /webhook/bitbucket answers 501 rather than pretending to verify.
+// This test asserts the shape rather than calling setup().
 func TestBitbucketWithNoCredentialsMustNotStopTheDaemon(t *testing.T) {
 	dir := t.TempDir()
 	v, err := vault.OpenWithKey(filepath.Join(dir, "vault.age"), "a-test-passphrase")
@@ -52,14 +46,10 @@ func TestBitbucketWithNoCredentialsMustNotStopTheDaemon(t *testing.T) {
 		t.Errorf("the error does not name the missing key: %v", err)
 	}
 
-	// The webhook secret alone is enough to build a client, and that is deliberate.
-	//
-	// A Bitbucket access token is scoped to one repository unless a workspace
-	// administrator permits the wider kinds, and plenty do not — so an operator may have
-	// no workspace-wide token to store at all, only one per project. Requiring a global
-	// credential here meant those workspaces got no Bitbucket client, which meant
-	// /webhook/bitbucket answered 501, which meant the projects page could not be used to
-	// supply the per-project tokens that would have made it work.
+	// The webhook secret alone is enough to build a client, deliberately: a Bitbucket access token is
+	// scoped to one repository unless a workspace administrator permits wider kinds, and many do not.
+	// An operator with only per-project tokens and no workspace-wide one still needs a Bitbucket client
+	// and a working webhook endpoint to supply those tokens through.
 	if err := v.Set(vault.KeyBitbucketHookSec, vault.NewSecretString("generated")); err != nil {
 		t.Fatal(err)
 	}
@@ -83,17 +73,12 @@ func TestBitbucketWithNoCredentialsMustNotStopTheDaemon(t *testing.T) {
 
 // TestBothConstructionPathsResolvePerProjectCredentials.
 //
-// There are two places a Bitbucket client is built — setup(), for a daemon whose vault is
-// already unlocked, and rewireBitbucket, for one unlocked afterwards from the dashboard —
-// and only the second attached the per-project credential resolver. The consequence was
-// invisible until somebody restarted: with vault.key_source set, the client came from
-// setup(), so every project's own token was unreachable and Test credential answered "no
-// Bitbucket credential for owner/repo" about a token sitting in the vault. It worked after
-// a vault write and stopped working after a restart, which is the hardest shape of bug to
-// believe a report of.
+// A Bitbucket client is built in two places — setup(), for a daemon whose vault is already unlocked, and
+// rewireBitbucket, for one unlocked later from the dashboard — and both must attach the per-project
+// credential resolver. Without it on the setup() path, a project's own token in the vault is unreachable
+// and "Test credential" reports none, even with vault.key_source set and the token present.
 //
-// Asserted against the *source*, because the resolver is a function field with no exported
-// reader: a wiring bug in a path nobody tests is exactly what this is.
+// Asserted against the *source*, because the resolver is a function field with no exported reader.
 func TestBothConstructionPathsResolvePerProjectCredentials(t *testing.T) {
 	body, err := os.ReadFile("main.go")
 	if err != nil {

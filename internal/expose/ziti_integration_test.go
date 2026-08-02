@@ -81,13 +81,11 @@ func overlayClient(t *testing.T, readerIdentity, service string) *http.Client {
 
 // sharedZiti is one exposer for the whole package, created on first use.
 //
-// Not a convenience — a correctness requirement, and one the first version of
-// these tests got wrong in a way worth recording. Binding a ziti service
-// creates a *terminator*; two bindings create two, and the router
-// load-balances between them under the default smartrouting strategy. A test
-// that opened its own exposer would find roughly half its requests answered by
-// the previous test's still-closing instance, which presents as previews
-// mysteriously 404ing.
+// Not a convenience — a correctness requirement. Binding a ziti service creates
+// a *terminator*; two bindings create two, and the router load-balances between
+// them under the default smartrouting strategy. A test that opened its own
+// exposer would find roughly half its requests answered by the previous test's
+// still-closing instance, which presents as previews mysteriously 404ing.
 //
 // The same is true in production: exactly one docpreview may bind a given
 // service. Two instances sharing one would split traffic between two disjoint

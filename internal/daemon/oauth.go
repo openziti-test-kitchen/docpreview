@@ -20,18 +20,17 @@ import (
 //
 // # Why not delegate to the tunnel
 //
-// The first attempt did: zrok can gate a share on an OAuth provider and an email domain at its
-// frontend, which is less code and stronger — an unauthenticated request never reaches this
-// process. It was the wrong answer for two reasons that only appear when somebody uses it.
+// Delegating looks like the better answer at first: zrok can gate a share on an OAuth provider and an
+// email domain at its frontend, which is less code and stronger — an unauthenticated request never
+// reaches this process. It fails for two reasons that only show up once somebody uses it.
 //
 // It is not docpreview's page, so it cannot offer a *choice*. The operator wants one login
 // screen with a password field and a Google button beside it; what the frontend gives is zrok's
 // own sign-in for zrok.io, before docpreview is reached, with no way to type a password instead.
 //
 // And two independent redirectors on one URL fight. zrok's interstitial redirects to authorize,
-// docpreview redirects to its own form, and the browser bounced between them — reported as "just
-// redirecting me over and over". Layering one login behind another produces that whenever the
-// two disagree about who owns the request.
+// docpreview redirects to its own form, and the browser bounces between them whenever the two disagree
+// about who owns the request — from the outside, indistinguishable from a redirect loop.
 //
 // So the share stays open and this process does the gating.
 //

@@ -75,20 +75,23 @@ for target in $targets; do
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
     go build -trimpath -ldflags "$LDFLAGS" -o "$work/$bin" ./cmd/docpreview
 
-  # What somebody needs beside the binary. The units and the installer are only useful on Linux,
-  # and shipping them everywhere invites running them where they cannot work.
+  # What somebody needs beside the binary.
+  #
+  # The systemd units, on Linux only — the installer reads them out of the extracted archive, so
+  # they have to travel with it. **Not `install.sh` itself.** That is curled from the repository at
+  # this tag, which makes it one file with one source rather than a copy in every archive that can
+  # drift from the one people are told to download.
   cp LICENSE README.md "$work/"
   if [ "$goos" = "linux" ]; then
     mkdir -p "$work/install"
-    cp install/*.service install/install.sh "$work/install/"
-    chmod +x "$work/install/install.sh"
+    cp install/*.service "$work/install/"
   fi
 
   if [ "$goos" = "windows" ]; then
     # A zip, because a Windows user double-clicks it and Explorer opens it. Three ways to make
     # one, tried in order: `zip` is on CI and on most Linux boxes, `Compress-Archive` is on every
     # Windows one, and bsdtar's `-a` infers the format from the extension. git-bash on Windows
-    # has none of the first, which is where this was found.
+    # has none of the first, so the fallback chain below tries the other two.
     if command -v zip >/dev/null 2>&1; then
       (cd "$OUT" && zip -qr "$name.zip" "$name")
     elif ps_exe="$(command -v pwsh || command -v pwsh.exe || command -v powershell.exe)"; then
@@ -117,6 +120,86 @@ echo "-- checksums"
 # a consumer matching on one spelling would work for exactly half of the releases.
 (cd "$OUT" && sha256sum ./*.tar.gz ./*.zip | sed -e 's| \*\./| \*|' -e 's| \./| |' > SHA256SUMS)
 cat "$OUT/SHA256SUMS"
+
+# ── The release notes ────────────────────────────────────────────────────────────────────────
+#
+# Written here rather than left to `gh --generate-notes`, which produces a list of pull request
+# titles. For this project that reads "round 3 updates / Round 5 / round 6 pr", which tells a
+# stranger nothing about what the thing is or how to install it — and the release page is the
+# first thing anybody sees.
+#
+# The generated list still goes on the end, under a heading, where it belongs: it is a changelog,
+# not an introduction.
+notes="$OUT/NOTES.md"
+{
+  cat <<'INTRO'
+Documentation previews for pull requests. A pull request arrives as a webhook, docpreview clones
+it, builds the docs, publishes the output at a URL, and comments on the pull request with the
+link. Self-hosted, one binary, and no inbound port — the preview reaches the internet through a
+zrok tunnel.
+
+## Install on Linux
+
+INTRO
+
+  cat <<INSTALL
+\`\`\`bash
+curl -fsSLO https://raw.githubusercontent.com/$REPO/$VERSION/install/install.sh
+chmod +x install.sh
+sudo ./install.sh --version $VERSION
+\`\`\`
+
+The installer downloads the right archive for this machine, **verifies it against the
+\`SHA256SUMS\` below**, and refuses to install anything that does not match. It creates the
+service account and the systemd units, and it starts nothing — the four remaining steps are
+decisions, and it prints the command for each.
+
+Full walkthrough, from a provisioned VM to a preview URL:
+[install on a Linux VM](https://github.com/$REPO/blob/$VERSION/www/docs/runbooks/linux-service.md).
+
+## Anywhere else
+
+Download the archive for your platform below and put the binary on your PATH. Then:
+
+\`\`\`
+docpreview init
+docpreview preview -build ./docs
+\`\`\`
+
+That publishes one directory and needs no account, no App and no webhook.
+
+## Verifying a download
+
+\`\`\`bash
+sha256sum -c SHA256SUMS --ignore-missing
+\`\`\`
+
+## Checksums
+
+\`\`\`
+INSTALL
+
+  cat "$OUT/SHA256SUMS"
+
+  cat <<'OUTRO'
+```
+
+## Requirements
+
+- **4 GB RAM** on the build host. A Docusaurus build peaks during prerendering and a 2 GB machine
+  is killed there, after the install has already succeeded.
+- **docker**, for the default build driver. `build.driver: local` runs the build directly instead,
+  which is fine for repositories only you can push to.
+- A **GitHub App** or a **Bitbucket access token**, and outbound HTTPS. Nothing inbound.
+
+## Changelog
+
+OUTRO
+} > "$notes"
+
+echo
+echo "-- notes"
+echo "   $notes"
 
 echo
 echo "done: $OUT"

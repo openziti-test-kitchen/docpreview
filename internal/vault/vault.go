@@ -60,9 +60,8 @@ const (
 	// revocable on its own, and attributed to a synthetic bot address rather
 	// than to a person.
 	//
-	// Added after the two below, which were reserved first and name the *fallback*
-	// mode — an operator following the older names would have stored the wider
-	// credential by default.
+	// The two keys below name the fallback mode, which is wider in scope: an operator who
+	// stores those instead gets a credential covering more than one resource by default.
 	KeyBitbucketAccessToken = "bitbucket.access_token"
 
 	// KeyBitbucketEmail and KeyBitbucketAPIToken are the api_token fallback. The
@@ -165,15 +164,9 @@ func IsProjectSCMKey(name string) bool {
 // itself and no build should ever see. The dotted keys are all infrastructure and the
 // naming convention already carried that distinction; this makes it load-bearing.
 //
-// It exists because the alternative made the dashboard a liar. A secret stored from the
-// credential page did nothing until somebody also added a `build.secrets` line to a YAML
-// file on the host — so the page accepted a token, said "set", and the next build behaved
-// exactly as if the token were absent. A global secret now reaches every build, and a
-// project's own entry of the same name overrides it.
-//
-// The consequence is worth stating plainly: anything stored here under a shell-shaped
-// name is handed to every build on this daemon, and a build can read its own environment.
-// Store what a build needs, and nothing else.
+// A global secret stored under a shell-shaped name reaches every build on this daemon, and
+// a project's own entry of the same name overrides it. A build can read its own environment,
+// so store what a build needs and nothing else.
 func IsBuildEnvKey(key string) bool {
 	if key == "" {
 		return false
@@ -391,15 +384,11 @@ func (v *Vault) RevealPrefix(prefix string) map[string]string {
 		if name == "" || strings.Contains(name, "/") {
 			continue
 		}
-		// Only shell-shaped names, which is the same rule that keeps
-		// `github.private_key` out of every build, applied to the project scope.
-		//
-		// This is the one bulk read of values in this package and its only caller builds
-		// a build's environment, so anything returned here is handed to a pull request's
-		// own build script. A project's source-control credential lives under this same
-		// prefix as `scm.access_token` — dotted, deliberately — and without this filter it
-		// would be injected into every build of the repository it can clone and comment
-		// on. `TestProjectSCMCredentialsNeverReachABuild`.
+		// Only shell-shaped names, the same rule that keeps `github.private_key` out of
+		// every build, applied to the project scope. A project's source-control credential
+		// lives under this same prefix as `scm.access_token` — dotted, deliberately — and
+		// without this filter it would be injected into every build of the repository it
+		// can clone and comment on. See TestProjectSCMCredentialsNeverReachABuild.
 		if !IsBuildEnvKey(name) {
 			continue
 		}

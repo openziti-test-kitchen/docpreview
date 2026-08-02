@@ -71,10 +71,10 @@ func (c *Cloner) Clone(ctx context.Context, pr model.PullRequest, cloneURL strin
 	//
 	// Two builds of the same pull request overlap by design: a newer push cancels
 	// the older build but does not wait for it, so the loser is still unwinding
-	// while the winner starts. Sharing a directory let them corrupt each other —
-	// the loser's cleanup deleting files under the winner, and a `.git` surviving
-	// a failed cleanup so the winner's `git remote add` found origin already
-	// there and the whole build failed on it.
+	// while the winner starts. Sharing a directory would let them corrupt each
+	// other — the loser's cleanup deleting files under the winner, and a `.git`
+	// surviving a failed cleanup so the winner's `git remote add` finds an origin
+	// already there and the whole build fails on it.
 	//
 	// Nesting under the preview ID keeps teardown's RemoveAll of the preview's
 	// directory working unchanged.
@@ -109,10 +109,10 @@ func (c *Cloner) Clone(ctx context.Context, pr model.PullRequest, cloneURL strin
 	// with its own comment.
 	// No named remote. Fetching the URL directly makes the sequence idempotent:
 	// `git remote add origin` fails outright on a repository that already has an
-	// origin, so a .git surviving an interrupted build turned the next attempt
-	// into a failed build — which is exactly what a supersede produced. Nothing
-	// here needs a remote to persist, since the URL carries a short-lived token
-	// and would be stale by the next build anyway.
+	// origin, so a .git surviving an interrupted build would turn the next
+	// attempt into a failed build — exactly the failure mode a supersede produces.
+	// Nothing here needs a remote to persist, since the URL carries a
+	// short-lived token and would be stale by the next build anyway.
 	steps := [][]string{
 		{"init", "--quiet"},
 		{"fetch", "--quiet", "--depth", "1", cloneURL, pr.HeadSHA},
@@ -150,8 +150,7 @@ func buildDirName(sha string) string {
 //
 // Best-effort throughout. A sibling that will not delete is usually a superseded
 // build still shutting down with a file open, and that directory must survive
-// until it does — deleting it is what corrupted the winner's build before each
-// build had its own.
+// until it does — deleting it out from under a still-running build corrupts it.
 func (c *Cloner) pruneSiblings(previewDir, keep string) {
 	entries, err := os.ReadDir(previewDir)
 	if err != nil {
@@ -208,16 +207,14 @@ func scrub(s string) string {
 // The rule is RFC 3986's: after "://", the authority runs to the first "/", "?"
 // or "#", and userinfo is everything before the **last** "@" inside it.
 //
-// The last, not the first. This was originally the first, which leaked the
-// secret it existed to hide the moment a username contained an unescaped "@" —
-// a Bitbucket credential is an email address, so
+// The last "@", not the first: a Bitbucket credential is an email address, so a URL like
 //
 //	https://someone@example.com:TOKEN@bitbucket.org/ws/repo.git
 //
-// redacted "someone", emitted ":TOKEN@bitbucket.org/..." verbatim, and wrote a
-// live token into the build log and from there into the pull request comment.
-// An unescaped "@" in userinfo is not legal, but git accepts it and people write
-// it, so the scrubber has to survive it.
+// has an unescaped "@" in its userinfo. Redacting only up to the first "@" would hide
+// "someone" but emit ":TOKEN@bitbucket.org/..." verbatim, writing a live token into the
+// build log and from there into the pull request comment. An unescaped "@" in userinfo is
+// not legal, but git accepts it and people write it, so the scrubber has to survive it.
 func scrubLine(line string) string {
 	var b strings.Builder
 	for {

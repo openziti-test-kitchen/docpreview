@@ -74,9 +74,10 @@ func TestARefreshOnlyRebuildsWhatAlreadyExists(t *testing.T) {
 
 // A branch preview whose last build failed is retried at the next startup.
 //
-// The backfill skipped any project that had a branch preview *row*, and a failed build leaves one.
-// So the permanent preview of `main` stayed broken until somebody noticed and pressed Rebuild — on
-// the one preview nobody looks at, because the point of it is that it sits there working.
+// Skipping any project that already has a branch preview *row* is not enough: a failed build leaves one
+// too. Without this retry, the permanent preview of `main` would stay broken until somebody noticed and
+// pressed Rebuild — on the one preview nobody looks at, because the point of it is that it sits there
+// working.
 //
 // The backfill itself is run, with a fake that resolves a default branch, and the queue is what is
 // asserted — the decision matters only through what it causes.
@@ -86,7 +87,7 @@ func TestAFailedBranchPreviewIsRetriedAtStartup(t *testing.T) {
 		state     scm.State
 		wantQueue bool
 	}{
-		// The bug: a row exists, so the old test skipped it and `main` stayed broken.
+		// A row exists for a failed build too, so checking only for a row's presence is not enough.
 		{"failed", scm.StateFailed, true},
 		// And the rule it must not break: a working preview is left alone. Rebuilding every
 		// branch preview at every startup would mean a build per project per restart, on

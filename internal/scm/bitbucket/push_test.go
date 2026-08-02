@@ -48,8 +48,8 @@ func pushDelivery(mainBranch string, changes ...[3]string) []byte {
 // A push to the main branch rebuilds its preview.
 //
 // The Bitbucket half of the same rule GitHub's push handler implements: the permanent preview is
-// a claim about what `main` looks like now, and without this it was a claim about what it looked
-// like whenever somebody last opened a pull request.
+// a claim about what `main` looks like now, and without this it would be a claim about what it
+// looked like whenever somebody last opened a pull request.
 func TestABitbucketPushToMainRebuildsIt(t *testing.T) {
 	c, _ := newTestClient(t, commitResolver(""))
 

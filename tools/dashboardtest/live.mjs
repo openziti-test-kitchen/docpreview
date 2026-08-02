@@ -1,14 +1,13 @@
-// Fetching /status from a running daemon, now that /status needs a login.
+// Fetching /status from a running daemon, since /status is behind a login.
 //
 // # Why this exists
 //
 // Three harnesses prefer live state to the fixture beside them, for a good reason: the
-// fixture cannot contain the history shape nobody thought to invent. Once the dashboard
-// went behind a login they all broke the same way and none of them said so — the fetch
-// succeeded with a 401, `await res.json()` parsed `{"error":"not logged in"}`, and the
-// page rendered against a status object with no `previews` key. The failure surfaced as
-// `Cannot read properties of undefined (reading 'filter')` inside the page, which reads
-// like a bug in the page.
+// fixture cannot contain the history shape nobody thought to invent. /status behind a
+// login means a fetch can succeed with a 401 whose body is still valid JSON — a status
+// object with no `previews` key — and the page would then fail with `Cannot read
+// properties of undefined (reading 'filter')`, which reads like a bug in the page rather
+// than a login the caller skipped.
 //
 // So: one place that knows how to log in, and that is explicit about which state it
 // returned.

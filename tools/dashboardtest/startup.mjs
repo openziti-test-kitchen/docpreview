@@ -2,18 +2,17 @@
 //
 // # Why this exists
 //
-// The banner was one line of prose prepended into `.wrap`. `.wrap` is a two-column
-// grid, so prepending made the banner its first cell: the previews list was pushed
-// into the 21rem rail column and the activity rail took the wide one. Every row in the
-// list then overlapped itself in a third of the width it was built for — which reads as
-// broken row CSS, and is not. Nothing in the markup or the row styles is wrong, so no
-// amount of reading either of them finds it. A harness that asks "is the banner a child
-// of the grid" does.
+// `.wrap` is a two-column grid, and the banner must be a sibling of it, never a child.
+// Prepending into `.wrap` would make the banner its first cell, push the previews list
+// into the 21rem rail column, and give the activity rail the wide one — every row in the
+// list overlapping itself in a third of the width it was built for. That reads as broken
+// row CSS and is not: nothing in the markup or the row styles is wrong, so no amount of
+// reading either of them finds it. A harness that asks "is the banner a child of the
+// grid" does.
 //
-// It also covers what the banner now says. Recovery takes two minutes of zrok round
-// trips, and a wait with no progress is indistinguishable from a hang — the first thing
-// anybody did with the silent version was restart the daemon, losing the recovery it
-// was reporting.
+// It also covers what the banner says. Recovery takes minutes of zrok round trips, and a
+// wait with no progress is indistinguishable from a hang, so the banner has to report
+// visible progress rather than sit silent.
 //
 //   npm install --prefix tools/dashboardtest
 //   node tools/dashboardtest/startup.mjs
@@ -109,8 +108,9 @@ console.log("the banner is not a cell of the previews grid");
 
 console.log("\nthe page's own content stays on screen");
 {
-  // Hiding it was tried and produced a dashboard whose whole visible contents were one
-  // notice, which reads as broken. The rows are true — they come from the database.
+  // Hiding the page's content during recovery would leave a dashboard whose whole
+  // visible contents are one notice, which reads as broken. The rows are true — they
+  // come from the database.
   if ($(".wrap").hidden) {
     fail("the previews list and activity rail are hidden, leaving a page whose only " +
          "content is a banner");
@@ -243,9 +243,9 @@ console.log("\nit says what it is doing, not only how far along");
 
 console.log("\nno startup dialog opens by itself");
 {
-  // It used to, gated on a marker in sessionStorage so a reload would not re-announce a
-  // restart from an hour ago. Right for a four-minute startup and wrong for a three-second
-  // one: a dialog to dismiss to be told that nothing went wrong.
+  // Gating this on a marker in sessionStorage, so a reload would not re-announce an old
+  // restart, would still open a dialog to dismiss for a startup that took three seconds
+  // and went fine — right for a long recovery and wrong for a short one.
   await apply({...starting, starting: false, startup: undefined, pending: 0,
     last_startup: {
       seconds: 3, instance: "20260730-100000.000",
@@ -264,8 +264,8 @@ console.log("\nno startup dialog opens by itself");
     fail(`the link reads ${JSON.stringify(btn.textContent)}, without the duration`);
   } else ok(`footer reads ${JSON.stringify(btn.textContent.trim())}`);
 
-  // And it opens on click, including for the quick, uneventful startup that the old rule
-  // refused to report: somebody who clicks wants the report either way.
+  // And it opens on click, including for a quick, uneventful startup: somebody who
+  // clicks wants the report either way.
   btn.dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
   await settle();
   if ($("#boot").hidden) fail("the footer link did not open the report");

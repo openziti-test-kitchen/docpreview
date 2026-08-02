@@ -36,9 +36,9 @@ func pushEvents(t *testing.T, body []byte) []scm.Event {
 
 // A push to the default branch rebuilds its preview.
 //
-// Without this the permanent `main` preview was a claim about what `main` looked like the last
-// time somebody opened a pull request or restarted the daemon — which is the difference between
-// "always current" and "current as of whenever somebody last did something else".
+// Without this the permanent `main` preview would be a claim about what `main` looked like the
+// last time somebody opened a pull request or restarted the daemon — which is the difference
+// between "always current" and "current as of whenever somebody last did something else".
 func TestAPushToTheDefaultBranchRebuildsIt(t *testing.T) {
 	evs := pushEvents(t, pushBody("refs/heads/main", "abc123", "main", false))
 
@@ -61,7 +61,7 @@ func TestAPushToTheDefaultBranchRebuildsIt(t *testing.T) {
 		t.Errorf("repo = %s", e.PR.Repo.Slug())
 	}
 	// Without it, every build of this preview fails with "the webhook payload was missing
-	// installation.id" — which is what the branch previews did before installationOf existed.
+	// installation.id".
 	if e.PR.InstallationID != 42 {
 		t.Errorf("installation = %d, want 42", e.PR.InstallationID)
 	}

@@ -12,10 +12,10 @@ import (
 
 // A pending job must not survive the teardown of its preview.
 //
-// `Claim` used to be the only statement that removed a `jobs` row, so a push landing moments
-// before a close left a job behind — and a worker claimed it minutes later, built it, wrote
-// the preview row back and published a share for something that had been deliberately
-// removed. From the operator's side that is a deleted preview reappearing on its own.
+// Teardown must remove a `jobs` row itself, not rely on `Claim` alone: a push landing moments before a
+// close could otherwise leave a job behind for a worker to claim minutes later, build, and publish a
+// share for something that had been deliberately removed. From the operator's side that is a deleted
+// preview reappearing on its own.
 //
 // Asserted through `Claim` rather than through `PendingCount`, because a worker is what does
 // the damage and `Claim` is the call it makes.

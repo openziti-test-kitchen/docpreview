@@ -6,10 +6,9 @@
     A killed build leaves its node process behind, and that process holds the workspace directory open — which
     is what makes a later reseed fail with "device or resource busy". So node goes too.
 
-    Only the node processes this demo started. The previous version ran
-    `Get-Process -Name node | Stop-Process -Force`, which kills every node process on the machine — it took out
-    an unrelated Docusaurus dev server that had been running since before the demo started. Matching on the
-    command line is the difference between cleaning up after yourself and clearing the room.
+    Only the node processes this demo started. Matching on the command line, rather than stopping every
+    process named node, is the difference between cleaning up after yourself and clearing the room: a plain
+    `Get-Process -Name node | Stop-Process -Force` kills any unrelated node process on the machine too.
 #>
 [CmdletBinding()]
 param(
@@ -43,8 +42,8 @@ if (-not $KeepNode) {
         Write-Host 'no demo node processes to clean up'
     }
 
-    # Anything left is somebody else's. Say so rather than killing it, because the last version killing it is
-    # exactly the bug this comment exists to prevent.
+    # Anything left is somebody else's. Say so rather than killing it: this script must not stop a node
+    # process outside its own data directory.
     $others = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
         Where-Object { -not $_.CommandLine -or $_.CommandLine -notlike "*$demoRoot*" }
     if ($others) {

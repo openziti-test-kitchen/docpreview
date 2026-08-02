@@ -424,9 +424,8 @@ type FrontdoorConfig struct {
 	// Frontend is the **id** of the Frontdoor frontend that will serve previews — a value
 	// like "bMTHPrtQ", not a name like "public".
 	//
-	// It was documented and defaulted as a name, which cannot work: the API's field is
-	// `frontendIds` and takes ids. A name there is accepted by the JSON decoder and then
-	// matches no frontend, so the share is created serving nothing.
+	// The API's field is `frontendIds` and takes ids only. A name there is accepted by the
+	// JSON decoder and then matches no frontend, so the share is created serving nothing.
 	Frontend string `yaml:"frontend"`
 
 	// EnvZID is the ziti identity of the enrolled Frontdoor agent that will host the
@@ -468,9 +467,9 @@ const (
 	BitbucketAuthAPIToken = "api_token"
 )
 
-// BitbucketAPIBase is where authenticated REST calls must go. Since 4 May 2026
-// Bitbucket requires api.bitbucket.org with a bearer token per RFC 6750, and a call
-// to bitbucket.org/api answers 403 with an unhelpful body.
+// BitbucketAPIBase is where authenticated REST calls must go. Bitbucket requires
+// api.bitbucket.org with a bearer token per RFC 6750; a call to bitbucket.org/api
+// answers 403 with an unhelpful body.
 const BitbucketAPIBase = "https://api.bitbucket.org"
 
 // BitbucketConfig configures the Bitbucket Cloud client.
@@ -484,10 +483,10 @@ type BitbucketConfig struct {
 
 	// Auth is "access_token" (recommended) or "api_token".
 	//
-	// Never inferred from which keys happen to be stored. A vault mid-setup contains
-	// a subset of everything, and a client that silently picked the wider credential
-	// because the narrower one was not stored yet is the kind of magic that gets
-	// discovered during an incident.
+	// Never inferred from which keys happen to be stored. A vault mid-setup contains a
+	// subset of everything, and a client that silently picked the wider credential because
+	// the narrower one was not stored yet would be authenticating as the wrong identity
+	// without anything in the config saying so.
 	Auth string `yaml:"auth"`
 }
 
@@ -612,9 +611,9 @@ type PreviewConfig struct {
 // four projects each with a `new-install-guide` branch all render to the same
 // label. Under zrok and Frontdoor that means two previews fighting over one
 // name in a shared namespace; under ziti it means one hostname with two
-// claimants; under the local exposer it meant each publish silently killing
-// another project's listener, which is how it was found. A default that is
-// correct for one repository and quietly wrong for two is the wrong default.
+// claimants; under the local exposer it means each publish silently kills
+// another project's listener. A default that is correct for one repository
+// and quietly wrong for two is the wrong default.
 //
 // Deliberately not the commit SHA. Vercel gives every deployment its own
 // immutable URL and a branch alias on top; docpreview has one comment per pull
@@ -643,8 +642,8 @@ const (
 	DefaultBuildCommand = "npm run build"
 
 	// DefaultImage needs node *and* git: a documentation build that assembles several
-	// repositories clones them from inside the container. The -slim images have no git,
-	// which made the shipped default fail on the first clone with "git: not found".
+	// repositories clones them from inside the container. The -slim images have no git, so
+	// a build using one fails on its first clone with "git: not found".
 	DefaultImage = "node:24-bookworm"
 )
 
@@ -684,23 +683,21 @@ func DefaultServer() Server {
 			DefaultBase: "main",
 		},
 		Build: BuildDefaults{
-			// Docker, because the alternative executes a pull request's own code on
-			// this host. The default used to be local, which meant every install that
-			// never touched this key was running branch-authored build scripts as the
-			// daemon's user. See AllowLocalDriver.
+			// Docker, because the alternative executes a pull request's own code on this
+			// host as the daemon's user. See AllowLocalDriver.
 			Driver: DriverDocker,
-			// Not the -slim variant, which was the default and has no git in it. A
-			// documentation site that assembles content from other repositories clones
-			// them from inside the container, and that failed on the first clone with
-			// "git: not found" — a default that cannot run the thing this program exists
-			// to run. The full image is about twice the size, pulled once, and the
-			// operator who wants the smaller one can say so.
+			// Not the -slim variant, which has no git in it. A documentation site that
+			// assembles content from other repositories clones them from inside the
+			// container, and a -slim image fails on the first clone with "git: not found" —
+			// a default that cannot run the thing this program exists to run. The full
+			// image is about twice the size, pulled once, and the operator who wants the
+			// smaller one can say so.
 			Image:    DefaultImage,
 			Timeout:  15 * time.Minute,
 			KeepLogs: 7 * 24 * time.Hour,
-			// Four cores and six gigabytes. The old hardcoded pair was two and four,
-			// which on any modern machine leaves the prerender phase of a Docusaurus
-			// build — the longest one — running on a fraction of what is there.
+			// Four cores and six gigabytes: enough headroom that the prerender phase of a
+			// Docusaurus build — the longest one, and the one that parallelises across
+			// cores — is not left running on a fraction of a modern machine's capacity.
 			CPUs:   4,
 			Memory: "6g",
 		},

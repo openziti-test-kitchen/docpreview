@@ -103,9 +103,9 @@ func (l *eventLog) recent(n int) []Event {
 
 // backfill seeds the activity feed from the recorded build history.
 //
-// The feed is an in-memory ring, so before this it was empty after every restart
-// — a list of "recent activity" that forgot everything the moment the process
-// did, which reads as a broken feed rather than as an empty one.
+// The feed is an in-memory ring, so without this it would be empty after every restart — a list of
+// "recent activity" that forgets everything the moment the process does, reading as a broken feed rather
+// than an empty one.
 //
 // Oldest first, because add() writes into a ring and the newest entry has to end
 // up last. Only builds; the queued and skipped states are not recorded per build
@@ -148,12 +148,9 @@ func (d *Daemon) record(r scm.Report, message string) {
 	d.events.add(Event{
 		At:   time.Now(),
 		Kind: string(r.State),
-		// The same spelling StatusPreview uses, so the dashboard's one
-		// project() helper can derive the display name for both. They shipped
-		// under the same `repo` JSON key in different formats, which worked
-		// only because String() happens to end in the name — and collapsed two
-		// repositories with the same name under different owners into one
-		// filter chip.
+		// The same spelling StatusPreview uses, so the dashboard's one project() helper can derive the
+		// display name for both. Both fields share the `repo` JSON key, so a format that drops the owner
+		// would collapse two repositories with the same name under different owners into one filter chip.
 		Repo:      r.PR.Repo.String(),
 		PreviewID: r.PreviewID,
 		Number:    r.PR.Number,

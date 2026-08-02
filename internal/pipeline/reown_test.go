@@ -17,7 +17,7 @@ import (
 //   - `build ; chown` makes the shell's status the chown's, so **every failed build reports
 //     success** — a green comment on a pull request whose site did not build.
 //
-// The second is what this test exists for. It was written, reviewed and nearly shipped.
+// The second is what this test exists for.
 func TestTheBuildsExitStatusSurvivesTheChown(t *testing.T) {
 	script := buildScript("npm ci", "npm run build", "chown -R 1000:1000 /workspace")
 

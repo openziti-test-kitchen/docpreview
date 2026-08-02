@@ -220,11 +220,10 @@ func TestSecretsGenerateProducesADifferentValueEachTime(t *testing.T) {
 }
 
 func TestSecretsCreatingAVaultPersistsIt(t *testing.T) {
-	// "Create" has to create something. Open on a missing file returns an empty
-	// vault in memory and writes nothing, so the file used to appear only when
-	// the first secret was stored — and a restart before that discarded the
-	// passphrase, leaving a page that offered to create the vault again. It
-	// looked exactly like the vault had been wiped.
+	// "Create" has to create something. Open on a missing file returns an empty vault in memory and writes
+	// nothing on its own, so unlock must persist the vault immediately: otherwise a restart before the first
+	// secret is stored discards the passphrase and the page offers to create the vault again, indistinguishable
+	// from the vault having been wiped.
 	a, h := testAdmin(t, "127.0.0.1:8471")
 
 	if vaultExists(a.path) {

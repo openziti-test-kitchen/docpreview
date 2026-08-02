@@ -1,28 +1,22 @@
 // Loads the real dashboard in a DOM and watches one build happen underneath an
-// expanded row, driving the build picker the way the operator did when they
-// reported it.
+// expanded row, driving the build picker the way an operator would.
 //
 // # Why this exists
 //
-// "When you change and show the running build in the drop down, the black log is
-// NOT updated/tailing properly", and separately "i see it building in the
-// customer-connect-docs but i don't see one building in the drop down ... ok i
-// refreshed and i see it". Two complaints, one screen, and neither is visible by
-// reading the page: everything on it depends on which of four state objects a
-// render happens to see. So this harness plays the sequence out.
+// The dashboard's log pane depends on which of four state objects a render happens to
+// see, which is not visible by reading the page. This harness plays the sequence out:
+// expand a row while nothing is running, let a build start under it, step back to the
+// finished build, then pick the running one out of the dropdown and check whether
+// output that arrives *after* that click lands in the pane and whether the pane is
+// still following it.
 //
-// The sequence is exactly the operator's: expand a row while nothing is running,
-// let a build start under it, step back to the finished build, then pick the
-// running one out of the dropdown and see whether output that arrives *after*
-// that click lands in the pane and whether the pane is still following it.
+// # What it asserts
 //
-// # What it found
-//
-//   - Selecting the running build opened the stream but left Following off,
-//     because the only path to a stored build turns following off and the live
-//     entry shares it. The lines arrive and the viewport never moves, which from
-//     the reader's side is a log that stopped at the instant they selected it —
-//     the report, word for word.
+//   - Selecting the running build must turn Following back on. The only other path to
+//     a stored build turns following off, and the live entry shares that code path —
+//     without an explicit override, lines would arrive and the viewport would never
+//     move, which from the reader's side is a log that looks stopped at the instant
+//     they selected it.
 //   - The pane is only honest about the *newest* build being live. Any other
 //     stored build must stay a file download, because /logs/{id}/stream serves
 //     whatever is current rather than what was asked for, so "stream when a build
@@ -44,8 +38,7 @@ import {JSDOM, VirtualConsole} from "jsdom";
 const here = dirname(fileURLToPath(import.meta.url));
 // The page under test, overridable so a fix can be checked against the code it
 // fixes. A harness that only ever loads the current file cannot tell a real
-// assertion from one that would have passed before the change, and two of the four
-// diagnoses this page has collected were exactly that.
+// assertion from one that would have passed regardless of the change.
 const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
   join(here, "..", "..", "internal", "daemon", "dashboard.html");
 
@@ -141,8 +134,8 @@ const dom = new JSDOM(readFileSync(dashboard, "utf8"), {
       fetched.push(url);
       // A stored build is a download of plain text. Its body says "snapshot" so a
       // pane filled from the file is distinguishable from one fed by the stream —
-      // the two used to be indistinguishable, which is how a truncated read of a
-      // running build's log passed for a working feature.
+      // without this mark a truncated read of a running build's log would look
+      // identical to a working live tail.
       const dl = url.match(/^\/logs\/([^/]+)\/download\/(.+)$/);
       if (dl) {
         const build = decodeURIComponent(dl[2]);
@@ -231,9 +224,8 @@ await settle(250);
 
 /* ── 2. A build starts underneath the open row ──────────────────────────── */
 //
-// The operator's second complaint. Nothing was clicked and nothing was reloaded;
-// a push arrived. The picker has to learn about the build without being asked,
-// because the only other way to see it is the reload they had to do.
+// A push arrives with nothing clicked and no reload. The picker has to learn about
+// the new build on its own, because the only other way to see it is a reload.
 
 logs = [{preview_id: PREVIEW, build_id: NEW, size: 128, state: "building",
          mod_time: new Date().toISOString(), started_at: new Date().toISOString()},
@@ -249,8 +241,7 @@ await settle(400);
   console.log(`   labels=${JSON.stringify(s.labels)}`);
   console.log(`   banner="${s.banner}" streaming=${s.streaming}`);
   if (!s.labels.some(l => l.includes(NEW))) {
-    fail(`the picker never listed the build that started (${NEW}) — a reload is ` +
-      `the only way to see it, which is how this was reported`);
+    fail(`the picker never listed the build that started (${NEW}) without a reload`);
   } else {
     ok(`the picker listed ${NEW} without a reload`);
   }
@@ -286,10 +277,9 @@ if (choose(OLD)) {
 
 /* ── 4. Now show the running build, from the dropdown ──────────────────── */
 //
-// The reported bug. Everything that matters here is about what happens *after*
-// the click: a pane that renders the log so far and then sits there is precisely
-// what a file read looks like, and it is indistinguishable from a working stream
-// until another line arrives.
+// Everything that matters here is about what happens *after* the click: a pane that
+// renders the log so far and then sits there is precisely what a file read looks
+// like, and it is indistinguishable from a working stream until another line arrives.
 
 if (choose(NEW)) {
   await settle(200);
@@ -304,7 +294,7 @@ if (choose(NEW)) {
 
   if (/SNAPSHOT/.test(before.text)) {
     fail("the running build was read as a stored file — the pane shows the log up " +
-      "to that instant and then stops, which is the report");
+      "to that instant and then stops");
   }
   if (!s.streaming) fail("no stream is open for the running build");
   if (!grew) fail("nothing was streaming, so no line could be pushed in");
@@ -352,8 +342,8 @@ await settle(400);
   buildSel().blur();
   // Short on purpose. The one-second timestamp tick would catch this up on its own,
   // and a wait long enough to include it would assert nothing: the reader is looking
-  // at the list *now*, and "it appears a second after you stop touching it" is the
-  // complaint, not the fix.
+  // at the list *now*, and "it appears a second after you stop touching it" is still
+  // a stale picker, not a fix.
   await settle(150);
   const s = observe();
   console.log(`   after blur:    ${JSON.stringify(s.options)}`);

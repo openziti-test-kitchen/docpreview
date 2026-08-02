@@ -11,8 +11,7 @@ import (
 
 func TestYamlStringEscapesControlCharacters(t *testing.T) {
 	// Every free-form answer in `init -advanced` is operator-typed, so a pasted
-	// value with a stray newline or tab is ordinary, not exotic. An earlier
-	// version escaped only backslash and quote and emitted unparseable YAML.
+	// value with a stray newline or tab is ordinary, not exotic.
 	tests := []struct {
 		name  string
 		value string
@@ -97,9 +96,7 @@ func TestRenderedConfigAlwaysLoads(t *testing.T) {
 }
 
 func TestWriteConfigLeavesTheTargetAloneWhenInvalid(t *testing.T) {
-	// The promise: write a valid config, or fail without writing. An earlier
-	// version wrote first and validated second, so a bad value cost you the
-	// config you already had.
+	// The promise: write a valid config, or fail without writing.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yml")
 

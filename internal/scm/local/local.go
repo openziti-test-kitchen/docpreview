@@ -143,9 +143,9 @@ func (c *Client) VerifyWebhook(_ context.Context, headers map[string][]string, b
 		sig := http.Header(headers).Get("X-Hub-Signature-256")
 		if !verifySignature([]byte(c.cfg.WebhookSecret), body, sig) {
 			// The shared sentinel, so the ingress answers 401 rather than 400.
-			// A bare error here made a bad signature on this platform look like
-			// a malformed body, which tells a caller guessing at the secret that
-			// its guess was at least well-formed.
+			// A bare error here would make a bad signature on this platform look
+			// like a malformed body, telling a caller guessing at the secret
+			// that its guess was at least well-formed.
 			return nil, scm.ErrBadSignature
 		}
 	}
@@ -302,9 +302,9 @@ func (c *Client) Retract(ctx context.Context, pr model.PullRequest) error {
 // gitOutput runs a git command in a repository and returns trimmed stdout.
 //
 // stdout and stderr are captured separately, and the error carries stderr.
-// Using cmd.Output() and reporting only the exit status — which is what this
-// did first — throws away the one sentence that says what went wrong, leaving
-// "git diff: exit status 128" as the entire diagnosis.
+// Using cmd.Output() and reporting only the exit status would throw away the
+// one sentence that says what went wrong, leaving "git diff: exit status 128"
+// as the entire diagnosis.
 //
 // The error text is scrubbed on the way out. Nothing in a *local* repository
 // path is secret, so this is belt and braces here; it matters because the

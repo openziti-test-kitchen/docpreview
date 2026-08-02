@@ -36,11 +36,9 @@ func desktopPath(slashed string) string {
 // /run/desktop/mnt/host/<letter>, and a remote daemon accepts none of them.
 // hostMountPath encodes one answer; this asks the daemon in front of it.
 //
-// Success is judged by exit status, never by output. An earlier version of this
-// probe looked for the canary's contents in the command's output and so reported
-// every form as broken, including the two that worked — container stdout does not
-// come back over a TCP endpoint. That mistake cost an afternoon and a wrong
-// conclusion in the driver's own comments.
+// Success is judged by exit status, never by output: container stdout does not come back
+// over a TCP endpoint, so a probe that looked for the canary's contents in the command's
+// output would report every form as broken, including the ones that work.
 //
 // It logs and never fails, so it is safe to leave in the tree.
 func TestWhichMountFormDockerAccepts(t *testing.T) {

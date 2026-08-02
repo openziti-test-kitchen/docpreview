@@ -11,13 +11,11 @@ import (
 	"github.com/netfoundry/docpreview/internal/store"
 )
 
-// TestRestoreBuildSharesSurvivesARestart covers a bug that shipped and was found by
-// clicking a link.
+// TestRestoreBuildSharesSurvivesARestart asserts that a per-build share survives a restart.
 //
-// Startup reaps with an empty keep-set — nothing this process owns can have survived
-// the last one — and then republished previews only. So every per-build share died on
-// restart while `builds.url` went on advertising it, and the URL 404'd. The report
-// was "that should still be there", and it should have been.
+// Startup reaps with an empty keep-set — nothing this process owns can have survived the last one — and
+// must republish per-build shares along with previews. Without that, every per-build share would die on
+// restart while `builds.url` kept advertising it, and the URL would 404.
 func TestRestoreBuildSharesSurvivesARestart(t *testing.T) {
 	_, d, st := testIngress(t, &fakeClient{})
 	ctx := context.Background()

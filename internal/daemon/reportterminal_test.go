@@ -10,10 +10,9 @@ import (
 
 // TestATerminalStateAlwaysReachesThePlatform.
 //
-// A real 15-minute timeout recorded `failed` in the builds table and left the pull request
-// comment reading "Building" — for the rest of the day, since nothing else was going to
-// report against that commit. The reviewer's only view of the build says it is still
-// running.
+// A build.timeout failure that reaches only the builds table and not the platform leaves the pull
+// request comment reading "Building" indefinitely, since nothing else reports against that commit. The
+// reviewer's only view of the build would say it is still running.
 //
 // Every terminal state is checked, not just failed, and the queued/building pair before it
 // is included because the report path is stateful: staleReport tracks the furthest state per

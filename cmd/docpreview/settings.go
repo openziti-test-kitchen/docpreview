@@ -17,8 +17,8 @@ import (
 // These have a dashboard field each, and this command exists for the same reason `console
 // password` does: the dashboard is behind a login, so a script cannot reach it, and every field
 // on it is a field somebody eventually wants to set from a provisioning script or a restart
-// wrapper. `Restart-Docpreview.ps1 -Prefix a` was doing it with an authenticated PUT until the
-// login went in front of the API, at which point it started failing with a redirect to a form.
+// wrapper such as `Restart-Docpreview.ps1 -Prefix a`, which cannot follow a redirect to a login
+// form the way a browser can.
 func cmdSettings(args []string) error {
 	if len(args) == 0 {
 		usage()

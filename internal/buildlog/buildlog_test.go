@@ -143,11 +143,11 @@ func TestOverlongLineIsFlushedRatherThanBuffered(t *testing.T) {
 }
 
 func TestOverlongLineStaysReadable(t *testing.T) {
-	// The writer's flush cap and the reader's scanner cap were the same number
-	// with opposite meanings — "flush at least this much" against "reject more
-	// than this much" — so every flushed overlong line was one byte too long to
-	// read back. bufio.Scanner returned ErrTooLong and Tail then discarded the
-	// *entire* log, which surfaced as a blank log viewer with no explanation.
+	// The writer's flush cap and the reader's scanner cap have opposite meanings —
+	// "flush at least this much" against "reject more than this much" — so sharing one
+	// number between them would make a flushed overlong line exactly one byte too long
+	// to read back. bufio.Scanner would return ErrTooLong and Tail would discard the
+	// *entire* log, surfacing as a blank log viewer with no explanation.
 	//
 	// Stat'ing the file, which is all the test above did, cannot catch that.
 	// Reading it back is the whole point.

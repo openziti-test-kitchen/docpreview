@@ -240,9 +240,8 @@ func New(
 // on the next restart the recovery pass would skip a non-ready row and the
 // reaper would then delete a share that was working fine.
 //
-// Writing nothing at all, which is what happened before, means a failure has no
-// row, so it never appears on the dashboard and there is nothing to click to
-// reach its log. Which is exactly when somebody wants the log.
+// Writing nothing at all means a failure has no row, so it never appears on the dashboard and there is
+// nothing to click to reach its log — exactly when somebody wants the log.
 //
 // So: leave an existing preview alone — it is still true — and insert a row only
 // when there is nothing there, which is the first-build-fails case. The build
@@ -379,10 +378,9 @@ func (d *Daemon) currentBuilder() *pipeline.Builder {
 
 // SetClient installs the client for a platform, replacing any already there.
 //
-// Callable at runtime, because a GitHub client needs the App private key and
-// the vault holding it may still be locked when the daemon starts. Building it
-// during wiring meant the daemon refused to start until the vault was open —
-// while the page that opens the vault lives inside that daemon.
+// Callable at runtime, because a GitHub client needs the App private key and the vault holding it may
+// still be locked when the daemon starts. Building it during wiring would leave the daemon refusing to
+// start until the vault is open, and the page that opens the vault is served by this daemon.
 //
 // A build already in flight resolved its client when it started, so a client
 // installed now takes effect from the next report onwards.
@@ -576,11 +574,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 // backfillOpenPullRequests builds the open pull requests that have no preview.
 //
-// It exists because a delivery can be missed, and when it is, nothing notices. The daemon was
-// stopped for a rebuild while somebody opened a pull request; the webhook was retried into a
-// closed port; the tunnel was down for the minute that mattered. The pull request then sits with
-// no comment and no preview, and the first sign of it is a person asking why their link never
-// appeared — which is exactly how `customer-connect-docs#21` was found.
+// A webhook delivery can be missed — the daemon down for a rebuild, the tunnel down for a minute, a
+// delivery retried into a closed port — and nothing else notices when it is. Without this, the pull
+// request sits with no comment and no preview until someone asks why their link never appeared.
 //
 // Only pull requests with **no preview at all**. A preview that exists and failed is left alone,
 // for the same reason a failed branch preview is: rebuilding it on every restart would hide a
@@ -678,12 +674,11 @@ func (d *Daemon) backfillBranchPreviews(ctx context.Context) {
 	// startup, and a query per project on an installation with fifty of them is fifty
 	// queries to answer one question.
 	//
-	// A *failed* branch preview does not count as having one. The row exists, so the old test
-	// skipped it, and the permanent preview of `main` stayed broken until somebody noticed and
-	// pressed Rebuild — on the one preview nobody looks at, because the whole point of it is
-	// that it sits there working. A restart is the natural moment to try again: whatever broke
-	// the build may have been the thing that was just restarted, and the cost of being wrong is
-	// one build.
+	// A *failed* branch preview does not count as having one, even though a row exists for it. Without
+	// this, the permanent preview of `main` would stay broken until somebody noticed and pressed
+	// Rebuild — on the one preview nobody looks at, because the whole point of it is that it sits there
+	// working. A restart is the natural moment to try again: whatever broke the build may have been the
+	// thing that was just restarted, and the cost of being wrong is one build.
 	has := map[model.Repo]bool{}
 	failed := map[model.Repo]bool{}
 	for _, p := range previews {
@@ -999,11 +994,9 @@ func (d *Daemon) startupItemsSnapshot() []string {
 // restoreBuildShares republishes one preview's per-build shares, and forgets the
 // ones it cannot.
 //
-// Without this a build share lasted exactly as long as the process that made it.
-// Startup reaps with an empty keep-set — nothing we own can have survived — and then
-// republished previews only, so every build URL 404'd after a restart while
-// `builds.url` went on advertising it. Reported as "that should still be there", and
-// it should have been.
+// Without this a build share lasts only as long as the process that made it. Startup reaps with an empty
+// keep-set — nothing this process owns can have survived — and must republish build shares too, or every
+// build URL 404s after a restart while `builds.url` keeps advertising it.
 //
 // A row whose artifacts are gone has its URL cleared rather than being republished,
 // because `keep_builds` prunes artifacts and the row outlives them. Leaving the URL
@@ -1123,12 +1116,10 @@ func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg con
 
 	// The framework preset, before the project's own fields overlay it.
 	//
-	// Precedence, top down: the project's explicit field, then its preset, then the
-	// repository's .docpreview.yml. The middle one beating the last is the surprising half
-	// and is deliberate — the repository's file says what it says, and an operator who
-	// chose "Docusaurus" in the dashboard has said something more recent and more specific.
-	// Deferring to the repository is what the blank preset is for, and it is the default,
-	// so a project nobody has touched behaves exactly as before.
+	// Precedence, top down: the project's explicit field, then its preset, then the repository's own
+	// .docpreview.yml. A preset outranks the repository's file because an operator who chose "Docusaurus"
+	// in the dashboard has said something more recent and more specific. The blank preset defers to the
+	// repository, and it is the default, so an untouched project behaves as if there were no preset at all.
 	//
 	// An unknown id is ignored rather than refused: it means this binary does not have a
 	// preset the row names — a downgrade, or an entry since removed — and falling back to
@@ -1461,10 +1452,9 @@ func (d *Daemon) republish(ctx context.Context, p store.Preview) error {
 
 // markUnpublished records that a preview recovery could not restore is not being served.
 //
-// Seen live on 2026-07-30: a preview that had built perfectly failed to restore when
-// `CreateShare` timed out, and `/status` went on reporting `state: ready` with a URL that
-// answered 502 for the rest of the day. `restoreBuildShares` already forgets a build's URL
-// when it cannot republish it, for exactly this reason; the preview path did not.
+// A preview can build perfectly and still fail to restore, if `CreateShare` times out. Left unhandled,
+// `/status` would go on reporting `state: ready` with a URL that answers 502 indefinitely.
+// `restoreBuildShares` already forgets a build's URL when it cannot republish it, for the same reason.
 //
 // Three things, and each closes one of the three surfaces that were lying:
 //
@@ -1599,12 +1589,11 @@ func (d *Daemon) CancelBuild(ctx context.Context, previewID string) bool {
 
 // Expecting reports whether a build is running or queued for a preview.
 //
-// It exists for the log stream, which has to decide between two right answers. A preview
-// with nothing coming should replay its last log and close, so a tab opening yesterday's
-// failure is not holding a connection open for a build that will never happen. A preview
-// with a build queued should keep the connection and announce that build when it starts,
-// because the alternative is what Rebuild used to do: connect, learn "nothing is running",
-// and have no way to find out that changed.
+// It exists for the log stream, which has to decide between two right answers. A preview with nothing
+// coming should replay its last log and close, so a tab opening an old failure is not holding a connection
+// open for a build that will never happen. A preview with a build queued should keep the connection and
+// announce that build when it starts: connecting, learning "nothing is running", and having no way to find
+// out that changed is the alternative this avoids.
 //
 // Queued as well as running, and that is the case it was written for: Rebuild enqueues, and
 // a worker claims the job a second or two later.
@@ -2029,13 +2018,11 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	var errs []error
 	// The queued build goes with the running one, and for the same reason.
 	//
-	// Claim used to be the only statement that removed a `jobs` row, so a push landing
-	// moments before a close left a job behind — and a worker claimed it minutes later,
-	// built it, wrote the rows back and published a share for a preview that had been
-	// deliberately removed. Unlinking a pull request is a button an operator presses to
-	// make the work stop, so a teardown that leaves the work queued has not done what it
-	// said. Cancelling the in-flight build above and dropping the queued one here are the
-	// two halves of one act.
+	// Dequeue must remove a `jobs` row here too, not only on Claim: a push landing moments before a close
+	// could otherwise leave a job behind for a worker to claim minutes later, build, and publish a share
+	// for a preview that had been deliberately removed. Unlinking a pull request is a button an operator
+	// presses to make the work stop, so a teardown that leaves the work queued has not done what it said.
+	// Cancelling the in-flight build above and dropping the queued one here are the two halves of one act.
 	//
 	// Collected rather than logged: a surviving job resurrects everything the rest of this
 	// function is removing, which makes it the one step whose failure the caller has to
@@ -2442,10 +2429,9 @@ func (d *Daemon) runPipeline(
 	if logw != nil {
 		sink = logw
 	}
-	// No event is recorded for opening the log. It used to emit one, which put
-	// a "log — build log opened" row in the activity feed between every queued
-	// and building pair: an entry for a thing that always happens, carrying no
-	// information, at twice the rate of the states anyone is watching for.
+	// No event is recorded for opening the log: it happens for every build, so an event here would put a
+	// "log — build log opened" row in the activity feed between every queued and building pair, carrying
+	// no information at twice the rate of the states anyone is watching for.
 
 	result, err := builder.Build(ctx, ws, repoCfg, sink)
 
@@ -2453,9 +2439,8 @@ func (d *Daemon) runPipeline(
 		if err != nil {
 			// The summary line for a *build* failure, the whole error for one of ours.
 			//
-			// The builder wraps the whole build output into its error so a pull request
-			// comment can quote it, so writing err.Error() for those appends a second copy
-			// of the log to the log — which is what the first version did.
+			// The builder wraps the whole build output into its error so a pull request comment can
+			// quote it. Writing err.Error() here would append a second copy of the log to the log.
 			//
 			// But errArtifactsUnusable is docpreview's own, carries no build output, and is
 			// four lines of diagnosis: the base URL the preview will serve at, the one the
@@ -2669,9 +2654,8 @@ func buildKey(previewID, buildID string) string { return previewID + "/" + build
 
 // markOpenable sets Openable on each event that still has something to show.
 //
-// Retention prunes old builds, so "this entry names a preview that exists" — which
-// is all the page could check for itself — stopped being the right question. An
-// entry whose build has been pruned must go inert rather than offer a click that
+// Retention prunes old builds, so "this entry names a preview that exists" — all the page can check for
+// itself — is not enough. An entry whose build has been pruned must go inert rather than offer a click that
 // lands on an empty pane.
 //
 // A build log is enough on its own. The log outlives the artifacts under a shorter
@@ -2680,8 +2664,7 @@ func buildKey(previewID, buildID string) string { return previewID + "/" + build
 //
 // Matched on the build id's suffix, because an event carries a short sha and a build
 // id is `<date>-<time>-<sha>`. An event with no commit — a teardown, anything
-// recorded against the preview rather than a build — is openable when the preview
-// still exists, which is what the page used to assume for everything.
+// recorded against the preview rather than a build — is openable when the preview still exists.
 //
 // One listing per preview, cached across the batch: sixty events over three previews
 // is three directory reads, not sixty.
@@ -2997,11 +2980,10 @@ func (d *Daemon) report(ctx context.Context, r scm.Report) {
 	// through, and a report that reached a platform without it would tell
 	// somebody a build failed and not where to look.
 	//
-	// The dashboard, with the preview in the fragment — not `/logs/<preview>`, which
-	// this used to be and which is a JSON array. The only link in a failure comment
-	// handed a reviewer a raw payload, and a fragment is the right half of the URL to
-	// put it in: the daemon never sees it, so it cannot leak into a log, and the page
-	// opens that preview's log pane on arrival.
+	// The dashboard, with the preview in the fragment — not `/logs/<preview>`, a JSON array that would hand
+	// a reviewer a raw payload as the only link in a failure comment. A fragment is the right half of the
+	// URL for this: the daemon never sees it, so it cannot leak into a log, and the page opens that
+	// preview's log pane on arrival.
 	if r.State == scm.StateFailed && r.DetailURL == "" {
 		if base := strings.TrimRight(d.cfg.DashboardURL, "/"); base != "" {
 			r.DetailURL = fmt.Sprintf("%s/#preview=%s", base, r.PreviewID)
@@ -3177,11 +3159,9 @@ type Status struct {
 	// Instance changes when the daemon restarts, which is how an open tab learns
 	// its JavaScript is older than the daemon answering it.
 	//
-	// The dashboard is one embedded file with no cache busting, so a tab left open
-	// across a rebuild keeps running the code it loaded. That produced three false
-	// bug reports in one afternoon — a fixed layout that had not moved, a filter
-	// that had not applied, a stale row — each costing a diagnosis before somebody
-	// thought to reload.
+	// The dashboard is one embedded file with no cache busting, so a tab left open across a rebuild keeps
+	// running the code it loaded. Behaviour that looks broken — a layout that has not moved, a filter that
+	// has not applied, a stale row — can instead be stale JavaScript running against a newer daemon.
 	//
 	// The process start time, not a build id: a version stamped at compile time
 	// cannot tell a restart of the same binary from no restart at all, and restart
@@ -3196,10 +3176,9 @@ type Status struct {
 
 	// Starting is true while recovery is still running.
 	//
-	// Workers do not exist until it finishes — reap-then-republish has to complete before
-	// anything may publish — so a build queued during that window sits there, and the page
-	// showed "Queued" with no way to tell it apart from a stuck queue. Which is what it was
-	// reported as, twice.
+	// Workers do not exist until it finishes — reap-then-republish has to complete before anything may
+	// publish — so a build queued during that window sits there. Without this flag the page shows "Queued"
+	// with no way to tell it apart from a stuck queue.
 	Starting bool `json:"starting"`
 
 	// Startup is which part of recovery is running, and how far through it is.
@@ -3308,11 +3287,10 @@ func (d *Daemon) setStartup(stage, note string, done, total int) {
 
 // bumpStartup records one completed exposer round trip.
 //
-// Counted in round trips rather than in previews, and that is the whole point of it.
-// Restoring two pull requests is eleven calls — one share per preview plus one per
-// retained build — at ten to fifteen seconds each, so a bar reading "1 of 2" sat
-// unchanged for minutes while eleven things happened behind it. Reported as the UI
-// being broken, which is a fair reading of a progress indicator that does not move.
+// Counted in round trips rather than in previews. Restoring two pull requests is eleven calls — one share
+// per preview plus one per retained build — at ten to fifteen seconds each, so a bar counting previews
+// would read "1 of 2" and sit unchanged for minutes while eleven things happened behind it, indistinguishable
+// from a stuck progress indicator.
 func (d *Daemon) bumpStartup() {
 	done := int(d.startupDone.Add(1))
 	d.setStartup(StageRestoring, restoringNote, done, d.startupTotal)

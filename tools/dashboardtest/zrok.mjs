@@ -317,8 +317,8 @@ for (const [where, over] of [
 
   // Un-enrolling is on the row it acts on, and only for this installation's own directory.
   //
-  // It used to be a button in a row of its own below both directories, which made it a
-  // control with no visible subject — "un-enrol this host" with two hosts listed above it.
+  // A button in a row of its own below both directories would be a control with no
+  // visible subject — "un-enrol this host" with two hosts listed above it.
   //
   // And never for the machine's: `~/.zrok2` belongs to the zrok CLI and to whatever else that
   // account is used for — a share somebody left running, another tool, a colleague's scripts.
@@ -497,9 +497,9 @@ console.log("\nthe machine's directory is described as a user account, not a hos
 
 console.log("\nan empty directory is never offered as something to use");
 {
-  // "Use this one" over a directory with nothing in it was the complaint that started this:
-  // selecting it cannot mean "publish through this", because there is nothing there. The
-  // empty one gets the wizard, the enrolled one gets the switch, and neither gets both.
+  // "Use this one" over a directory with nothing in it cannot mean "publish through
+  // this", because there is nothing there. The empty one gets the wizard, the enrolled
+  // one gets the switch, and neither gets both.
   const {doc} = await load(zrokState({
     enrolled: true, stored: "system", in_force: "system",
     system: {path: SYSTEM_DIR, exists: true, enabled: true},
@@ -586,8 +586,9 @@ console.log("\nevery exposer has a section, and one of them is marked in use");
 
 console.log("\nevery exposer can be selected from the page, and only when it would start");
 {
-  // Switching exposers used to be "edit config.yml and restart" — on a page built to avoid
-  // exactly that. The kind is a stored setting now, so every section carries the same control.
+  // The exposer kind is a stored setting, not something read from config.yml, so switching
+  // exposers is a control on this page rather than "edit config.yml and restart", and every
+  // section carries the same control.
   const {doc, posted} = await load(zrokState({
     enrolled: true, stored: "project", in_force: "project", exposer_kind: "local",
     project: {path: PROJECT_DIR, exists: true, enabled: true},
@@ -678,9 +679,9 @@ console.log("\nevery exposer can be selected from the page, and only when it wou
 
 console.log("\na chosen exposer that is not running yet says so, in three places");
 {
-  // The reported bug: pressing Enable and watching nothing move. The chips come from the
-  // *running* exposer, which does not change until a restart, so a panel that reported only
-  // that state looked inert — the click had worked and there was no way to tell.
+  // The chips come from the *running* exposer, which does not change until a restart, so
+  // a panel that reported only that state would look inert after pressing Enable — the
+  // click worked and there would be no way to tell.
   const {doc, body} = await load(zrokState({
     enrolled: true, stored: "project", in_force: "project",
     exposer_kind: "zrok2", exposer_stored: "ziti",
@@ -877,8 +878,8 @@ console.log("\nthe settings page is called Settings and links to Projects");
 console.log("\nthe rows are padded, not flush against the border");
 {
   // Every row lives inside a .secgroup-box, which is the only rule that gives .sec any
-  // horizontal padding — the first version put them straight into .secbox and the text
-  // touched the border. Asserted structurally because jsdom resolves no layout.
+  // horizontal padding — a row placed straight into .secbox would have its text touch
+  // the border. Asserted structurally because jsdom resolves no layout.
   const {doc} = await load(zrokState());
   const loose = [...doc.querySelectorAll("#exposer-body .sec")]
     .filter(el => !el.closest(".secgroup-box"));

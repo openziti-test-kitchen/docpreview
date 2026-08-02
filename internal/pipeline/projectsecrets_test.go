@@ -94,10 +94,9 @@ func TestProjectSecretsDoNotLeakBetweenProjects(t *testing.T) {
 
 // TestTheLogNamesTheInjectedVariables.
 //
-// Two builds in one evening failed because a variable was stored under a name the build
-// script does not read. Both times the symptom was several steps removed from the cause: the
-// script fell back to SSH, the container has no key, and the log said "Host key verification
-// failed" — naming neither the variable nor the fallback.
+// A variable stored under a name the build script does not read fails several steps removed
+// from the cause: the script falls back to SSH, the container has no key, and the log says
+// "Host key verification failed" — naming neither the missing variable nor the fallback.
 //
 // So the log says which variables were supplied. Names only: a name is a lookup key the
 // operator chose and has to be able to check, and the values are what the redactor is for.
