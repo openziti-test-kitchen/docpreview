@@ -58,6 +58,10 @@ const config: Config = {
   onBrokenLinks: 'throw',
 
   markdown: {
+    // Without this a ```mermaid fence renders as a code block showing the diagram's source,
+    // which looks like a page that forgot to finish rather than like a missing plugin. It needs
+    // @docusaurus/theme-mermaid registered below as well — one without the other does nothing.
+    mermaid: true,
     hooks: {
       onBrokenMarkdownLinks: 'warn',
     },
@@ -74,7 +78,9 @@ const config: Config = {
   // the --nf-* custom properties, the code-block palette) via getClientModules.
   // Registered here rather than in the preset so it loads after theme-classic
   // and its component overrides win.
-  themes: ['@netfoundry/docusaurus-theme'],
+  // theme-mermaid first, so the NetFoundry theme's component overrides still win where the two
+  // touch the same component.
+  themes: ['@docusaurus/theme-mermaid', '@netfoundry/docusaurus-theme'],
 
   presets: [
     [

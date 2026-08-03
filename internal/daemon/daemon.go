@@ -602,8 +602,14 @@ func (d *Daemon) backfillOpenPullRequests(ctx context.Context) {
 	// One pass over the previews rather than a query per pull request. Keyed by preview id
 	// because that is what a pull request hashes to, and what a row is keyed on.
 	have := map[string]bool{}
+	// And grouped by repository, for the reverse question. Branch previews are excluded:
+	// they belong to a branch rather than a pull request and are never closed.
+	storedByRepo := map[model.Repo][]store.Preview{}
 	for _, p := range previews {
 		have[p.PreviewID] = true
+		if !p.PR.IsBranch() && p.PR.Number != 0 {
+			storedByRepo[p.PR.Repo] = append(storedByRepo[p.PR.Repo], p)
+		}
 	}
 
 	for _, p := range projects {
@@ -641,6 +647,76 @@ func (d *Daemon) backfillOpenPullRequests(ctx context.Context) {
 			d.log.Info("queued a pull request that had no preview", "pr", pr.String(),
 				"note", "its webhook delivery was missed, or it was opened while the daemon was down")
 		}
+
+		d.teardownClosed(ctx, repo, prs, storedByRepo[repo])
+	}
+}
+
+// teardownClosed removes previews for pull requests this listing did not report as open.
+//
+// The reverse of the scan above, from the same listing, which is why it lives here rather than
+// in a pass of its own: asking twice would double the API calls a restart makes.
+//
+// Teardown otherwise happens only from a closed webhook, so a pull request merged while the
+// daemon was stopped keeps its preview forever — the artifacts, the row, and one reserved
+// exposer name per retained build. Nothing else notices: `shares list` compares the account
+// against the database and both agree, because it is the database that is stale.
+//
+// **Absence from a successful listing is the only evidence used.** The caller skips this
+// entirely when the listing failed, and an empty listing beside stored previews is treated as a
+// permissions problem rather than as thirty merged pull requests. Deleting a live preview
+// because an API call misbehaved costs a URL somebody is reading, and nothing here would say so.
+func (d *Daemon) teardownClosed(
+	ctx context.Context, repo model.Repo, open []model.PullRequest, stored []store.Preview,
+) {
+	if len(stored) == 0 {
+		return
+	}
+	if !d.cfg.Preview.TeardownOnClose {
+		// Counted and named, because the operator who turned this off is not the one who
+		// later finds that no new preview gets a URL. Every one of these holds reserved
+		// names against the exposer's quota for as long as the installation lives.
+		closed := 0
+		isOpen := make(map[int]bool, len(open))
+		for _, pr := range open {
+			isOpen[pr.Number] = true
+		}
+		for _, p := range stored {
+			if !isOpen[p.PR.Number] {
+				closed++
+			}
+		}
+		if closed > 0 {
+			d.log.Warn("previews are being kept for closed pull requests because teardown_on_close is off",
+				"project", repo.String(), "kept", closed)
+		}
+		return
+	}
+	if len(open) == 0 {
+		d.log.Warn("no open pull requests reported; leaving every preview for this project in place",
+			"project", repo.String(), "previews", len(stored))
+		return
+	}
+
+	isOpen := make(map[int]bool, len(open))
+	for _, pr := range open {
+		isOpen[pr.Number] = true
+	}
+	for _, p := range stored {
+		if isOpen[p.PR.Number] || ctx.Err() != nil {
+			continue
+		}
+		// Named before it happens, with the URL. The first restart after this shipped can
+		// remove a lot at once, and an operator watching preview URLs stop answering needs
+		// to be able to tell this from a fault.
+		d.log.Info("tearing down a preview whose pull request is closed",
+			"pr", p.PR.String(), "preview", p.PreviewID, "url", p.URL)
+		if err := d.teardown(ctx, p.PR, p.PreviewID); err != nil {
+			d.log.Warn("could not tear down a closed pull request's preview",
+				"pr", p.PR.String(), "preview", p.PreviewID, "error", err)
+			continue
+		}
+		d.recordf(p.PR, "removed", "Torn down at startup: the pull request is closed.")
 	}
 }
 
@@ -2316,8 +2392,7 @@ func (d *Daemon) runPipeline(
 	client scm.Client,
 	pr model.PullRequest,
 	log *slog.Logger,
-) (buildOutcome, pipeline.Decision, error) {
-	var out buildOutcome
+) (out buildOutcome, decisionOut pipeline.Decision, errOut error) {
 
 	cloneURL, err := client.CloneURL(ctx, pr)
 	if err != nil {
@@ -2456,11 +2531,35 @@ func (d *Daemon) runPipeline(
 				text = baseURL.Diagnosis
 			}
 			fmt.Fprintf(logw, "\n%s\n", d.scrub(text))
+			if ferr := d.logs.Finish(pr.PreviewID(), logw); ferr != nil {
+				log.Warn("closing the build log", "error", ferr)
+			}
+			logw = nil
+		}
+	}
+
+	// The log stays open through the commit phase, and closes in this deferred call.
+	//
+	// Publishing happens after the build and fails for reasons the build cannot see — a name
+	// already serving another preview, an exhausted name quota, a controller that will not
+	// answer. Closing the log at the end of the build put every one of those beyond its reach,
+	// so the pane ended on "$ build finished" and reported a success for a preview that never
+	// appeared. The reason existed only in the daemon's own log, on the host.
+	//
+	// The first line only. A publish error is one sentence, and the ones that wrap a build's
+	// output are already handled above, where the log is closed early to keep this from
+	// appending the log to itself.
+	defer func() {
+		if logw == nil {
+			return
+		}
+		if errOut != nil && !errors.Is(errOut, errSuperseded) {
+			fmt.Fprintf(logw, "\n$ this build did not publish\n%s\n", d.scrub(firstLine(errOut.Error())))
 		}
 		if ferr := d.logs.Finish(pr.PreviewID(), logw); ferr != nil {
 			log.Warn("closing the build log", "error", ferr)
 		}
-	}
+	}()
 
 	if err != nil {
 		d.saveBuild(store.Build{
@@ -2628,6 +2727,19 @@ func (d *Daemon) publishBuildShare(
 		PR:        pr,
 	}, site)
 	if err != nil {
+		// An exhausted name quota is reported to the operator rather than only to the log.
+		//
+		// It is not a fault in this build and the branch URL still works, so the build is
+		// allowed to succeed — which is exactly what makes it invisible. Every subsequent
+		// build silently loses its own URL, and the only symptom is a "Open build" link
+		// that stopped appearing. The event puts it in the activity feed, where the
+		// dashboard shows it, and names the three ways out.
+		if errors.Is(err, expose.ErrNameQuota) {
+			d.log.Error("no per-build URL: the exposer's name quota is exhausted",
+				"pr", pr.String(), "build", buildID, "name", name)
+			d.recordf(pr, "error", "No URL for this build — "+expose.ErrNameQuota.Error()+".")
+			return ""
+		}
 		d.log.Warn("this build has no URL of its own; the branch URL is unaffected",
 			"pr", pr.String(), "build", buildID, "name", name, "error", err)
 		return ""
@@ -3058,13 +3170,14 @@ func (d *Daemon) reaper(ctx context.Context) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 
+	// Swept once before the first tick, and the order in this loop is what does it.
+	//
+	// Waiting for the tick means a process that does not live an hour never expires anything.
+	// That is the ordinary case on a machine where the daemon is restarted to pick up a build,
+	// and it is silent: the TTL is configured, nothing is wrong in any log, and previews
+	// accumulate until an exposer quota stops the next publish. Previews outliving their TTL
+	// across a restart is the one thing this loop exists to prevent.
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-
 		expired, err := d.store.ExpiredPreviews(ctx, d.cfg.Preview.TTL)
 		if err != nil {
 			d.log.Error("finding expired previews", "error", err)
@@ -3139,6 +3252,13 @@ func (d *Daemon) reaper(ctx context.Context) {
 					d.log.Warn("reaping shares", "error", err)
 				}
 			}
+		}
+
+		// Waited at the bottom, so the sweep above runs once at startup.
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }

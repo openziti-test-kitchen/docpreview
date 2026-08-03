@@ -204,6 +204,8 @@ func cmdInit(args []string) error {
 		p.section("Preview lifetime")
 		p.note("Idle lifetime, refreshed on every rebuild, so an active PR never expires.")
 		cfg.Preview.TTL = p.duration("Preview TTL", cfg.Preview.TTL)
+		p.note("Answer yes unless you have a reason. No keeps every merged pull request's preview,")
+		p.note("and each one holds reserved names against the exposer's quota indefinitely.")
 		cfg.Preview.TeardownOnClose = p.yesNo("Remove a preview when its pull request closes?",
 			cfg.Preview.TeardownOnClose)
 	}
@@ -530,6 +532,9 @@ func renderConfig(c config.Server) string {
 	b.WriteString("preview:\n")
 	b.WriteString("  # Idle lifetime, refreshed on every rebuild.\n")
 	fmt.Fprintf(&b, "  ttl: %s\n", c.Preview.TTL)
+	b.WriteString("  # Leave this on. Off, every merged pull request keeps its preview, and each\n")
+	b.WriteString("  # retained build of each one holds a reserved name against the exposer's quota\n")
+	b.WriteString("  # until publishing stops working for the whole installation.\n")
 	fmt.Fprintf(&b, "  teardown_on_close: %t\n\n", c.Preview.TeardownOnClose)
 
 	b.WriteString("vault:\n")

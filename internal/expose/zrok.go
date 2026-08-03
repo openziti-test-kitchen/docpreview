@@ -730,6 +730,15 @@ func (z *Zrok) ensureName(ctx context.Context, name string) error {
 			z.log.Debug("zrok name already registered", "name", name, "namespace", z.namespace)
 			return nil
 		}
+		if isNameQuotaExhausted(err) {
+			// Logged here as well as returned, because the caller for a build share
+			// swallows the error into a warning: a build with no URL of its own is not a
+			// failed build. Without this line the account's limit is visible only as a
+			// preview that quietly stopped getting per-build URLs.
+			z.log.Error("zrok reserved-name quota is exhausted",
+				"name", name, "namespace", z.namespace)
+			return fmt.Errorf("registering zrok name %q: %w", name, ErrNameQuota)
+		}
 		return fmt.Errorf("registering zrok name %q in namespace %q: %w", name, z.namespace, err)
 	}
 	z.log.Info("registered zrok name", "name", name, "namespace", z.namespace)
@@ -760,6 +769,32 @@ func (z *Zrok) ensureName(ctx context.Context, name string) error {
 func isNameAlreadyExists(err error) bool {
 	var conflict *share.CreateShareNameConflict
 	return errors.As(err, &conflict) && conflict.Payload == ""
+}
+
+// ErrNameQuota reports that the zrok account holds every reserved name it is allowed.
+//
+// A distinct sentinel because the operator's response is distinct. Every other publish
+// failure is answered by retrying or fixing configuration, and this one is answered by
+// releasing names or moving to an account without the limit — so anything reporting it
+// has to say which of those it is, and the raw controller text does not.
+//
+// One name per commit reaches this far sooner than one per branch, so it is the ordinary
+// consequence of retaining a URL per build rather than a rare account problem.
+var ErrNameQuota = errors.New(
+	"this zrok account holds the maximum number of reserved names, so no new preview URL " +
+		"can be registered. Tear down previews for closed pull requests, lower " +
+		"preview.keep_builds so fewer per-build URLs are retained, or use an exposer with " +
+		"no name quota")
+
+// isNameQuotaExhausted recognises the quota 409 among the four that share its type.
+//
+// Matched on the payload text because the controller offers nothing else: all four
+// conflicts arrive as *share.CreateShareNameConflict and the status code is the same.
+// A wording change upstream turns this back into an unrecognised publish failure, which
+// is the safe direction — the publish still fails and still says so.
+func isNameQuotaExhausted(err error) bool {
+	var conflict *share.CreateShareNameConflict
+	return errors.As(err, &conflict) && strings.Contains(string(conflict.Payload), "names limit reached")
 }
 
 // ReleaseName gives up a reserved name, the other half of ensureName. Skipping it
