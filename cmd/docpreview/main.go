@@ -1031,6 +1031,14 @@ func cmdDoctor(args []string) error {
 	fmt.Printf("exposer: %s%s\n", w.cfg.Exposer.Kind, from)
 	fmt.Printf("driver:  %s\n", w.cfg.Build.Driver)
 
+	// Only when it is off, and only because the symptom points nowhere near it: previews
+	// accumulate, the exposer's name quota fills, and new previews stop getting URLs while
+	// every existing one keeps working. `doctor` is what somebody runs at that point.
+	if !w.cfg.Preview.TeardownOnClose {
+		fmt.Printf("cleanup: OFF — merged pull requests keep their previews, and each holds " +
+			"reserved names against the exposer's quota. Set preview.teardown_on_close: true\n")
+	}
+
 	for i, l := range w.cfg.Listeners {
 		label := "listen: "
 		if i > 0 {
