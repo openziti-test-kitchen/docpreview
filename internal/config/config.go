@@ -584,8 +584,13 @@ type PreviewConfig struct {
 	// preview is refreshed on every rebuild.
 	TTL time.Duration `yaml:"ttl"`
 
-	// TeardownOnClose removes the preview when its pull request is closed or
-	// merged.
+	// TeardownOnClose removes the preview when its pull request is closed or merged.
+	//
+	// Defaults to true and should stay that way. Turning it off keeps every merged pull
+	// request's preview, and each retained build of each one holds a reserved name against
+	// the exposer's quota — so publishing eventually stops for the whole installation, with
+	// nothing failing except new previews having no URL. The daemon warns at startup when it
+	// is off, because nothing else about the symptom points back here.
 	TeardownOnClose bool `yaml:"teardown_on_close"`
 
 	// KeepBuilds is how many builds of one pull request keep their artifacts, and

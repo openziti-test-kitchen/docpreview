@@ -245,10 +245,28 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 		return nil, fmt.Errorf("%w\n%s", err, out)
 	}
 
+	// refuse records why a *successful* build is not publishable, in the log as well as in the
+	// returned error.
+	//
+	// Every check below runs after the build exited zero, so the log already ends with
+	// "$ build finished" and reads as a success. Without this the dashboard shows a completed
+	// build, no error, and no preview, and the only copy of the reason is in a pull request
+	// comment that quotes a truncated excerpt.
+	//
+	// The reason only, never `out`: the errors here wrap the whole build log, and writing that
+	// to the sink would append the log to itself.
+	refuse := func(reason string) {
+		if sink != nil {
+			fmt.Fprintf(sink, "\n$ refusing to publish this build\n%s\n", reason)
+		}
+	}
+
 	outputDir := filepath.Join(buildDir, filepath.FromSlash(cfg.Build.Output))
 	if stat, statErr := os.Stat(outputDir); statErr != nil || !stat.IsDir() {
-		return nil, fmt.Errorf("build produced no output at %q; set build.output in %s\n%s",
-			cfg.Build.Output, config.RepoConfigName, out)
+		reason := fmt.Sprintf("build produced no output at %q; set build.output in %s",
+			cfg.Build.Output, config.RepoConfigName)
+		refuse(reason)
+		return nil, fmt.Errorf("%s\n%s", reason, out)
 	}
 
 	// Checked here rather than inside buildDocker, since the hazard applies to both
@@ -257,6 +275,7 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 	// build that writes `dist/secrets -> /home/daemon/.docpreview` publishes the vault
 	// at a preview URL.
 	if err := rejectSymlinks(outputDir); err != nil {
+		refuse(err.Error())
 		return nil, fmt.Errorf("%w\n%s", err, out)
 	}
 
@@ -269,6 +288,7 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 		// first line — "the site was built for a different base URL than the preview will
 		// serve" — would drop both base URLs, and the four lines that state them are the
 		// entire value of the check.
+		refuse(err.Error())
 		return nil, &BaseURLError{Diagnosis: err.Error(), Output: out, err: err}
 	}
 

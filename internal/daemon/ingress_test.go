@@ -38,6 +38,11 @@ type fakeClient struct {
 	// scan and link paths silently untestable rather than failing.
 	openPRs []model.PullRequest
 
+	// openPRsErr makes the listing fail. A failed listing must leave every stored preview
+	// alone: the startup scan treats absence from a listing as "this pull request is closed",
+	// and an unreachable platform would otherwise read as every pull request closing at once.
+	openPRsErr error
+
 	// What scm.BranchResolver answers. `master` rather than `main` in the tests that use
 	// it, so an implementation that assumed the name instead of asking would fail.
 	defaultBranch string
@@ -78,6 +83,9 @@ func (f *fakeClient) Retract(_ context.Context, pr model.PullRequest) error {
 func (f *fakeClient) OpenPullRequests(context.Context, model.Repo) ([]model.PullRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.openPRsErr != nil {
+		return nil, f.openPRsErr
+	}
 	return f.openPRs, nil
 }
 
