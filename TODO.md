@@ -11,6 +11,22 @@ three attempts to diagnose it by reading the code were all wrong.
 
 ## In flight
 
+**Packaging beyond deb and rpm.** `release.sh` now builds `.deb` and `.rpm` for amd64 and arm64 through
+nfpm, and the release uploads them. Four more channels would each remove a step for somebody:
+
+- [ ] **A container image on ghcr.io**, built and pushed from the tag. `Dockerfile` and
+      `docker-compose.yml` already exist and are documented, and every operator today builds the image
+      themselves — which means the compose file in the runbook refers to an image nobody can pull.
+- [ ] **A Homebrew tap.** Needs a second repository named `homebrew-docpreview` holding the formula,
+      and a release step that updates the formula's version and sha256. `brew install` is how a Mac
+      user expects to get the binary they run `docpreview preview` with.
+- [ ] **A Scoop manifest**, the cheapest of the four: one JSON file naming the Windows zip and its
+      hash. It can live in this repository and be installed from a raw URL before any bucket exists.
+- [ ] **Chocolatey**, last. The package has to clear community moderation, so the turnaround is days
+      rather than minutes and it should follow a release everybody else can already install.
+
+Each needs the same thing from the release: a version and a checksum, both already in `SHA256SUMS`.
+
 **An open pull request abandoned for months still holds its names forever.** Fixed on 4 August 2026 so
 that the TTL never expires an open pull request, which is correct for a review sitting over a weekend and
 leaves nothing to collect a branch somebody opened in March and forgot. The quota is the eventual cost.

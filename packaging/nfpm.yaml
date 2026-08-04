@@ -1,0 +1,92 @@
+# deb and rpm packaging, read by nfpm.
+#
+# **A template, not a config.** release.sh substitutes the three @@PLACEHOLDER@@ values below and
+# writes a real config per architecture. nfpm expands environment variables in some fields and not
+# in `contents.src`, where an unexpanded `${VAR}` becomes a glob that matches nothing — and the
+# packager reports that as an empty package rather than as an error, so it fails by producing a
+# zero-byte deb.
+#
+# The paths here must match install/install.sh exactly. A host installed from a package and a host
+# installed from the script have to be the same host, or a runbook is only true for one of them —
+# /usr/local/bin/docpreview, /etc/docpreview, /var/lib/docpreview, units in /etc/systemd/system.
+#
+# /etc/systemd/system rather than the /usr/lib/systemd/system a distribution package would normally
+# use. It is the directory install.sh writes to, and matching it means a host that has had both
+# cannot end up running one copy of a unit while editing another.
+name: docpreview
+arch: "@@ARCH@@"
+platform: linux
+version: "@@VERSION@@"
+section: devel
+priority: optional
+maintainer: NetFoundry <support@netfoundry.io>
+description: |
+  Documentation previews for pull requests.
+  A pull request arrives as a webhook, docpreview clones it, builds the docs, publishes the
+  output at a URL, and comments on the pull request with the link. Self-hosted, one binary,
+  and no inbound port.
+vendor: NetFoundry
+homepage: https://github.com/openziti-test-kitchen/docpreview
+license: Apache-2.0
+
+contents:
+  - src: "@@BIN@@"
+    dst: /usr/local/bin/docpreview
+    file_info:
+      mode: 0755
+
+  - src: install/docpreview.service
+    dst: /etc/systemd/system/docpreview.service
+    type: config|noreplace
+  - src: install/docpreview-webhook.service
+    dst: /etc/systemd/system/docpreview-webhook.service
+    type: config|noreplace
+  - src: install/docpreview-dashboard.service
+    dst: /etc/systemd/system/docpreview-dashboard.service
+    type: config|noreplace
+
+  - src: README.md
+    dst: /usr/share/doc/docpreview/README.md
+  - src: LICENSE
+    dst: /usr/share/doc/docpreview/LICENSE
+
+  # Owned by the package so an uninstall does not leave them behind, and created empty so the
+  # postinstall has somewhere to put permissions. The vault and the database live in the first and
+  # the config in the second, so neither is ever removed on upgrade — see the postremove.
+  - dst: /var/lib/docpreview
+    type: dir
+    file_info:
+      mode: 0700
+      owner: docpreview
+      group: docpreview
+  # Group-writable, because the service account writes into it: `docpreview init` creates
+  # config.yml here and `vault keygen -out` puts the master key beside it, and both are documented
+  # as `sudo -u docpreview`. At 0750 that first command fails with a permission denied on a
+  # temporary file, which reads as a broken package rather than as a directory mode.
+  #
+  # Not world-readable. The config names where the master key comes from, and the key itself is
+  # 0640 root:docpreview once written.
+  - dst: /etc/docpreview
+    type: dir
+    file_info:
+      mode: 0770
+      owner: root
+      group: docpreview
+
+scripts:
+  preinstall: packaging/preinstall.sh
+  postinstall: packaging/postinstall.sh
+  preremove: packaging/preremove.sh
+  postremove: packaging/postremove.sh
+
+# No dependency on docker. The local build driver needs node instead, the container driver needs a
+# docker socket that may be on another host, and a hard dependency would make the package
+# uninstallable on a machine that builds with neither. install.sh reports which is available and so
+# does `docpreview doctor`.
+overrides:
+  deb:
+    recommends:
+      - docker.io
+  rpm:
+    recommends:
+      - docker
