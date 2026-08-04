@@ -42,7 +42,7 @@ Nothing on this box has been changed. Everything below is still to do.
 | Exposer | `zrok2`, selected on the dashboard rather than in the config file |
 | Share names | `docpreview` (webhook), `docpreview-dash` (dashboard) |
 | Source control | GitHub App 4420399, plus a Bitbucket access token |
-| Previews | 10 serving, 32 publications |
+| Previews | 7 serving, 16 publications, as of 4 August 2026 — check with `shares list` before copying, and expect the same numbers on the far side |
 
 The zrok scope is the one that makes this move more than a file copy.
 
@@ -116,7 +116,7 @@ there, unusable, forever.
 sudo install -o docpreview -g docpreview -m 0600 docpreview.db* vault.age /var/lib/docpreview/
 sudo cp -r zrok2 /var/lib/docpreview/zrok2
 sudo chown -R docpreview:docpreview /var/lib/docpreview
-sudo install -o root -g docpreview -m 0640 master.key /etc/docpreview/master.key
+sudo install -o docpreview -g docpreview -m 0600 master.key /etc/docpreview/master.key
 ```
 
 ### 6. Write the config

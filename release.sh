@@ -34,6 +34,13 @@ COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 DATE="$(git show -s --format=%cI HEAD 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
 OUT="${OUT:-dist}"
 
+# The repository the release notes point at, for the install command and the runbook link.
+#
+# Overridable, and defaulted rather than derived from the git remote: a fork building this would
+# otherwise print install instructions naming its own repository, where the release being described
+# does not exist.
+REPO="${REPO:-openziti-test-kitchen/docpreview}"
+
 echo "version : $VERSION"
 echo "commit  : $COMMIT"
 echo "date    : $DATE"
@@ -108,8 +115,72 @@ for target in $targets; do
   else
     tar -czf "$OUT/$name.tar.gz" -C "$OUT" "$name"
   fi
+
+  # Kept for the deb and rpm below, which need the same binary rather than one built again.
+  # Building twice risks two artifacts from one version that are not the same bytes.
+  if [ "$goos" = "linux" ]; then
+    mkdir -p "$OUT/.bin/$goarch"
+    cp "$work/$bin" "$OUT/.bin/$goarch/docpreview"
+  fi
+
   rm -rf "$work"
 done
+
+# ── deb and rpm ──────────────────────────────────────────────────────────────────────────────
+#
+# Built with nfpm, run through `go run` at a pinned version rather than installed: the only
+# toolchain this script may assume is the Go one it already needs, and a release that depends on
+# somebody having remembered to install a packaging tool is a release that fails on a fresh CI
+# runner.
+#
+# Skipped rather than fatal when the download cannot happen. Somebody building on a laptop with no
+# network still gets the archives, which is what they were probably after.
+NFPM_VERSION="v2.43.0"
+PKG_VERSION="${VERSION#v}"
+
+echo
+echo "-- deb and rpm"
+if [ "${SKIP_PACKAGES:-}" = "1" ]; then
+  echo "   skipped: SKIP_PACKAGES=1"
+else
+  for goarch in amd64 arm64; do
+    # Go's spelling of the architecture, which nfpm translates into each packager's own. Passing
+    # the distribution's name instead produces a package whose filename and metadata disagree.
+    cfg="$OUT/.nfpm-$goarch.yaml"
+    sed -e "s|@@ARCH@@|$goarch|" \
+        -e "s|@@VERSION@@|$PKG_VERSION|" \
+        -e "s|@@BIN@@|$OUT/.bin/$goarch/docpreview|" \
+        packaging/nfpm.yaml | tee "$cfg" >/dev/null
+
+    for packager in deb rpm; do
+      if go run "github.com/goreleaser/nfpm/v2/cmd/nfpm@$NFPM_VERSION" package \
+        --config "$cfg" --packager "$packager" --target "$OUT"; then
+        continue
+      fi
+      # An empty artifact is worse than none: it lands in SHA256SUMS, downloads cleanly and
+      # installs nothing.
+      echo "   $packager for $goarch failed" >&2
+      find "$OUT" -maxdepth 1 -name "*.$packager" -size 0 -delete
+      packages_failed=1
+    done
+    rm -f "$cfg"
+  done
+fi
+rm -rf "$OUT/.bin"
+
+# Every artifact this release claims to have must exist and be non-empty. Verified rather than
+# assumed, because the packagers report a missing input as an empty output.
+for pkg in "$OUT"/*.deb "$OUT"/*.rpm; do
+  [ -e "$pkg" ] || continue
+  if [ ! -s "$pkg" ]; then
+    echo "empty package: $pkg" >&2
+    exit 1
+  fi
+done
+if [ "${packages_failed:-0}" = "1" ]; then
+  echo "packaging failed; not publishing a release with missing artifacts" >&2
+  exit 1
+fi
 
 echo
 echo "-- checksums"
@@ -118,7 +189,18 @@ echo "-- checksums"
 # The sed strips both the `./` and the `*` that sha256sum writes in binary mode — which it does on
 # Windows and not on Linux, so the file's format would otherwise depend on where it was built, and
 # a consumer matching on one spelling would work for exactly half of the releases.
-(cd "$OUT" && sha256sum ./*.tar.gz ./*.zip | sed -e 's| \*\./| \*|' -e 's| \./| |' > SHA256SUMS)
+#
+# nullglob is not on by default in sh, so the package globs are expanded through a helper that
+# drops what did not match — the deb and rpm are skippable and a literal `*.deb` in SHA256SUMS
+# would make verification fail for everybody.
+(
+  cd "$OUT" || exit 1
+  set -- ./*.tar.gz ./*.zip
+  for pkg in ./*.deb ./*.rpm; do
+    [ -f "$pkg" ] && set -- "$@" "$pkg"
+  done
+  sha256sum "$@" | sed -e 's| \*\./| \*|' -e 's| \./| |' | tee SHA256SUMS >/dev/null
+)
 cat "$OUT/SHA256SUMS"
 
 # ── The release notes ────────────────────────────────────────────────────────────────────────
@@ -143,6 +225,27 @@ zrok tunnel.
 INTRO
 
   cat <<INSTALL
+A package, if your distribution takes one. Both create the \`docpreview\` service account, install
+the three systemd units, and start nothing — there is a config to write first, and the package says
+so on the way out.
+
+\`\`\`bash
+# RHEL, Fedora, Amazon Linux
+sudo dnf install -y https://github.com/$REPO/releases/download/$VERSION/docpreview-${PKG_VERSION}-1.x86_64.rpm
+
+# Debian, Ubuntu
+curl -fsSLO https://github.com/$REPO/releases/download/$VERSION/docpreview_${PKG_VERSION}_amd64.deb
+sudo apt install -y ./docpreview_${PKG_VERSION}_amd64.deb
+\`\`\`
+
+\`arm64\` and \`aarch64\` builds of both are below.
+
+Removing either leaves \`/var/lib/docpreview\` and \`/etc/docpreview\` in place. They hold the
+vault, the database and the config naming the master key's source, and an uninstall that deleted
+them would destroy every stored credential with nothing to restore from.
+
+Or the script, which works on any distribution and verifies the download against \`SHA256SUMS\`:
+
 \`\`\`bash
 curl -fsSLO https://raw.githubusercontent.com/$REPO/$VERSION/install/install.sh
 chmod +x install.sh
@@ -155,7 +258,7 @@ service account and the systemd units, and it starts nothing — the four remain
 decisions, and it prints the command for each.
 
 Full walkthrough, from a provisioned VM to a preview URL:
-[install on a Linux VM](https://github.com/$REPO/blob/$VERSION/www/docs/runbooks/linux-service.md).
+[install on a Linux VM](https://github.com/$REPO/blob/$VERSION/www/docs/guides/linux-service.md).
 
 ## Anywhere else
 

@@ -19,7 +19,8 @@ extra failure modes.
 
 | | |
 |---|---|
-| A VM | 2 vCPU, **4 GB RAM**, 20 GB disk. Ubuntu 22.04 or 24.04, Debian 12, or anything with systemd |
+| A VM | 2 vCPU, **4 GB RAM**, 20 GB disk. Ubuntu 22.04 or 24.04, Debian 12, Amazon Linux 2023, or anything with systemd |
+| Docker | Needed by the default build driver. Step 1 installs it, and the `.deb` and `.rpm` pull it in for you |
 | Outbound HTTPS | To your source-control host, to the zrok service, and to the package registries a build downloads from |
 | Inbound | **None.** No port is opened, no DNS record is needed, no certificate is issued |
 | A source-control account | A GitHub App you can create, or a Bitbucket repository you can add a webhook to |
@@ -43,7 +44,18 @@ sudo systemctl enable --now docker
 docker run --rm hello-world
 ```
 
-:::note You can skip this
+:::tip The package may have done this already
+
+The `.deb` and `.rpm` in Step 2 declare docker as a recommended dependency, so `apt` and `dnf`
+install it with them by default. On Amazon Linux 2023, `dnf install ./docpreview*.rpm` brings in
+docker, containerd and runc unasked.
+
+That is a *weak* dependency: a minimal image, or `--setopt=install_weak_deps=False`, skips it. Run
+`docker run --rm hello-world` and only come back here if it fails.
+
+:::
+
+:::note You can skip docker entirely
 
 Set `build.driver: local` in the config instead and builds run `npm` directly on the VM. That is
 fine for repositories only you can push to, and it is not fine for anything where opening a pull
@@ -52,25 +64,61 @@ request is not a privilege — the build script arrives *in* the pull request. S
 
 :::
 
-## Step 2 — Get the binary onto the VM
+## Step 2 — Install docpreview
 
-A published release is the short way. The installer downloads it, **verifies it against the
-`SHA256SUMS` published with the release**, and refuses to install anything that does not match:
+A package, if your distribution takes one. Take the version from the
+[release page](https://github.com/openziti-test-kitchen/docpreview/releases) and substitute it
+below — these examples use `0.2.0`.
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/openziti-test-kitchen/docpreview/v0.1.0/install/install.sh
+# RHEL, Fedora, Amazon Linux
+sudo dnf install -y \
+  https://github.com/openziti-test-kitchen/docpreview/releases/download/v0.2.0/docpreview-0.2.0-1.x86_64.rpm
+```
+
+```bash
+# Debian, Ubuntu
+curl -fsSLO \
+  https://github.com/openziti-test-kitchen/docpreview/releases/download/v0.2.0/docpreview_0.2.0_amd64.deb
+sudo apt install -y ./docpreview_0.2.0_amd64.deb
+```
+
+`aarch64` and `arm64` builds of both are on the release page. Note the filenames: the rpm spells
+the architecture `x86_64` and `aarch64`, the deb spells it `amd64` and `arm64`, and neither carries
+the leading `v` that the tag does.
+
+The package does everything Step 3 describes — the service account, the directories, the units —
+and starts nothing. It prints the next three commands as it finishes.
+
+**Upgrading is the same command with a newer file.** There is no apt or dnf repository to add, so
+nothing upgrades on its own. `/var/lib/docpreview` and `/etc/docpreview` survive an upgrade and
+survive a removal, because they hold the vault, the database and the config naming the master key's
+source. Restart the service afterwards to run the new binary:
+
+```bash
+sudo systemctl restart docpreview
+```
+
+### No package for your distribution
+
+The installer script works anywhere with systemd. It downloads a release, **verifies it against the
+`SHA256SUMS` published with it**, and refuses to install anything that does not match:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/openziti-test-kitchen/docpreview/v0.2.0/install/install.sh
 chmod +x install.sh
-sudo ./install.sh --version v0.1.0
+sudo ./install.sh --version v0.2.0
 ```
 
 The installer comes from the repository at that tag, not from inside an archive — one file with one
 source. It downloads the right archive for the machine, checks it, and reads the systemd units out
 of it.
 
-Releases carry `linux/amd64`, `linux/arm64`, `darwin/arm64` and `windows/amd64`. The
-[release page](https://github.com/openziti-test-kitchen/docpreview/releases) lists them.
+Releases carry `linux/amd64`, `linux/arm64`, `darwin/arm64` and `windows/amd64`.
 
-Building it yourself works the same, from the VM or from your laptop:
+### Or build it yourself
+
+From the VM or from your laptop:
 
 ```bash
 # on the VM, with Go installed
@@ -89,21 +137,25 @@ Whichever you used, `docpreview version` says exactly what you have — the tag,
 whether the tree it was built from was dirty:
 
 ```text
-docpreview v0.3.0  a162fad0ffe3  2026-08-01T16:30:48-04:00  linux/amd64  go1.26.0
+docpreview v0.2.0  a162fad0ffe3  2026-08-01T16:30:48-04:00  linux/amd64  go1.26.0
 ```
 
 ## Step 3 — Run the installer
 
-Skip this if `--version` already did it. Otherwise, pointing at the binary you built:
+Skip this entirely if you installed the `.deb` or `.rpm`, or if `--version` already did it.
+Otherwise, pointing at the binary you built:
 
 ```bash
 sudo ./install.sh --binary ./docpreview
 ```
 
-It creates the `docpreview` service account, `/var/lib/docpreview` (0700) and `/etc/docpreview`
-(0750, root-owned), installs the binary to `/usr/local/bin`, and installs three systemd units. It
-starts nothing, and it writes no config, no key and no credential — those are decisions, and it
-prints the commands for each.
+However you got here, the result is the same host: the `docpreview` service account,
+`/var/lib/docpreview` (0700, owned by it) and `/etc/docpreview` (0770, `root:docpreview`), the
+binary at `/usr/local/bin/docpreview`, and three systemd units. Nothing is started, and no config,
+key or credential is written — those are decisions, and the next steps take them one at a time.
+
+`/etc/docpreview` is group-writable because the service account writes into it: Step 4 creates
+`config.yml` there and Step 5 puts the master key beside it, both as `sudo -u docpreview`.
 
 ### The service account
 
@@ -154,11 +206,16 @@ sudo -u docpreview /usr/local/bin/docpreview init -config /etc/docpreview/config
 One question — which exposer — then it writes commented YAML and prints everything it defaulted.
 Answer `zrok2`.
 
-Then set the data directory, since `init` defaults it to the account's home:
+Then set the data directory. `init` defaults it to `.docpreview` *inside* the account's home, so on
+this layout it writes `data_dir: "/var/lib/docpreview/.docpreview"` — a working directory, one level
+below the one the package created and the one the units and every command in this guide name:
 
 ```yaml
 data_dir: "/var/lib/docpreview"
 ```
+
+Left alone, nothing fails. The daemon builds and publishes out of the nested directory, and it is
+the directory a backup, a migration and `shares list` all miss.
 
 ## Step 5 — Mint a master key
 
@@ -168,14 +225,24 @@ expect to reboot unattended.
 
 ```bash
 sudo -u docpreview /usr/local/bin/docpreview vault keygen -out /etc/docpreview/master.key
-sudo chown root:docpreview /etc/docpreview/master.key
-sudo chmod 0640 /etc/docpreview/master.key
 ```
 
 ```yaml
 vault:
   key_source: "file:/etc/docpreview/master.key"
 ```
+
+:::danger Do not widen the key's permissions
+
+`keygen` writes it `0600` and owned by `docpreview`, which is what the daemon requires. **A key file
+readable by group or other is refused at startup**, so a `chmod 0640` to "let the group read it"
+produces a daemon that cannot open its own vault — reported as `it must not be readable by group or
+other`, which sounds like a bug in the check rather than a change somebody made on purpose.
+
+The file decrypts every secret in the vault. One account reads it, and that account is the one
+running the daemon.
+
+:::
 
 The key is outside `data_dir` on purpose, and the daemon refuses a key file inside it: that
 directory holds the vault, so one directory read must not yield both halves.

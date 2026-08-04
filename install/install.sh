@@ -8,7 +8,7 @@
 # a script whose choices nobody knows they inherited.
 #
 # What it leaves you with is a stopped service and a printed list of the four commands that start
-# it. See www/docs/runbooks/linux-service.md for the whole path including zrok and the App.
+# it. See www/docs/guides/linux-service.md for the whole path including zrok and the App.
 #
 #   sudo ./install.sh --version v0.3.0      # download a release and verify its checksum
 #   sudo ./install.sh                       # binary from ./build or $PWD
@@ -182,11 +182,15 @@ fi
 # ── Directories ──────────────────────────────────────────────────────────────────────────────
 say "creating directories"
 install -d -o "$USER_NAME" -g "$USER_NAME" -m 0700 "$DATA_DIR"
-# 0750 and root-owned: the config is not a secret, the master key beside it is, and the service
-# account needs to read both and write neither.
-install -d -o root -g "$USER_NAME" -m 0750 "$CONF_DIR"
+# Root-owned and group-writable. Step 1 below is `sudo -u docpreview docpreview init -config
+# $CONF_DIR/config.yml`, which writes a temporary file here before renaming it into place — at 0750
+# that fails with a permission denied on a name nobody recognises, and it reads as a broken install
+# rather than as a directory mode. The same account writes the master key here in step 2.
+#
+# Not world-readable: the config names where the master key comes from.
+install -d -o root -g "$USER_NAME" -m 0770 "$CONF_DIR"
 echo "   $DATA_DIR (0700, $USER_NAME)"
-echo "   $CONF_DIR (0750, root:$USER_NAME)"
+echo "   $CONF_DIR (0770, root:$USER_NAME)"
 
 # ── The binary and the units ─────────────────────────────────────────────────────────────────
 say "installing the binary"
@@ -214,7 +218,10 @@ Installed. Nothing is running yet, and four things are still yours to decide.
 2. A master key, so restarts do not need a person:
 
      sudo -u $USER_NAME $BIN_DEST vault keygen -out $CONF_DIR/master.key
-     sudo chown root:$USER_NAME $CONF_DIR/master.key && sudo chmod 0640 $CONF_DIR/master.key
+
+   keygen writes it 0600 and owned by $USER_NAME, which is what the daemon requires. Do not
+   widen it: a key file readable by group or other is refused at startup, because it decrypts
+   every secret in the vault.
 
    and in config.yml:
 
@@ -245,5 +252,5 @@ every open documentation pull request. Set the viewer password first, then:
 
      sudo systemctl enable --now docpreview-dashboard
 
-Full walkthrough: www/docs/runbooks/linux-service.md
+Full walkthrough: www/docs/guides/linux-service.md
 EOF

@@ -54,7 +54,7 @@ jobs:
             --notes-file dist/NOTES.md \
             --generate-notes \
             --verify-tag \
-            dist/*.tar.gz dist/*.zip dist/SHA256SUMS
+            dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/SHA256SUMS
 
       - name: Keep the artifacts either way
         uses: actions/upload-artifact@v4
