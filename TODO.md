@@ -11,6 +11,30 @@ three attempts to diagnose it by reading the code were all wrong.
 
 ## In flight
 
+**An open pull request abandoned for months still holds its names forever.** Fixed on 4 August 2026 so
+that the TTL never expires an open pull request, which is correct for a review sitting over a weekend and
+leaves nothing to collect a branch somebody opened in March and forgot. The quota is the eventual cost.
+
+- [ ] **A longer, separate window for an open-but-idle pull request** — `preview.abandon_after`, measured
+      in weeks rather than the TTL's days. Its comment has to be edited rather than retracted, because the
+      pull request is still open and a reviewer arriving at a deleted comment has no link and no reason.
+      That is what `scm.StateExpired` would be for, and it is deliberately not added until this is.
+
+**Recovery tears down a share it has already adopted, when one commit has two builds.** A build share's
+name embeds the commit, so two builds of the same commit render to one name — and publishing a name
+withdraws whatever holds it. Restoring both means the second kills the first's listener, and the log says
+so only afterwards, as `preview server stopped ... listener is closed`. Live on 2 August 2026 for
+`customer-connect-docs-feature-assistant-b400e0-cf9f37d`, builds `20260730-181530-cf9f37d` and
+`20260730-184200-cf9f37d`.
+
+`shares list` already reports this shape — its closing note explains that two builds of one commit share a
+URL — so the knowledge exists and recovery does not have it.
+
+- [ ] **Restore one share per name, not one per build.** The newest build of a commit wins, and the older
+      rows point at the same URL, which is what they already do on the account.
+- [ ] **A rebuild of the same commit must not orphan the previous build's row.** Whatever is skipped still
+      needs a URL that resolves, and the sibling's share is that URL.
+
 **A merged pull request whose preview outlived it is never noticed.** Teardown runs from the closed
 webhook, so a merge that lands while the daemon is stopped is missed and nothing reconciles it afterwards.
 Live on 2 August 2026: ten merged pull requests still held previews, 43 reserved zrok names between them,

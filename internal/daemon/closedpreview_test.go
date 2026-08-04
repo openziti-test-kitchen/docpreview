@@ -168,6 +168,66 @@ func TestOneRepositorysListingDoesNotTearDownAnother(t *testing.T) {
 	}
 }
 
+// An open pull request's preview does not expire, however long it has been idle.
+//
+// The TTL measures time since the last build, so a review that sits over a long weekend is
+// indistinguishable from one abandoned months ago. Expiring the first deletes the link a reviewer
+// was about to open and, because teardown retracts, the comment explaining it as well. Live on
+// 3 August 2026: four previews expired at 72h44m, one of them an open pull request.
+func TestAnOpenPullRequestsPreviewDoesNotExpire(t *testing.T) {
+	client := &fakeClient{}
+	_, d, _ := testIngress(t, client)
+	ctx := context.Background()
+
+	repo := model.Repo{Platform: model.PlatformGitHub, Owner: "acme", Name: "docs"}
+	open := model.PullRequest{Repo: repo, Number: 145, Branch: "testing-pr", HeadSHA: "aaa1111"}
+	closed := model.PullRequest{Repo: repo, Number: 4, Branch: "merged", HeadSHA: "bbb2222"}
+	client.openPRs = []model.PullRequest{open}
+
+	stale := []store.Preview{
+		{PreviewID: open.PreviewID(), PR: open, Name: open.Branch},
+		{PreviewID: closed.PreviewID(), PR: closed, Name: closed.Branch},
+	}
+
+	stillOpen := d.openPullRequests(ctx, stale)
+
+	if !stillOpen[open.PreviewID()] {
+		t.Error("an open pull request was not recognised as open, so its preview would expire")
+	}
+	if stillOpen[closed.PreviewID()] {
+		t.Error("a closed pull request was treated as open, so its preview would never expire")
+	}
+}
+
+// A pull request is assumed open when the platform cannot say otherwise.
+//
+// Every caller uses this to decide whether to destroy a preview, so an unreachable platform must
+// not read as every pull request closing at once.
+func TestAnUnreachablePlatformMeansAssumeOpen(t *testing.T) {
+	client := &fakeClient{}
+	_, d, _ := testIngress(t, client)
+	ctx := context.Background()
+
+	repo := model.Repo{Platform: model.PlatformGitHub, Owner: "acme", Name: "docs"}
+	pr := model.PullRequest{Repo: repo, Number: 4, Branch: "whatever", HeadSHA: "bbb2222"}
+	stale := []store.Preview{{PreviewID: pr.PreviewID(), PR: pr, Name: pr.Branch}}
+
+	for _, tc := range []struct {
+		name  string
+		setup func()
+	}{
+		{"the listing failed", func() { client.openPRsErr = errors.New("unreachable") }},
+		{"the listing was empty", func() { client.openPRsErr = nil; client.openPRs = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.setup()
+			if !d.openPullRequests(ctx, stale)[pr.PreviewID()] {
+				t.Error("a preview would have expired on an answer the platform never gave")
+			}
+		})
+	}
+}
+
 // An empty listing tears down nothing.
 //
 // Zero open pull requests beside stored previews is the shape a revoked credential takes, and it
