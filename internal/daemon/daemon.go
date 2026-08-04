@@ -3162,6 +3162,69 @@ func reportMessage(r scm.Report) string {
 	}
 }
 
+// openPullRequests reports which of these previews belong to a pull request that is still open,
+// keyed by preview id.
+//
+// **A pull request is treated as open unless a successful listing says otherwise.** Every caller
+// uses this to decide whether to destroy something, so an unreachable platform, a client that
+// cannot list, or an empty listing all have to mean "leave it alone". The failure of this
+// function is silent from the caller's side, and the cost of guessing wrong is a live preview
+// URL deleted from a pull request somebody is reviewing.
+func (d *Daemon) openPullRequests(ctx context.Context, previews []store.Preview) map[string]bool {
+	open := map[string]bool{}
+
+	byRepo := map[model.Repo][]store.Preview{}
+	for _, p := range previews {
+		if p.PR.IsBranch() || p.PR.Number == 0 {
+			continue
+		}
+		byRepo[p.PR.Repo] = append(byRepo[p.PR.Repo], p)
+	}
+
+	for repo, stored := range byRepo {
+		assumeOpen := func(why string, args ...any) {
+			d.log.Warn("assuming every pull request here is open, so nothing expires: "+why,
+				append([]any{"project", repo.String(), "previews", len(stored)}, args...)...)
+			for _, p := range stored {
+				open[p.PR.PreviewID()] = true
+			}
+		}
+
+		client, ok := d.client(repo.Platform)
+		if !ok {
+			assumeOpen("no client for this platform")
+			continue
+		}
+		lister, ok := client.(scm.PullRequestLister)
+		if !ok {
+			assumeOpen("this platform cannot list open pull requests")
+			continue
+		}
+		listed, err := lister.OpenPullRequests(ctx, repo)
+		if err != nil {
+			assumeOpen("the listing failed", "error", err)
+			continue
+		}
+		if len(listed) == 0 {
+			// The shape a revoked credential takes, and indistinguishable from a repository
+			// whose pull requests all closed.
+			assumeOpen("the listing came back empty")
+			continue
+		}
+
+		numbers := make(map[int]bool, len(listed))
+		for _, pr := range listed {
+			numbers[pr.Number] = true
+		}
+		for _, p := range stored {
+			if numbers[p.PR.Number] {
+				open[p.PR.PreviewID()] = true
+			}
+		}
+	}
+	return open
+}
+
 // reaper removes previews that have gone stale.
 func (d *Daemon) reaper(ctx context.Context) {
 	// Hourly: preview TTLs are measured in days, so anything finer is wasted
@@ -3183,6 +3246,16 @@ func (d *Daemon) reaper(ctx context.Context) {
 			d.log.Error("finding expired previews", "error", err)
 			continue
 		}
+		// Which pull requests are still open, asked once per repository rather than once per
+		// expired preview, and only for the repositories something expired in.
+		//
+		// An open pull request does not expire. The TTL measures time since the last build,
+		// so a review that sits over a long weekend looks identical to one that was abandoned
+		// in March — and taking the preview away from the first costs a reviewer the link they
+		// were about to use. Abandonment is what the TTL is for, and a closed pull request is
+		// already handled the moment it closes.
+		stillOpen := d.openPullRequests(ctx, expired)
+
 		for _, p := range expired {
 			// A branch preview does not expire, and this is the only place that could have
 			// expired it.
@@ -3194,6 +3267,9 @@ func (d *Daemon) reaper(ctx context.Context) {
 			// with no commits for longer than the TTL would otherwise have its permanent
 			// preview quietly deleted, which is the one thing it must not do.
 			if p.PR.IsBranch() {
+				continue
+			}
+			if stillOpen[p.PR.PreviewID()] {
 				continue
 			}
 			d.log.Info("reaping expired preview", "preview", p.PreviewID, "age", time.Since(p.UpdatedAt))
