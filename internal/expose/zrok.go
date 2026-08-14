@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -207,7 +209,8 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	// namespace" — so every preview needs its name registered first. Naming a
 	// share is the whole point of name_template, so the alternative is ephemeral
 	// shares whose hostname changes on every rebuild.
-	if err := z.ensureName(ctx, spec.Name); err != nil {
+	spec.say("registering the zrok name %s", spec.Name)
+	if err := z.ensureName(ctx, spec); err != nil {
 		return nil, err
 	}
 
@@ -220,9 +223,10 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	// bound to the name. The alternative is what this replaced — a preview that built
 	// successfully, has its artifacts on disk, and is not served because one HTTP request
 	// was slow. A leaked share until the next restart is the cheaper failure.
+	spec.say("creating the public share")
 	shr, err := func() (*sdk.Share, error) {
 		var out *sdk.Share
-		err := z.retryTransient(ctx, "create share "+spec.Name, func() error {
+		err := z.retryTransientTo(ctx, spec.Progress, "create share "+spec.Name, func() error {
 			var attempt error
 			out, attempt = sdk.CreateShare(z.root, req)
 			return attempt
@@ -242,10 +246,25 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 		}
 	}
 
-	listener, err := sdk.NewListener(shr.Token, z.root)
+	// Retried, and retried *before* the share is deleted.
+	//
+	// Opening a listener is a second round trip to the controller and fails for the same reasons
+	// creating the share does — a timeout, or the rate limit that a burst of publishes provokes.
+	// Unretried, a share created successfully was then thrown away because the call after it was
+	// refused for a reason that clears in seconds, and the build reported "did not publish".
+	spec.say("opening the listener for share %s", shr.Token)
+	listener, err := func() (net.Listener, error) {
+		var out net.Listener
+		err := z.retryTransientTo(ctx, spec.Progress, "open listener "+shr.Token, func() error {
+			var attempt error
+			out, attempt = sdk.NewListener(shr.Token, z.root)
+			return attempt
+		})
+		return out, err
+	}()
 	if err != nil {
-		// The share exists but nothing can serve it. Leaving it would burn the
-		// name and confuse the next attempt.
+		// Every attempt failed. The share exists and nothing can serve it, so leaving it would
+		// burn the name and confuse the next attempt.
 		if delErr := sdk.DeleteShare(z.root, shr); delErr != nil {
 			z.log.Error("failed to clean up share after listener error", "token", shr.Token, "error", delErr)
 		}
@@ -295,6 +314,7 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	}
 
 	url := JoinURL(origin, spec.BaseURL)
+	spec.say("published %s", url)
 	z.log.Info("published preview",
 		"preview", spec.PreviewID, "build", spec.BuildID,
 		"name", spec.Name, "url", url, "token", shr.Token)
@@ -384,7 +404,18 @@ func (z *Zrok) Adopt(ctx context.Context, spec Spec, a Adoptable, h http.Handler
 		z.withdraw(id)
 	}
 
-	listener, err := sdk.NewListener(a.Handle, z.root)
+	// Retried for the same reasons as the one in Publish, and it matters more here: this runs
+	// once per preview during startup recovery, so a rate limit provoked by the burst falls on
+	// exactly the calls that are restoring the installation.
+	listener, err := func() (net.Listener, error) {
+		var out net.Listener
+		err := z.retryTransient(ctx, "adopt listener "+a.Handle, func() error {
+			var attempt error
+			out, attempt = sdk.NewListener(a.Handle, z.root)
+			return attempt
+		})
+		return out, err
+	}()
 	if err != nil {
 		// Deliberately not deleted. Publish deletes a share it cannot serve because it
 		// had just created it; this one predates the process and something else may yet
@@ -625,6 +656,9 @@ func TransientZrok(err error) bool {
 	if err == nil {
 		return false
 	}
+	if RateLimitedZrok(err) {
+		return true
+	}
 	msg := err.Error()
 	for _, s := range []string{
 		"context deadline exceeded",
@@ -641,6 +675,32 @@ func TransientZrok(err error) bool {
 	return false
 }
 
+// RateLimitedZrok recognises the controller refusing because too many state changes were asked
+// for too quickly.
+//
+// A distinct test from the rest of TransientZrok because the right answer is a distinct wait.
+// A timeout means the controller was busy for a moment and two seconds is enough; a rate limit
+// means it is deliberately refusing and will keep refusing for as long as its window lasts, so
+// retrying on the same schedule spends all three attempts inside the same refusal.
+//
+// It arrives two ways and both are matched. Creating a share reports the code directly, and
+// opening the listener afterwards reports it as an authentication failure — `no apiSession,
+// authentication attempt failed: ... SERVER_TOO_MANY_REQUESTS` — because the SDK could not
+// establish a session to do the work. The second is the confusing one: nothing about it looks
+// like a rate limit, and it reads as a credential problem.
+//
+// Publishing several previews at once is what reaches it. Each publication is a name
+// registration, a share creation and a listener bind, so a restart or a queue draining with more
+// than one worker issues them in a burst.
+func RateLimitedZrok(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SERVER_TOO_MANY_REQUESTS") ||
+		strings.Contains(msg, "Too many requests to alter state")
+}
+
 // RetryZrok runs fn, trying again while it fails transiently.
 //
 // The package-level form of Zrok.retryTransient, for callers that hold no Zrok — the two tunnel
@@ -648,23 +708,61 @@ func TransientZrok(err error) bool {
 //
 // ctx is honoured between attempts, so a shutdown does not sit through the wait.
 func RetryZrok(ctx context.Context, log *slog.Logger, what string, fn func() error) error {
-	err := fn()
-	for i, wait := range zrokBackoff {
+	return retryZrok(ctx, log, what, fn)
+}
+
+// retryZrok is the one implementation behind RetryZrok and Zrok.retryTransient.
+//
+// The schedule is chosen per attempt from the error in hand rather than fixed up front, because a
+// call can fail one way and then the other: a timeout retried two seconds later can come back rate
+// limited, and that attempt needs the longer wait rather than the one the first failure earned.
+func retryZrok(ctx context.Context, log *slog.Logger, what string, fn func() error) error {
+	return retryZrokTo(ctx, log, nil, what, fn)
+}
+
+// retryZrokTo is retryZrok with somewhere to narrate the waits.
+//
+// A backoff is the one thing here that takes long enough to be mistaken for a hang: a publish can
+// sit for two and a half minutes while the controller refuses state changes, and from the build
+// log it is indistinguishable from a build that stopped. progress is nil for every caller that has
+// nowhere to say it.
+func retryZrokTo(ctx context.Context, log *slog.Logger, progress io.Writer, what string, fn func() error) error {
+	// Paced here rather than at each call site, because every state-altering call already comes
+	// through this function — creating a share, opening a listener, registering a name, deleting
+	// any of them. A pacer at the call sites would be a rule to remember at the next one.
+	paced := func() error {
+		paceZrok(ctx)
+		return fn()
+	}
+
+	err := paced()
+	for attempt := 1; ; attempt++ {
 		if !TransientZrok(err) {
 			return err
 		}
+		waits := zrokBackoff
+		reason := "zrok call timed out, retrying"
+		if RateLimitedZrok(err) {
+			waits = zrokRateLimitBackoff
+			reason = "zrok is rate limiting state changes, backing off"
+		}
+		if attempt > len(waits) {
+			return err
+		}
+		wait := waits[attempt-1]
 		if log != nil {
-			log.Warn("zrok call timed out, retrying", "call", what,
-				"attempt", i+1, "in", wait, "error", err)
+			log.Warn(reason, "call", what, "attempt", attempt, "in", wait, "error", err)
+		}
+		if progress != nil {
+			fmt.Fprintf(progress, "$ %s (%s) — retrying in %s\n", reason, what, wait)
 		}
 		select {
 		case <-ctx.Done():
 			return errors.Join(err, ctx.Err())
 		case <-time.After(wait):
 		}
-		err = fn()
+		err = paced()
 	}
-	return err
 }
 
 // isNotFound recognises the controller's answer for a share that is not there.
@@ -682,26 +780,78 @@ func isNotFound(err error) bool {
 // question.
 var zrokBackoff = []time.Duration{2 * time.Second, 6 * time.Second}
 
+// zrokRateLimitBackoff is the wait when the controller is refusing state changes outright.
+//
+// Tens of seconds, and more attempts, because the refusal has a window and retrying inside it is
+// refused again. The short schedule spent every attempt in the same window and reported the
+// publish as failed — which for a build that succeeded means a preview with no URL and a comment
+// that says so.
+//
+// The last wait is long enough to outlast a burst from a restart republishing several previews,
+// which is when this is met.
+var zrokRateLimitBackoff = []time.Duration{
+	15 * time.Second,
+	45 * time.Second,
+	90 * time.Second,
+}
+
+// zrokMinInterval is the smallest gap between two state-altering calls to the controller.
+//
+// Backing off after a refusal is the cure. This is the prevention, and it is the half that
+// matters: the controller limits *how fast state changes are asked for*, so the fix for hitting it
+// is not to ask faster than that and then wait. Publishing one preview is three calls — register
+// the name, create the share, open the listener — and there are two places that issue many at
+// once: startup recovery, which republishes every preview, and more than one build worker
+// finishing together.
+//
+// Process-wide rather than per-Zrok, because the limit is per account and a process holds one
+// environment. The tunnel commands share it through RetryZrok for the same reason.
+//
+// The cost is bounded and small. One publish gains under a second; recovering seventeen shares
+// gains about ten. Against that, a refused publish is a build that succeeded with no URL, and the
+// backoff that recovers it costs fifteen seconds at best.
+const zrokMinInterval = 250 * time.Millisecond
+
+var (
+	zrokPaceMu   sync.Mutex
+	zrokLastCall time.Time
+)
+
+// paceZrok blocks until zrokMinInterval has passed since the previous state-altering call.
+//
+// The lock is held across the wait deliberately. Callers are meant to queue here: releasing it
+// early would let every waiter compute the same deadline, sleep concurrently, and then issue
+// together — which is the burst this exists to break up.
+//
+// A cancelled context shortens the wait and does not refuse the call. Deciding not to call at all
+// belongs to the caller: `Publish` runs to completion on purpose once it has started, because a
+// share created and then abandoned is a leak, and the retry loop already declines to try *again*
+// after a cancellation.
+func paceZrok(ctx context.Context) {
+	zrokPaceMu.Lock()
+	defer zrokPaceMu.Unlock()
+
+	if wait := zrokMinInterval - time.Since(zrokLastCall); wait > 0 {
+		select {
+		case <-ctx.Done():
+		case <-time.After(wait):
+		}
+	}
+	zrokLastCall = time.Now()
+}
+
 // retryTransient runs fn, trying again while it fails in a way that looks like the
 // controller rather than the request.
 //
 // ctx is honoured between attempts, so a shutdown does not sit through the backoff.
 func (z *Zrok) retryTransient(ctx context.Context, what string, fn func() error) error {
-	err := fn()
-	for i, wait := range zrokBackoff {
-		if !transient(err) {
-			return err
-		}
-		z.log.Warn("zrok call timed out, retrying", "call", what,
-			"attempt", i+1, "in", wait, "error", err)
-		select {
-		case <-ctx.Done():
-			return errors.Join(err, ctx.Err())
-		case <-time.After(wait):
-		}
-		err = fn()
-	}
-	return err
+	return retryZrokTo(ctx, z.log, nil, what, fn)
+}
+
+// retryTransientTo is retryTransient for the calls a publish makes, which have a build log to
+// narrate their waits into.
+func (z *Zrok) retryTransientTo(ctx context.Context, progress io.Writer, what string, fn func() error) error {
+	return retryZrokTo(ctx, z.log, progress, what, fn)
 }
 
 // ensureName registers a name in the namespace, tolerating one that is already
@@ -716,7 +866,8 @@ func (z *Zrok) retryTransient(ctx context.Context, what string, fn func() error)
 // stable across rebuilds and restarts — the same reason the webhook tunnel
 // reserves its own name — and it means the account accumulates one name per
 // preview name ever published. See the note on Withdraw.
-func (z *Zrok) ensureName(ctx context.Context, name string) error {
+func (z *Zrok) ensureName(ctx context.Context, spec Spec) error {
+	name := spec.Name
 	client, err := z.root.Client()
 	if err != nil {
 		return fmt.Errorf("building zrok client: %w", err)
@@ -725,7 +876,20 @@ func (z *Zrok) ensureName(ctx context.Context, name string) error {
 	params := share.NewCreateShareNameParamsWithContext(ctx)
 	params.Body = share.CreateShareNameBody{Name: name, NamespaceToken: z.namespace}
 
-	if _, err := client.Share.CreateShareName(params, z.auth()); err != nil {
+	// The third state-altering call in a publish, after the name and the listener, and so the
+	// third that a burst of publishes can have refused. Retried on the same schedule: an
+	// unretried one turns a rate limit into a preview with no URL.
+	err = z.retryTransientTo(ctx, spec.Progress, "register name "+name, func() error {
+		_, attempt := client.Share.CreateShareName(params, z.auth())
+		// An existing name is the success case and must not be retried — asking again would
+		// spend the whole schedule on an answer that is already the one wanted.
+		if isNameAlreadyExists(attempt) {
+			return nil
+		}
+		return attempt
+	})
+
+	if err != nil {
 		if isNameAlreadyExists(err) {
 			z.log.Debug("zrok name already registered", "name", name, "namespace", z.namespace)
 			return nil

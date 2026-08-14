@@ -47,6 +47,10 @@ type fakeClient struct {
 	// it, so an implementation that assumed the name instead of asking would fail.
 	defaultBranch string
 	branchTip     string
+
+	// cloneURLErr fails the very first step of a build, which is the earliest a pipeline can
+	// fail and the case where no build log exists yet.
+	cloneURLErr error
 }
 
 func (f *fakeClient) Platform() model.Platform { return model.PlatformGitHub }
@@ -59,6 +63,9 @@ func (f *fakeClient) VerifyWebhook(context.Context, map[string][]string, []byte)
 }
 
 func (f *fakeClient) CloneURL(context.Context, model.PullRequest) (string, error) {
+	if f.cloneURLErr != nil {
+		return "", f.cloneURLErr
+	}
 	return "https://example.invalid/repo.git", nil
 }
 

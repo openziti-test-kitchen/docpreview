@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -200,33 +202,27 @@ func hostMountPath(dir string) (string, error) {
 // is created per commit and pruned with its siblings, so nothing inside it
 // survives a push.
 //
-// **This buys network, not build time.** A cold build takes 4m28s against 4m21s warm —
-// inside the noise. The actual speedup comes from node_modules living on a volume rather
-// than the bind mount, which takes the install from 5m46s to 14s on its own (see the
-// mount comments in build.go). What this cache buys instead is not re-fetching the same
-// tarballs on the second push to a branch, which matters on a metered or slow link and
-// not at all to the clock here.
+// # One cache per repository, not per pull request
 //
-// # One cache per pull request
+// Keyed on the repository, so the first build of a new pull request is warm. Per preview it
+// was cold, and the cost is measurable rather than theoretical: on netfoundry/docusaurus-shared
+// a cold `yarn install` spends **49 seconds** in `[3/5] Fetching packages`, which is 49 seconds
+// on the first build of every pull request, forever. Vercel caches per project and reports
+// `Already up-to-date. Done in 0.48s` for the same commit.
 //
-// Keyed by preview, which is the same lifetime as everything else a pull request
-// owns — its workspace, its artifacts, its logs. The cache is therefore deleted by
-// the same teardown that removes those, which is the property a shared cache cannot
-// have: a directory outliving every branch that wrote to it has no moment at which
-// anyone knows it is safe to remove.
+// Sharing is safe **for a cache** in a way it would not be for an installed tree. All three
+// managers' caches are content-addressed and written by atomic rename — that is what makes them
+// safe for the concurrent installs a machine with more than one build worker runs. node_modules
+// is deliberately not shared: it is mutable, `npm ci` empties it before installing, and two
+// builds writing one copy is a corrupt tree rather than a slow one.
 //
-// The cost is the first build of each pull request, which is cold. That is accepted
-// deliberately. A cache shared more widely is warmer, and it makes every build
-// depend on a directory every other build writes to — one corrupt entry then fails
-// everything at once, and clearing it costs everything too. Within a pull request,
-// which is where the pushes actually repeat, this is warm from the second build on.
+// What sharing gives up is a lifetime. A per-preview cache was deleted by the teardown that
+// removed the preview's workspace and artifacts; a repository's cache outlives every pull
+// request that filled it, so nothing deletes it on its own. That is the cache-clear control on
+// the projects page, and the bound on its growth is one dependency tree per repository.
 //
-// Not keyed on the branch name: PreviewID excludes it, so a force-push or a rename
-// keeps the cache the pull request already filled.
-//
-// What is deliberately *not* cached is node_modules. `npm ci` deletes it before
-// installing, which a bind mount cannot survive, and an installed tree is the thing
-// that would be unsafe to reuse anyway.
+// Not keyed on the branch or the pull request, so a force-push, a rename, or a brand new pull
+// request all land on the cache the repository already filled.
 //
 // Directories are created on the host first. A bind mount of a path the daemon
 // cannot find creates it as root-owned, which on a Linux host leaves a cache
@@ -244,7 +240,7 @@ func (b *Builder) cacheMounts(pr model.PullRequest) ([]string, error) {
 	var args []string
 	for _, m := range managers {
 		args = append(args,
-			"--mount", "type=volume,source="+CacheVolume(pr.PreviewID(), m.name)+
+			"--mount", "type=volume,source="+CacheVolume(CacheScope(pr), m.name)+
 				",target="+m.target,
 			"--env", m.env+"="+m.target,
 		)
@@ -252,8 +248,23 @@ func (b *Builder) cacheMounts(pr model.PullRequest) ([]string, error) {
 	return args, nil
 }
 
+// CacheScope is the cache key for a pull request: its repository, as twelve hex characters.
+//
+// Hex, and the same width a preview id is, because the volume name is parsed back into a scope by
+// the clear-all control and by anything listing what is on the disk. An owner and a repository
+// name would have to be sanitized into docker's `[a-zA-Z0-9][a-zA-Z0-9_.-]` alphabet, and two
+// distinct repositories can sanitize to one string — which is one repository silently reading
+// another's cache.
+//
+// The platform is in the digest, so github.com/acme/docs and a Bitbucket acme/docs are different
+// scopes. They are different repositories that happen to share a name.
+func CacheScope(pr model.PullRequest) string {
+	sum := sha256.Sum256([]byte(string(pr.Repo.Platform) + ":" + pr.Repo.Owner + "/" + pr.Repo.Name))
+	return hex.EncodeToString(sum[:6])
+}
+
 // CacheVolume names the docker volume holding one package manager's cache for one
-// preview.
+// scope — a repository, as CacheScope renders it.
 //
 // # Why a volume and not a directory on the host
 //
@@ -264,38 +275,39 @@ func (b *Builder) cacheMounts(pr model.PullRequest) ([]string, error) {
 // the same penalty that makes `npm ci` take 5m46s writing node_modules through a mount and
 // 14s writing it to a volume.
 //
-// A named volume lives in the docker VM's own filesystem, so the writes are native. It is
-// still per preview, so it still has the lifetime of everything else a pull request owns,
-// and it still survives between pushes to the same branch. What it gives up is being
-// visible on the host — which is why teardown and the cache controls delete volumes rather
-// than directories.
+// A named volume lives in the docker VM's own filesystem, so the writes are native. What it
+// gives up is being visible on the host — which is why the cache controls delete volumes
+// rather than directories.
 //
 // `build.cache_dir` therefore applies to the local driver only, and says so in the config.
 //
-// The name is the preview id and the manager, both already safe for docker's
-// `[a-zA-Z0-9][a-zA-Z0-9_.-]` rule: a preview id is hex and a manager name is a word.
-func CacheVolume(previewID, manager string) string {
-	return "docpreview-cache-" + previewID + "-" + manager
+// The name is the scope and the manager, both already safe for docker's
+// `[a-zA-Z0-9][a-zA-Z0-9_.-]` rule: a scope is hex and a manager name is a word.
+func CacheVolume(scope, manager string) string {
+	return "docpreview-cache-" + scope + "-" + manager
 }
 
-// CacheVolumesFor lists every cache volume belonging to a preview, for a caller that has
+// CacheVolumesFor lists every cache volume belonging to one scope, for a caller that has
 // to remove them.
-func CacheVolumesFor(previewID string) []string {
+func CacheVolumesFor(scope string) []string {
 	return []string{
-		CacheVolume(previewID, "npm"),
-		CacheVolume(previewID, "yarn"),
-		CacheVolume(previewID, "pnpm"),
+		CacheVolume(scope, "npm"),
+		CacheVolume(scope, "yarn"),
+		CacheVolume(scope, "pnpm"),
 	}
 }
 
-// RemoveCacheVolumes deletes a preview's cache volumes.
+// RemoveCacheVolumes deletes one scope's cache volumes.
 //
-// Best effort, and quiet about a volume that does not exist: a preview built under the
-// local driver never had any, and a preview torn down twice would otherwise log a failure
+// Best effort, and quiet about a volume that does not exist: a repository built under the
+// local driver never had any, and a scope cleared twice would otherwise log a failure
 // for work already done. `docker volume rm -f` is itself idempotent, so the only errors
 // worth reporting are docker being unreachable, which the caller logs.
-func RemoveCacheVolumes(ctx context.Context, previewID string) error {
-	args := append([]string{"volume", "rm", "-f"}, CacheVolumesFor(previewID)...)
+//
+// A volume a running build has mounted is refused by docker and reported as a failure rather
+// than waited for. Clearing a cache under a live build would be the more surprising answer.
+func RemoveCacheVolumes(ctx context.Context, scope string) error {
+	args := append([]string{"volume", "rm", "-f"}, CacheVolumesFor(scope)...)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return exec.CommandContext(ctx, "docker", args...).Run()

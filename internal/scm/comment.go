@@ -43,35 +43,71 @@ func RenderComment(r Report) string {
 	// and edits them in place. Without that it would post a second comment on every open
 	// pull request at once. See scm.HasMarker.
 	b.WriteString(MarkerFor(r.PreviewID, MarkerLinkRef))
-	b.WriteString("\n\n**Documentation preview**\n\n")
+	b.WriteString("\n\n")
 
-	b.WriteString("| | |\n|---|---|\n")
-	b.WriteString(fmt.Sprintf("| **Status** | %s %s |\n", stateIcon(r.State), stateText(r)))
-
-	// An explicit link, not a bare URL.
+	// One row under headings, rather than one labelled row per field.
 	//
-	// GitHub autolinks a bare URL in a table cell, but Bitbucket does not autolink inside
-	// a table and renders the preview URL as plain text that nobody could click — the one
-	// thing the whole comment exists to deliver. `[url](url)` is CommonMark, so both hosts
-	// produce a link and the visible text is unchanged.
-	if r.URL != "" {
-		b.WriteString(fmt.Sprintf("| **Preview** | [%s](%s) |\n", r.URL, r.URL))
+	// A field per row made the table taller than the information in it and grew every time
+	// something was added. Across, the labels are paid for once, the row is scannable, and a second
+	// preview of the same pull request would be a second row rather than a second table.
+	//
+	// Five columns, and every one of them answers a question somebody actually asks: which project,
+	// what state, where do I click, which commit, and is this current.
+	b.WriteString("**Documentation preview**\n\n")
+	b.WriteString("| Project | Status | Preview | Commit | Updated (UTC) |\n")
+	b.WriteString("|---|---|---|---|---|\n")
+
+	// The project is the repository, linked to the dashboard.
+	//
+	// Not to the build log — that is the status cell below. This is "where does this thing live",
+	// which is the dashboard itself, and it is the link that stays useful after the preview is
+	// gone.
+	project := r.PR.Repo.Owner + "/" + r.PR.Repo.Name
+	if r.DashboardURL != "" {
+		project = fmt.Sprintf("[%s](%s)", project, r.DashboardURL)
 	}
-	if r.Name != "" {
-		b.WriteString(fmt.Sprintf("| **Name** | `%s` |\n", r.Name))
-	}
-	if r.Commit != "" {
-		b.WriteString(fmt.Sprintf("| **Commit** | `%s` |\n", shortSHA(r.Commit)))
+
+	// The state, linked to its own build log when there is one.
+	//
+	// "Building" is the state this matters for: the log is tailed live, so the moment worth
+	// watching is while the build runs, and the reviewer who just pushed is reading this then. The
+	// duration joins it rather than taking a column of its own — it is a footnote to the state and
+	// exists only after the build finishes, so a column for it would be empty in every row anybody
+	// is watching.
+	status := fmt.Sprintf("%s %s", stateIcon(r.State), stateText(r))
+	if r.DetailURL != "" {
+		status = fmt.Sprintf("%s [%s](%s)", stateIcon(r.State), stateText(r), r.DetailURL)
 	}
 	if r.Duration > 0 {
-		b.WriteString(fmt.Sprintf("| **Built in** | %s |\n", r.Duration.Round(time.Second)))
+		status += fmt.Sprintf(" · %s", r.Duration.Round(time.Second))
 	}
 
+	// An explicit link, not a bare URL: GitHub autolinks one and Bitbucket does not, so the one
+	// thing this comment exists to deliver would render as unclickable text on one of the two
+	// hosts.
+	//
+	// The word rather than the address. The hostname is forty characters of DNS label that pushes
+	// every column after it off the screen, and a reviewer wants to click it rather than read it —
+	// the address is still there to copy, in the link.
+	preview := "—"
+	if r.URL != "" {
+		preview = fmt.Sprintf("[Preview](%s)", r.URL)
+	}
+
+	commit := "—"
+	if r.Commit != "" {
+		commit = fmt.Sprintf("`%s`", shortSHA(r.Commit))
+	}
+
+	// UTC, and the header says so. A build host, a reviewer and a pull request are routinely in
+	// three zones, and the comment cannot know the reader's — so it names the one it used.
 	updated := r.UpdatedAt
 	if updated.IsZero() {
 		updated = time.Now()
 	}
-	b.WriteString(fmt.Sprintf("| **Updated** | %s |\n", updated.UTC().Format("2006-01-02 15:04:05 UTC")))
+
+	b.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n",
+		project, status, preview, commit, updated.UTC().Format("Jan 2, 2006 3:04pm")))
 
 	// A failure says where to look, and nothing else.
 	//
@@ -84,14 +120,12 @@ func RenderComment(r Report) string {
 	//
 	// The detail is not lost. It is in the daemon's log and in the build log,
 	// both of which stay on the machine that ran the build.
+	// Only when there is no link on the state word. With one, this sentence printed the same URL a
+	// second time and said in twelve words what "Failed" already links to.
 	if r.State == StateFailed {
-		b.WriteString("\nThe build failed. See the build log for details")
-		if r.DetailURL != "" {
-			b.WriteString(fmt.Sprintf(": [%s](%s)", r.DetailURL, r.DetailURL))
-		} else {
-			b.WriteString(" on the docpreview dashboard")
+		if r.DetailURL == "" {
+			b.WriteString("\nThe build failed. See the build log on the docpreview dashboard.\n")
 		}
-		b.WriteString("\n")
 		return b.String()
 	}
 
@@ -132,7 +166,12 @@ func stateText(r Report) string {
 	case StateReady:
 		return "Ready"
 	case StateSkipped:
-		return "Skipped — no documentation changes"
+		// The reason carries the detail when there is one, and it is written for the person who
+		// opened the pull request. Spelling it out here as well printed the same sentence twice.
+		if r.Reason != "" {
+			return "Skipped"
+		}
+		return "Skipped, no documentation changes"
 	case StateFailed:
 		return "Failed"
 	default:

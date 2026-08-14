@@ -158,18 +158,26 @@ Defaults:
 ```yaml
 detect:
   paths:
-    - "docs/**"
-    - "blog/**"
-    - "src/**"
-    - "static/**"
+    - "**/docs/**"
+    - "**/blog/**"
+    - "**/src/**"
+    - "**/static/**"
     - "**/*.md"
     - "**/*.mdx"
-    - "docusaurus.config.*"
-    - "sidebars.*"
-    - "package.json"
-    - "package-lock.json"
+    - "**/docusaurus.config.*"
+    - "**/sidebars.*"
+    - "**/package.json"
+    - "**/package-lock.json"
     - ".docpreview.yml"
 ```
+
+**Every default starts with `**/`, so the site does not have to be at the repository root.** A
+monorepo, or a repository that assembles several sources into one `unified-doc/`, matches these as
+written. Anchored at the root they matched a stock layout and nothing else, and a nested site had
+every change reported as "no documentation changes" — a pull request that silently never gets a
+preview, which looks the same as the tool being broken.
+
+`**/` matches zero or more segments, so a root-level `docs/intro.md` still matches `**/docs/**`.
 
 An **empty** list is treated as a mistake and builds everything rather than nothing. A misconfigured
 repository should be noisy, not silently dead.

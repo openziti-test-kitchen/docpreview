@@ -37,16 +37,23 @@ var dashboardPaths = []string{
 
 // dashboardPostPaths are the routes that need POST as well.
 //
-// Two, and both are the login. Without them a daemon with a viewer password set would serve the
-// form through this tunnel and 404 the submission — a sign-in page that cannot sign anybody in,
-// which is a worse failure than having no login at all because it looks like the password is
-// wrong.
+// Three. Two are the login: without them a daemon with a viewer password set would serve the form
+// through this tunnel and 404 the submission — a sign-in page that cannot sign anybody in, which
+// is a worse failure than having no login at all because it looks like the password is wrong.
 //
-// Deliberately still an allowlist. The alternative — forwarding every POST — would hand the
-// tunnel the credential and project APIs, which is exactly what this command exists to prevent.
+// The third is rebuild, and it is the one write this tunnel carries. A reviewer who can see that a
+// build failed should be able to retry it, and a rebuild re-runs the command the branch already
+// runs on every push — it cannot choose what executes. The daemon gates it on a signed-in session
+// of either role; see ProjectsAdmin.rebuildGated for what that trades and why cancel and unlink
+// are not here.
+//
+// Deliberately still an allowlist. Forwarding every POST would hand the tunnel the credential and
+// project APIs, which is what this command exists to prevent, and those decide what command runs
+// on the build host.
 var dashboardPostPaths = []string{
 	"/login",
 	"/logout",
+	"/api/builds/{preview}/rebuild",
 }
 
 // cmdDashboardOnly publishes the read-only dashboard and nothing else.

@@ -45,10 +45,10 @@ func TestCacheMountsPointEachManagerAtItsOwnVolume(t *testing.T) {
 		}
 	}
 
-	// One volume per manager, named for the preview. Shared, pnpm's hard-linked store
-	// would land inside another manager's tree.
+	// One volume per manager, named for the repository. Shared between managers, pnpm's
+	// hard-linked store would land inside another manager's tree.
 	for _, m := range []string{"npm", "yarn", "pnpm"} {
-		want := "type=volume,source=" + CacheVolume(pr.PreviewID(), m) + ",target=/cache/" + m
+		want := "type=volume,source=" + CacheVolume(CacheScope(pr), m) + ",target=/cache/" + m
 		if !strings.Contains(joined, want) {
 			t.Errorf("no mount for the %s cache: want %s in\n%s", m, want, joined)
 		}
@@ -75,52 +75,54 @@ func TestCachesExistWithoutACacheDir(t *testing.T) {
 	}
 }
 
-// TestCachesAreNotSharedBetweenPullRequests is the property the per-preview layout
-// exists for: one pull request's corrupt entry must not be in the path of another's
-// build, and its cache must be deletable with it.
-func TestCachesAreNotSharedBetweenPullRequests(t *testing.T) {
-	root := t.TempDir()
+// Every pull request against one repository shares its cache, and two repositories never do.
+//
+// Sharing is the point: keyed per preview, the first build of every new pull request spent 49
+// seconds in `[3/5] Fetching packages` re-downloading a tree the repository had already fetched
+// many times. Safe because all three managers' caches are content-addressed and written by atomic
+// rename, which is what makes concurrent installs safe in the first place. node_modules is not
+// shared, and must not be — see cacheMounts.
+//
+// Two repositories must still be separate, including two that share a name on different platforms:
+// a cache one repository can write and another reads is one repository's dependency serving
+// another's build.
+func TestOneCachePerRepositorySharedByItsPullRequests(t *testing.T) {
 	b := &Builder{
-		defaults: config.BuildDefaults{CacheDir: root},
+		defaults: config.BuildDefaults{CacheDir: t.TempDir()},
 		log:      slog.New(slog.DiscardHandler),
 	}
 
-	// Two pull requests on the same repository, and one on another repository whose
-	// number collides — keying on the number alone would merge those two.
-	first, err := b.cacheMounts(testPR("acme", "docs", 2))
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := b.cacheMounts(testPR("acme", "docs", 3))
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, err := b.cacheMounts(testPR("other", "docs", 2))
-	if err != nil {
-		t.Fatal(err)
+	mounts := func(pr model.PullRequest) string {
+		args, err := b.cacheMounts(pr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sourceOf(t, args)
 	}
 
-	dirs := map[string]string{
-		"acme/docs#2":  sourceOf(t, first),
-		"acme/docs#3":  sourceOf(t, second),
-		"other/docs#2": sourceOf(t, other),
+	two := mounts(testPR("acme", "docs", 2))
+	three := mounts(testPR("acme", "docs", 3))
+	if two != three {
+		t.Errorf("two pull requests on one repository have different caches: %s and %s", two, three)
 	}
-	seen := map[string]string{}
-	for name, dir := range dirs {
-		if prev, dup := seen[dir]; dup {
-			t.Errorf("%s and %s share a cache directory: %s", prev, name, dir)
-		}
-		seen[dir] = name
+
+	if other := mounts(testPR("other", "docs", 2)); other == two {
+		t.Errorf("acme/docs and other/docs share the cache %s", other)
+	}
+
+	// Same owner and name, different platform. They are unrelated repositories.
+	bb := testPR("acme", "docs", 2)
+	bb.Repo.Platform = model.PlatformBitbucket
+	if mounts(bb) == two {
+		t.Errorf("github and bitbucket acme/docs share the cache %s", two)
 	}
 }
 
-// TestCacheFollowsThePullRequestNotTheBranch — PreviewID excludes the branch and the
-// commit, so a force-push or a rename must keep the cache the pull request filled.
-// This is the reason it is keyed on the preview rather than on the head branch.
-func TestCacheFollowsThePullRequestNotTheBranch(t *testing.T) {
-	root := t.TempDir()
+// A force-push or a branch rename must not move the cache. The scope is the repository, so
+// neither the branch nor the commit is in it.
+func TestCacheFollowsTheRepositoryNotTheBranch(t *testing.T) {
 	b := &Builder{
-		defaults: config.BuildDefaults{CacheDir: root},
+		defaults: config.BuildDefaults{CacheDir: t.TempDir()},
 		log:      slog.New(slog.DiscardHandler),
 	}
 

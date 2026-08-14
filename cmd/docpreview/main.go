@@ -545,6 +545,10 @@ func cmdServe(args []string) error {
 		return err
 	}
 
+	// Handed to the daemon so the dashboard can show it. The stamp lives in this package because
+	// that is where -ldflags writes it, and the daemon cannot import its own command.
+	daemon.SetBuildVersion(versionStamp())
+
 	w, err := setup(*configPath, *logLevel)
 	if err != nil {
 		return err

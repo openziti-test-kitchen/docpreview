@@ -209,10 +209,7 @@ func (i *Ingress) googleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	clientID, _, _ := i.google()
 
-	next := r.URL.Query().Get("next")
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
-		next = "/"
-	}
+	next := safeNext(r.URL.Query().Get("next"))
 	state, err := i.signState(next, time.Now())
 	if err != nil {
 		i.log.Error("signing the oauth state", "error", err)
@@ -310,7 +307,9 @@ func (i *Ingress) googleCallback(w http.ResponseWriter, r *http.Request) {
 	// Viewer, always. Admin is password-only — see the note at the top of this file.
 	setConsoleCookie(w, i.console.issue(RoleViewer, time.Now()))
 	i.log.Info("dashboard login via google", "email", email, "role", RoleViewer)
-	http.Redirect(w, r, next, http.StatusSeeOther)
+	// Re-checked although this `next` came out of our own signed state: the check is one call and
+	// it means no future change to what may be packed into state can turn this into a redirector.
+	http.Redirect(w, r, safeNext(next), http.StatusSeeOther)
 }
 
 // exchangeGoogleCode swaps an authorization code for the signed-in address.

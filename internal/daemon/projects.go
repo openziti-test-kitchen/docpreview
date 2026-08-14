@@ -229,7 +229,8 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// Cancelling a build. Keyed on a preview rather than a project, like the cache
 	// controls, and here for the same reason: one gate rather than a third copy of it.
 	mux.HandleFunc("POST /api/builds/{preview}/cancel", a.gated(a.cancelBuild))
-	mux.HandleFunc("POST /api/builds/{preview}/rebuild", a.gated(a.rebuild))
+	// The one route on this admin a viewer may reach. See rebuildGated.
+	mux.HandleFunc("POST /api/builds/{preview}/rebuild", a.rebuildGated(a.rebuild))
 
 	// Unlinking is keyed on the preview, because that is what the operator is looking
 	// at when they decide they do not want it. Linking is keyed on the project and a
@@ -275,6 +276,58 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 // guarding the weaker of the two.
 func (a *ProjectsAdmin) available() (bool, string) {
 	return listenersAllowAdmin(a.cfg.Listeners, "projects")
+}
+
+// rebuildGated is the gate for rebuilding a preview, and it is deliberately looser than gated.
+//
+// **Any signed-in role may rebuild, viewer included.** A rebuild re-clones the branch at the
+// commit already recorded and runs the build command already configured. It cannot choose what
+// runs: the command comes from the operator's project row or from the repository, both of which a
+// push already executes without anybody signing in. So the code a rebuild runs is code this
+// installation runs anyway, and refusing a viewer buys nothing except a reviewer who can see a
+// failed build and not retry it.
+//
+// What it does cost is bounded and worth naming. A rebuild spends build capacity, and it rewrites
+// the pull request comment when it finishes. `Enqueue` replaces the pending job for the same
+// preview rather than queuing behind it, so repeated presses collapse to one waiting build instead
+// of a queue somebody has to drain.
+//
+// Everything else on this admin keeps `gated`. Cancel stops somebody else's build, unlink removes
+// a preview and its comment, and the project and credential routes decide what command runs on
+// this host — none of those are recoverable by pressing the button again.
+//
+// No locality check and no listener check, which is the point: a viewer reaching this through the
+// read-only dashboard tunnel is exactly the caller it is for. The session is the credential, and
+// there is no path to a session without a password.
+func (a *ProjectsAdmin) rebuildGated(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch roleOfContext(r.Context()) {
+		case RoleAdmin, RoleViewer:
+			next(w, r)
+			return
+		}
+		// No session. That is either an installation with no password set — where the locality
+		// gate is the only boundary there is — or a caller who never signed in.
+		a.gated(next)(w, r)
+	}
+}
+
+// mayRebuild answers the question rebuildGated will answer, without running the handler.
+//
+// So `/status` can tell the page whether to offer the control. One function decides, asked twice:
+// a second copy of the rule in the page is a copy that disagrees with the gate, and both ways of
+// disagreeing are visible — a button that 404s, or a missing button on a daemon that would have
+// accepted the request.
+func (a *ProjectsAdmin) mayRebuild(r *http.Request) bool {
+	switch roleOfContext(r.Context()) {
+	case RoleAdmin, RoleViewer:
+		return true
+	}
+	if ok, _ := a.available(); !ok {
+		return false
+	}
+	ok, _ := isLocalRequest(r)
+	return ok
 }
 
 func (a *ProjectsAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
@@ -487,6 +540,44 @@ func validAvatar(a string) string {
 	if n := len([]rune(a)); n > maxAvatarRunes {
 		return fmt.Sprintf("an avatar is at most %d characters or emoji, got %d",
 			maxAvatarRunes, n)
+	}
+	return ""
+}
+
+// validDetectScript checks the detect script field, returning why it is unusable or "".
+//
+// **The field is a path in the repository, not a command.** It is executed directly — no shell, no
+// argument splitting — so a value with arguments in it is looked up as one long filename that
+// cannot exist. Checked here because the build-time failure is unrecognisable as this mistake: the
+// daemon reports `lstat /var/lib/docpreview/workspaces/<id>/scripts: no such file or directory`,
+// naming a path the operator never typed, an hour after they typed the one they did.
+//
+// `..` is refused for the same reason and one more. The detect script runs on the build host under
+// the local driver, so a path leaving the repository is a request to run something that did not
+// arrive in the pull request. The runtime check that catches it resolves symlinks first and
+// therefore reports whatever lstat says instead — true, and no use to anybody.
+//
+// A leading `./` is accepted and trimmed rather than refused: it means the same thing, and it is
+// how anybody used to a shell writes a path in the current directory.
+func validDetectScript(s string) string {
+	if s == "" {
+		return ""
+	}
+	if strings.ContainsAny(s, " \t") {
+		return `a detect script is a path in the repository, not a command — it runs directly, ` +
+			`so arguments are part of the filename. Put the arguments in a script and name that: ` +
+			`".docpreview/detect"`
+	}
+	if strings.HasPrefix(s, "/") || strings.HasPrefix(s, `\`) ||
+		(len(s) > 1 && s[1] == ':') {
+		return `a detect script is a path relative to the repository root, so it cannot start ` +
+			`with "/" or name a drive`
+	}
+	for _, part := range strings.Split(strings.ReplaceAll(s, `\`, "/"), "/") {
+		if part == ".." {
+			return `a detect script cannot contain "..": it must be a file in the repository ` +
+				`being previewed, which is the only thing this daemon clones`
+		}
 	}
 	return ""
 }
@@ -747,6 +838,10 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if why := validAvatar(p.Avatar); why != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
+		return
+	}
+	if why := validDetectScript(p.DetectScript); why != "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
 		return
 	}

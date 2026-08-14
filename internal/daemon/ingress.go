@@ -489,6 +489,13 @@ func (i *Ingress) status(w http.ResponseWriter, r *http.Request) {
 	// Whose session this is, which only the request knows. The page needs it to decide whether
 	// to offer a sign-out: the cookie is HttpOnly, so JavaScript cannot look.
 	st.Role = string(roleOfContext(r.Context()))
+
+	// Whether this caller may rebuild, decided by the gate that will actually answer the POST
+	// rather than inferred by the page from two other facts. The page had to guess from the role
+	// plus /api/admin, and guessing wrong hides a control that works or offers one that 404s.
+	if i.projects != nil {
+		st.CanRebuild = i.projects.mayRebuild(r)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

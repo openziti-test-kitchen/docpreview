@@ -70,11 +70,20 @@ type Report struct {
 	// own pull request page render it, and neither is public.
 	LogExcerpt string
 
-	// DetailURL points at the build log for this preview, for a comment that
-	// declines to quote it. Empty when the operator has configured no address
-	// the link would work from, in which case the comment names the command
-	// instead.
+	// DetailURL points at the build log for this preview. The comment links the state word to it,
+	// and a failure names it again in the sentence that declines to quote the log.
+	//
+	// Empty when the operator has configured no address the link would work from, in which case
+	// the state is plain text and the comment names the dashboard instead.
 	DetailURL string
+
+	// DashboardURL is the dashboard itself, which the comment's project column links to.
+	//
+	// Separate from DetailURL, which addresses one preview's log. This is where the previews live
+	// and stays useful after this one is torn down — the same distinction Vercel draws between a
+	// project and a deployment. Empty when no address is configured, and the project is then plain
+	// text rather than a link to nowhere.
+	DashboardURL string
 
 	// Commit is the SHA that produced this state.
 	Commit string

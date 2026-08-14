@@ -68,3 +68,45 @@ func versionLine() string {
 	parts = append(parts, fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH), runtime.Version())
 	return strings.Join(parts, "  ")
 }
+
+// versionStamp is the short form the dashboard shows in its corner: a version and a short commit.
+//
+// The commit is here and the platform is not. "Is this the binary I just built" is answered by the
+// commit, and a corner label has room for one fact beyond the tag. `docpreview version` is where
+// the rest lives.
+//
+// A dirty tree says so, because the commit alone would name source that is not what is running —
+// which during development is most builds.
+func versionStamp() string {
+	v, c := version, commit
+
+	if info, ok := debug.ReadBuildInfo(); ok {
+		dirty := false
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				if c == "" {
+					c = s.Value
+				}
+			case "vcs.modified":
+				dirty = s.Value == "true"
+			}
+		}
+		if dirty {
+			c += "+dirty"
+		}
+	}
+
+	if v == "" {
+		v = "dev"
+	}
+	if i := strings.IndexByte(c, '+'); i > 12 {
+		c = c[:12] + c[i:]
+	} else if i < 0 && len(c) > 12 {
+		c = c[:12]
+	}
+	if c == "" {
+		return v
+	}
+	return v + " · " + c
+}

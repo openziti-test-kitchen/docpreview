@@ -2132,14 +2132,14 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 	if err := os.RemoveAll(filepath.Join(d.cfg.WorkspacesDir(), previewID)); err != nil {
 		errs = append(errs, fmt.Errorf("removing workspace: %w", err))
 	}
-	// The package cache is keyed on the preview for exactly this: it has the same
-	// lifetime as the workspace and artifacts above, so it goes the same way. A
-	// cache with a longer life than the branch that filled it has no moment at which
-	// anything knows it is safe to delete, and grows until somebody notices the disk.
-	// The docker driver's caches are volumes, not directories — see
-	// pipeline.CacheVolume for why. Removed here for the same reason the directory is:
-	// the cache has the lifetime of the pull request that filled it, and a volume nothing
-	// records is a volume nobody ever deletes.
+	// The package cache is **not** removed here. It is keyed on the repository, so it belongs to
+	// every pull request against that repository rather than to this one — deleting it would make
+	// closing one pull request cost every other one a cold install. Clearing it is the operator's
+	// decision, on the projects page.
+	//
+	// The call that remains removes volumes named by the preview id, which is how they were keyed
+	// before. A daemon upgraded across that change has one such set per pull request it ever
+	// built, and nothing else would ever collect them.
 	if d.removeCacheVolumes != nil {
 		if err := d.removeCacheVolumes(ctx, previewID); err != nil {
 			errs = append(errs, fmt.Errorf("removing the build cache volumes: %w", err))
@@ -2370,6 +2370,42 @@ func (d *Daemon) build(parent context.Context, pr model.PullRequest) {
 	}
 }
 
+// lateFailureLog opens a build log for a build that failed before it had one, and records the
+// attempt so the log has a row beside it in the picker.
+//
+// The failures this exists for are the ones a reader is least equipped to diagnose: a clone that
+// could not authenticate, a `.docpreview.yml` that does not parse, a detect script that is not at
+// the path a project row names. Each ends up in the daemon's log on the host and in one line of a
+// pull request comment, and until now the pane said "No build log was kept for <commit>" — the same
+// sentence a log pruned by retention produces. Somebody who clicked Rebuild and got that reasonably
+// concludes nothing ran.
+//
+// The redactor is the current builder's rather than this build's, since the build never got far
+// enough to have one. It carries the same server-wide secrets; what it lacks is this project's own
+// variables, which nothing has read into the error at this stage.
+//
+// Best effort. A log that cannot be opened here must not turn a build failure into a second one, so
+// every path returns nil and the caller carries on.
+func (d *Daemon) lateFailureLog(
+	pr model.PullRequest, buildID string, startedAt time.Time, cause error, log *slog.Logger,
+) *buildlog.Writer {
+	w, err := d.logs.Begin(pr.PreviewID(), buildID, d.currentBuilder().Redactor())
+	if err != nil {
+		log.Warn("could not open a log for a build that failed before starting", "error", err)
+		return nil
+	}
+
+	// A row for the log to sit beside. Without one the picker lists the log with no state and no
+	// duration — readable, but it does not say the build failed, which is the one thing it is
+	// being opened to say.
+	d.saveBuild(store.Build{
+		PreviewID: pr.PreviewID(), BuildID: buildID, PR: pr, Commit: pr.HeadSHA,
+		State: string(scm.StateFailed), Reason: d.scrub(firstLine(cause.Error())),
+		StartedAt: startedAt, FinishedAt: time.Now(),
+	})
+	return w
+}
+
 // buildOutcome is the successful result of runPipeline.
 type buildOutcome struct {
 	URL  string
@@ -2393,6 +2429,59 @@ func (d *Daemon) runPipeline(
 	pr model.PullRequest,
 	log *slog.Logger,
 ) (out buildOutcome, decisionOut pipeline.Decision, errOut error) {
+
+	// The build's identity and its log, declared before anything can fail.
+	//
+	// Everything below this point can fail before the build log is opened — a clone that cannot
+	// authenticate, an unparsable `.docpreview.yml`, a detect script that is not there. Those
+	// failures reached the daemon's log on the host and the pull request comment, and nothing
+	// else: the pane a reader opens said "No build log was kept", which is what a *pruned* log
+	// says, so a misconfiguration was indistinguishable from an expired one.
+	//
+	// The deferred call below opens a log for exactly that case. See lateFailureLog.
+	buildID := logBuildID(pr.HeadSHA)
+	startedAt := time.Now()
+
+	var logw *buildlog.Writer
+	// logClosed means the log was finished early, on the build-failure path, which must not
+	// reopen one here: a second Begin for the same build would overwrite the log that already
+	// holds the reason.
+	logClosed := false
+
+	defer func() {
+		if errors.Is(errOut, errSuperseded) {
+			// A newer push replaced this one. It has its own log, and this build's silence is
+			// correct — see the report suppression in runBuild.
+			return
+		}
+
+		if logw == nil && !logClosed {
+			if errOut == nil {
+				return
+			}
+			logw = d.lateFailureLog(pr, buildID, startedAt, errOut, log)
+			if logw == nil {
+				return
+			}
+		}
+		if logw == nil {
+			return
+		}
+
+		if errOut != nil {
+			// "did not publish" only once the build itself has run. Before that the build did
+			// not get as far as producing anything to publish, and saying otherwise sends
+			// somebody looking at the exposer for a fault in the clone.
+			what := "$ this build did not start"
+			if decisionOut.Build && out.Duration > 0 {
+				what = "$ this build did not publish"
+			}
+			fmt.Fprintf(logw, "\n%s\n%s\n", what, d.scrub(firstLine(errOut.Error())))
+		}
+		if ferr := d.logs.Finish(pr.PreviewID(), logw); ferr != nil {
+			log.Warn("closing the build log", "error", ferr)
+		}
+	}()
 
 	cloneURL, err := client.CloneURL(ctx, pr)
 	if err != nil {
@@ -2482,8 +2571,8 @@ func (d *Daemon) runPipeline(
 	// by one redactor and the environment set by another.
 	builder := d.currentBuilder().WithDriver(driver, image).WithSecrets(d.projectSecrets(pr))
 
-	buildID := logBuildID(pr.HeadSHA)
-	logw, logErr := d.logs.Begin(pr.PreviewID(), buildID, builder.Redactor())
+	opened, logErr := d.logs.Begin(pr.PreviewID(), buildID, builder.Redactor())
+	logw = opened
 	if logErr != nil {
 		// A build with no log is worse than no build, but only slightly — and
 		// refusing to build because a log file could not be opened would be a
@@ -2494,7 +2583,6 @@ func (d *Daemon) runPipeline(
 	// Record the attempt before it runs, so a build in flight appears in the
 	// history rather than materialising only once it ends — which is when somebody
 	// looking at the dashboard most wants to see it.
-	startedAt := time.Now()
 	d.saveBuild(store.Build{
 		PreviewID: pr.PreviewID(), BuildID: buildID, PR: pr, Commit: pr.HeadSHA,
 		State: string(scm.StateBuilding), StartedAt: startedAt,
@@ -2531,35 +2619,24 @@ func (d *Daemon) runPipeline(
 				text = baseURL.Diagnosis
 			}
 			fmt.Fprintf(logw, "\n%s\n", d.scrub(text))
+			// Closed here rather than in the deferred call, which would otherwise append the
+			// build's own output to itself. logClosed stops that call reopening one.
 			if ferr := d.logs.Finish(pr.PreviewID(), logw); ferr != nil {
 				log.Warn("closing the build log", "error", ferr)
 			}
 			logw = nil
+			logClosed = true
 		}
 	}
 
-	// The log stays open through the commit phase, and closes in this deferred call.
+	// The log stays open through the commit phase, and closes in the deferred call at the top of
+	// this function.
 	//
 	// Publishing happens after the build and fails for reasons the build cannot see — a name
 	// already serving another preview, an exhausted name quota, a controller that will not
 	// answer. Closing the log at the end of the build put every one of those beyond its reach,
 	// so the pane ended on "$ build finished" and reported a success for a preview that never
 	// appeared. The reason existed only in the daemon's own log, on the host.
-	//
-	// The first line only. A publish error is one sentence, and the ones that wrap a build's
-	// output are already handled above, where the log is closed early to keep this from
-	// appending the log to itself.
-	defer func() {
-		if logw == nil {
-			return
-		}
-		if errOut != nil && !errors.Is(errOut, errSuperseded) {
-			fmt.Fprintf(logw, "\n$ this build did not publish\n%s\n", d.scrub(firstLine(errOut.Error())))
-		}
-		if ferr := d.logs.Finish(pr.PreviewID(), logw); ferr != nil {
-			log.Warn("closing the build log", "error", ferr)
-		}
-	}()
 
 	if err != nil {
 		d.saveBuild(store.Build{
@@ -2618,14 +2695,27 @@ func (d *Daemon) runPipeline(
 		return out, decision, err
 	}
 
+	// The publish narrates itself into the build log, which is the pane somebody is watching
+	// while this happens. It is a network conversation of three round trips per share, each of
+	// which can be refused and retried on a schedule measured in tens of seconds — so without
+	// this the log ends at "$ build finished" and a minute of waiting looks like a hang.
+	//
+	// sink rather than logw: they are the same writer here, and sink is the one already typed as
+	// the interface Spec wants.
+	published := time.Now()
 	pub, err := d.exposer.Publish(ctx, expose.Spec{
 		PreviewID: pr.PreviewID(),
 		Name:      name,
 		BaseURL:   repoCfg.Build.BaseURL,
 		PR:        pr,
+		Progress:  sink,
 	}, site)
 	if err != nil {
 		return out, decision, err
+	}
+	if sink != nil {
+		fmt.Fprintf(sink, "$ preview is live at %s (%s)\n", pub.URL,
+			time.Since(published).Round(time.Second))
 	}
 
 	d.mu.Lock()
@@ -2668,7 +2758,7 @@ func (d *Daemon) runPipeline(
 
 	// A second share, pinned to this commit, beside the branch share that follows
 	// whatever is newest. Best effort: see publishBuildShare.
-	buildURL := d.publishBuildShare(ctx, pr, buildID, name, repoCfg, site)
+	buildURL := d.publishBuildShare(ctx, pr, buildID, name, repoCfg, site, sink)
 	if buildURL != "" {
 		// The row was already written as ready above, before this URL existed. The
 		// upsert keeps a non-empty name and url and refreshes the rest, so writing
@@ -2712,19 +2802,29 @@ func (d *Daemon) runPipeline(
 // as a daemon that has never had one.
 func (d *Daemon) publishBuildShare(
 	ctx context.Context, pr model.PullRequest, buildID, branchName string,
-	repoCfg config.RepoConfig, site http.Handler,
+	repoCfg config.RepoConfig, site http.Handler, progress io.Writer,
 ) string {
+	// The failure paths below all return empty and let the build succeed, so the build log is the
+	// only place a reader finds out why the second URL never appeared.
+	say := func(format string, a ...any) {
+		if progress != nil {
+			fmt.Fprintf(progress, "$ "+format+"\n", a...)
+		}
+	}
+
 	// Derived from the branch name rather than rendered from the template again,
 	// so a name_template that separates repositories keeps doing so here, and the
 	// two names sort next to each other in any list of shares.
 	name := branchName + "-" + model.ShortSHA(pr.HeadSHA)
 
+	say("publishing a URL for this commit as %s", name)
 	pub, err := d.exposer.Publish(ctx, expose.Spec{
 		PreviewID: pr.PreviewID(),
 		BuildID:   buildID,
 		Name:      name,
 		BaseURL:   repoCfg.Build.BaseURL,
 		PR:        pr,
+		Progress:  progress,
 	}, site)
 	if err != nil {
 		// An exhausted name quota is reported to the operator rather than only to the log.
@@ -2738,10 +2838,13 @@ func (d *Daemon) publishBuildShare(
 			d.log.Error("no per-build URL: the exposer's name quota is exhausted",
 				"pr", pr.String(), "build", buildID, "name", name)
 			d.recordf(pr, "error", "No URL for this build — "+expose.ErrNameQuota.Error()+".")
+			say("no URL for this commit: %s", expose.ErrNameQuota.Error())
 			return ""
 		}
 		d.log.Warn("this build has no URL of its own; the branch URL is unaffected",
 			"pr", pr.String(), "build", buildID, "name", name, "error", err)
+		say("no URL for this commit, which does not affect the preview URL above: %s",
+			d.scrub(firstLine(err.Error())))
 		return ""
 	}
 
@@ -3096,8 +3199,14 @@ func (d *Daemon) report(ctx context.Context, r scm.Report) {
 	// a reviewer a raw payload as the only link in a failure comment. A fragment is the right half of the
 	// URL for this: the daemon never sees it, so it cannot leak into a log, and the page opens that
 	// preview's log pane on arrival.
-	if r.State == scm.StateFailed && r.DetailURL == "" {
-		if base := strings.TrimRight(d.cfg.DashboardURL, "/"); base != "" {
+	// A build in flight gets it too, and the comment links the word "Building" to it. The log is
+	// tailed live, so the moment worth watching is while it runs — and a reviewer who has just
+	// pushed is reading the comment then, not after it says failed.
+	if base := strings.TrimRight(d.cfg.DashboardURL, "/"); base != "" {
+		if r.DashboardURL == "" {
+			r.DashboardURL = base + "/"
+		}
+		if r.DetailURL == "" && (r.State == scm.StateFailed || r.State == scm.StateBuilding) {
 			r.DetailURL = fmt.Sprintf("%s/#preview=%s", base, r.PreviewID)
 		}
 	}
@@ -3365,6 +3474,36 @@ type Status struct {
 	// change prompts a reload.
 	Instance string `json:"instance"`
 
+	// CanRebuild is whether this caller may rebuild a preview.
+	//
+	// Answered by the same gate the POST goes through, so the page never offers a control that
+	// will be refused and never hides one that would work. Filled in by the ingress, because it
+	// is a property of the request rather than of the daemon.
+	CanRebuild bool `json:"can_rebuild"`
+
+	// Version is the binary's build stamp, shown in the dashboard's corner.
+	//
+	// Instance answers "did it restart"; this answers "is the restart running what I built".
+	// Those are different questions and the second one is the one that goes unanswered for
+	// hours: a fix deployed to the wrong host, or a service restarted onto the old binary,
+	// looks exactly like a fix that does not work.
+	//
+	// Omitted when unset so the corner stays empty rather than reading "dev" on a release.
+	Version string `json:"version,omitempty"`
+
+	// StampOffsetMinutes is the UTC offset the build logs' per-line timestamps are written in.
+	//
+	// A log line is stamped `18:31:18.128` — no date and no zone, because a build log is read as a
+	// column of gaps rather than as a set of instants. The dashboard's timestamp hover does need
+	// the instant, and the reader's own zone is the wrong answer: a daemon on a VM in UTC and a
+	// reader in New York are four hours apart, so the hover would confidently report a time the
+	// build did not happen at.
+	//
+	// This daemon's *current* offset, so a log written on the other side of a daylight-saving
+	// change is off by an hour. That is the whole of the inaccuracy, it applies to logs older than
+	// the last transition, and the alternative is a zone database in the payload.
+	StampOffsetMinutes int `json:"stamp_offset_minutes"`
+
 	Pending  int             `json:"pending"`
 	Running  int             `json:"running"`
 	Previews []StatusPreview `json:"previews"`
@@ -3551,15 +3690,21 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 	}
 	d.mu.Unlock()
 
+	// The zone the build logs are stamped in, which is this process's. buildlog.Writer formats
+	// each line with time.Time.Format in local time, so the offset is the one time.Now() has.
+	_, offset := time.Now().Zone()
+
 	out := Status{
-		Exposer:     d.exposer.Kind(),
-		Instance:    d.instance,
-		Starting:    d.starting.Load(),
-		Startup:     d.startup.Load(),
-		LastStartup: d.lastStartup.Load(),
-		Pending:     pending,
-		Running:     len(running),
-		Events:      d.markOpenable(d.events.recent(60)),
+		Exposer:            d.exposer.Kind(),
+		Instance:           d.instance,
+		Version:            BuildVersion(),
+		StampOffsetMinutes: offset / 60,
+		Starting:           d.starting.Load(),
+		Startup:            d.startup.Load(),
+		LastStartup:        d.lastStartup.Load(),
+		Pending:            pending,
+		Running:            len(running),
+		Events:             d.markOpenable(d.events.recent(60)),
 	}
 
 	// Best effort. The switcher degrades to repository names, which is what it showed

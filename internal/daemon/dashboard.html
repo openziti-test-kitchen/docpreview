@@ -1152,9 +1152,13 @@ input.control::placeholder { color: var(--muted) }
 .item.open .caret { transform: rotate(90deg) }
 @media (prefers-reduced-motion: reduce) { .caret { transition: none } }
 
+/* No pull request number in here.
+   It is the row's pull request *link*, further along the row, and printing it twice put an
+   identical "#21" inside the accordion button — where clicking it toggles the row rather than
+   opening the pull request, because a button cannot contain an anchor. Two identical numbers, one
+   of them a link, is a trap: people click the first one they see. */
 .who { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0 }
 .who .proj { font-weight: 600 }
-.who .num { color: var(--muted); font-weight: 400 }
 .who .branch {
   font: 12.5px/1.4 ui-monospace, Consolas, monospace; color: var(--ink-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1313,6 +1317,11 @@ pre.term.empty .why { display: block; color: var(--muted); font-size: 0.8rem; ma
 pre.term .cmd { color: #9fd2ff }
 pre.term .err { color: #ff9a8c }
 pre.term .mask { color: var(--warning); font-weight: 700 }
+/* The per-line timestamp. Dimmer than the output, because it is a gutter rather than content —
+   every line has one and at full contrast the eye reads the column before the text. The help
+   cursor is the only affordance saying there is more behind it; see stampTitle. */
+pre.term .lts { color: #6f7885; cursor: help }
+pre.term .lts:hover { color: #b9c2cf }
 
 /* ── Right rail ─────────────────────────────────────────────────────────── */
 .rail { position: sticky; top: 4rem }
@@ -1447,6 +1456,31 @@ footer {
 .session { display: inline-flex; align-items: center; gap: 0.4rem }
 .session form { display: inline; margin: 0 }
 .session .who { font-size: 0.72rem; color: var(--muted) }
+
+/* The build stamp, bottom left.
+
+   Fixed rather than in the footer so it is answerable without scrolling: the question it exists
+   for — "is this the binary I just deployed" — is asked while looking at something that seems
+   wrong, and a fact that requires scrolling to the end of the page does not get read.
+
+   pointer-events: none so it cannot intercept a click meant for whatever is beneath it, and a
+   tabular figure so a changing commit does not shift its own width. Deliberately quiet: --muted
+   at 0.66rem, and it fades up on hover for anybody who actually wants to read it. */
+.buildstamp {
+  position: fixed;
+  left: 0.5rem;
+  bottom: 0.4rem;
+  z-index: 5;
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  opacity: 0.45;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.15s;
+}
+.buildstamp:hover { opacity: 0.9 }
+@media (max-width: 700px) { .buildstamp { display: none } }
 
 /* Last in the sheet, and !important, because `[hidden]` loses to any author rule
    that sets display — and .wrap sets grid. `el.hidden = true` alone would leave the
@@ -1614,6 +1648,11 @@ footer {
        login was needed, which is every installation that has set no viewer password. -->
 </footer>
 
+<!-- The running binary's build stamp. Filled from /status, and empty until the first poll
+     answers — a version typed into the markup would be the version of whatever built the page,
+     which is the same file for every release and so always wrong. -->
+<div class="buildstamp" id="buildstamp" title="the running binary — docpreview version says more"></div>
+
 <script>
 "use strict";
 
@@ -1658,6 +1697,26 @@ const stamp = iso => {
   return `${month} ${day} ${d.toLocaleTimeString([], {hour12: false})}`;
 };
 
+/* ago is how long before now, in words, for the one place a moving age is the answer: the
+   timestamp hover in the log pane, where "when was this line written" is asked about a line
+   somebody is pointing at rather than about a column that redraws.
+
+   Deliberately not used in the lists. There the age would count up beside a duration that does
+   not, which is two numbers moving at once and one of them meaningless — see stamp. */
+const ago = iso => {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!isFinite(ms)) return "";
+  if (ms < 0) return "just now";
+  const s = Math.round(ms / 1000);
+  if (s < 45) return s <= 1 ? "just now" : s + " seconds ago";
+  const m = Math.round(s / 60);
+  if (m < 60) return m === 1 ? "a minute ago" : m + " minutes ago";
+  const h = Math.round(m / 60);
+  if (h < 24) return h === 1 ? "an hour ago" : h + " hours ago";
+  const d = Math.round(h / 24);
+  return d === 1 ? "yesterday" : d + " days ago";
+};
+
 /* LIVE_STATES are the ones where the timestamp is a stopwatch rather than an age.
    A finished build's "6m" is a fact that does not change; a running build's is the
    thing being watched. */
@@ -1686,9 +1745,16 @@ const elapsed = iso => {
    happening without the reader having to read the words. */
 const rowWhen = p => isLive(p.state) ? elapsed(p.updated_at) : stamp(p.updated_at);
 
-/* pickerWhen is the same choice inside a sentence: "Building · 04m 12s" for one in
-   flight, "Ready · 14:26:23" for one that finished. */
-const pickerWhen = p => isLive(p.state) ? elapsed(p.updated_at) : stamp(p.updated_at);
+/* pickerWhen is the same idea for an <option>, with one difference that matters: it never ticks.
+
+   A stopwatch here changes the option's text every second, so the whole <select> has to be
+   rewritten — and rewriting a <select> closes the dropdown open over it, resetting the control
+   under anybody reaching into it. The row's clock is where a running build is watched, and the
+   option already says "Building".
+
+   So a live preview gets its state and no time. "Building" with a number beside it that stopped
+   moving would be worse than no number at all. */
+const pickerWhen = p => isLive(p.state) ? "" : stamp(p.updated_at);
 
 /* secs renders a duration. Minutes and seconds rather than a bare count, because the
    numbers that matter here are a warm install at 40s and a cold one at 6m20s, and "380s"
@@ -1725,6 +1791,12 @@ const ui = {
   // silently drop you onto a different build than the one you were reading.
   build: {},
   builds: {},         // preview id -> the build list last fetched for it
+  // preview id -> the state the build list was fetched at, so a render that changed nothing does
+  // not refetch. See maybeLoadBuilds.
+  buildsSig: {},
+  // preview id -> when it was last fetched, which throttles the one case that has to be asked
+  // again without a state change: a build appearing under a row that is already `building`.
+  buildsAt: {},
   // The timestamp of the activity entry that was clicked.
   //
   // Marked in the feed because there are clicks that change nothing else: every
@@ -1747,9 +1819,18 @@ const ui = {
   status: {},
   logSource: null,
   logFor: null,       // preview id the open stream belongs to
-  // The preview timestamp a reconnect was last done for, so it happens once per transition.
-  // See updateBody.
-  reconnectedAt: null,
+  // What an "there is no log" pane currently says, and when that was last confirmed:
+  // {previewID, html, checkedAt}. Null whenever the pane holds a log or nothing.
+  //
+  // An empty pane has an empty buffer and no open stream, which is the same state as a log
+  // nobody has read yet — so without this the reopen test fires on every render, reconnecting
+  // once per poll and rewriting the pane with the identical sentence each time.
+  empty: null,
+  // When a reconnect to the live stream was last attempted, and the preview and state it was for.
+  // A state change reconnects at once; after that it is retried on a timer, so a lost race
+  // recovers without a second transition to hang it on. See updateBody.
+  reconnectAt: 0,
+  reconnectSig: null,
 };
 
 // Inline SVG rather than an icon font or an emoji. A font is a network request
@@ -2035,12 +2116,21 @@ function renderList() {
   const gs = groups();
   const el = document.getElementById("list");
 
-  document.getElementById("list-heading").textContent =
-    ui.state || ui.project || ui.query
-      ? `Projects (${gs.length}) — ${ui.previews.filter(matches).length} of ${ui.previews.length} previews`
-      : `Projects (${gs.length})`;
+  const heading = document.getElementById("list-heading");
+  const headingText = ui.state || ui.project || ui.query
+    ? `Projects (${gs.length}) — ${ui.previews.filter(matches).length} of ${ui.previews.length} previews`
+    : `Projects (${gs.length})`;
+  if (heading.textContent !== headingText) heading.textContent = headingText;
 
-  const empty = el.querySelector(".empty");
+  // `:scope >`, and the restriction is load-bearing.
+  //
+  // This looks for *this list's* placeholder. Unscoped, `.empty` also matches the log pane, which
+  // explainEmptyPane marks `term empty` when a build's log has been pruned — so a row open on such
+  // a preview made the line below wipe the whole list on every render. The rows, the open pane and
+  // its scroll position were destroyed and rebuilt once a second, which is a text selection that
+  // cannot survive a second, a dropdown that closes under the pointer, and every control on the
+  // row flickering — all with no network activity to explain any of it.
+  const empty = el.querySelector(":scope > .empty");
   if (gs.length === 0) {
     if (!empty) {
       const filtered = ui.state || ui.project || ui.query;
@@ -2144,14 +2234,22 @@ function updateHead(item, g) {
   // p.url is in the signature because the row now carries the link: a republish
   // that moves the URL without changing the state would otherwise leave the
   // anchor pointing at the old one.
-  // The elapsed clock is deliberately part of the signature. It changes every second
-  // for a running build, which is the point — and for every other row it is a fixed
-  // finishing time, so a page of finished previews still rebuilds nothing.
-  const sig = [p.preview_id, p.state, p.url, p.branch, p.number, rowWhen(p),
+  //
+  // The clock is *not* in it, and is compared separately below. It changes every second on a
+  // running build, and folding it in here meant replacing the whole header — caret, project,
+  // branch, pill and all — once a second to move one timestamp. Rebuilding markup to update a
+  // string that has its own element is the churn; the element is right there.
+  const sig = [p.preview_id, p.state, p.url, p.branch, p.number,
                ui.open === g.name].join("|");
+  const when = rowWhen(p);
 
   const head = item.querySelector(".head");
-  if (head.dataset.sig === sig) return;
+  if (head.dataset.sig === sig) {
+    // Structure unchanged, so at most the clock moved. One text node, and only if it differs.
+    const el = head.querySelector(".when");
+    if (el && el.textContent !== when) el.textContent = when;
+    return;
+  }
 
   // Replacing the markup of the element that currently has focus takes the
   // focus with it, which drops a keyboard user back to the top of the page
@@ -2165,13 +2263,13 @@ function updateHead(item, g) {
     <span class="caret">▶</span>
     <span class="who">
       <span class="proj">${esc(g.name)}</span>
-      <span class="branch">${esc(p.branch)}</span><span class="num">#${p.number}</span>
+      <span class="branch">${esc(p.branch)}</span>
     </span>
     <span class="grow"></span>
     <span class="pill${s.work ? " work" : s.spin ? " spin" : ""}" style="--edge:${s.color}">
       <span class="dot"></span>${esc(s.label)}
     </span>
-    <span class="when${isLive(p.state) ? " ticking" : ""}">${rowWhen(p)}</span>`;
+    <span class="when${isLive(p.state) ? " ticking" : ""}">${when}</span>`;
 
   updateRowPR(item.querySelector('[data-role="row-pr"]'), p);
   // The Open link is the *last* .go, since the pull request link shares the class to
@@ -2399,7 +2497,12 @@ function updateBody(item, g) {
     // render() rather than loadBuilds(id): the same round trip happens inside
     // updateBody, and going through render keeps this from depending on which preview
     // the closure captured when the row was first drawn.
-    buildPick.onblur = () => render();
+    // Releasing the dropdown is a request to catch up, so the throttle is dropped for this render.
+    //
+    // Everything deferred while the reader held it applies now, including a build that started in
+    // the meantime — which the state-change signal alone would miss, since a third build beginning
+    // while the preview is already `building` changes no state at all.
+    buildPick.onblur = () => { forgetBuildLists(); render(); };
     body.querySelector(".term").addEventListener("scroll", () => {
       if (ui.autoScrolling) return;
       setFollow(atBottom());
@@ -2422,34 +2525,75 @@ function updateBody(item, g) {
     ui.pick[g.name] = g.current.preview_id;
   }
 
-  updatePicker(body.querySelector('[data-role="pick"]'), g);
-
-  // The build list changes when a build finishes, so refresh it on the render
-  // that follows — cheap, and the alternative is a picker that never learns
-  // about the build you are watching complete.
-  loadBuilds(g.current.preview_id);
-
   const p = g.current;
-  body.querySelector('[data-role="download"]').href =
-    `/logs/${encodeURIComponent(p.preview_id)}/download`;
+
+  // Nothing in this row's controls is rewritten while the reader is holding one of them.
+  //
+  // The two pickers each defer on their own focus, which covers rewriting the element that has
+  // focus. It does not cover the rest: repainting a sibling control reflows the row, and a native
+  // dropdown open over it closes. So the whole subtree is left alone while focus is inside it, and
+  // the next render after the reader lets go applies everything.
+  //
+  // The pane is deliberately outside this. Log lines arriving are the one update somebody holding
+  // a control still wants, and appending to the terminal moves nothing the pointer is over.
+  const holding = body.contains(document.activeElement);
+
+  if (!holding) {
+    updatePicker(body.querySelector('[data-role="pick"]'), g);
+
+    // A body just created has an empty build picker, so fill it from what is already known before
+    // asking the daemon anything. Without this, reopening a row showed a blank dropdown until
+    // something happened to trigger a fetch — and on a finished preview nothing ever does.
+    if (fresh) updateBuildPicker(p.preview_id);
+
+    // The build list changes when a build starts or finishes, so refresh it when that could have
+    // happened — not on every render.
+    //
+    // Unconditionally was one request per second per open row, and each answer repopulated the
+    // build picker, so the controls beside it flickered once a second forever.
+    maybeLoadBuilds(p);
+  }
+
+  const dl = body.querySelector('[data-role="download"]');
+  const dlHref = `/logs/${encodeURIComponent(p.preview_id)}/download`;
+  if (dl.getAttribute("href") !== dlHref) dl.href = dlHref;
 
   // Cancel, only while this preview is actually building. The state comes from the same
   // status payload the row is drawn from, so the button appears and disappears with the
   // row's own pill rather than on its own schedule.
-  // Reconnect when this preview starts building under a pane showing something else.
+  // Reconnect while this preview is working and the pane is not showing its output.
   //
-  // The server does the load-bearing half: a stream opened while a build is queued waits
-  // and announces it (Ingress.awaitLive), which is the Rebuild case and is deterministic.
-  // This covers the other one — a *push* arriving while somebody has a finished build's
-  // log open, where the stream closed at connect because nothing was coming yet.
+  // The server does the load-bearing half: a stream opened while a build is queued waits and
+  // announces it — Ingress.awaitLive — so the ordinary Rebuild needs nothing here.
   //
-  // Guarded by the preview's own updated_at so it fires once per transition rather than on
-  // every status tick: openLog's start event may arrive after the next tick, and a
-  // condition that stayed true would reconnect in a loop.
-  if (p.state === "building" && ui.logFor === p.preview_id && !ui.build[p.preview_id] &&
-      ui.banner?.kind !== "live" && ui.reconnectedAt !== p.updated_at) {
-    ui.reconnectedAt = p.updated_at;
-    openLog(p.preview_id);
+  // It has a race, though, and this is what closes it. awaitLive only holds the connection when
+  // Daemon.Expecting says a build is coming, and Expecting asks two questions: is one running, and
+  // is one pending. A job that has just been claimed by a worker has left the pending queue and
+  // not yet registered as running, so a stream connecting in that window is told nothing is coming
+  // and closes — leaving the picker naming the new build while the pane holds the previous one
+  // under "nothing is running". Pressing Rebuild lands in exactly that window, because the job is
+  // claimed within a second of being queued.
+  //
+  // The condition is the contradiction itself: the row says it is working, and nothing is
+  // streaming. Retried on a timer rather than once per updated_at, because the previous form fired
+  // once and gave up — and one lost race then meant a build that ran to completion with a pane
+  // that never moved.
+  const working = p.state === "building" || p.state === "queued";
+  if (working && ui.logFor === p.preview_id && !ui.build[p.preview_id] &&
+      ui.banner?.kind !== "live" && !ui.logSource) {
+    // Immediately on a state change, and on a timer after that.
+    //
+    // The state change is the ordinary path — queued becomes building and the pane should follow
+    // without waiting. The timer is for the lost race, where nothing further changes and only a
+    // retry recovers. Throttling both made the common case wait up to two seconds for output that
+    // was already arriving.
+    const sig = `${p.preview_id}:${p.state}`;
+    const moved = ui.reconnectSig !== sig;
+    if (moved || Date.now() - (ui.reconnectAt || 0) >= LIVE_RECONNECT_MS) {
+      ui.reconnectSig = sig;
+      ui.reconnectAt = Date.now();
+      openLog(p.preview_id);
+    }
   }
   //
   // Queued counts as cancellable. A queued build has no context to cancel, so the daemon
@@ -2459,14 +2603,21 @@ function updateBody(item, g) {
   const building = p.state === "building" || p.state === "queued";
   const cancel = body.querySelector('[data-role="cancel"]');
   cancel.hidden = !building;
-  cancel.textContent = p.state === "queued" ? "Cancel queued build" : "Cancel build";
+  const cancelText = p.state === "queued" ? "Cancel queued build" : "Cancel build";
+  if (cancel.textContent !== cancelText) cancel.textContent = cancelText;
 
   // Rebuild, when nothing is running. It queues the commit already on the row rather than
   // the branch tip: pushing is what builds the tip, and this is for the case a push cannot
   // fix — a bad cache entry, a timeout, an image since corrected, a project setting changed
   // under a preview nobody is pushing to.
   const rebuild = body.querySelector('[data-role="rebuild"]');
-  rebuild.hidden = building;
+  // The server's answer, not the page's guess.
+  //
+  // /status carries can_rebuild, decided by the same gate the POST goes through. Inferring it here
+  // from the role and /api/admin meant two rules for one decision, and either way of disagreeing
+  // is visible: a button that 404s, or a missing button on a daemon that would have accepted it.
+  const canRebuild = !!(ui.status && ui.status.can_rebuild);
+  rebuild.hidden = building || !canRebuild;
   rebuild.title = p.commit
     ? `Build ${p.commit.slice(0, 7)} again`
     : "Build this preview's recorded commit again";
@@ -2607,7 +2758,14 @@ function updateBody(item, g) {
     // Same preview, new element. Repaint from the buffer rather than
     // reconnecting, which would replay the whole log from the top.
     const t = body.querySelector(".term");
-    t.innerHTML = ui.buffer;
+    if (ui.empty && ui.empty.previewID === p.preview_id) {
+      // A pane explaining that there is no log has an empty buffer, so painting the buffer
+      // here would blank it and the next recheck would be the only thing that filled it in.
+      t.className = "term empty";
+      t.innerHTML = ui.empty.html;
+    } else {
+      t.innerHTML = ui.buffer;
+    }
     if (ui.follow) t.scrollTop = t.scrollHeight;
 
     // The banner is part of the pane and goes with it.
@@ -2615,7 +2773,9 @@ function updateBody(item, g) {
 
     // A stream that has already ended leaves nothing to reconnect to, but an
     // empty buffer with no stream means the log was never read.
-    if (!ui.logSource && !ui.buffer) openLog(p.preview_id);
+    if (!ui.logSource && !ui.buffer && emptyLogRecheckDue(p.preview_id)) {
+      openLog(p.preview_id);
+    }
   }
 }
 
@@ -2635,10 +2795,14 @@ function updatePicker(sel, g) {
 
   if (sel.dataset.sig !== sig) {
     sel.dataset.sig = sig;
-    sel.innerHTML = g.list.map(p =>
-      `<option value="${esc(p.preview_id)}">` +
-      `${esc(p.branch)} · #${p.number} · ${esc(state(p.state).label)} · ${esc(pickerWhen(p))}` +
-      `</option>`).join("");
+    sel.innerHTML = g.list.map(p => {
+      const when = pickerWhen(p);
+      return `<option value="${esc(p.preview_id)}">` +
+        `${esc(p.branch)} · #${p.number} · ${esc(state(p.state).label)}` +
+        // Omitted rather than left as a trailing separator: a live preview has no time here.
+        `${when ? " · " + esc(when) : ""}` +
+        `</option>`;
+    }).join("");
   }
   sel.value = g.current.preview_id;
   sel.disabled = g.list.length < 2;
@@ -2673,10 +2837,7 @@ function banner(kind, text) {
 //
 // Also called for a log retention pruned, which is a different fact and says so: the
 // build happened, its output is simply not kept any more.
-function explainEmptyPane(previewID, commit, kind) {
-  const t = term();
-  if (!t) return;
-
+function emptyPaneHTML(previewID, commit, kind) {
   // The reason travels on the activity entry for that commit, and on the preview row
   // for its newest build. Prefer the entry: it is the one the reader clicked.
   const ev = (ui.events || []).find(e =>
@@ -2689,18 +2850,64 @@ function explainEmptyPane(previewID, commit, kind) {
     queued: "Queued. Nothing has run yet.",
     building: "Building. Output will appear here as it is written.",
   };
-  const head = heads[kind] || `No build log was kept for ${commit}.`;
+  // Named only when there is one. A pruned entry carries no commit, and "No build log was
+  // kept for ." is the sentence that produces.
+  const head = heads[kind] ||
+    (commit ? `No build log was kept for ${commit}.` : "No build log was kept for this build.");
   const tail = heads[kind]
     ? ""
     : `<span class="why">Logs are kept for <code>build.keep_logs</code>, which is shorter
        than the history in the activity rail — so an entry can outlive what it produced.</span>`;
 
-  t.className = "term empty";
   // The reason is its own block. Concatenated onto the heading it read as one run-on
   // sentence: "This build was skipped, so there is no log.no documentation changes".
-  t.innerHTML = `<strong>${esc(head)}</strong>` +
+  return `<strong>${esc(head)}</strong>` +
     (why ? `<div class="reason">${esc(why)}</div>` : "") + tail;
+}
+
+function explainEmptyPane(previewID, commit, kind) {
+  const t = term();
+  if (!t) return;
+
+  const html = emptyPaneHTML(previewID, commit, kind);
+
+  // Written only when the answer changed.
+  //
+  // This is reached once per recheck for as long as the pane stays open on a preview with no
+  // log, and the answer is the same every time. Assigning innerHTML regardless rebuilds the
+  // subtree, which drops the selection, cancels a text drag and makes the panel flicker — a
+  // pane that says "nothing here" should be the calmest thing on the page.
+  if (ui.empty && ui.empty.previewID === previewID && ui.empty.html === html &&
+      t.innerHTML === html) {
+    ui.empty.checkedAt = Date.now();
+    return;
+  }
+
+  t.className = "term empty";
+  t.innerHTML = html;
   ui.buffer = "";
+
+  // What is on screen, and when it was last confirmed. emptyLogRecheckDue reads both: without
+  // this record an empty pane has an empty buffer and no stream, which is indistinguishable
+  // from a log that was never read — so every render reopened the stream, once per poll.
+  ui.empty = {previewID, html, checkedAt: Date.now()};
+}
+
+// EMPTY_LOG_RECHECK_MS is how long an "there is no log" answer is trusted before asking again.
+//
+// It is asked again at all because the answer can change on its own: a queued build starts
+// writing, and the pane should fill in without anybody clicking. It is not asked every render
+// because the poll interval is a second and the answer almost never changes — one request per
+// second per open pane, each ending in the same sentence.
+const EMPTY_LOG_RECHECK_MS = 5000;
+
+// emptyLogRecheckDue reports whether an empty pane is old enough to ask again.
+//
+// True when there is no record, which covers the first read and any other preview.
+function emptyLogRecheckDue(previewID) {
+  const e = ui.empty;
+  if (!e || e.previewID !== previewID) return true;
+  return Date.now() - e.checkedAt >= EMPTY_LOG_RECHECK_MS;
 }
 
 // resetPane puts the terminal back to being a terminal.
@@ -2709,6 +2916,9 @@ function resetPane() {
   if (!t) return;
   t.className = "term" + (ui.tall ? " tall" : "");
   t.innerHTML = "";
+  // The pane no longer says "no log", so the record describing that must not outlive it. Left
+  // behind, it suppresses the recheck for a pane that is now streaming.
+  ui.empty = null;
 }
 
 function toggle(name) {
@@ -2731,6 +2941,9 @@ function closeLog() {
   if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
   ui.logFor = null;
   ui.buffer = "";
+  // Dropped with the rest of the pane's state. A record naming a preview nobody is looking at
+  // would suppress the first recheck after it is opened again.
+  ui.empty = null;
 }
 
 // liveBuild reports whether a build id names the build that is running right now.
@@ -2806,6 +3019,69 @@ async function showBuild(previewID, buildID) {
   }
 }
 
+// maybeLoadBuilds fetches the build list only when it could have changed since the last fetch.
+//
+// The signature is the preview's identity, state and timestamp, which is everything that moves
+// when a build starts, finishes or fails. A build that appears without any of those changing is
+// not a thing the daemon can produce: every build writes the row it is attached to.
+//
+// A running preview is refetched on each render regardless, because its timestamp advances while
+// the build writes and the picker has to gain the new entry as it appears.
+function maybeLoadBuilds(p) {
+  if (!p) return;
+
+  // The state alone, and deliberately not updated_at.
+  //
+  // A running build advances updated_at on every poll, so folding it in made the signature differ
+  // every second and refetched the list every second — which is the same storm the signature was
+  // added to stop, wearing a condition.
+  //
+  // Every change to the list is a state change. A build appears when the preview becomes
+  // `building` and its outcome lands when it leaves. Nothing else adds or removes an entry, and
+  // the stopwatch on a running build's label is rendered here from started_at rather than fetched.
+  const sig = `${p.preview_id}:${p.state}`;
+  // Never fetched, so fetch regardless of what the signature says.
+  //
+  // The signature records that the list *was asked for*, not that the picker holds it. A request
+  // that failed, or one still in flight when the row was closed, leaves the signature set and the
+  // cache empty — and the picker then stays blank for as long as the state does not change, which
+  // on a finished preview is forever.
+  if (Array.isArray(ui.builds[p.preview_id]) && ui.buildsSig[p.preview_id] === sig) {
+    // One exception, throttled. A build that starts while the row is open has to appear in the
+    // picker, and it starts a moment after the state says `building` — so a running preview is
+    // asked again on a slow timer rather than on every render. Queued is not included: nothing is
+    // written until it starts, and starting is a state change this already catches.
+    if (p.state !== "building") return;
+    const last = ui.buildsAt[p.preview_id] || 0;
+    if (Date.now() - last < BUILD_LIST_REFRESH_MS) return;
+  }
+  ui.buildsSig[p.preview_id] = sig;
+  ui.buildsAt[p.preview_id] = Date.now();
+  loadBuilds(p.preview_id);
+}
+
+// forgetBuildLists drops what maybeLoadBuilds remembers, so the next render fetches again.
+//
+// Called when the reader does something that means "show me what changed" — releasing the build
+// dropdown, or pressing a control that queues work. Cheap and rare: it forgets a signature and a
+// timestamp, and the fetch it allows is one request per open row.
+function forgetBuildLists() {
+  ui.buildsSig = {};
+  ui.buildsAt = {};
+}
+
+// LIVE_RECONNECT_MS is how often the pane retries the live stream while the row says it is working.
+//
+// Short, because the gap it covers is a pane that is not showing the build somebody just asked
+// for. Long enough that a daemon which genuinely has nothing to stream is not asked every render.
+const LIVE_RECONNECT_MS = 2000;
+
+// BUILD_LIST_REFRESH_MS is how often a *running* preview's build list is asked for again.
+//
+// Long enough that it is not once per render, short enough that a build starting under an open row
+// appears in the picker while somebody is still looking at it.
+const BUILD_LIST_REFRESH_MS = 5000;
+
 // loadBuilds fetches the build list for a preview and repopulates the picker.
 //
 // Fetched on demand rather than folded into /status, because a status payload
@@ -2816,7 +3092,20 @@ async function loadBuilds(previewID) {
     const res = await fetch(`/logs/${encodeURIComponent(previewID)}`);
     if (toLoginIf(res) || !res.ok) return;
     const d = await res.json();
-    ui.builds[previewID] = d.logs || [];
+    const next = d.logs || [];
+
+    // A changed list retires the "there is nothing here" answer at once, rather than waiting out
+    // the recheck window. The list is the authority on whether a log exists, so a build appearing
+    // in it is the event that means the pane is now wrong — and a time-based gate would hold the
+    // stale explanation for up to the window even though the fact that contradicts it is in hand.
+    const before = ui.builds[previewID];
+    const changed = !Array.isArray(before) || before.length !== next.length ||
+      before.some((b, i) => b.build_id !== next[i].build_id || b.state !== next[i].state);
+
+    ui.builds[previewID] = next;
+    if (changed && ui.empty && ui.empty.previewID === previewID) {
+      ui.empty = null;
+    }
     updateBuildPicker(previewID);
   } catch { /* the picker stays as it was */ }
 }
@@ -2852,21 +3141,39 @@ function updateBuildPicker(previewID) {
   // How long each build took, beside its outcome. The relative age answers "when", and
   // "how long" is the other half of the question anybody asks after watching a package
   // install for four minutes — and it is the number that shows a cache going cold.
-  sel.innerHTML = builds.map((b, i) =>
+  const html = builds.map((b, i) =>
     `<option value="${i === 0 ? "" : esc(b.build_id)}">` +
     // A running build has no duration to report yet, so its age becomes the
     // stopwatch — "running · 04m 12s" — and the `took` clause appears once it has
     // actually taken something.
     `${buildIcon(b)} ${esc(buildLabel(b))} · ${esc(b.build_id)} · ` +
-    // started_at, not mod_time: mod_time is the log file's, which advances with every
-    // line the build writes, so a stopwatch driven from it would read a few seconds
-    // old for the whole build.
-    // No duration here. A third fact on every option — outcome, id, age, took — would
-    // make a picker of five builds five unreadable lines. The banner under the
-    // picker says how long the selected build took, where it costs no width.
-    `${esc(isLive(b.state) ? elapsed(b.started_at || b.mod_time) : stamp(b.mod_time))}` +
+    // A fixed time, never a stopwatch — including for the build that is running.
+    //
+    // A ticking label changes the option's text every second, so the whole <select> differs from
+    // what is on screen and gets rewritten once a second. That closes the dropdown under anybody
+    // reaching into it and repaints the controls beside it, and the focus guard above cannot help:
+    // the rewrite is legitimate, the content really did change.
+    //
+    // Nothing is lost. The row's own clock ticks for the running build, which is where somebody
+    // watching one looks, and the banner under the picker says how long the selected build took.
+    //
+    // started_at for a running build, mod_time for a finished one: mod_time is the log file's and
+    // advances with every line written, so it would read as the wrong time while a build runs.
+    `${esc(isLive(b.state) ? "started " + clock(b.started_at || b.mod_time) : stamp(b.mod_time))}` +
     `</option>`).join("");
-  sel.value = current;
+
+  // Written only when the options actually differ.
+  //
+  // Rebuilding a <select> replaces every option element, which resets the control and repaints
+  // the row beside it — visible as a flicker once per render for as long as a row stays open.
+  // A running build's option carries a stopwatch, so its text does change every second and the
+  // rewrite there is real work; a finished list produces the identical string every time.
+  if (sel.innerHTML !== html) {
+    sel.innerHTML = html;
+  }
+  if (sel.value !== current) {
+    sel.value = current;
+  }
 
   updateOpenBuild(previewID, current);
 }
@@ -2888,15 +3195,18 @@ function updateOpenBuild(previewID, buildID) {
   const b = buildID ? builds.find(x => x.build_id === buildID) : builds[0];
   const url = safeURL(b && b.url);
 
+  // Each attribute set only when it differs. Assigning href re-resolves the link and, on an
+  // anchor styled as a button, is enough to repaint it — once per render is the flicker.
+  const title = url ? url
+    : b ? "this build has no URL of its own — open the branch instead"
+    : "no build selected";
+
   if (url) {
-    a.href = url;
-    a.title = url;
-  } else {
+    if (a.getAttribute("href") !== url) a.href = url;
+  } else if (a.hasAttribute("href")) {
     a.removeAttribute("href");
-    a.title = b
-      ? "this build has no URL of its own — open the branch instead"
-      : "no build selected";
   }
+  if (a.title !== title) a.title = title;
 }
 
 // buildIcon and buildLabel describe how a build ended.
@@ -2934,12 +3244,31 @@ function openLog(previewID) {
   if (ui.logSource) { ui.logSource.close(); ui.logSource = null; }
   ui.logFor = previewID;
   ui.buffer = "";
-  banner("none", "connecting…");
 
-  // Back to being a terminal. Without this, opening a preview that has output after one
-  // that had none leaves the pane in its prose styling and the first lines arrive in the
-  // wrong font on the wrong background.
-  resetPane();
+  // Nothing is streamed for a preview the build list says has no logs and that is not running.
+  //
+  // The list already answers this — `/logs/{preview}` returns an empty array — so opening a
+  // stream to be told the same thing is a second round trip for a fact in hand. It is also the
+  // one that churns: the answer arrives asynchronously, so the pane is cleared now and explained
+  // later, which is a black flash on every recheck.
+  //
+  // A running or queued build is the exception. Its log does not exist yet and the stream is how
+  // the first line arrives, so there the request is the point.
+  const p = (ui.previews || []).find(x => x.preview_id === previewID);
+  const active = p && (p.state === "building" || p.state === "queued");
+  const known = ui.builds[previewID];
+  if (!active && Array.isArray(known) && known.length === 0) {
+    banner("none", "no build log");
+    explainEmptyPane(previewID, p?.commit || "", p?.state === "skipped" ? "skipped" : "");
+    return;
+  }
+
+  // The pane is left alone until the server says what is in it.
+  //
+  // Clearing here shows an empty terminal for as long as the round trip takes, and for a preview
+  // with no log that is the whole interaction: blank, then the same sentence it already had. The
+  // start handler clears instead, which is the moment there is something to replace it with.
+  banner("none", "connecting…");
 
   const src = new EventSource(`/logs/${encodeURIComponent(previewID)}/stream`);
   ui.logSource = src;
@@ -3004,16 +3333,167 @@ function openLog(previewID) {
   src.onerror = () => { src.close(); if (ui.logSource === src) ui.logSource = null; };
 }
 
+// LINE_STAMP matches the timestamp the daemon puts on every line it writes: `18:31:18.128 `.
+//
+// Every line has one. buildlog.Writer stamps on the way to both the file and the stream, so a
+// line arrives here already prefixed, and anything testing the start of a line has to account for
+// that — which is why the classification below runs on the text *after* the stamp. Tested against
+// the whole line, `^\$ ` never matched and no command line was ever highlighted.
+const LINE_STAMP = /^(\d\d:\d\d:\d\d\.\d{3}) (.*)$/;
+
 // Only three cases, all structural rather than interpreting the tool's own
 // output: the command being run, something that looks like an error, and a
 // redaction — highlighted deliberately, so redaction is visibly happening
 // rather than silently assumed.
-function logLine(text) {
+function logBody(text) {
   const safe = esc(text);
   if (/^\$ /.test(text)) return `<span class="cmd">${safe}</span>`;
   if (/(^|\s)(ERR!|ERROR|error:|failed|FAIL)/.test(text)) return `<span class="err">${safe}</span>`;
   return safe.replace(/\*{5}/g, '<span class="mask">*****</span>');
 }
+
+// logLine splits the stamp off, so it can be hovered and so the body is classified on its own.
+//
+// The stamp carries no title attribute: filling one per line would write thousands of attributes
+// per build, and the values that make it worth reading — how long since the previous line, how far
+// into the build — are relative to lines that may not have arrived yet. Written on hover instead,
+// by stampTitle.
+function logLine(text) {
+  const m = LINE_STAMP.exec(text);
+  if (!m) return logBody(text);
+  return `<span class="lts">${m[1]}</span> ` + logBody(m[2]);
+}
+
+/* ── Hovering a log timestamp ───────────────────────────────────────────
+
+   A stamp is `18:31:18.128` and nothing more: no date, and no zone. Read on its own it answers
+   "when" only for somebody who already knows both, and the questions people actually have about a
+   build log are relative anyway — how long did that step take, how far into the build was this.
+
+   So the hover answers five, and computes them at hover time rather than at render time. Rendering
+   them would mean an attribute per line, thousands per build, three of which are relative to lines
+   that have not arrived yet; and the "ago" value would freeze at whatever it was when the line was
+   written. */
+
+// stampMillis parses `HH:MM:SS.mmm` to milliseconds since midnight, NaN if it is not one.
+function stampMillis(text) {
+  const m = /^(\d\d):(\d\d):(\d\d)\.(\d{3})$/.exec(text || "");
+  if (!m) return NaN;
+  return (+m[1] * 3600 + +m[2] * 60 + +m[3]) * 1000 + +m[4];
+}
+
+// sinceStamp is the gap between two stamps, in milliseconds.
+//
+// A build that runs across midnight produces a later stamp with a smaller value, so a negative gap
+// means the day rolled over rather than that time went backwards. Twenty-four hours is added once:
+// nothing here builds for a day, and a log spanning two midnights is not a case worth carrying
+// arithmetic for.
+function sinceStamp(from, to) {
+  let gap = to - from;
+  if (gap < 0) gap += 24 * 3600 * 1000;
+  return gap;
+}
+
+// shortGap renders a duration the way somebody reading a log wants it: milliseconds while it is
+// small enough to matter, then seconds, then minutes.
+function shortGap(ms) {
+  if (!isFinite(ms)) return "";
+  if (ms < 1000) return Math.round(ms) + "ms";
+  if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
+  const m = Math.floor(ms / 60000);
+  return m + "m " + Math.round((ms % 60000) / 1000) + "s";
+}
+
+// stampBase is the instant the pane's selected build started, or null.
+//
+// The stamps carry no date, so this supplies one: the build's `started_at` is ISO 8601 and names an
+// instant. Null when no build list has arrived, which is what makes the absolute rows absent rather
+// than guessed — a tooltip confidently wrong about a timestamp is worse than one that omits it.
+function stampBase(previewID) {
+  const builds = ui.builds[previewID] || [];
+  if (!builds.length) return null;
+  const want = ui.build[previewID] || "";
+  const b = want ? builds.find(x => x.build_id === want) : builds[0];
+  const iso = b && (b.started_at || b.mod_time);
+  if (!iso) return null;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// stampInstant turns a stamp into the moment it names, given the build it belongs to.
+//
+// The stamp is wall-clock time in **the daemon's** zone, which is not the reader's: a daemon on a
+// VM in UTC and a reader in New York are four hours apart, so reading the stamp as local time
+// reports a time the build did not happen at. `stamp_offset_minutes` from /status is that zone's
+// offset, and the arithmetic below is done on a clock shifted into it.
+//
+// The date comes from the build's start. A line stamped before the build started is a line from
+// after midnight, so it belongs to the next day — the one-minute slack is for a build that starts
+// within a whisker of midnight and writes its first line just before the boundary.
+function stampInstant(stampMs, base) {
+  const shift = (ui.stampOffsetMinutes || 0) * 60000;
+
+  const wall = base.getTime() + shift;
+  const midnight = Date.UTC(
+    new Date(wall).getUTCFullYear(),
+    new Date(wall).getUTCMonth(),
+    new Date(wall).getUTCDate());
+
+  let lineWall = midnight + stampMs;
+  if (lineWall < wall - 60000) lineWall += 24 * 3600 * 1000;
+  return new Date(lineWall - shift);
+}
+
+// stampTitle builds the tooltip for one stamp, and is called on hover.
+function stampTitle(el) {
+  const pane = el.closest(".term");
+  if (!pane) return "";
+
+  const all = [...pane.querySelectorAll(".lts")];
+  const i = all.indexOf(el);
+  const at = stampMillis(el.textContent);
+  if (!isFinite(at)) return "";
+
+  const rows = [];
+
+  // The absolute time, in the reader's zone and in UTC. Both, because the two audiences for a
+  // build log are the person who just pushed and whoever is correlating it against another
+  // service's log, and those want different clocks.
+  const base = stampBase(ui.logFor);
+  if (base) {
+    const abs = stampInstant(at, base);
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+    rows.push([zone, abs.toLocaleString([], {dateStyle: "medium", timeStyle: "medium"})]);
+    rows.push(["UTC", abs.toISOString().replace("T", " ").replace("Z", " UTC")]);
+    rows.push(["Relative", ago(abs.toISOString())]);
+  }
+
+  if (i > 0) {
+    const first = stampMillis(all[0].textContent);
+    if (isFinite(first)) rows.push(["Relative to start", shortGap(sinceStamp(first, at))]);
+    const prev = stampMillis(all[i - 1].textContent);
+    if (isFinite(prev)) rows.push(["Relative to previous", shortGap(sinceStamp(prev, at))]);
+  }
+
+  if (!rows.length) return "";
+  // Padded into two columns. A native title is the whole tooltip here — no positioning code, no
+  // element to place, and nothing written to the DOM until somebody actually hovers.
+  const width = Math.max(...rows.map(r => r[0].length));
+  return rows.map(r => r[0].padEnd(width) + "   " + r[1]).join("\n");
+}
+
+// Bound once, on the document, rather than on the pane.
+//
+// The pane is replaced whenever a row is reopened, and a listener bound to the element would be
+// lost with it — silently, since a stamp with no tooltip looks like a stamp. Recomputed on every
+// hover: the "ago" row is wrong the moment it is cached, and the two relative rows change as lines
+// arrive above.
+document.addEventListener("mouseover", e => {
+  const el = e.target;
+  if (!el || !el.classList || !el.classList.contains("lts")) return;
+  const title = stampTitle(el);
+  if (title && el.getAttribute("title") !== title) el.setAttribute("title", title);
+}, true);
 
 // 40px of slack: a scroll position is fractional and a bottom test that demands
 // equality is false as often as it is true.
@@ -7010,8 +7490,18 @@ function applyStatus(d) {
   ui.previews = d.previews || [];
   ui.events = d.events || [];
   ui.status = d;
+  // The zone the build logs are stamped in. Kept out of ui.status's reader path because the
+  // timestamp hover runs without a render behind it and needs a plain number, not a payload that
+  // may be from a poll that has since been replaced.
+  ui.stampOffsetMinutes = Number(d.stamp_offset_minutes) || 0;
 
   document.getElementById("exposer").textContent = `exposer: ${d.exposer}`;
+
+  // The build stamp, written only when it changes — which is once per deploy, not once per poll.
+  const stamp = document.getElementById("buildstamp");
+  if (stamp && stamp.textContent !== (d.version || "")) {
+    stamp.textContent = d.version || "";
+  }
 
   // The session, when there is one. The role comes from the payload because the cookie is
   // HttpOnly and the page cannot read it — and a "sign out" offered to somebody who never

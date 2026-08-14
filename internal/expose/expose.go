@@ -19,6 +19,7 @@ package expose
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"text/template"
@@ -66,6 +67,26 @@ type Spec struct {
 
 	// PR is carried for logging and for name templating.
 	PR model.PullRequest
+
+	// Progress is where the exposer narrates the publish, nil to narrate nowhere.
+	//
+	// The daemon points this at the build log, which is what somebody watching a build is
+	// actually reading. Publishing is a network conversation that can take a minute and a half —
+	// reserving a name, creating a share, opening a listener, and backing off when the controller
+	// rate-limits any of them — and with nothing written here the pane stops at "$ build finished"
+	// and gives no sign that anything is still happening.
+	Progress io.Writer
+}
+
+// say narrates one step of a publish, and does nothing when there is nowhere to narrate to.
+//
+// Present tense and one line each: these are read as they arrive, interleaved with the build
+// output above them.
+func (s Spec) say(format string, a ...any) {
+	if s.Progress == nil {
+		return
+	}
+	fmt.Fprintf(s.Progress, "$ "+format+"\n", a...)
 }
 
 // Key identifies one publication.

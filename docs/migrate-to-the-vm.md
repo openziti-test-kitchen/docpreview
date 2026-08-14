@@ -50,14 +50,32 @@ The zrok scope is the one that makes this move more than a file copy.
 
 ### 1. Prepare the VM
 
-[The install runbook](../www/docs/guides/linux-service.md), steps 1 to 3: docker, the binary, and
-`install.sh`. Stop before writing a config — this installation brings its own.
+One command. The package creates the service account, both directories and the three units, brings
+docker with it, and starts nothing:
 
-Cross-compile from the laptop rather than installing Go on the VM:
+```bash
+sudo dnf install -y \
+  https://github.com/openziti-test-kitchen/docpreview/releases/download/v0.2.0/docpreview-0.2.0-1.x86_64.rpm
+```
 
-```powershell
-$env:GOOS='linux'; $env:GOARCH='amd64'
-go build -o dist/docpreview ./cmd/docpreview
+**Stop there.** The next steps of
+[the install guide](../www/docs/guides/linux-service.md) write a config, a master key and a vault,
+and this installation brings all three with it.
+
+Confirm what you have before copying anything onto it:
+
+```bash
+docpreview version
+docker run --rm hello-world
+```
+
+Already done on `docprev` as of 4 August 2026 — v0.2.0, docker 25.0.16 — with a throwaway config and
+a one-entry vault from testing the package. **Delete both before step 5**, or the copy lands beside
+them and `doctor` reports a vault that is neither the old one nor empty:
+
+```bash
+sudo systemctl stop docpreview docpreview-webhook docpreview-dashboard
+sudo rm -rf /var/lib/docpreview/vault.age /var/lib/docpreview/docpreview.db* /etc/docpreview/config.yml /etc/docpreview/master.key
 ```
 
 ### 2. Stop everything on the laptop
@@ -71,7 +89,7 @@ Get-Process docpreview | Stop-Process -Force
 
 Confirm: `curl.exe -s -o NUL -w "%{http_code}" http://127.0.0.1:8471/healthz` should fail.
 
-### 3. Copy the database with its WAL
+### 3. Copy the database, its WAL, and the artifacts
 
 ```powershell
 $data = "D:\worktrees\tangents\vercel-replacement\.docpreview\data"
@@ -82,6 +100,20 @@ Copy-Item "C:\Users\claude\AppData\Local\docpreview\master.key" $env:TEMP\out\
 
 The `-wal` file matters. Copying the `.db` alone loses whatever has not been checkpointed, which on
 a daemon stopped a moment ago is the most recent thing it did.
+
+**`artifacts/` matters as much, and is the easy one to leave behind.** Startup republishes each
+recorded preview *from the built site already on disk*, so without it the database describes previews
+whose output is absent — `recovered previews_restored=0` — and every one is rebuilt from source
+instead. On this installation that is 600 MB and the difference between URLs answering in seconds
+and a rebuild queue that takes an hour:
+
+```powershell
+tar -czf $env:TEMP\out\artifacts.tar.gz -C $data artifacts
+```
+
+`logs/` and `workspaces/` are not worth copying. Build logs are history nothing needs to run, and a
+workspace is scratch — worse, a workspace left by a killed build contains root-owned files that the
+service account on the far side cannot delete, which fails every later build for that preview.
 
 ### 4. Copy the zrok environment — the part that is easy to get wrong
 
@@ -121,14 +153,32 @@ sudo install -o docpreview -g docpreview -m 0600 master.key /etc/docpreview/mast
 
 ### 6. Write the config
 
-Copy `config.yml` across and change the two values that were only true on Windows:
+Copy `config.yml` across and change the values that were only true on the laptop:
 
 ```yaml
 data_dir: "/var/lib/docpreview"
+log_file: "/var/lib/docpreview/daemon.log"
+
+workers: 1
+
+build:
+  cpus: 2
+  memory: 3g
 
 vault:
   key_source: "file:/etc/docpreview/master.key"
 ```
+
+The three paths are obvious. **The three sizing values are the ones that bite**, because the laptop's
+are larger than the VM and nothing warns you:
+
+- `cpus: 4` on a 2-core box makes docker refuse every build —
+  `Range of CPUs is from 0.01 to 2.00, as there are only 2 CPUs available`, visible only in the build
+  log.
+- `workers: 2` with `memory: 3g` permits 6 GB on a 4 GB machine. Both builds start and the *host*
+  runs out, which takes ssh down rather than failing a build.
+- Add swap before the first build. See
+  [sizing the build](../www/docs/guides/linux-service.md#sizing-the-build-for-the-box).
 
 Everything else travels. The exposer, the prefix `a`, the console passwords, the project rows and
 their credentials are all in the database.
@@ -171,6 +221,27 @@ them, so **the URLs come back unchanged** and nothing in any pull request commen
 Then make sure the laptop cannot start it again. It still holds a copy of the vault, the master key
 and the zrok enrolment — which is a second machine able to claim the same names, and a copy of
 every credential.
+
+## Replacing the binary afterwards
+
+The three units run `/usr/local/bin/docpreview`, so that is the only path a deploy may write:
+
+```bash
+scp build.claude/docpreview-linux-amd64 docprev:/tmp/docpreview-new
+ssh docprev 'sudo systemctl stop docpreview docpreview-webhook docpreview-dashboard \
+  && sudo install -m 0755 /tmp/docpreview-new /usr/local/bin/docpreview \
+  && sudo systemctl start docpreview docpreview-webhook docpreview-dashboard \
+  && docpreview version'
+```
+
+Stop first: a running daemon holds the file, and on Linux replacing it under a live process leaves the
+old code running with the new binary on disk — which reads as a deploy that did nothing.
+
+**A copy at `/usr/bin/docpreview` is not it, and writing there is silent.** `/usr/local/bin` comes
+first on `PATH`, so the stray copy is shadowed: the install succeeds, the services restart, and
+`docpreview version` answers with the version that was already there — the same answer a deploy that
+never happened gives. `which -a docpreview` lists every copy, and the units' `ExecStart` is the
+authority on which one runs.
 
 ## After the move
 

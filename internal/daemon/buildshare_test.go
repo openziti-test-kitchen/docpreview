@@ -159,7 +159,7 @@ func TestBuildShareFailureDoesNotFailTheBuild(t *testing.T) {
 	}
 
 	url := d.publishBuildShare(context.Background(), pr, "20260729-190307-85912e2",
-		"add-guide", config.RepoConfig{}, http.NotFoundHandler())
+		"add-guide", config.RepoConfig{}, http.NotFoundHandler(), nil)
 	if url != "" {
 		t.Errorf("url = %q, want empty when the publish failed", url)
 	}

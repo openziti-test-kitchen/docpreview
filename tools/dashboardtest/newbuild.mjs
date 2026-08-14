@@ -362,5 +362,62 @@ console.log("\nE. one stream, two builds: the server switches it from replay to 
   }
 }
 
+console.log("\nF. the stream closed on a lost race, and the pane recovers on its own");
+{
+  // The race is real and lives in the daemon. A stream holds the connection open only while
+  // Daemon.Expecting says a build is coming, and Expecting asks whether one is running or pending.
+  // A job claimed by a worker has left the pending queue and not yet registered as running, so a
+  // stream connecting in that window is told nothing is coming and closes — which is precisely
+  // where Rebuild lands, since the job is claimed within a second of being queued.
+  //
+  // Seen live on 5 August 2026: the picker named the new build, the row said Building, and the
+  // pane held the previous build's log under "nothing is running" until the row was collapsed.
+  logs = [{preview_id: PREVIEW, build_id: OLD, size: 4096, state: "ready", seconds: 20,
+           mod_time: "2026-07-30T09:00:20.000Z", started_at: "2026-07-30T09:00:00.000Z"}];
+  liveNow = false;
+  liveBuild = "";
+  ui.build = {};
+  ui.open = null;
+  win.eval("closeLog()");
+  await apply("ready", "2026-07-30T09:00:20.000Z");
+  win.document.querySelector(".item .head").click();
+  await settle(300);
+
+  // The row starts working while the stub still answers "not live", which is the lost race: the
+  // stream replays the old build, says done and closes.
+  await apply("building", new Date().toISOString());
+  await settle(300);
+
+  if (observe().streaming) {
+    fail("the harness did not reproduce the race — a stream is open, so nothing was lost");
+  } else {
+    ok("the stream closed while the row says it is building, as the race leaves it");
+  }
+
+  // Now the build is genuinely writing. Nothing else happens: no click, no push, no state change.
+  // The page has to notice the contradiction — working row, no stream — and reconnect.
+  logs = [{preview_id: PREVIEW, build_id: NEW, size: 0, state: "building",
+           mod_time: new Date().toISOString(), started_at: new Date().toISOString()},
+          ...logs];
+  liveNow = true;
+  liveBuild = NEW;
+
+  // Past the retry window, then let the ordinary one-second render happen.
+  win.eval("ui.reconnectAt = 0");
+  await apply("building", new Date().toISOString());
+  await settle(400);
+
+  const s = observe();
+  if (!s.streaming) {
+    fail("the pane never reconnected, so a build ran to completion with nothing on screen");
+  } else ok("it reconnected on its own");
+  if (s.kind !== "live") {
+    fail(`the banner still says ${JSON.stringify(s.banner)} rather than announcing the build`);
+  } else ok(`the banner reads "${s.banner}"`);
+  if (!s.head.includes(NEW) && !s.last.includes(NEW)) {
+    fail(`the pane shows ${JSON.stringify(s.last)}, not the running build`);
+  } else ok("the running build's output is in the pane");
+}
+
 console.log(failures === 0 ? "\nall new-build checks OK" : `\n${failures} failure(s)`);
 process.exit(failures === 0 ? 0 : 1);

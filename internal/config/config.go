@@ -976,7 +976,19 @@ type RepoDetect struct {
 }
 
 // DefaultRepoConfig is what a repository gets when it ships no .docpreview.yml.
-// The globs cover a stock Docusaurus layout.
+//
+// The globs cover a Docusaurus layout **wherever it sits in the repository**, which is why every
+// one of them starts with `**/`. Anchored at the root instead, they matched a stock layout and
+// nothing else: a repository that assembles its site in a subdirectory — a monorepo, or one that
+// pulls several sources into one `unified-doc/` — had every change to it reported as "no
+// documentation changes" and skipped, with only `**/*.md` catching anything at all.
+//
+// `**/` matches zero or more segments, so a root-level `docs/intro.md` still matches `**/docs/**`
+// and the stock layout keeps working. `TestANestedSiteIsStillADocumentationChange` pins both.
+//
+// Over-matching is the safe direction here. The consequence of a glob that is too broad is a build
+// nobody needed; the consequence of one that is too narrow is a pull request that silently never
+// gets a preview, which is indistinguishable from the tool being broken.
 func DefaultRepoConfig() RepoConfig {
 	return RepoConfig{
 		Build: RepoBuild{
@@ -987,16 +999,16 @@ func DefaultRepoConfig() RepoConfig {
 		},
 		Detect: RepoDetect{
 			Paths: []string{
-				"docs/**",
-				"blog/**",
-				"src/**",
-				"static/**",
+				"**/docs/**",
+				"**/blog/**",
+				"**/src/**",
+				"**/static/**",
 				"**/*.md",
 				"**/*.mdx",
-				"docusaurus.config.*",
-				"sidebars.*",
-				"package.json",
-				"package-lock.json",
+				"**/docusaurus.config.*",
+				"**/sidebars.*",
+				"**/package.json",
+				"**/package-lock.json",
 				RepoConfigName,
 			},
 		},

@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/netfoundry/docpreview/internal/pipeline"
 )
 
 // cacheManagers are the per-manager subdirectories under a preview's cache.
@@ -33,13 +35,16 @@ var cacheManagers = []string{"npm", "yarn", "pnpm"}
 // a digest.
 var previewIDPattern = regexp.MustCompile(`^[0-9a-f]{12}$`)
 
-// clearCache empties one preview's package manager caches.
+// clearCache empties the package manager caches a preview's builds use.
 //
 // The escape hatch for the one failure a cache introduces: a corrupt or
-// half-written entry that makes every build of a pull request fail the same way,
-// with an error about a tarball rather than about the cache. Teardown removes the
-// cache with the rest of the preview, so this is for the pull request that is still
-// open and whose next build has to work.
+// half-written entry that makes every build fail the same way, with an error about a
+// tarball rather than about the cache.
+//
+// **The cache belongs to the repository, not to this preview.** Addressed by preview because that
+// is what an operator has in front of them — a pull request whose build is failing — but clearing
+// it costs every pull request against that repository one cold install. The response names the
+// scope that was cleared so the page can say so.
 //
 // Gated exactly as a project write is: clearing forces a refetch, so a remote
 // caller could otherwise hold the build host on the registry indefinitely.
@@ -52,12 +57,25 @@ func (a *ProjectsAdmin) clearCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The repository behind the preview, because that is what the volumes are named for.
+	//
+	// A preview nothing recorded yields no scope, and no volume is removed for it. Not an error:
+	// the local driver's cache is a directory named by the preview and is cleared below regardless,
+	// and refusing the whole request would make an unknown preview unclearable under either driver.
+	// The response carries the scope, empty when there was none, so the page can tell the two
+	// outcomes apart.
+	scope, scopeErr := a.cacheScopeOf(r.Context(), preview)
+	if scopeErr != nil {
+		a.log.Warn("no repository for this preview, so no cache volumes were removed",
+			"preview", preview, "error", scopeErr)
+	}
+
 	// The docker driver's caches are volumes. Removed rather than emptied: a volume is
 	// recreated by the next `docker create` that names it, so deleting it *is* clearing
 	// it, and there is no way to walk its contents from here anyway.
-	if a.removeVolumes != nil {
-		if err := a.removeVolumes(r.Context(), preview); err != nil {
-			a.log.Warn("removing cache volumes", "preview", preview, "error", err)
+	if a.removeVolumes != nil && scope != "" {
+		if err := a.removeVolumes(r.Context(), scope); err != nil {
+			a.log.Warn("removing cache volumes", "preview", preview, "scope", scope, "error", err)
 		}
 	}
 
@@ -65,17 +83,38 @@ func (a *ProjectsAdmin) clearCache(w http.ResponseWriter, r *http.Request) {
 	// an error any more: the docker path above needs none.
 	var cleared []string
 	if dir := a.cfg.PreviewCacheDir(preview); dir != "" {
-		var err error
-		cleared, err = clearManagerDirs(dir)
-		if err != nil {
-			a.log.Warn("clearing a build cache", "dir", dir, "error", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		dirErr := error(nil)
+		cleared, dirErr = clearManagerDirs(dir)
+		if dirErr != nil {
+			a.log.Warn("clearing a build cache", "dir", dir, "error", dirErr)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": dirErr.Error()})
 			return
 		}
 	}
 
-	a.log.Info("cleared a preview's build cache", "preview", preview, "managers", cleared)
-	writeJSON(w, http.StatusOK, map[string]any{"preview": preview, "cleared": cleared})
+	a.log.Info("cleared the build cache for a repository",
+		"preview", preview, "scope", scope, "managers", cleared)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"preview": preview, "scope": scope, "cleared": cleared,
+	})
+}
+
+// cacheScopeOf resolves a preview to the cache scope its builds mount.
+//
+// Through the store rather than through the live set: the control exists for a preview whose build
+// is failing, and a preview with no live publication is exactly the case where somebody reaches
+// for it.
+func (a *ProjectsAdmin) cacheScopeOf(ctx context.Context, previewID string) (string, error) {
+	previews, err := a.store.ListPreviews(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, p := range previews {
+		if p.PreviewID == previewID {
+			return pipeline.CacheScope(p.PR), nil
+		}
+	}
+	return "", fmt.Errorf("no preview %s", previewID)
 }
 
 // clearAllCaches empties every preview's package manager caches.

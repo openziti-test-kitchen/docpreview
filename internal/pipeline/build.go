@@ -22,6 +22,23 @@ import (
 	"github.com/netfoundry/docpreview/internal/redact"
 )
 
+// stderrOf returns a command's captured stderr, newline-prefixed and ready to append to a message,
+// or empty when there is none.
+//
+// Only exec.Cmd.Output() captures it. CombinedOutput and Run do not, so a caller using either has
+// nothing for this to find — which is why the callers that need a reason use Output().
+func stderrOf(err error) string {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		return ""
+	}
+	text := strings.TrimSpace(string(exit.Stderr))
+	if text == "" {
+		return ""
+	}
+	return "\n" + text
+}
+
 // Result is a finished build.
 type Result struct {
 	// OutputDir is the directory of static files to serve.
@@ -492,8 +509,15 @@ func (b *Builder) buildDocker(ctx context.Context, ws *Workspace, buildDir strin
 
 	created, err := exec.CommandContext(ctx, "docker", args...).Output()
 	if err != nil {
-		fmt.Fprintf(out, "docker create failed: %v\n", err)
-		return log.String(), fmt.Errorf("docker create failed: %w", err)
+		// docker's own stderr, which is the only thing that says why.
+		//
+		// Output() puts it on ExitError.Stderr and ExitError.Error() reports the exit status
+		// alone, so without this a failed create is "docker create failed: exit status 1" in
+		// the build log, in the pull request comment and in the daemon's log — three copies of
+		// a message that names no cause. Every reason docker refuses is in that stderr: an
+		// unreachable socket, a mount it will not accept, a volume name already in use.
+		fmt.Fprintf(out, "docker create failed: %v%s\n", err, stderrOf(err))
+		return log.String(), fmt.Errorf("docker create failed: %w%s", err, stderrOf(err))
 	}
 	container := strings.TrimSpace(string(created))
 	if container == "" {
@@ -622,10 +646,17 @@ func (b *Builder) createArgs(
 // The chown is passed in rather than looked up, so the ordering can be tested on a platform where
 // there is no chown to append — otherwise the test that matters most would skip on the machine
 // this is developed on and run only in CI.
+// The chown announces itself, because it is silent and it is not fast. It walks the whole
+// workspace, which on a Docusaurus site is tens of thousands of files, and it runs after the
+// package manager has printed its own "Done in …" line — so the log sits with nothing after that
+// for as long as the walk takes. Unannounced, the last thing a reader sees is a build that
+// finished, followed by seconds of nothing.
+//
+// The echo is placed after `rc=$?` so it cannot become the status the container exits with.
 func buildScript(install, build, reown string) string {
 	script := install + " && " + build
 	if reown != "" {
-		script += "; rc=$?; " + reown + "; exit $rc"
+		script += "; rc=$?; echo '$ handing the output back to the daemon'; " + reown + "; exit $rc"
 	}
 	return script
 }

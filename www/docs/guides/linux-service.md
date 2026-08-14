@@ -20,6 +20,8 @@ extra failure modes.
 | | |
 |---|---|
 | A VM | 2 vCPU, **4 GB RAM**, 20 GB disk. Ubuntu 22.04 or 24.04, Debian 12, Amazon Linux 2023, or anything with systemd |
+| Swap | **A few GB.** A large docs build peaks above 3 GB, and swap is what turns that peak into a slower build rather than a killed one. See [sizing the build](#sizing-the-build-for-the-box) |
+| git | Required by every build, under both drivers. Step 1 installs it |
 | Docker | Needed by the default build driver. Step 1 installs it, and the `.deb` and `.rpm` pull it in for you |
 | Outbound HTTPS | To your source-control host, to the zrok service, and to the package registries a build downloads from |
 | Inbound | **None.** No port is opened, no DNS record is needed, no certificate is issued |
@@ -33,16 +35,34 @@ A Docusaurus build peaks in prerendering, and a 2 GB box kills it there. The fai
 
 :::
 
-## Step 1 — Install docker
+## Step 1 — Install git and docker
 
-Builds run in containers by default, which is what keeps a pull request author's build script off
-the host filesystem.
+**git is required, whichever build driver you use.** Every build starts by cloning the branch, and
+that shells out to `git`. Without it every build fails in under a second with
+`git init failed: exec: "git": executable file not found in $PATH`, and — because the clone happens
+before anything is built — the daemon reports a failure to the pull request each time.
+
+```bash
+sudo dnf install -y git      # or: sudo apt install -y git
+```
+
+Builds then run in containers by default, which is what keeps a pull request author's build script
+off the host filesystem.
 
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
 sudo systemctl enable --now docker
 docker run --rm hello-world
 ```
+
+:::caution Installing docker is not the same as starting it
+
+A package manager can install docker and leave it stopped, and Amazon Linux ships the socket unit
+without enabling the service. The symptom is a build that fails immediately on `docker create`
+rather than a daemon that will not start. `systemctl enable --now docker` is the half people miss,
+and `docker run --rm hello-world` is the only proof that matters.
+
+:::
 
 :::tip The package may have done this already
 
@@ -216,6 +236,58 @@ data_dir: "/var/lib/docpreview"
 
 Left alone, nothing fails. The daemon builds and publishes out of the nested directory, and it is
 the directory a backup, a migration and `shares list` all miss.
+
+### Sizing the build for the box
+
+Four settings decide whether a build fits, and the defaults are written for a developer machine. A
+config copied from a laptop onto a small VM is the way this goes wrong.
+
+```yaml
+workers: 1
+
+build:
+  cpus: 2         # must not exceed the machine's core count
+  memory: 3g      # per build container
+```
+
+**`cpus` above the core count is refused outright**, and the message only appears in the build log:
+`Range of CPUs is from 0.01 to 2.00, as there are only 2 CPUs available`. Set it to `nproc` or less.
+
+**`workers` multiplies `memory`.** Two workers at `3g` each is 6 GB of permitted allocation on a
+machine with 4 GB. Nothing enforces the product, so both builds start, and the machine — not the
+container — runs out. That takes the host off the network rather than failing a build: load above 40
+on two cores, and ssh timing out during the banner exchange. On a 4 GB box, run one worker.
+
+**A large docs build peaks above 3 GB**, and Node will not back off. V8 grows its heap until the
+cgroup refuses, and docker kills the process at the limit with nothing in the build log to say why.
+`dmesg` is where the evidence is:
+
+```text
+oom_memcg=/system.slice/docker-….scope   Killed process (MainThread) anon-rss:1994752kB
+```
+
+`anon-rss` at the cap, and `CONSTRAINT_MEMCG` rather than `global_oom`, is the container hitting its
+own `memory` limit. `global_oom` is the machine, which means `workers × memory` is too high.
+
+**Swap is what makes the peak survivable.** With none, a build that wants 200 MB more than the cap
+dies. With a few GB, docker gives the container an equal amount of swap on top of `memory`, the
+overshoot spills to disk, and the build finishes slower. On a 4 GB VM, one large site went from
+being killed twice to completing in 3m40s using 349 MB of swap:
+
+```bash
+sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab
+```
+
+The `fstab` line matters. Without it the swap is gone after a reboot, and the build that worked
+yesterday is killed today.
+
+Swap trades build time for headroom, so it is the cheap answer and not the fast one. Reach for a
+bigger machine when builds start queuing behind each other, which is a throughput problem that
+swap does not help.
 
 ## Step 5 — Mint a master key
 

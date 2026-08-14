@@ -162,6 +162,34 @@ func urlQueryEscape(s string) string {
 	return b.String()
 }
 
+// safeNext reduces a caller-supplied destination to a path on this daemon, "/" if it is anything
+// else.
+//
+// A `next` is attacker-supplied, so an absolute URL there is an open redirect — the classic
+// phishing primitive, made worse here because the victim has just typed a password. A leading
+// "//" is the same thing in a protocol-relative disguise.
+//
+// A fragment is allowed through, and is the reason this is a function rather than two lines at
+// each call site. The dashboard addresses a preview as `/#preview=<id>`, the fragment never
+// reaches the server, and the login page puts it back — see the script in serveLogin. It cannot
+// change the origin of a path that already starts with a single "/", so permitting it costs
+// nothing.
+//
+// Control characters and spaces are refused outright. They cannot appear in a URL a browser
+// produced, and a newline in a value that becomes a Location header is a response-splitting
+// attempt rather than a destination.
+func safeNext(next string) string {
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		return "/"
+	}
+	for _, r := range next {
+		if r <= ' ' || r == 0x7f {
+			return "/"
+		}
+	}
+	return next
+}
+
 // login serves the form and handles the submission.
 func (i *Ingress) login(w http.ResponseWriter, r *http.Request) {
 	if i.console == nil {
@@ -205,13 +233,7 @@ func (i *Ingress) login(w http.ResponseWriter, r *http.Request) {
 	setConsoleCookie(w, i.console.issue(role, time.Now()))
 	i.log.Info("dashboard login", "role", role, "remote", r.RemoteAddr)
 
-	// Only a path this daemon serves. A `next` from the query string is attacker-supplied, so
-	// an absolute URL there is an open redirect — the classic phishing primitive, made worse
-	// here because the victim has just typed a password.
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
-		next = "/"
-	}
-	http.Redirect(w, r, next, http.StatusSeeOther)
+	http.Redirect(w, r, safeNext(next), http.StatusSeeOther)
 }
 
 // logout clears the session.
@@ -230,8 +252,21 @@ func (i *Ingress) logout(w http.ResponseWriter, r *http.Request) {
 // serveLogin renders the form.
 //
 // Its own page rather than a panel on the dashboard, and deliberately tiny: it is the one thing
-// served to an unauthenticated caller, so it carries no build data, no project names and no
-// JavaScript. What it says about the daemon is its name.
+// served to an unauthenticated caller, so it carries no build data and no project names. What it
+// says about the daemon is its name.
+//
+// # The one script on the page
+//
+// A fragment is never sent to the server. A reader who opens `/#preview=<id>` — the link in every
+// pull request comment for a build with no URL — is redirected to `/login?next=%2F`, the browser
+// carries the fragment onto that URL because the redirect target has none of its own, and the form
+// posts to `/login`, where it is lost. The reader lands on the dashboard rather than the preview
+// they clicked.
+//
+// So the script copies `location.hash` into the `next` field, and onto the Google link. It reads
+// the address bar and writes two attributes on this page; it fetches nothing and knows nothing
+// about the daemon. `safeNext` still decides what the redirect may be, because the value arrives
+// in a form post like any other.
 //
 // # Every comment about this page belongs here, not in the markup
 //
@@ -356,6 +391,16 @@ p.hint { margin: 0.35rem 0 0; font-size: 0.72rem; opacity: 0.6; text-align: cent
   <input type="hidden" name="next" value="%s">
   <button type="submit">Sign in</button>
 </form>
+<script>
+(function () {
+  var hash = location.hash;
+  if (!hash || hash === "#") return;
+  var next = document.querySelector('input[name="next"]');
+  if (next && next.value.indexOf("#") < 0) next.value = (next.value || "/") + hash;
+  var google = document.querySelector("a.google");
+  if (google) google.href += encodeURIComponent(hash);
+})();
+</script>
 </body></html>
 `, note, google, html.EscapeString(next))
 }

@@ -192,6 +192,11 @@ func (i *Ingress) streamStatus(w http.ResponseWriter, r *http.Request) {
 	// when this connection was accepted, and a cookie cannot change mid-stream.
 	role := string(roleOfContext(r.Context()))
 
+	// Whether this caller may rebuild, decided once for the same reason and from the same request.
+	// Set on `/status` alone it would be a field the page never sees, and the control it governs
+	// would stay hidden for everybody — which is exactly what the paragraph above warns about.
+	canRebuild := i.projects != nil && i.projects.mayRebuild(r)
+
 	send := func() bool {
 		st, err := i.daemon.Status(ctx)
 		if err != nil {
@@ -199,6 +204,7 @@ func (i *Ingress) streamStatus(w http.ResponseWriter, r *http.Request) {
 			return true
 		}
 		st.Role = role
+		st.CanRebuild = canRebuild
 		payload, err := json.Marshal(st)
 		if err != nil {
 			logOnce("encoding status for a stream", err)

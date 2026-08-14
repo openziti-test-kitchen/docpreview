@@ -65,7 +65,7 @@ func TestRebuildMustNotReleaseTheName(t *testing.T) {
 	// withdraws the first, which closes a Publication.
 	for range 2 {
 		if url := d.publishBuildShare(ctx, pr, "20260729-190307-85912e2", "add-guide",
-			config.RepoConfig{}, http.NotFoundHandler()); url == "" {
+			config.RepoConfig{}, http.NotFoundHandler(), nil); url == "" {
 			t.Fatal("the build share did not publish, so this proves nothing")
 		}
 	}

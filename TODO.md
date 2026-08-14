@@ -11,6 +11,39 @@ three attempts to diagnose it by reading the code were all wrong.
 
 ## In flight
 
+**A killed build wedges its preview permanently.** `reownCommand` hands the output back to the host
+uid at the *end* of the build script, so a build killed before it runs — an OOM, a timeout, a
+supersede — leaves root-owned files in the workspace. Clearing the workspace then fails for the
+service account with `unlinkat …: permission denied`, and every later build of that preview fails the
+same way. Live on 4 August 2026: `customer-connect-docs@main` failed three consecutive times until
+the workspace was removed by hand as root.
+
+- [ ] **Clear a workspace as root when the service account cannot.** A container mounting the parent
+      directory and removing the tree is the only tool available, since the daemon does not run as
+      root and must not.
+- [ ] **Reown on the way out of a killed build too**, not only on the script's success path. A
+      deferred `docker run` doing the chown costs one container per failed build and removes the
+      class of failure.
+
+**A preview whose row exists but never published is never retried.** `backfillOpenPullRequests` skips
+any pull request already having a preview row, and a failed branch preview is retried while a failed
+*pull request* preview is not. After a migration the rows arrive without their shares, so four
+previews sat at `never` with nothing scheduled to fix them and no way to press Rebuild until the
+dashboard share was up.
+
+- [ ] **Treat "has a row, has no URL" as absent.** It is the same reasoning that already retries a
+      failed branch preview at startup, and it is what makes a restored database self-heal.
+
+**Two prerequisites are undocumented and unenforced.** Both cost a working afternoon on 4 August 2026.
+
+- [ ] **`git` belongs in the package's dependencies**, not its recommendations. Every build clones,
+      under both drivers, so a host without it fails every build in under a second — and reports each
+      failure to the pull request. `www/docs/guides/linux-service.md` now says so; the package does
+      not.
+- [ ] **The package should enable docker**, or `doctor` should report that it is installed and
+      stopped. Amazon Linux installs the socket unit without starting the service, and the symptom is
+      `docker create` failing rather than anything naming docker.
+
 **Packaging beyond deb and rpm.** `release.sh` now builds `.deb` and `.rpm` for amd64 and arm64 through
 nfpm, and the release uploads them. Four more channels would each remove a step for somebody:
 
@@ -886,6 +919,33 @@ The four things that made this harder than a form, all still load-bearing and no
       being investigated. A path that cannot be opened is a warning, not a refusal to start.
 - [ ] **The container has no TTY, so build tools block-buffer.** Output arrives in 4-8 KiB lumps rather than by
       the line, which reads as a stalled build. A TTY would line-buffer, at the cost of ANSI escapes to strip.
+- [ ] **The build host is half the machine Vercel gives the same build, and that is most of what is left.**
+      Measured on 2026-08-10, both building `netfoundry/docusaurus-shared` at `7127614`, phase by phase:
+
+      | phase | vercel | docprev |
+      |---|---|---|
+      | clone the site repo | 3.1s | 0.6s |
+      | dependency install | 0.5s (cache restored) | 80.0s |
+      | clone the 8 remote doc repos | 19.3s | 18.0s |
+      | docusaurus build | 40.8s | 112.7s |
+      | node exiting after `[SUCCESS]` | not visible | 42.2s |
+      | chown the output back | none needed | 4.6s |
+      | **total** | **1m54s** | **4m28s** |
+
+      The install gap is fixed — the package cache is keyed on the repository now, so only the very first build of
+      a repository is cold. What remains is hardware: Vercel builds on 4 cores and 8 GB, docprev has 2 cores and
+      3.7 GB plus swap, and a Docusaurus build parallelises across cores. That accounts for the 2.8× on the build
+      itself and probably for most of the 42 seconds node spends exiting, which is webpack flushing its
+      persistent cache to a disk that is also the swap device. `DOCUSAURUS_PERF_LOGGER=true` in a repository's
+      `build.env` would attribute that phase properly, and is the cheapest next measurement.
+
+      Not worth engineering around. A bigger instance is the fix, and it also makes the memory limits above
+      stop being a constraint.
+- [ ] **Nothing bounds the package cache.** It is keyed on the repository now rather than on the preview, which is
+      what makes a new pull request's first build warm — but it also means nothing deletes it: preview teardown
+      used to, and must not any more, since every other pull request on that repository is using it. One
+      dependency tree per repository is a small number, and the projects page can clear one, but there is no
+      age-based prune and no accounting of what is on the disk.
 - [ ] **Preview diffing.** Vercel shows what changed visually between deployments. Not attempted.
 - [ ] **`internal/scm/local` has no tests.** The package is exercised end to end by the demo but has no unit
       tests of its own; `VerifyWebhook`, `ChangedFiles` and the path checks all deserve them.
