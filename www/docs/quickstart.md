@@ -320,16 +320,14 @@ Within a minute the pull request gets a comment:
 
 > **Documentation preview**
 >
-> | | |
-> |---|---|
-> | **Status** | ✅ Ready |
-> | **Preview** | https://docs-quickstart-test.shares.zrok.io/ |
-> | **Name** | `docs-quickstart-test` |
-> | **Commit** | `a1b2c3d` |
-> | **Built in** | 41s |
-> | **Updated** | 2026-07-27 14:22:07 UTC |
+> | Project | Status | Preview | Commit | Updated (UTC) |
+> |---|---|---|---|---|
+> | [acme/docs](http://127.0.0.1:8471/) | ✅ Ready · 41s | [Preview](https://docs-quickstart-test.shares.zrok.io/) | `a1b2c3d` | Jul 27, 2026 2:22pm |
 
 Push again. The **same comment** updates — the timestamp and commit change, the URL does not.
+
+While the build is running the status reads `🔨 Building` and links to that build's log on the dashboard, which
+tails as it runs. The project column links to the dashboard itself, and stays useful after the preview is gone.
 
 ### 10. Open the dashboard
 

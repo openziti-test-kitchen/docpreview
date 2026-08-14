@@ -184,6 +184,7 @@ Vault subcommands:
   docpreview vault list   [-config FILE]  List stored secret names
   docpreview vault set    <key> [-file F] Store a secret (from -file, or stdin)
   docpreview vault delete <key>           Remove a secret
+  docpreview vault rekey  -generate -yes  Change the master key, keeping every secret
 
 The master key comes from vault.key_source in the config — a file, or a command
 that prints it — then $DOCPREVIEW_MASTER_KEY, then a prompt on a terminal. With
@@ -196,6 +197,11 @@ none of the three the daemon starts locked and is unlocked from the dashboard.
 Mint one straight into a file, keeping it out of your shell history:
 
   docpreview vault keygen -out /etc/docpreview/master.key
+
+Changing that key later keeps every secret. Stop the daemon first — a running one holds
+the old key in memory and its next write would undo the change:
+
+  docpreview vault rekey -generate -yes
 `)
 }
 
@@ -1192,6 +1198,9 @@ func cmdVault(args []string) error {
 	case "keygen":
 		return cmdVaultKeygen(args[1:])
 
+	case "rekey":
+		return cmdVaultRekey(args[1:])
+
 	case "list":
 		fs := flag.NewFlagSet("vault list", flag.ExitOnError)
 		configPath := fs.String("config", defaultConfigPath(), "path to the server config file")
@@ -1419,6 +1428,184 @@ func writeKeyFile(path, key string, quiet bool) error {
 			abs, abs)
 	}
 	return nil
+}
+
+// cmdVaultRekey re-encrypts the vault under a new master key.
+//
+// The vault's own key is the one credential with nowhere inside the system to live, and until this
+// existed it was also the one credential that could not be changed: rotating it meant re-storing
+// every secret by hand, which needs each plaintext, which is what the vault exists to avoid keeping.
+// So a key typed hastily during setup was permanent, and nobody admits a permanent key is too weak.
+//
+// # The order, and why it is this order
+//
+//  1. Open the vault under the **current** key. A rekey that cannot read the vault is a rekey that
+//     would destroy it, so this failing is the good outcome.
+//  2. Copy vault.age aside. The backup is what makes step 4 recoverable.
+//  3. Re-encrypt in place, atomically. A crash here leaves the vault readable by the old key.
+//  4. Install the new key at `vault.key_source`, last. Between 3 and 4 the two disagree and the
+//     recovery is to put the old key back — which only works while the old key still exists.
+//
+// Reversed, step 4 first, the failure is total: a vault nothing can open and no way back. That is
+// the whole reason this is a command rather than a documented sequence of two.
+//
+// # What it refuses to do
+//
+// It will not write a key file for an `exec:` source, because there is nothing to write to — the key
+// lives in a secret manager and putting it there is a step this cannot take. It prints the new key
+// once, on stdout, and stops. Nothing else here prints a key.
+//
+// It also cannot tell whether the daemon is running, and a running daemon holds the old recipient in
+// memory: its next write re-encrypts under the old key and silently undoes this. Hence -yes, and
+// hence the sentence above it.
+func cmdVaultRekey(args []string) error {
+	fs := flag.NewFlagSet("vault rekey", flag.ExitOnError)
+	configPath := fs.String("config", defaultConfigPath(), "path to the server config file")
+	generate := fs.Bool("generate", false, "mint the new key instead of reading one from stdin")
+	yes := fs.Bool("yes", false, "proceed; the daemon must be stopped first")
+	if err := fs.Parse(hoistFlags(fs, args)); err != nil {
+		return err
+	}
+
+	if !*yes {
+		return errors.New("vault rekey re-encrypts the vault and replaces its master key. " +
+			"Stop the daemon first — a running one holds the old key in memory and its next write " +
+			"would undo this — then re-run with -yes")
+	}
+
+	cfg, err := config.LoadServer(*configPath)
+	if err != nil {
+		return err
+	}
+	src := cfg.KeySource()
+
+	// Step 1. Under the current key, and this failing is the good outcome: a rekey that cannot read
+	// the vault would replace it with an empty one.
+	v, err := vault.OpenFrom(cfg.VaultPath(), src)
+	if err != nil {
+		return fmt.Errorf("opening the vault under the current key: %w", err)
+	}
+	before := len(v.Keys())
+
+	newKey := ""
+	if *generate {
+		newKey, err = vault.GenerateIdentity()
+		if err != nil {
+			return err
+		}
+	} else {
+		raw, err := readStdin()
+		if err != nil {
+			return err
+		}
+		newKey = string(trimTrailingNewline(raw))
+		if newKey == "" {
+			return errors.New("vault rekey: no key on stdin. Pipe one in, or pass -generate")
+		}
+	}
+
+	// Step 2. Before anything is written, and named so it is obvious what it is and when it was
+	// taken. Left behind deliberately: deleting the only copy of the vault that the old key opens is
+	// this command's job to avoid, not to do.
+	backup, err := backupVault(cfg.VaultPath())
+	if err != nil {
+		return err
+	}
+
+	// Step 3.
+	if err := v.Rekey(newKey); err != nil {
+		return fmt.Errorf("re-encrypting the vault: %w (the vault is unchanged and still opens "+
+			"with the current key; %s is a copy of it)", err, backup)
+	}
+
+	// Step 4, last. A file source is replaced in place; anything else is printed, because this
+	// cannot reach into a secret manager.
+	if src.Kind() != "file" {
+		fmt.Println(newKey)
+		fmt.Fprintf(os.Stderr,
+			"\nThe vault now needs the key above, and %s cannot be written by this command.\n"+
+				"Store it wherever that source reads from, then start the daemon.\n\n"+
+				"Until then the daemon starts locked. The previous vault is at:\n  %s\n",
+			src.Describe(), backup)
+		return nil
+	}
+
+	if err := replaceKeyFile(src.Path(), newKey); err != nil {
+		return fmt.Errorf("the vault was re-encrypted but the new key could not be installed: %w\n"+
+			"The vault at %s now needs the new key, which nothing has recorded. Restore the "+
+			"previous vault from %s and try again", err, cfg.VaultPath(), backup)
+	}
+
+	fmt.Fprintf(os.Stderr,
+		"Re-encrypted %d secrets under a new master key.\n\n"+
+			"  key    %s\n"+
+			"  vault  %s\n"+
+			"  backup %s (opens with the previous key)\n\n"+
+			"Start the daemon and confirm it unlocks before deleting the backup. The secrets "+
+			"themselves are unchanged:\nanybody who read them under the old key still knows them, "+
+			"so rotate the credentials at their own platforms if that is the worry.\n",
+		before, src.Path(), cfg.VaultPath(), backup)
+	return nil
+}
+
+// backupVault copies the vault beside itself, returning the new path.
+//
+// A copy rather than a rename: the original has to keep working, because the rekey may fail and the
+// daemon may be started again before anybody notices.
+func backupVault(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		// Nothing to back up and nothing to lose. A vault that does not exist yet is created by the
+		// first write under the new key.
+		return "(no existing vault)", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("reading the vault: %w", err)
+	}
+
+	// Second-resolution and sortable, so two rekeys in one session do not collide and the newest
+	// backup is the last one in a directory listing.
+	dst := fmt.Sprintf("%s.bak-%s", path, time.Now().Format("20060102-150405"))
+	if err := os.WriteFile(dst, raw, 0o600); err != nil {
+		return "", fmt.Errorf("writing %s: %w", dst, err)
+	}
+	return dst, nil
+}
+
+// replaceKeyFile overwrites the master key file, which writeKeyFile deliberately refuses to do.
+//
+// The refusal there is right: `keygen -out` clobbering an existing key would destroy every secret in
+// the vault it opens. Here the vault has *already* been re-encrypted to this key, so the file is
+// now the stale half and leaving it would be the failure.
+//
+// Written through a temp file and renamed, so an interrupted write cannot leave a truncated key —
+// which would be indistinguishable from the wrong key and just as fatal. The mode is 0600 because
+// the vault refuses a key file any group can read.
+func replaceKeyFile(path, key string) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".master-key-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating a temp file in %s: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+
+	if err := tmp.Chmod(0o600); err != nil && os.PathSeparator != '\\' {
+		tmp.Close()
+		return fmt.Errorf("securing %s: %w", tmpName, err)
+	}
+	if _, err := tmp.WriteString(key + "\n"); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing %s: %w", tmpName, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("syncing %s: %w", tmpName, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // isFlagSet reports whether a flag was given on the command line, as opposed to

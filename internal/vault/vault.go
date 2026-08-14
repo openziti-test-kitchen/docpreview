@@ -458,6 +458,57 @@ func (v *Vault) Save() error {
 	return nil
 }
 
+// Rekey re-encrypts the vault under a new master key, keeping every secret.
+//
+// # Why it exists
+//
+// Without it, changing the master key means re-storing every credential by hand, which requires
+// still having each plaintext — and the vault exists precisely so that nobody has to keep those. A
+// key chosen hastily during setup was therefore permanent in practice, and a key that cannot be
+// changed is one nobody admits is too weak.
+//
+// # What it does not do
+//
+// The secrets are unchanged. Anybody who read them under the old key still knows them, so this
+// answers "the key is too weak" and not "these credentials leaked" — the second needs each
+// credential rotated at the platform that issued it.
+//
+// # The ordering, which is the dangerous part
+//
+// The caller installs the new key wherever `vault.key_source` points, and must do it **after** this
+// returns. In between, the key on disk and the vault on disk disagree, and the recovery is to put
+// the old key back — which only works while the old key still exists. A caller that replaces the key
+// first has a vault nothing can open and nothing to go back to.
+//
+// Save writes a temp file and renames over the target, so a crash inside this call leaves the vault
+// readable by the *old* key rather than by neither.
+//
+// # The daemon must not be running
+//
+// An unlocked daemon holds this vault's old recipient in memory, and its next write would re-encrypt
+// under the old key and silently undo the rekey. Nothing here can detect that, which is why the
+// command that calls it says so and takes a confirmation.
+//
+// An empty key is refused, for the same reason Open refuses one: an empty scrypt passphrase is valid
+// age, and produces a vault anybody can open.
+func (v *Vault) Rekey(newKey string) error {
+	newKey = strings.TrimSpace(newKey)
+	if newKey == "" {
+		return fmt.Errorf("%w: empty key", ErrLocked)
+	}
+
+	id, rcp, err := keyFromString(newKey)
+	if err != nil {
+		return err
+	}
+
+	v.mu.Lock()
+	v.identity, v.recipient = id, rcp
+	v.mu.Unlock()
+
+	return v.Save()
+}
+
 // ResolveKey produces the age identity and recipient for the vault, with no
 // configured key source. See ResolveKeyFrom.
 func ResolveKey() (age.Identity, age.Recipient, error) {
