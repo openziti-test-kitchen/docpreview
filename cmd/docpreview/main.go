@@ -19,10 +19,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/netfoundry/docpreview/internal/config"
 	"github.com/netfoundry/docpreview/internal/daemon"
@@ -1391,27 +1394,12 @@ func writeKeyFile(path, key string, quiet bool) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		return fmt.Errorf("creating %s: %w", filepath.Dir(abs), err)
-	}
-
-	// O_EXCL is the refusal, and it is atomic — a Stat-then-create would lose a
-	// race with a second keygen against the same path.
-	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if os.IsExist(err) {
-		return fmt.Errorf("%s already exists: it may be the only key to an existing vault, "+
-			"and overwriting it would make every secret in that vault unreadable. "+
-			"Move it aside first if you mean to replace it", abs)
-	}
-	if err != nil {
-		return fmt.Errorf("creating %s: %w", abs, err)
-	}
-	if _, err := f.WriteString(key + "\n"); err != nil {
-		f.Close()
-		return fmt.Errorf("writing %s: %w", abs, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("writing %s: %w", abs, err)
+	// The mode, the atomicity and the refusal to clobber all live in internal/vault, beside the code
+	// that reads a key file back and decides what it will accept. What belongs here is which of the
+	// two writes this is: creating a key is a refusal to overwrite, and replacing one — after the
+	// vault has been re-encrypted to it — is not.
+	if err := vault.CreateKeyFile(abs, key); err != nil {
+		return err
 	}
 
 	if !quiet {
@@ -1462,7 +1450,7 @@ func cmdVaultRekey(args []string) error {
 	fs := flag.NewFlagSet("vault rekey", flag.ExitOnError)
 	configPath := fs.String("config", defaultConfigPath(), "path to the server config file")
 	generate := fs.Bool("generate", false, "mint the new key instead of reading one from stdin")
-	yes := fs.Bool("yes", false, "proceed; the daemon must be stopped first")
+	yes := fs.Bool("yes", false, "required: re-encrypts the vault; the daemon must be stopped first")
 	if err := fs.Parse(hoistFlags(fs, args)); err != nil {
 		return err
 	}
@@ -1494,13 +1482,9 @@ func cmdVaultRekey(args []string) error {
 			return err
 		}
 	} else {
-		raw, err := readStdin()
+		newKey, err = readNewKey()
 		if err != nil {
 			return err
-		}
-		newKey = string(trimTrailingNewline(raw))
-		if newKey == "" {
-			return errors.New("vault rekey: no key on stdin. Pipe one in, or pass -generate")
 		}
 	}
 
@@ -1518,83 +1502,188 @@ func cmdVaultRekey(args []string) error {
 			"with the current key; %s is a copy of it)", err, backup)
 	}
 
-	// Step 4, last. A file source is replaced in place; anything else is printed, because this
-	// cannot reach into a secret manager.
-	if src.Kind() != "file" {
+	// Step 4, last. Only a file source can be written; the other two are somewhere this process
+	// cannot reach, so the key is printed once and installing it is the operator's step.
+	if src.Kind() != vault.SourceKindFile {
 		fmt.Println(newKey)
-		fmt.Fprintf(os.Stderr,
-			"\nThe vault now needs the key above, and %s cannot be written by this command.\n"+
-				"Store it wherever that source reads from, then start the daemon.\n\n"+
-				"Until then the daemon starts locked. The previous vault is at:\n  %s\n",
-			src.Describe(), backup)
+		fmt.Fprintf(os.Stderr, "\nThe vault now needs the key above. %s\n%s",
+			installKeyHint(src), previousVaultNote(backup))
 		return nil
 	}
 
-	if err := replaceKeyFile(src.Path(), newKey); err != nil {
+	if err := vault.WriteKeyFile(src.Path(), newKey); err != nil {
 		return fmt.Errorf("the vault was re-encrypted but the new key could not be installed: %w\n"+
-			"The vault at %s now needs the new key, which nothing has recorded. Restore the "+
-			"previous vault from %s and try again", err, cfg.VaultPath(), backup)
+			"The vault at %s now needs the new key, which nothing has recorded. Copy %s back over "+
+			"it to return to the previous key, then try again", err, cfg.VaultPath(), backup)
 	}
 
 	fmt.Fprintf(os.Stderr,
 		"Re-encrypted %d secrets under a new master key.\n\n"+
 			"  key    %s\n"+
 			"  vault  %s\n"+
-			"  backup %s (opens with the previous key)\n\n"+
+			"%s\n"+
 			"Start the daemon and confirm it unlocks before deleting the backup. The secrets "+
 			"themselves are unchanged:\nanybody who read them under the old key still knows them, "+
 			"so rotate the credentials at their own platforms if that is the worry.\n",
-		before, src.Path(), cfg.VaultPath(), backup)
+		before, src.Path(), cfg.VaultPath(), backupLine(backup))
 	return nil
 }
 
-// backupVault copies the vault beside itself, returning the new path.
+// readNewKey reads the replacement key from stdin, hiding it when stdin is a terminal.
+//
+// Hidden for the same reason the unlock prompt in internal/vault hides its input: a master key typed
+// in view of a screen recorder, a shared terminal or a tmux log is a master key that has leaked. A
+// pipe is read as-is, which is the scripted path.
+//
+// Trimmed of all surrounding whitespace, not merely the trailing newline. A key is not a credential
+// value — `vault set` keeps whitespace deliberately, because a PEM body contains it — and both
+// OpenWithKey and Rekey trim, so a key with a stray space would otherwise be refused two steps later
+// having already written a backup.
+func readNewKey() (string, error) {
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprint(os.Stderr, "New master key (not echoed): ")
+		raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return "", fmt.Errorf("reading the new key: %w", err)
+		}
+		key := strings.TrimSpace(string(raw))
+		vault.Zero(raw)
+		if key == "" {
+			return "", errors.New("vault rekey: no key entered. Type one, or pass -generate")
+		}
+		return key, nil
+	}
+
+	raw, err := readStdin()
+	if err != nil {
+		return "", err
+	}
+	key := strings.TrimSpace(string(raw))
+	// The buffer outlives the string otherwise, holding the plaintext master key on the heap for as
+	// long as the process runs.
+	vault.Zero(raw)
+	if key == "" {
+		return "", errors.New("vault rekey: no key on stdin. Pipe one in, or pass -generate")
+	}
+	return key, nil
+}
+
+// installKeyHint says where a key that cannot be written has to go, in terms of the source that will
+// read it back.
+//
+// Three sources reach this: `exec:`, which is a secret manager; the environment variable, which is
+// not a source object at all and reports its kind as empty; and nothing configured, where the daemon
+// starts locked and is unlocked from the dashboard. "Store it wherever that source reads from" is
+// true only of the first, and reads as nonsense against `none`.
+func installKeyHint(src vault.KeySource) string {
+	switch src.Kind() {
+	case vault.SourceKindExec:
+		return fmt.Sprintf("Store it where %s reads from, then start the daemon.\n"+
+			"Until then the daemon starts locked.", src.Describe())
+	default:
+		return "No vault.key_source is configured, so nothing on disk holds it.\n" +
+			"Set $DOCPREVIEW_MASTER_KEY to it, or unlock the daemon with it from the dashboard —\n" +
+			"and to have a restart survive without a person, point vault.key_source at a file or a\n" +
+			"secret manager:\n\n" +
+			"  vault:\n" +
+			"    key_source: \"file:/etc/docpreview/master.key\"\n" +
+			"    key_source: \"exec:op read op://ops/docpreview/master-key\""
+	}
+}
+
+// backupLine and previousVaultNote render the backup, or say plainly that there was none.
+//
+// A vault that did not exist yet has nothing to copy, and printing the sentinel as though it were a
+// path told the operator "backup (no existing vault) (opens with the previous key)" — three claims,
+// none of them true.
+func backupLine(backup string) string {
+	if backup == "" {
+		return "\nNo backup was taken: there was no vault before this.\n"
+	}
+	return fmt.Sprintf("  backup %s (opens with the previous key)\n", backup)
+}
+
+func previousVaultNote(backup string) string {
+	if backup == "" {
+		return "There was no vault before this, so nothing was backed up.\n"
+	}
+	return fmt.Sprintf("The previous vault is at:\n  %s\n", backup)
+}
+
+// backupVault copies the vault beside itself, returning the new path or "" when there was no vault.
 //
 // A copy rather than a rename: the original has to keep working, because the rekey may fail and the
 // daemon may be started again before anybody notices.
+//
+// The copy is the recovery path the command then names, so it is written the way every other vault
+// write is — temp file, sync, rename — rather than with a plain WriteFile. A power loss between
+// writing this and re-encrypting the vault would otherwise leave a durable new-key vault beside a
+// truncated backup, which is the exact inversion of what these steps exist to guarantee.
+//
+// The name refuses to collide rather than overwriting. Two rekeys in the same second produce the same
+// stamp, and `docpreview vault keygen -out` already establishes the rule for this project: anything
+// that writes a credential to disk does not clobber what is there.
 func backupVault(path string) (string, error) {
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		// Nothing to back up and nothing to lose. A vault that does not exist yet is created by the
 		// first write under the new key.
-		return "(no existing vault)", nil
+		return "", nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("reading the vault: %w", err)
 	}
+	defer vault.Zero(raw)
 
-	// Second-resolution and sortable, so two rekeys in one session do not collide and the newest
-	// backup is the last one in a directory listing.
-	dst := fmt.Sprintf("%s.bak-%s", path, time.Now().Format("20060102-150405"))
-	if err := os.WriteFile(dst, raw, 0o600); err != nil {
-		return "", fmt.Errorf("writing %s: %w", dst, err)
+	// UTC and sortable, matching every other timestamped name this project writes — a local stamp
+	// sorts wrongly for an hour after a daylight-saving fall-back and cannot be lined up against the
+	// daemon's own logs.
+	stamp := time.Now().UTC().Format("20060102-150405")
+	for attempt := 0; ; attempt++ {
+		dst := fmt.Sprintf("%s.bak-%s", path, stamp)
+		if attempt > 0 {
+			dst = fmt.Sprintf("%s.bak-%s-%d", path, stamp, attempt)
+		}
+		err := writeNewFile(dst, raw)
+		if os.IsExist(err) {
+			if attempt > 100 {
+				return "", fmt.Errorf("cannot find an unused backup name beside %s", path)
+			}
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return dst, nil
 	}
-	return dst, nil
 }
 
-// replaceKeyFile overwrites the master key file, which writeKeyFile deliberately refuses to do.
+// writeNewFile writes data to a path that must not already exist, atomically and at 0600.
 //
-// The refusal there is right: `keygen -out` clobbering an existing key would destroy every secret in
-// the vault it opens. Here the vault has *already* been re-encrypted to this key, so the file is
-// now the stale half and leaving it would be the failure.
-//
-// Written through a temp file and renamed, so an interrupted write cannot leave a truncated key —
-// which would be indistinguishable from the wrong key and just as fatal. The mode is 0600 because
-// the vault refuses a key file any group can read.
-func replaceKeyFile(path, key string) error {
+// os.IsExist on the returned error means the name was taken; the caller picks another.
+func writeNewFile(path string, data []byte) error {
+	// The exclusive create is what reserves the name. The content then goes to a temp file and is
+	// renamed over that reservation, so the visible file is never partial.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	f.Close()
+
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".master-key-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".vault-bak-*.tmp")
 	if err != nil {
 		return fmt.Errorf("creating a temp file in %s: %w", dir, err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op once the rename succeeds
 
-	if err := tmp.Chmod(0o600); err != nil && os.PathSeparator != '\\' {
+	if err := tmp.Chmod(0o600); err != nil && runtime.GOOS != "windows" {
 		tmp.Close()
 		return fmt.Errorf("securing %s: %w", tmpName, err)
 	}
-	if _, err := tmp.WriteString(key + "\n"); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return fmt.Errorf("writing %s: %w", tmpName, err)
 	}

@@ -100,6 +100,26 @@ $ grep -c "github" ~/.docpreview/vault.age
 0
 ```
 
+#### Changing it
+
+```bash
+docpreview vault rekey -generate -yes    # with the daemon stopped
+```
+
+Every secret is kept, so this does not require having the plaintexts — which matters, because the vault exists
+precisely so that nobody keeps a copy of them. Without it, changing the key means re-storing each credential by
+hand, so a key chosen hastily during setup is permanent in practice.
+
+Two things it does not do. It does not change the secrets, so anybody who read one under the old key still knows
+it — rotate that credential at the platform that issued it. And it cannot help a daemon that is running: the old
+key is in memory, and the next write would undo the rekey. See [`vault rekey`](./cli.md#vault-rekey) for the
+ordering and what the backup is for.
+
+A weak key is worth changing even when the file permissions look fine. On the host they are what protects the
+secrets — anything that can read `vault.age` can read the key beside it — but a short passphrase protects nothing
+wherever the vault travels without its key: a snapshot, a backup, or a copy left behind by
+[moving an installation](../guides/move-an-installation.md#afterwards). Four characters is ten thousand guesses.
+
 ## Credentials in memory
 
 Every credential is wrapped in a `Secret` type that implements `Stringer`, `Formatter`, `GoStringer`, and

@@ -384,6 +384,16 @@ for the full state.
 demoted to a fallback and locked-boot the default. See
 [docs/design/05-secrets.md](docs/design/05-secrets.md#the-master-key). What is left:
 
+- [x] **The key can be changed.** `docpreview vault rekey` re-encrypts the vault under a new key, keeping every
+      secret — so rotating no longer needs every plaintext, which is what made a hastily chosen key permanent.
+      Opens under the current key first, backs the vault up, re-encrypts, and installs the new key last; the
+      ordering and its one unprotected window are in
+      [docs/design/05-secrets.md](docs/design/05-secrets.md#changing-it).
+- [ ] **Nothing detects a daemon during a rekey.** A running daemon holds the old recipient in memory and its next
+      write undoes the rekey — after step 4 it does so with the old key file already replaced, which is the one
+      state with no recovery. `-yes` is the operator asserting the daemon is stopped, not a check. An advisory
+      lock held for the daemon's lifetime, attempted by `vault rekey` before step 1, would make it real and would
+      serialize two concurrent rekeys as a side effect. Nothing serializes them today.
 - [ ] **Show the key source on the dashboard.** The one thing an operator wants to know from the Secrets panel
       is whether a restart will need them, and right now that only appears in `doctor` and one startup log
       line. `secretsState` needs a field and the panel a sentence.

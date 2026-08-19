@@ -960,6 +960,61 @@ too — the `-shell` form sets the variable for one session only, and losing the
 A passphrase works instead of a generated key: any `$DOCPREVIEW_MASTER_KEY` that does not begin with
 `AGE-SECRET-KEY-1` is treated as one and stretched with scrypt.
 
+### `vault rekey`
+
+```powershell
+docpreview vault rekey -generate -yes
+```
+
+Re-encrypts the vault under a new master key and keeps every secret. Use it when the key is weaker than it should
+be — a short passphrase typed during setup — or when the key itself may have been seen.
+
+```text
+docpreview vault rekey [-config FILE] [-generate] -yes
+```
+
+| Flag | |
+|---|---|
+| `-generate` | Mint the new key. Without it, the new key is read from stdin, so an existing one can be reused. |
+| `-yes` | Required. Without it nothing happens and the command says why. |
+
+:::danger Stop the daemon first
+
+A running daemon holds the old key in memory. Its next write to the vault re-encrypts under that old key and
+silently undoes the rekey. Nothing can detect this from here, which is why `-yes` exists.
+
+:::
+
+The order is what makes it recoverable:
+
+1. Open the vault under the **current** key. Failing here writes nothing — a rekey that cannot read the vault
+   would otherwise replace it with an empty one.
+2. Copy `vault.age` to `vault.age.bak-<timestamp>`, which the old key still opens.
+3. Re-encrypt in place, atomically. A crash here leaves the vault readable by the old key.
+4. Install the new key at `vault.key_source`, **last**. Between 3 and 4 the two disagree, and the recovery is to
+   put the old key back — which only works while the old key still exists.
+
+```text
+Re-encrypted 12 secrets under a new master key.
+
+  key    /etc/docpreview/master.key
+  vault  /var/lib/docpreview/vault.age
+  backup /var/lib/docpreview/vault.age.bak-20260814-124819 (opens with the previous key)
+```
+
+Start the daemon and confirm it unlocks before deleting the backup.
+
+An `exec:` key source cannot be written to — the key lives in a secret manager, and putting it there is a step
+this command cannot take. It prints the new key once, on stdout, and tells you to store it. Until you do, the
+daemon starts locked.
+
+:::note This changes the lock, not the credentials
+
+Anybody who read a secret under the old key still knows it. A rekey answers "the key is too weak"; a leaked
+credential has to be rotated at the platform that issued it.
+
+:::
+
 ### `vault set <key>`
 
 From a file:

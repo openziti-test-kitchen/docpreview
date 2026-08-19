@@ -249,6 +249,12 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	// remote caller may change.
 	mux.HandleFunc("PUT /api/settings/prefix", a.gated(a.setNamePrefix))
 
+	// Read separately, because the field moved to the Settings page and that page has no reason
+	// to fetch every project row — which carries an inlined badge per project — to render one
+	// twelve-character input. Ungated on purpose: it is the same value already in every preview
+	// hostname, so it is public by the time anyone can ask.
+	mux.HandleFunc("GET /api/settings/prefix", a.getNamePrefix)
+
 	// Checking an image runs a docker command with an operator-supplied argument and
 	// makes a registry round trip, so it is gated like every other write even though it
 	// changes nothing here. Unauthenticated, it would be a way to make this host probe
@@ -1116,6 +1122,26 @@ func (a *ProjectsAdmin) link(w http.ResponseWriter, r *http.Request) {
 // Stored in the database rather than written back into config.yml, because that file is
 // hand-written and its comments are the most valuable thing in it — a daemon that rewrote it
 // to save one string would delete them.
+// getNamePrefix reports the installation's name prefix, and whether it can be changed from here.
+//
+// can_write comes from the same pair of gates the PUT goes through, so the Settings page can show
+// the value read-only rather than offering a Save that will 403.
+func (a *ProjectsAdmin) getNamePrefix(w http.ResponseWriter, r *http.Request) {
+	writable := a.setPrefix != nil
+	if writable && roleOfContext(r.Context()) != RoleAdmin {
+		// The same two gates the PUT goes through, asked rather than enforced.
+		if ok, _ := a.available(); !ok {
+			writable = false
+		} else if ok, _ := isLocalRequest(r); !ok {
+			writable = false
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"prefix":    a.namePrefix(),
+		"can_write": writable,
+	})
+}
+
 func (a *ProjectsAdmin) setNamePrefix(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Prefix string `json:"prefix"`

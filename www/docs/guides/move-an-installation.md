@@ -216,6 +216,17 @@ status change after the move.
 The old machine still holds a copy of the vault and the master key. Whether that matters is a decision about the
 credentials inside it rather than about docpreview.
 
+**Consider changing the master key on the new machine.** A move leaves `vault.age` on two machines, and if the key
+is short — a passphrase typed during a hurried first setup — the copy you left behind is guessable without the key
+file beside it. With the daemon stopped:
+
+```bash
+docpreview vault rekey -generate -yes
+```
+
+Every secret is kept, so this needs none of the plaintexts. See [`vault rekey`](../reference/cli.md#vault-rekey)
+for the ordering and what the backup is for.
+
 If you left it able to start, make sure it cannot: an old daemon coming back up on the same zrok account will not
 reap the new one's shares — the two enrolments are different identities — but both will try to hold the same
 **names**, and the second one to publish takes them. Uninstall the service, or give the new installation a

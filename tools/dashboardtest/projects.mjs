@@ -162,6 +162,21 @@ const openSecrets = async d => {
   d.dispatchEvent(new win.Event("toggle"));
   await settle();
 };
+/* A project's settings are behind a disclosure now: the row carries identity and the live branch
+   preview, and everything else opens on demand. So anything asserting on the facts, the notes or
+   the environment variables has to open the row first — the same click a reader makes.
+
+   Takes the card's data-card key. A no-op when that row has nothing to disclose, which is a
+   project deferring entirely to its own .docpreview.yml. */
+// Idempotent, because the state lives outside the DOM and survives every re-render: a second
+// caller that clicked unconditionally would close what the first one opened.
+const openDetails = async key => {
+  const b = doc.querySelector(`[data-details="${key}"]`);
+  if (!b) return false;
+  if (b.getAttribute("aria-expanded") === "true") return true;
+  await click(b);
+  return true;
+};
 // Typing, not assignment: the page listens for input, and a bare `.value =` exercises
 // none of it — the kind of stub that makes a harness agree with itself.
 const type = async (el, v) => {
@@ -227,7 +242,18 @@ console.log("\nproject cards");
   const cards = $$(".pcard");
   if (cards.length !== 2) fail(`${cards.length} cards, want 2`);
 
-  const first = cards[0];
+  // Collapsed, a row is identity plus the live branch preview and nothing else. That is the whole
+  // point of the shape: the settings are what made four projects a wall of text.
+  const firstKey = cards[0].dataset.card;
+  if (cards[0].querySelector(".facts")) {
+    fail("the settings are rendered before anybody asked for them");
+  } else {
+    ok("a collapsed row carries no settings");
+  }
+
+  await openDetails(firstKey);
+
+  const first = $(`[data-card="${firstKey}"]`);
   const pairs = [...first.querySelectorAll(".facts dt")].map(dt =>
     [dt.textContent, dt.nextElementSibling?.textContent]);
   const asMap = Object.fromEntries(pairs);
@@ -244,9 +270,13 @@ console.log("\nproject cards");
   if (!asMap.env) fail("the card does not say the project has environment variables");
   ok(`facts render as ${pairs.length} label/value pairs`);
 
-  // The second project states nothing at all, and must say so in words rather than
-  // rendering an empty card.
-  if (!cards[1].textContent.includes("entirely from the repository")) {
+  // The second project states nothing at all, and must say so in words rather than offering a
+  // disclosure that opens onto nothing.
+  const deferring = $$(".pcard")[1];
+  if (deferring.querySelector("[data-details]")) {
+    fail("a project with no settings offers to disclose them anyway");
+  }
+  if (!deferring.textContent.includes("from the repository")) {
     fail("a project that defers everything renders no explanation");
   }
   if (!cards[1].classList.contains("pcard-off")) fail("a disabled project is not marked");
@@ -283,11 +313,12 @@ console.log("\nidentity: badge, name, platform label");
     fail("the real owner/repo is hidden behind the display name");
   }
   // `local` is the git simulator. The stored value stays `local`; what is read says
-  // what it is.
-  if (!$$(".pcard-head .flag").some(f => f.textContent.trim() === "bitbucket")) {
-    fail("the platform chip is missing");
+  // what it is. It sits in the identity block's second line with the repository path now,
+  // rather than as a third chip beside the name.
+  if (!$$(".pcard-id .sub").some(el => el.textContent.includes("bitbucket"))) {
+    fail(`the platform is missing: ${JSON.stringify($$(".pcard-id .sub").map(e => e.textContent))}`);
   }
-  ok("display name shown with owner/repo beside it");
+  ok("display name shown with owner/repo and platform beside it");
 }
 
 console.log("\nadding is reachable without scrolling past every project");
@@ -296,8 +327,11 @@ console.log("\nadding is reachable without scrolling past every project");
   // project on a page of thirty would mean scrolling past every one that already exists,
   // and the form would then open where the button was — the bottom of a long page —
   // putting the fields to fill in somewhere the eye had never been.
+  //
+  // The button now lives in the page's action row beside Settings, outside #projects-body, so
+  // "above the list" is structural rather than a thing a render has to keep getting right.
   const body = $("#projects-body");
-  const btnEl = $("#p-new");
+  const btnEl = $("#p-new-top");
   const firstCard = $(".pcard");
   if (!btnEl) {
     fail("no New project button");
@@ -313,248 +347,6 @@ console.log("\nadding is reachable without scrolling past every project");
       ok("New project is above the list");
     }
   }
-}
-
-console.log("\nthe add form is a dialog, not the bottom of the page");
-{
-  await click($("#p-new"));
-  const modal = $("#p-new-modal");
-  if (!modal) {
-    fail("the new-project form is not in a dialog");
-  } else if (!modal.querySelector("#p-url")) {
-    fail("the dialog does not contain the form");
-  } else if (modal.querySelector(".modal-card") === null) {
-    fail("the dialog has no card");
-  } else {
-    ok("opens in a modal dialog");
-  }
-  // Wide, because a build command is a shell line and a container image is a registry
-  // path: a narrower dialog turns both into boxes you scroll sideways to read.
-  if (modal && !modal.querySelector(".modal-card.wide")) {
-    fail("the project dialog uses the narrow card");
-  }
-  await click(btn("Cancel"));
-  if ($("#p-new-modal")) fail("Cancel left the dialog open");
-  else ok("Cancel closes it");
-}
-
-console.log("\nthe add form is closed until asked for");
-{
-  if ($("#p-owner")) fail("the add form is open before anything asked for it");
-  const newBtn = $("#p-new");
-  if (!newBtn) {
-    fail("there is no New project button");
-  } else {
-    await click(newBtn);
-    if (!$("#p-owner")) fail("New project did not open the form");
-    else ok("New project opens the form");
-    // And closing it puts the page back, rather than leaving eleven inputs open.
-    const cancel = btn("Cancel");
-    if (cancel) await click(cancel);
-    if ($("#p-owner")) fail("Cancel left the form open");
-    else ok("Cancel closes it");
-  }
-}
-
-console.log("\nthe new-project form");
-{
-  await click($("#p-new"));
-
-  // Columnar: every field is its own row of label + control, not seven across.
-  //
-  // Everything except the variables accordions, whose Name and Value fields use the same
-  // markup. Unscoped, this counted two per project card, so the number grew with the
-  // fixture rather than with the form being tested — and scoping to `.panel` misses the
-  // new-project form, which is not inside one.
-  const rows = $$(".grid-form .field").filter(f => !f.closest("[data-secrets]"));
-  if (rows.length < 10) fail(`${rows.length} field rows, want one per field`);
-  const stacked = rows.every(r => r.querySelector("label") && r.children.length >= 2);
-  if (!stacked) fail("a field row has no label beside its control");
-  else ok(`${rows.length} fields, one per row`);
-
-  // Paste a URL, get the three identity fields. Each form is what somebody actually
-  // has on a clipboard.
-  const cases = [
-    ["https://github.com/acme/docs", "github", "acme", "docs"],
-    ["https://github.com/acme/docs/pull/4/files", "github", "acme", "docs"],
-    ["git@bitbucket.org:netfoundry/customer-connect-docs.git", "bitbucket", "netfoundry",
-     "customer-connect-docs"],
-    ["https://bitbucket.org/netfoundry/platform-doc/src/main/docs", "bitbucket",
-     "netfoundry", "platform-doc"],
-  ];
-  for (const [url, platform, owner, repo] of cases) {
-    const el = $("#p-url");
-    el.value = url;
-    el.dispatchEvent(new win.Event("input", {bubbles: true}));
-    await settle();
-    const got = [$("#p-platform").value, $("#p-owner").value, $("#p-repo").value];
-    if (got.join("/") !== [platform, owner, repo].join("/")) {
-      fail(`${url} -> ${got.join("/")}, want ${platform}/${owner}/${repo}`);
-    }
-  }
-  ok(`${cases.length} URL forms parsed into platform/owner/repo`);
-
-  // An unrecognised host must leave the fields alone rather than clearing them: a
-  // half-typed value would otherwise wipe what was already correct.
-  $("#p-owner").value = "acme";
-  const el = $("#p-url");
-  el.value = "https://git.example.com/acme/docs";
-  el.dispatchEvent(new win.Event("input", {bubbles: true}));
-  await settle();
-  if ($("#p-owner").value !== "acme") fail("an unknown host cleared the owner field");
-
-  // The driver select must not offer what the daemon will refuse. docker is available
-  // and local is not enabled in this fixture.
-  const opts = [...$("#p-driver").options];
-  const local = opts.find(o => o.value === "local");
-  const docker = opts.find(o => o.value === "docker");
-  if (!local?.disabled) fail("local is offered although this daemon has not enabled it");
-  if (!local.textContent.includes("not enabled")) {
-    fail(`the local option does not say why: ${JSON.stringify(local.textContent)}`);
-  }
-  if (docker?.disabled) fail("docker is disabled although the probe found it");
-  ok("the driver select disables what would be refused");
-
-  // The image field is a search box over the known images, and still free text — a
-  // private registry mirror is the normal answer in an enterprise and must not be
-  // refused by a closed list.
-  const image = $("#p-image");
-  if (image.tagName !== "INPUT") fail("the image field is a closed list, not pick-or-type");
-  const panel = $("#p-image-panel");
-  if (!panel) {
-    fail("the image field has no suggestion panel");
-  } else {
-    if (!panel.hidden) fail("the image panel is open before the field was touched");
-    image.dispatchEvent(new win.Event("focus", {bubbles: true}));
-    await settle();
-    if (panel.hidden) fail("focusing the image field did not open the list");
-    const all = $$("#p-image-panel [data-image]").filter(r => !r.hidden);
-    if (all.length < 2) fail(`${all.length} images offered`);
-
-    // The field filters its own list, which is the point of it being one field.
-    await type(image, "alpine");
-    const shown = $$("#p-image-panel [data-image]").filter(r => !r.hidden);
-    if (!shown.length || shown.some(r => !r.dataset.image.includes("alpine"))) {
-      fail(`filtering by "alpine" gave ${JSON.stringify(shown.map(r => r.dataset.image))}`);
-    }
-    // Each row says the one thing worth knowing about that image.
-    if (!shown[0].textContent.includes("musl")) fail("an alpine row does not mention musl");
-
-    // A value that matches nothing is legal, and the panel gets out of the way.
-    await type(image, "registry.internal/ours:1");
-    if (!$("#p-image-panel").hidden) fail("the panel stayed open over a custom value");
-
-    // Clicking a row sets the field.
-    image.dispatchEvent(new win.Event("focus", {bubbles: true}));
-    await type(image, "bookworm");
-    const row = $$("#p-image-panel [data-image]").find(r => !r.hidden);
-    await click(row);
-    if (image.value !== row.dataset.image) {
-      fail(`clicking a row set ${JSON.stringify(image.value)}`);
-    } else ok(`pick-or-type: filtered, clicked, field reads ${image.value}`);
-  }
-
-  // Notes is a textarea with a cap, not a one-line input.
-  const notes = $("#p-notes");
-  if (notes.tagName !== "TEXTAREA") fail("notes is still a single-line input");
-  else if (notes.getAttribute("maxlength") !== "5000") {
-    fail(`notes maxlength = ${notes.getAttribute("maxlength")}, want 5000`);
-  } else ok("notes is a capped textarea");
-
-  await click(btn("Cancel"));
-}
-
-console.log("\na framework preset fills the fields it knows");
-{
-  await click($("#p-new"));
-  const sel = $("[data-framework]");
-  if (!sel) {
-    fail("no framework preset dropdown");
-  } else {
-    // A new project starts on the server's default preset, not on "none": this daemon
-    // previews Docusaurus sites, so defaulting to "the repository decides" makes the
-    // commonest case two clicks and the rarest zero. An *existing* project still shows
-    // what it stored, blank included — asserted below.
-    if (sel.value !== "docusaurus") {
-      fail(`a new project starts on ${JSON.stringify(sel.value)}, want the default preset`);
-    } else {
-      ok("a new project starts on Docusaurus");
-    }
-
-    // Placeholders, never values. Typing is what overriding means, so a preset that
-    // prefilled the box would be indistinguishable from a value somebody set — and would
-    // then be stored as an explicit one that stops tracking the preset.
-    const cmd = $('[data-preset="build_command"]');
-    const out = $('[data-preset="output"]');
-    sel.value = "docusaurus";
-    sel.dispatchEvent(new win.Event("change", {bubbles: true}));
-    await settle();
-
-    if (cmd.placeholder !== "npm run build" || out.placeholder !== "build") {
-      fail(`placeholders are ${JSON.stringify([cmd.placeholder, out.placeholder])}`);
-    } else if (cmd.value !== "" || out.value !== "") {
-      fail("the preset filled the boxes instead of their placeholders");
-    } else {
-      ok(`placeholders follow the preset: ${JSON.stringify(cmd.placeholder)}, ${
-        JSON.stringify(out.placeholder)}`);
-    }
-
-    // A preset that needs a tool the node images do not have says so here, rather than
-    // twenty seconds into a build that reports "mkdocs: not found".
-    sel.value = "mkdocs";
-    sel.dispatchEvent(new win.Event("change", {bubbles: true}));
-    await settle();
-    const warn = $("#framework-tool");
-    if (!warn || warn.hidden) {
-      fail("MkDocs does not warn that the image needs mkdocs");
-    } else if (!/mkdocs/.test(warn.textContent)) {
-      fail(`the warning says ${JSON.stringify(warn.textContent)}`);
-    } else {
-      ok("warns when the preset needs a tool the image lacks");
-    }
-    if (cmd.placeholder !== "mkdocs build") {
-      fail(`switching presets left the placeholder at ${JSON.stringify(cmd.placeholder)}`);
-    }
-
-    // Back to none: a blank preset is how a project defers to the repository entirely.
-    sel.value = "";
-    sel.dispatchEvent(new win.Event("change", {bubbles: true}));
-    await settle();
-    if (!$("#framework-tool").hidden) fail("the tool warning outlived the preset");
-    else ok("no preset, no warning");
-  }
-  await click(btn("Cancel"));
-}
-
-console.log("\nthe new-project form asks about the credential without collecting it");
-{
-  // A token pasted into a form for a project that does not exist yet has nowhere to be
-  // stored until the row is written, which made the save two requests where the second
-  // could fail on its own — and did, reporting "failed to fetch" about a project that had
-  // been created.
-  await click($("#p-new"));
-  await type($("#p-url"), "https://bitbucket.org/netfoundry/customer-connect-docs");
-  const box = $("#scm-fields");
-  if (!box || box.hidden) {
-    fail("no credential question on a new Bitbucket project");
-  } else {
-    if (!box.querySelector("[data-privtoggle]")) {
-      fail("the new form does not ask whether the repository is private");
-    } else {
-      ok("asks whether it is private");
-    }
-    if (box.querySelector("[data-scmrow]") || box.querySelector("input[type=password]")) {
-      fail("the new form collects a credential it has nowhere to store yet");
-    } else {
-      ok("collects no token before the project exists");
-    }
-    if (!/Create the project first/.test(box.textContent)) {
-      fail("the form does not say when to paste the token");
-    } else {
-      ok("says to paste it after creating");
-    }
-  }
-  await click($("#p-new-modal .modal-x"));
 }
 
 console.log("\na private project with no credential says so on its card");
@@ -606,86 +398,15 @@ console.log("\na private project with no credential says so on its card");
   await settle();
 }
 
-console.log("\nan existing project keeps the preset it stored");
-{
-  // The default applies to a *new* form only. Applying it to a stored blank would change
-  // what every project written before presets existed builds.
-  const bb = $$(".pcard [data-tab=build]").find(
-    b => b.dataset.key === "bitbucket/netfoundry/customer-connect-docs");
-  await click(bb);
-  const sel = $("[data-framework]");
-  if (!sel) {
-    fail("no preset control on an existing project");
-  } else if (sel.value !== "") {
-    fail(`a project with no stored preset shows ${JSON.stringify(sel.value)}`);
-  } else {
-    ok("blank stays blank — the repository decides");
-  }
-  await click(btn("Cancel — discard edits"));
-}
-
-console.log("\nthe dialog has a close control that does not scroll away");
-{
-  await click($("#p-new"));
-  const x = $("#p-new-modal .modal-x");
-  if (!x) {
-    fail("no close control in the dialog");
-  } else {
-    // Sticky, so nineteen fields do not have to be scrolled past to find the way out.
-    const pos = win.getComputedStyle(x.parentElement).position;
-    if (pos !== "sticky") {
-      fail(`the close control's row is position:${pos}, so it scrolls away with the form`);
-    } else {
-      ok("pinned to the corner");
-    }
-    await click(x);
-    if ($("#p-new-modal")) fail("the close control did not close the dialog");
-    else ok("closes the dialog");
-  }
-}
-
-console.log("\none credential field, because that is all an access token needs");
-{
-  // This offered a choice between an access token and an account email plus API token,
-  // which put an email field in front of every operator. An access token needs none: the
-  // clone username is the literal x-token-auth and the API call is a bearer header. The
-  // account-token mode is a server-wide setting, not a per-project question.
-  const bb = $$(".pcard [data-tab=build]").find(
-    b => b.dataset.key === "bitbucket/netfoundry/customer-connect-docs");
-  await click(bb);
-
-  const box = $("#scm-fields");
-  const rows = [...box.querySelectorAll("[data-scmrow]")].map(r => r.dataset.scmrow);
-  if (rows.length !== 1 || rows[0] !== "scm.access_token") {
-    fail(`credential rows are ${JSON.stringify(rows)}, want only the access token`);
-  } else {
-    ok("one row: the access token");
-  }
-  if (box.querySelector("[data-scmmode]")) {
-    fail("the credential type picker is back, which is a question with one answer");
-  }
-  // No email *field*. The word still appears, in the sentence explaining that an access
-  // token needs none — asserting on the word flagged the explanation.
-  if (box.querySelector('[id$="scmemail"]') || /Account email/.test(box.textContent)) {
-    fail("the form still collects an email, which an access token does not use");
-  } else {
-    ok("no email field");
-  }
-  // And it says how the token is used, since that is what makes the absence of an email
-  // obvious rather than suspicious.
-  if (!/x-token-auth/.test(box.textContent)) {
-    fail("the form does not say how the token is used");
-  } else {
-    ok("says x-token-auth for clone, bearer for the API");
-  }
-  await click(btn("Cancel — discard edits"));
-}
-
 console.log("\nsecrets panel");
 {
   // An accordion in the card, not a `Secrets` button beside `Edit`. As a button it made
   // a project's tokens a mode the card switched into, mutually exclusive with the form —
   // so checking a variable meant leaving whatever was being edited.
+  //
+  // Inside the row's disclosure now, with the rest of the settings, so the row has to be opened
+  // first — the same click a reader makes.
+  await openDetails($$(".pcard")[0].dataset.card);
   const sec = $$(".pcard [data-secrets]")[0];
   if (!sec) {
     fail("no environment-variables section on a project card");
@@ -753,250 +474,6 @@ console.log("\nsecrets panel");
   }
 }
 
-console.log("\nthe Bitbucket credential appears only where it applies");
-{
-  // A GitHub App is installed on repositories, so the installation is the grant and there
-  // is nothing per project to paste. A Bitbucket access token is scoped to one repository
-  // at creation — unless a workspace admin permits wider ones, which many do not — so the
-  // credential has to live beside the project row.
-  await click($("#p-new"));
-  const box = $("#scm-fields");
-  if (!box) {
-    fail("the new-project form has no credential block at all");
-  } else if (!box.hidden) {
-    fail("the credential block is shown before the platform is known");
-  } else {
-    ok("hidden until the platform says Bitbucket");
-  }
-
-  // Pasting a Bitbucket URL fills the form from script, which fires no change event — so
-  // the URL handler has to reveal the block itself.
-  await type($("#p-url"), "https://bitbucket.org/netfoundry/customer-connect-docs");
-  if ($("#scm-fields").hidden) {
-    fail("a pasted Bitbucket URL left the credential block hidden");
-  } else {
-    ok("a pasted Bitbucket URL reveals it");
-  }
-
-  // And back again, so somebody who corrects the URL is not left with a token box for a
-  // platform that has no use for one.
-  await type($("#p-url"), "https://github.com/acme/docs");
-  if (!$("#scm-fields").hidden) {
-    fail("switching back to GitHub left the credential block on screen");
-  } else {
-    ok("hidden again for GitHub");
-  }
-  await click(btn("Cancel"));
-}
-
-console.log("\nediting a Bitbucket project shows what is stored");
-{
-  const bb = $$(".pcard [data-tab=build]").find(
-    b => b.dataset.key === "bitbucket/netfoundry/customer-connect-docs");
-  if (!bb) {
-    fail("no Edit control on the Bitbucket project");
-  } else {
-    await click(bb);
-    const box = $("#scm-fields");
-    if (!box || box.hidden) {
-      fail("the credential block is missing on a Bitbucket project's form");
-    } else {
-      // Names only, never values: "set" is the most that can be shown, because nothing
-      // reads a stored credential back.
-      const head = box.querySelector(".field-head").textContent;
-      if (!/set/.test(head)) fail(`the access token is not marked set: ${JSON.stringify(head)}`);
-      else ok("the stored access token is marked set");
-
-      // Text and password only. A checkbox's value is "on" whether it is ticked or not,
-      // so counting it made the private-repository question look like a leaked secret.
-      const boxes = [...box.querySelectorAll("input[type=password]")];
-      const leaked = boxes.filter(i => i.value !== "");
-      if (leaked.length) {
-        fail(`${leaked.length} credential box(es) are prefilled: ${
-          JSON.stringify(leaked.map(i => i.id))}`);
-      } else {
-        ok(`${boxes.length} credential boxes, all empty`);
-      }
-
-      const test = box.querySelector("[data-test-scm]");
-      if (!test) fail("no Test credential control on a saved project");
-      else ok("Test credential offered");
-
-      // The private-repository question, and what a blank field will do. With a
-      // workspace-wide token stored, blank means "inherit"; with none it means "this
-      // cannot clone" — opposite meanings for the same empty box, so the page has to say
-      // which. This fixture stores no global credential.
-      const priv = box.querySelector('input[type=checkbox]');
-      if (!priv) {
-        fail("nothing asks whether the repository is private");
-      } else {
-        ok("asks whether the repository is private");
-      }
-      // This project has its own token stored, so the line says so. The other two
-      // branches — inherit a workspace-wide one, or nothing anywhere — are asserted below
-      // by rendering with a different state.
-      if (!/uses its own credential/.test(box.textContent)) {
-        fail(`the form does not say which credential applies: ${
-          JSON.stringify(box.querySelector(".why").textContent.trim())}`);
-      } else {
-        ok("says this repository uses its own");
-      }
-
-      // The credential rows use the secrets-page shape, with their own Save — a token is
-      // pasted and then tested, so committing it must not require the form's Save.
-      const row = box.querySelector('[data-scmrow="scm.access_token"]');
-      if (!row || !row.querySelector("[data-set-scm]")) {
-        fail("the access token has no Save of its own");
-      } else if (!row.querySelector("[data-expand]")) {
-        fail("the access token box has no expand control");
-      } else {
-        ok("credential rows have their own Save and expand");
-      }
-
-      // A public repository reports nothing: it clones with no credential at all.
-      const priv2 = box.querySelector("[data-privtoggle]");
-      priv2.checked = false;
-      priv2.dispatchEvent(new win.Event("change", {bubbles: true}));
-      await settle();
-      if ($("#scm-flag").textContent.trim() !== "") {
-        fail(`unchecking private left ${JSON.stringify($("#scm-flag").textContent.trim())}`);
-      } else {
-        ok("no credential state reported for a public repository");
-      }
-      priv2.checked = true;
-      priv2.dispatchEvent(new win.Event("change", {bubbles: true}));
-      await settle();
-    }
-  }
-}
-
-console.log("\na blank field says whether it inherits or fails");
-{
-  // The same empty box means opposite things depending on what is stored workspace-wide,
-  // and the page is the only thing that can tell an operator which. Both branches, by
-  // rendering the page with each state.
-  const withGlobal = state();
-  withGlobal.defaults.scm_global = ["bitbucket.access_token"];
-  withGlobal.projects[1].scm = [];
-  withGlobal.projects[1].private = true;
-  win.eval(`projOpen = {key: "bitbucket/netfoundry/customer-connect-docs", tab: "build"}`);
-  win.eval(`renderProjectsPage(${JSON.stringify(withGlobal)})`);
-  await settle();
-
-  let text = $("#scm-fields").textContent;
-  if (!/inherit the workspace-wide credential/.test(text)) {
-    fail("with a global token stored, a blank field does not say it inherits");
-  } else {
-    ok("blank inherits the workspace-wide credential");
-  }
-  // And it is marked inherited rather than missing: calling it missing tells an operator
-  // to fix something that works.
-  if (!/inherited/.test($("#scm-fields .field-head").textContent)) {
-    fail("an inheriting project's credential is not marked inherited");
-  } else {
-    ok("marked inherited, not missing");
-  }
-
-  const withNothing = state();
-  withNothing.projects[1].scm = [];
-  withNothing.projects[1].private = true;
-  win.eval(`renderProjectsPage(${JSON.stringify(withNothing)})`);
-  await settle();
-
-  text = $("#scm-fields").textContent;
-  if (!/No workspace-wide credential is stored/.test(text)) {
-    fail("with nothing stored anywhere, the form does not say a token is needed");
-  } else {
-    ok("says a private repo needs its own token here");
-  }
-  if (!/missing/.test($("#scm-fields .field-head").textContent)) {
-    fail("with nothing to inherit, the credential is not marked missing");
-  } else {
-    ok("marked missing when there is nothing to fall back to");
-  }
-
-  // Back to the original state for the sections below.
-  win.eval(`renderProjectsPage(${JSON.stringify(state())})`);
-  await settle();
-}
-
-console.log("\ntesting a credential asks the platform");
-{
-  const test = $("[data-test-scm]");
-  calls.length = 0;
-  await click(test);
-
-  const post = calls.find(c => c.method === "POST");
-  const want = "/api/projects/bitbucket/netfoundry/customer-connect-docs/scm-test";
-  if (!post) fail("Test credential sent no request");
-  else if (post.url !== want) fail(`POST ${post.url}, want ${want}`);
-  else ok(`POST ${post.url}`);
-
-  // The form must stay open: if the answer is bad, this is where the token gets fixed.
-  if (!$("#scm-fields")) {
-    fail("the form closed on a credential test, taking the field with it");
-  } else {
-    ok("the form stays open");
-  }
-
-  // A toast lives for five seconds, which outlasts the rest of this file — so the next
-  // section's "was anything toasted" check would read this one's. Cleared rather than
-  // waited out.
-  $$("#toasts .toast").forEach(t => t.remove());
-}
-
-console.log("\nsaving sends only the credential boxes that were typed into");
-{
-  // An empty box means "leave what is stored alone". The alternative is that editing any
-  // other field on the form silently clears the token, which is a build that stops
-  // working for a reason nothing reports.
-  const key = "bitbucket/netfoundry/customer-connect-docs";
-  doc.getElementById(`p-scmtoken-${key}`).value = "a-new-repository-token";
-  calls.length = 0;
-  await click(btn("Save changes"));
-
-  const scm = calls.filter(c => c.url.includes("/scm/"));
-  if (scm.length !== 1) {
-    fail(`${scm.length} credential requests, want 1: ${JSON.stringify(scm.map(c => c.url))}`);
-  } else if (!scm[0].url.endsWith("/scm/scm.access_token")) {
-    fail(`PUT ${scm[0].url}`);
-  } else if (scm[0].body?.value !== "a-new-repository-token") {
-    fail("the token did not travel with the request");
-  } else {
-    ok(`PUT ${scm[0].url}`);
-  }
-  // The row itself still goes to the project endpoint, separately: one is sqlite, the
-  // other is the vault, and the credential must not travel in a payload that is logged.
-  if (!calls.some(c => c.method === "PUT" && c.url === `/api/projects/${key}`)) {
-    fail("the project row was not saved");
-  }
-}
-
-console.log("\nsaving an edit closes the form and says so");
-{
-  await click($$(".pcard [data-tab=build]")[0]);
-  if (!$(".pcard .panel")) fail("Edit did not open the panel");
-  calls.length = 0;
-  await click(btn("Save changes"));
-
-  if ($(".pcard .panel")) {
-    fail("the form is still open after saving, which looks identical to nothing happening");
-  }
-  // A toast, over the page. An inline notice would land where the form was — where the
-  // eye has already stopped looking once the panel closes — so a successful save would
-  // read as nothing happening.
-  const note = $("#toasts .toast");
-  if (!note || !note.textContent.includes("Saved")) {
-    fail(`no confirmation after saving: ${JSON.stringify(note?.textContent || null)}`);
-  } else ok(`closed, and toasted ${JSON.stringify(note.textContent.trim())}`);
-
-  // An edit must not scan: the pull requests are already known to the daemon, and
-  // re-queueing every one of them on every settings tweak would rebuild the world.
-  if (calls.some(c => c.method === "POST" && c.url.endsWith("/scan"))) {
-    fail("editing a project queued builds for every open pull request");
-  }
-}
-
 console.log("\nno per-card build button");
 {
   // It queued one build per open pull request — the same thing adding a project does — and
@@ -1006,59 +483,28 @@ console.log("\nno per-card build button");
     fail("a per-card build button is back on the project cards");
   } else ok("no Build control on a card");
 
-  // The scan on *add* is a different thing and must survive, which the add flow asserts
-  // further down. Nothing here posts a scan.
-  calls.length = 0;
-  await click($$(".pcard [data-tab=build]")[0]);
-  if (calls.some(c => c.url.endsWith("/scan"))) fail("opening Edit scanned the repository");
-  await click(btn("Cancel — discard edits") || btn("Cancel"));
-}
+  /* Edit is a link to the form's own page, not a button that expands a panel here.
 
-console.log("\nunsaved edits are not thrown away silently");
-{
-  // Open a project's settings and type into it.
-  await click($$(".pcard [data-tab=build]")[0]);
-  const dir = doc.getElementById("p-dir-github/netfoundry/unified-doc");
-  dir.value = "somewhere-else";
-  dir.dispatchEvent(new win.Event("input", {bubbles: true}));
-  await settle();
-
-  // Refuse the confirm: the panel stays open with the typing in it.
-  win.confirm = () => false;
-  await click(btn("Cancel"));
-  if (!$(".pcard .panel")) fail("declining the discard prompt closed the form anyway");
-  else if (doc.getElementById("p-dir-github/netfoundry/unified-doc").value !== "somewhere-else") {
-    fail("declining the prompt lost the typing");
-  } else ok("declining keeps the form and its edits");
-
-  // Accept it: the panel closes.
-  win.confirm = () => true;
-  await click(btn("Cancel"));
-  if ($(".pcard .panel")) fail("accepting the discard prompt left the form open");
-  else ok("accepting discards and closes");
-}
-
-console.log("\nadding a project queues its open pull requests");
-{
-  calls.length = 0;
-  await click($("#p-new"));
-  doc.getElementById("p-url").value = "https://github.com/acme/newdocs";
-  doc.getElementById("p-url").dispatchEvent(new win.Event("input", {bubbles: true}));
-  await settle();
-  await click(btn("Create project"));
-
-  const put = calls.find(c => c.method === "PUT");
-  const scan = calls.find(c => c.method === "POST" && c.url.endsWith("/scan"));
-  if (!put) fail("Create sent no PUT");
-  if (!scan) {
-    fail("Create did not scan for open pull requests, so nothing gets built");
-  } else if (scan.url !== "/api/projects/github/acme/newdocs/scan") {
-    fail(`scanned ${scan.url}`);
-  } else ok(`POST ${scan.url}`);
-
-  // And the order matters: the project has to exist before anything is queued against it.
-  if (put && scan && calls.indexOf(put) > calls.indexOf(scan)) {
-    fail("the scan was sent before the project was saved");
+     Nineteen fields expanding in place pushed every project below it off the screen, which is the
+     one thing a list must not do. The form's behaviour is in projectedit.mjs, against the page it
+     now lives on; what belongs here is that the list points at it, correctly, per project. */
+  const edits = $$(".pcard a.btn[href^='/projects/']");
+  if (!edits.length) {
+    fail("no Edit link on any card");
+  } else {
+    const hrefs = edits.map(a => a.getAttribute("href"));
+    const want = "/projects/github/netfoundry/unified-doc";
+    if (!hrefs.includes(want)) {
+      fail(`no Edit link to ${want}: ${JSON.stringify(hrefs)}`);
+    } else {
+      ok(`Edit links to ${want}`);
+    }
+  }
+  // And nothing on this page renders the form itself.
+  if ($(".grid-form") || $("#p-url")) {
+    fail("the project form is still rendered inside the list");
+  } else {
+    ok("no form on the list page");
   }
 }
 
@@ -1103,25 +549,8 @@ console.log("\nremoving a variable");
   else ok(`DELETE ${del.url}`);
 }
 
-console.log("\ndisabling a project");
-{
-  await click($$(".pcard [data-tab=build]")[0]);
-  calls.length = 0;
-  const toggle = btn("Disable");
-  if (!toggle) {
-    fail("no Disable control in the build panel");
-  } else {
-    await click(toggle);
-    const put = calls.find(c => c.method === "PUT");
-    if (!put) fail("Disable sent no request");
-    else if (put.body.enabled !== false) fail(`enabled = ${put.body.enabled}, want false`);
-    // PUT is a whole-row upsert, so every other field has to go with it or disabling a
-    // project would quietly erase its build command.
-    else if (put.body.build_command !== "npm run build") {
-      fail("disabling a project dropped its build command");
-    } else ok("Disable preserves the rest of the row");
-  }
-}
+// Disable is one of the form's actions, so it moved to the form's page with the rest of them.
+// projectedit.mjs asserts that it preserves the row.
 
 console.log("\na failure is reported where it can be seen");
 {
@@ -1231,49 +660,28 @@ console.log("\nunlinked pull requests are listed, and can be linked back");
   }
 }
 
-console.log("\nthe installation's hostname prefix");
+console.log("\nthe installation's hostname prefix is not on this page");
 {
-  // Beside New project, not on a card: it starts every hostname this daemon publishes, so
-  // it belongs to the page rather than to any project.
-  const box = doc.getElementById("p-prefix");
-  if (!box) {
-    fail("no hostname prefix field on the projects page");
-  } else {
-    if (box.value !== "") fail(`the field starts at ${JSON.stringify(box.value)}, want empty`);
+  /* It moved to the Settings page. It belongs to no project — it changes the public hostname of
+     every preview at once — and sitting in the same row as New project, with its own Save button
+     above a list of cards, it read as though it belonged to the first card.
 
-    // The example is live, because "a" tells nobody what they are about to get and
-    // `a-docs-main` is the string that ends up in a URL.
-    await type(box, "a-");
-    const eg = doc.getElementById("p-prefix-eg");
-    if (!eg) fail("no live example beside the field");
-    else if (eg.textContent.trim() !== "a-docs-main") {
-      fail(`the example reads ${JSON.stringify(eg.textContent.trim())}, want "a-docs-main"`);
-    } else ok(`typing "a-" shows ${JSON.stringify(eg.textContent.trim())}`);
-
-    // Saved to the settings route, not to a project. The trailing hyphen goes as typed —
-    // the server normalizes it, so the page does not have to guess.
-    calls.length = 0;
-    await click(btn("Save"));
-    const put = calls.find(c => c.method === "PUT" && c.url === "/api/settings/prefix");
-    if (!put) fail(`Save posted nothing to the settings route: ${JSON.stringify(calls)}`);
-    else if (put.body?.prefix !== "a-") {
-      fail(`it sent ${JSON.stringify(put.body)}, want the field's value`);
-    } else ok("PUT /api/settings/prefix");
-
-    // And it says what saving does not do. Nothing already published is renamed, which is
-    // the thing somebody would otherwise discover from a share list a week later.
-    const note = [...doc.querySelectorAll("#toasts .toast")]
-      .find(t => t.textContent.includes("keep their names"));
-    if (!note) fail("saving did not say that existing previews keep their names");
-    else ok("says existing previews keep their names until rebuilt");
+     Asserted here as an absence, because the alternative is nobody noticing it came back. Its
+     behaviour is tested in prefix.mjs, against the page it now lives on. */
+  for (const id of ["p-prefix", "p-prefix-eg"]) {
+    if (doc.getElementById(id)) fail(`#${id} is back on the projects page`);
   }
+  if (doc.querySelector("[data-save-prefix]")) {
+    fail("the prefix Save button is back on the projects page");
+  }
+  ok("no prefix field, no Save button — both are on Settings");
 }
 
 console.log("\nthe default branch's preview is on the card");
 {
   const cards = $$(".pcard");
   // The project that has one: a link to it, its branch, and its state.
-  const strip = cards[1].querySelector(".pcard-branch");
+  const strip = cards[1].querySelector(".pbranch");
   if (!strip) {
     fail("a project with a branch preview does not show it");
   } else {
@@ -1295,7 +703,7 @@ console.log("\nthe default branch's preview is on the card");
 
   // The project that has none says so and offers to start one, rather than leaving a blank
   // that reads as a broken feature.
-  const none = cards[0].querySelector(".pcard-branch.none");
+  const none = cards[0].querySelector(".pbranch.none");
   if (!none) {
     fail("a project with no branch preview says nothing about it");
   } else if (!none.querySelector("[data-branch]")) {

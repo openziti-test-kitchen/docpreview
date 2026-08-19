@@ -62,6 +62,45 @@ honoured so a path with a space in it can be one argument; there is no expansion
 helper gets one minute, because `op read` can legitimately block on a biometric prompt and killing that after
 five seconds would make the recommended configuration the one that does not work.
 
+### Changing it
+
+`docpreview vault rekey` re-encrypts the vault under a new key and keeps every secret.
+
+Before it existed, the master key was the one credential in the system that could not be changed. Rotating it
+meant re-storing each secret by hand, which requires still holding every plaintext — and not holding them is what
+the vault is for. So a key typed during a hurried first setup was permanent in practice, and a key that cannot be
+changed is one nobody admits is too weak. The four-character passphrase on the first production installation is
+the worked example.
+
+Four steps, and the order is the whole design:
+
+1. **Open under the current key.** Failing here writes nothing. A rekey that cannot read the vault would
+   otherwise replace it with an empty one and report success.
+2. **Copy `vault.age` to `vault.age.bak-<UTC stamp>`.** Written the same way every other vault write is — temp
+   file, sync, rename — because this copy is the recovery path steps 3 and 4 depend on, and a truncated backup
+   beside a durable new vault inverts the guarantee. The name refuses to collide rather than overwriting: two
+   rekeys in one second would otherwise share a stamp, and the older backup is the only thing that opens the
+   original vault.
+3. **Re-encrypt in place.** `Save` renames over the target, so a crash here leaves the file readable by the *old*
+   key. `Rekey` swaps the identity and recipient before writing and puts them back if the write fails, so a
+   failed rekey leaves the object on the same key as the file — a caller that retried would otherwise commit the
+   new key on its next write.
+4. **Install the new key, last.** Only a `file:` source can be written; `exec:` and the environment variable are
+   somewhere this process cannot reach, so the key is printed once and installing it is the operator's step.
+
+Between 3 and 4 the key on disk and the vault disagree, and the recovery is to put the old key back — which works
+only while the old key still exists. Reversed, the failure is total: a vault nothing can open and nothing to go
+back to. That window is the reason this is one command rather than a documented sequence of two.
+
+**The daemon has to be stopped, and nothing can check that.** An unlocked daemon holds the old recipient in
+memory, and its next write re-encrypts under the old key — silently undoing the rekey, and worse if it lands after
+step 4, since the old key file is gone by then. `-yes` is an assertion by the operator, not a detection. A real
+signal would be an advisory lock the daemon holds for its lifetime, which `vault rekey` could try to acquire; that
+also serializes two concurrent rekeys, which today nothing does. See `TODO.md`.
+
+**This changes the lock, not the credentials.** Anybody who read a secret under the old key still knows it.
+Rekeying answers "the key is too weak"; a leaked credential has to be rotated at the platform that issued it.
+
 ### The `Secret` type
 
 ```go
@@ -335,3 +374,7 @@ header, locked vault, and a round trip asserting no response body ever carries a
 10. A credential in git's own output is redacted before it becomes an error string.
 11. A project's secret is separated from a global one by a character no global key may contain.
 12. Injecting a value and adding it to the redactor are one operation, never two.
+13. A rekey preserves every secret, and the previous key stops opening the vault.
+14. A refused or failed rekey changes nothing: not the vault, not the key file, not the in-memory identity.
+15. The recipient a `Save` encrypts to is read under the same lock as the secrets it encrypts, so the ciphertext is
+    always one consistent pair of "these secrets, that key".
