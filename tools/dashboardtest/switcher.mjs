@@ -46,6 +46,12 @@ const status = {
     {preview_id: "ccc", repo: "github:openziti-test-kitchen/docpreview", number: 3,
      branch: "c", name: "d-c", url: "https://d-c.example/", state: "failed",
      updated_at: "2026-07-29T20:02:00-04:00", commit: "3333333"},
+    // A fourth preview so the preview count and the project count differ. With three of each,
+    // a trigger reading "All projects (3)" passes whichever number it is showing, and showing
+    // previews there is the bug: nine previews across four projects read as nine projects.
+    {preview_id: "ddd", repo: "github:netfoundry/unified-doc", number: 4,
+     branch: "d", name: "u-d", url: "https://u-d.example/", state: "ready",
+     updated_at: "2026-07-29T20:03:00-04:00", commit: "4444444"},
   ],
   events: [],
 };
@@ -111,6 +117,21 @@ console.log("closed until asked for");
   const label = $("#projpick-btn .pick-label").textContent.trim();
   if (!label.startsWith("All projects")) fail(`the trigger says ${JSON.stringify(label)}`);
   else ok(`trigger reads ${JSON.stringify(label)}`);
+
+  // The count is projects, not previews, and the fixture is built so the two differ: three
+  // projects holding three previews between them would let either reading pass. Nine previews
+  // across four projects reading "All projects (9)" is what this guards.
+  // Counted the way the page keys a project — the repository name — so a configured project
+  // and its own previews are one entry rather than two.
+  const projects = new Set(status.projects.map(p => p.key.split("/").pop()));
+  for (const p of status.previews) projects.add(p.repo.split("/").pop());
+  const want = `All projects (${projects.size})`;
+  if (label !== want) {
+    fail(`the trigger reads ${JSON.stringify(label)}, want ${JSON.stringify(want)} — ` +
+      `${status.previews.length} previews across ${projects.size} projects`);
+  } else {
+    ok(`the count is ${projects.size} projects, not ${status.previews.length} previews`);
+  }
 }
 
 console.log("\nthe list");

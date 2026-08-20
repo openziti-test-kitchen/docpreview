@@ -302,7 +302,24 @@ input.control::placeholder { color: var(--muted) }
   font: 12.5px/1.5 ui-monospace, Consolas, monospace;
 }
 
-.pcard-secrets { margin: 0.7rem 0 0 }
+/* The environment-variables disclosure, quieted right down.
+
+   It was a full-width bordered bar with "none" on the right, repeated on every card — so a page
+   of four projects carried four of them, each as visually loud as the project's own name, all
+   saying nothing. It is a disclosure for a thing most projects do not have: it reads as one line
+   of small text now, and only becomes a box when it is opened. */
+.pcard-secrets { margin: 0.55rem 0 0 }
+.pcard-secrets.secbox { border: 0; background: none; padding: 0 }
+.pcard-secrets > details > summary {
+  padding: 0.15rem 0; font-size: 0.78rem; color: var(--muted);
+}
+.pcard-secrets > details > summary:hover { color: var(--ink) }
+.pcard-secrets > details[open] > summary { color: var(--ink); font-weight: 600 }
+/* Opened, it gets its edges back: now there is content to bound. */
+.pcard-secrets > details[open] {
+  border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 0.3rem 0.55rem 0.1rem; background: var(--raised); margin-top: 0.35rem;
+}
 .pcard-secrets-body { padding: 0 0.9rem 0.8rem 2.75rem }
 /* The chips and the add-form inside it are their own layout, so the .sec grid does not
    apply — but the indent should still line up with the summary's label. */
@@ -739,15 +756,86 @@ input.control::placeholder { color: var(--muted) }
 
    Second time this stylesheet has been bitten by a generic class name; see the note on
    `.row .go` above. One document, one namespace, no scoping by accident. */
+/* A row, not a panel. Collapsed it is two lines tall, so four projects fit on a screen with room
+   between them, and the list reads as a list. */
 .pcard {
-  border: 1px solid var(--ring); border-radius: 8px; background: var(--surface);
-  padding: 0.7rem 0.85rem; margin-bottom: 0.6rem;
+  border: 1px solid var(--ring); border-radius: 10px; background: var(--surface);
+  padding: 0; margin-bottom: 0.65rem; overflow: hidden;
 }
-.pcard-head { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap }
-.pcard-head .name { font-weight: 600; font-size: 0.9rem }
-.pcard-head .sub { font: 11.5px/1.5 ui-monospace, Consolas, monospace; color: var(--muted) }
+.pcard:hover { border-color: var(--ink-2) }
+/* The header is its own band, ruled off from the body.
+
+   Everything used to sit in one padded box with nothing but whitespace between a project's
+   name and its settings — and the same amount of whitespace between one project and the
+   next. Four projects then read as a single column of text with names scattered through it.
+   A card needs a top: a tinted strip, a rule under it, and a gap below the card larger than
+   any gap inside it, so the eye gets the grouping before it reads a word. */
+.pcard-head {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0.55rem 0.8rem; background: var(--raised);
+  border-bottom: 1px solid var(--ring);
+}
+/* Name over path, as one identity block. Two lines rather than a name followed by three chips:
+   the eye reads the column of names down the page, and the path is there when it needs
+   disambiguating rather than competing for the same line. */
+.pcard-id { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0 }
+.pcard-head .name { font-weight: 650; font-size: 1rem; letter-spacing: -0.01em }
+.pcard-head .sub {
+  font: 11.5px/1.4 ui-monospace, Consolas, monospace; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .pcard-head .grow { flex: 1 }
+
+/* The default branch's preview, at the end of the project's own row.
+
+   Its own bordered strip under the header meant a second box per card and a second row to scan.
+   Here it is the right-hand end of one line, so four projects make a column of live links rather
+   than eight stacked boxes. The state colour is on the dot, which is the only thing that needs it. */
+.pbranch {
+  display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+.pbranch .bname { font: 12.5px/1.5 ui-monospace, Consolas, monospace; font-weight: 650 }
+.pbranch .dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--edge, var(--idle));
+}
+.pbranch .took { color: var(--muted) }
+.pbranch.none .hint { font-style: italic }
+
+/* The row's own actions, under the header and above whatever is disclosed. A quiet line: the
+   destructive one is not the loudest thing on the card, and the disclosure is a link rather than a
+   button because it navigates within the row rather than doing something. */
+.pcard-acts {
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+  margin-top: 0.15rem;
+}
+.pcard-acts .grow { flex: 1 }
+.linkish {
+  border: 0; background: none; padding: 0; font: inherit; font-size: 0.8rem;
+  color: var(--ink-2); cursor: pointer; text-decoration: underline;
+  text-decoration-color: var(--ring); text-underline-offset: 3px;
+}
+.linkish:hover { color: var(--ink); text-decoration-color: currentColor }
+.linkish:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 3px }
+/* What the disclosure reveals, set in from the row's edge so it reads as belonging to it. */
+.pcard-details { margin-top: 0.5rem }
+.pcard-body { padding: 0.45rem 0.8rem 0.55rem }
 .pcard-off { opacity: 0.6 }
+/* The operator's note about this project. Set apart with a rule rather than left as one more
+   line of grey text in a card that already has several — it is the only prose on the card, and
+   the only thing on it a person wrote. */
+.pcard-notes {
+  margin: 0.55rem 0 0; padding-left: 0.6rem;
+  border-left: 2px solid var(--ring); font-style: italic;
+}
+/* The chips carry the platform, whether the project is on, and the driver. Three of them on
+   every card, so they are furniture: one border, one muted colour, and no fill. Coloured —
+   green for enabled, orange for the driver — they were the brightest thing on a page whose
+   actual signals are build states, and "enabled" is the state every project is in. Only the
+   exception is coloured now, which is what a colour is for. */
+.pcard-head .flag { color: var(--muted); background: transparent }
+.pcard-head .flag.off { color: var(--critical); border-color: var(--critical) }
 
 /* The default branch's permanent preview, first thing under the card's header.
    Carries the state colour on its left edge like a previews row, because it is one. */
@@ -818,31 +906,38 @@ input.control::placeholder { color: var(--muted) }
 .ava-img { background: none !important; border-color: var(--hairline) !important; overflow: hidden }
 .ava-img img { display: block; width: 22px; height: 22px; object-fit: contain }
 
-/* One property per line: label in a fixed left column, value beside it. Read down,
-   not across.
+/* A project's settings, as a grid of label-over-value pairs inside a quiet container.
 
-   Three arrangements have been tried here. A `·`-joined line wrapped mid-value, so
-   `output:` ended one line and `build` started the next and read as a field called
-   build. Label-over-value in auto-filled columns fixed that and produced a row of
-   four headings that reads as a table of one row. This is the third: a column of
-   properties, which is what a card of settings is. */
-.facts { margin: 0.5rem 0 0 }
-.facts > div {
-  display: grid; grid-template-columns: 9.5rem minmax(0, 1fr);
-  gap: 0.5rem; padding: 0.12rem 0;
+   Four arrangements have been tried. A `·`-joined line wrapped mid-value, so `output:` ended one
+   line and `build` started the next and read as a field called build. Label-over-value in
+   auto-filled columns fixed that and read as a table of one row, because there was no container
+   around it. One property per line in a 9.5rem column fixed *that* and made every card four times
+   taller than the information in it — which is what made the page a wall of text.
+
+   This is the fourth: label above value, two or three pairs per line, inside a bordered box that
+   says where the settings start and stop. The box is what the third arrangement was missing, and
+   the columns are what the second one got right. */
+.facts {
+  margin: 0.6rem 0 0; padding: 0.4rem 0.5rem;
+  border: 1px solid var(--hairline); border-radius: 8px; background: var(--raised);
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.1rem 1.2rem;
 }
-.facts dt { font-size: 0.74rem; color: var(--muted) }
+.facts > div {
+  display: block; padding: 0.25rem 0.4rem; border-radius: 4px; min-width: 0;
+}
+.facts > div:hover { background: color-mix(in srgb, var(--ink) 3.5%, transparent) }
+.facts dt {
+  font-size: 0.68rem; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.05em; font-weight: 600;
+}
 .facts dd {
   margin: 0; font: 12px/1.45 ui-monospace, Consolas, monospace;
   color: var(--ink); overflow-wrap: anywhere;
 }
 .facts dd.inherit { font-family: inherit; font-size: 0.78rem; color: var(--muted) }
-@media (max-width: 34rem) {
-  /* Two columns of 9.5rem do not fit a phone, and a squeezed value column is the
-     wrapping problem again. */
-  .facts > div { grid-template-columns: minmax(0, 1fr) }
-  .facts dt { margin-top: 0.3rem }
-}
+/* auto-fit collapses to one column below the 13rem track on its own, so a phone needs no
+   override — the previous rule here was addressing a two-column layout that no longer exists. */
 
 /* An environment variable is a name, a state and a way to remove it. Chips,
    because the set is small and the names are long. */
@@ -887,8 +982,10 @@ input.control::placeholder { color: var(--muted) }
   margin: 0 0 0.5rem; font-size: 0.82rem;
   display: flex; align-items: center; gap: 0.6rem;
 }
-/* Pushed to the far end, so it reads as a destination rather than as part of the way back. */
-.backlink .control { margin-left: auto }
+/* The way back on the left, the actions on the right, separated by a spacer rather than by
+   `margin-left: auto` on every control — with two of them, auto on both put a gap between them
+   as well and they drifted apart. */
+.backlink .grow { flex: 1 }
 /* A section within an admin page, under its one <h2>. Introduced when the settings page grew a
    second panel and both were <h2>, which made the page look like two pages stacked. */
 .pagesec {
@@ -1001,11 +1098,91 @@ input.control::placeholder { color: var(--muted) }
   background: var(--raised); color: var(--ink);
   border: 1px solid var(--ring); border-radius: 6px; padding: 0.4rem 0.5rem;
 }
-.field-head {
-  margin: 0.8rem 0 0.3rem; font-size: 0.7rem; text-transform: uppercase;
-  letter-spacing: 0.04em; color: var(--muted); font-weight: 600;
+/* A titled group of fields.
+
+   Grey captions between rows were not enough: at the same size and weight as everything else, with
+   nothing bounding one group from the next, nineteen fields read as one undifferentiated column —
+   the "mushy screen". A group is a card with a heading, a sentence saying what it decides, and a
+   visible end. */
+.fgroup {
+  border: 1px solid var(--ring); border-radius: 10px; background: var(--surface);
+  margin: 0 0 1rem; overflow: hidden;
 }
-.field-head:first-child { margin-top: 0 }
+.fgroup-head {
+  padding: 0.6rem 0.9rem; background: var(--raised); border-bottom: 1px solid var(--ring);
+}
+.fgroup-head h4 {
+  margin: 0; font-size: 0.9rem; font-weight: 650; letter-spacing: -0.01em; color: var(--ink);
+}
+.fgroup-head p { margin: 0.15rem 0 0; font-size: 0.78rem; color: var(--muted); max-width: 60ch }
+.fgroup-body { padding: 0.75rem 0.9rem 0.9rem }
+/* Kept for the two places that still emit a bare caption rather than a group. */
+.field-head {
+  margin: 1.1rem 0 0.4rem; font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--ink-2); font-weight: 700;
+  padding-bottom: 0.3rem; border-bottom: 1px solid var(--ring);
+}
+.field-head:first-child { margin-top: 0.2rem }
+/* The form's own title. It was 0.72rem uppercase grey — the same treatment as a field caption —
+   so on a page whose entire purpose is one form, the form's name was the quietest text on it. */
+h3.form-title {
+  font-size: 1.15rem; font-weight: 650; letter-spacing: -0.015em;
+  text-transform: none; color: var(--ink); margin: 0 0 0.2rem;
+}
+.form-title-why {
+  margin: 0 0 1.1rem; font-size: 0.85rem; color: var(--muted); max-width: 68ch;
+}
+
+/* ── One project's settings, as a page ──────────────────────────────────── */
+
+/* Fields stack: label over control, control full width.
+
+   Beside a 10.5rem label column every input was a short box in the middle of a wide page — a build
+   command is a shell line and an image is a registry path, and both were being read through a
+   letterbox. Stacked, the value gets the whole width and the label is directly above it, which is
+   also the arrangement that survives a phone. */
+.pedit-form .field {
+  display: block; padding: 0.5rem 0; border-top: 1px solid var(--hairline);
+}
+.pedit-form .fgroup-body > .field:first-child { border-top: 0; padding-top: 0.1rem }
+.pedit-form .field > label {
+  display: block; margin-bottom: 0.25rem; font-size: 0.82rem; font-weight: 600; color: var(--ink);
+}
+.pedit-form .field .why {
+  grid-column: auto; margin: 0.3rem 0 0; font-size: 0.76rem; max-width: 78ch;
+}
+.pedit-form .field .control { width: 100% }
+/* A path, a command, an image and a duration are all machine text. Monospace says so, and makes a
+   stray space or a smart quote visible. */
+.pedit-form input#p-dir, .pedit-form input#p-command, .pedit-form input#p-output,
+.pedit-form input#p-baseurl, .pedit-form input#p-detect, .pedit-form input#p-timeout,
+.pedit-form input[id^="p-dir-"], .pedit-form input[id^="p-command-"],
+.pedit-form input[id^="p-output-"], .pedit-form input[id^="p-baseurl-"],
+.pedit-form input[id^="p-detect-"], .pedit-form input[id^="p-timeout-"],
+.pedit-form input[id^="p-image"], .pedit-form input#p-url {
+  font: 13px/1.5 ui-monospace, Consolas, monospace;
+}
+.pedit-form textarea { min-height: 5rem }
+/* The picker inside a field is a block, or its dropdown is measured against an inline span. */
+.pedit-form .picker { display: block }
+.pedit-form .grid-form { max-width: 58rem }
+
+/* The page's own header: the project, its identity, and its live branch preview — the same shape
+   as its row in the list, so arriving from there is continuous rather than a scene change. */
+.pedit-head {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding-bottom: 0.7rem; margin-bottom: 0.9rem; border-bottom: 1px solid var(--ring);
+}
+.pedit-head .grow { flex: 1 }
+.pedit-sub { margin: 0.1rem 0 1.1rem; font-size: 0.85rem; color: var(--muted); max-width: 68ch }
+/* The actions, held at the bottom of the viewport rather than at the bottom of the form. Five
+   groups of fields is more than one screen, so a Save at the end of them is a Save you have to go
+   looking for — and on a form this long, "did that save?" is the question worth designing out. */
+.pedit-form .formact {
+  position: sticky; bottom: 0; z-index: 2;
+  margin: 0.4rem 0 0; padding: 0.7rem 0.1rem;
+  background: linear-gradient(to top, var(--bg) 62%, transparent);
+}
 @media (max-width: 40rem) {
   .field { grid-template-columns: minmax(0, 1fr); gap: 0.15rem }
   .field .why { grid-column: 1 }
@@ -1590,6 +1767,14 @@ footer {
          belongs on this page rather than only in `doctor`. -->
     <h3 class="pagesec" id="exposer-head">Exposer configuration</h3>
     <div id="exposer-body"></div>
+
+    <!-- The installation's hostname prefix. Here rather than on /projects, where it used to sit
+         in the same row as the New project button: it belongs to no project, it changes the
+         public hostname of every preview at once, and a field with its own Save button beside a
+         list of cards read as though it belonged to the first card. This page is the one for
+         things that are true of the whole installation. -->
+    <h3 class="pagesec" id="prefix-head">Preview hostnames</h3>
+    <div id="prefix-body"></div>
   </div>
 </div>
 
@@ -1598,10 +1783,30 @@ footer {
 <div class="setup" id="projects" hidden>
   <div class="setup-inner">
     <!-- The other half of administering an installation. See the note on the settings page. -->
+    <!-- Both actions in the row that already holds the way out, rather than a second row of
+         controls under the heading. "New project" is the reason most visits happen, so it sits
+         where the eye already goes for Settings. -->
     <p class="backlink"><a href="/">← back to previews</a>
+      <span class="grow"></span>
+      <button class="control" id="p-new-top" hidden>New project</button>
       <a class="control" href="/secrets">Settings</a></p>
     <h2>Projects</h2>
     <div id="projects-body"></div>
+  </div>
+</div>
+
+<!-- One project's settings, on /projects/<platform>/<owner>/<repo> and /projects/new.
+
+     Its own page rather than a panel that expanded inside the list: nineteen fields are taller
+     than the list they open in, so editing the first project pushed the fourth off screen. A page
+     has no position to get wrong, and it is linkable. -->
+<div class="setup" id="projedit" hidden>
+  <div class="setup-inner">
+    <p class="backlink"><a href="/projects">← back to projects</a>
+      <span class="grow"></span>
+      <a class="control" href="/">Previews</a>
+      <a class="control" href="/secrets">Settings</a></p>
+    <div id="projedit-body"></div>
   </div>
 </div>
 
@@ -1778,6 +1983,23 @@ const project = p => String(p.repo || "").split("/").pop() || "unknown";
    log line; this is the same rule on the page. */
 const prLabel = p => p.number > 0 ? `#${p.number}` : `@${p.branch || "branch"}`;
 
+
+/* admin is what /api/admin last said: whether the credential and project pages are served at all.
+   Absent until that fetch answers, which is why every consumer treats a missing answer as "no".
+
+   Declared here rather than beside showAdminLinks, which is where it used to live. The first
+   render reads it — the switcher hides its "+ New project" row when the projects page is not
+   published — and a `let` further down the file is in its temporal dead zone at that point, which
+   threw and took the rest of the script with it. */
+let admin = {};
+
+/* NEW is the pseudo-key the add form opens under, so one piece of state covers both "editing this
+   project" and "adding one". A leading space, so it can never collide with a real
+   `platform/owner/repo` — projectFromRequest rejects a space in any of the three.
+
+   Declared here rather than beside the project code because the path is parsed into `editKey`
+   during initialisation, and that comparison happens before any of it runs. */
+const NEW = " new";
 
 const ui = {
   state: null,        // null means every state
@@ -1998,15 +2220,22 @@ function renderProjects() {
 
   // The trigger shows the scope, with its badge when it has one.
   const m = current ? meta.get(current) : null;
+  // The count on "All projects" is how many projects there are, not how many previews.
+  // Previews was the wrong noun in the one place the word "projects" appears: nine previews
+  // across four projects read as nine projects. Each row still carries its own preview count,
+  // which is the number that belongs beside a project's name.
   label.innerHTML = current
     ? `${m ? badgeHTML(m, current) : ""}<span>${esc(m?.label || current)}</span>`
-    : `<span>All projects (${ui.previews.length})</span>`;
+    : `<span>All projects (${names.length})</span>`;
   label.classList.toggle("with-ava", Boolean(m));
 
   // The list is rebuilt only when something in it changed, so an open panel keeps its
   // filter text and its scroll position across a status tick.
+  // admin.projects is in the signature because it arrives from its own fetch, after the first
+  // render. Without it the list is built once, while the answer is still "no", and the add row
+  // never appears on the machine that can use it.
   const sig = names.map(n => `${n}:${counts.get(n)}:${meta.get(n)?.avatar ? 1 : 0}`)
-    .join("|") + `|${current}|${ui.previews.length}`;
+    .join("|") + `|${current}|${names.length}|${admin.projects ? 1 : 0}`;
   const list = document.getElementById("projpick-list");
   if (list.dataset.sig === sig) return;
   list.dataset.sig = sig;
@@ -2015,7 +2244,7 @@ function renderProjects() {
   const rows = [
     `<button class="pick-row${current === "" ? " here" : ""}" data-pick-project=""
       role="option" aria-selected="${current === ""}">
-      <span>All projects</span><span class="count">${ui.previews.length}</span></button>`,
+      <span>All projects</span><span class="count">${names.length}</span></button>`,
   ];
   for (const n of names) {
     const pm = meta.get(n);
@@ -2024,9 +2253,18 @@ function renderProjects() {
       ${badgeHTML(pm, n)}<span>${esc(pm?.label || n)}</span>
       <span class="count">${counts.get(n) || ""}</span></button>`);
   }
-  // The way to add one, where Vercel puts it and for the same reason: the moment you
-  // discover a project is missing is while looking for it.
-  rows.push(`<a class="pick-row add" href="/projects">+ New project</a>`);
+  /* The way to add one, where Vercel puts it and for the same reason: the moment you discover a
+     project is missing is while looking for it.
+
+     Straight to the form's own address. It was `/projects?new`, a parameter the list read and acted
+     on, which existed only because the form had no address of its own. It has one now.
+
+     Only when /projects is actually reachable. Through the public dashboard share the page is not
+     published at all, so the link led to a 404 — offering a control that cannot work is worse than
+     not offering it, and this is the same signal the Projects and Settings links in the header use. */
+  if (admin.projects) {
+    rows.push(`<a class="pick-row add" href="/projects/new">+ New project</a>`);
+  }
 
   list.innerHTML = rows.join("");
   for (const b of list.querySelectorAll("[data-pick-project]")) {
@@ -4483,6 +4721,74 @@ function hideZrokPanel() {
   }
 }
 
+/* ── Preview hostnames, on the settings page ────────────────────────────────
+
+   The installation's name prefix. It was on /projects, in the same row as the New project
+   button, where it read as belonging to the first card — and it belongs to no project: it
+   changes the public hostname of every preview at once.
+
+   Its own endpoint rather than a field of the projects payload, so this page does not fetch
+   every project row and its inlined badge to render one twelve-character input. */
+async function loadPrefix() {
+  const body = document.getElementById("prefix-body");
+  if (!body) return;
+  try {
+    renderPrefix(await api("GET", "/api/settings/prefix"));
+  } catch (e) {
+    // A daemon with no projects admin wired answers 404. The section goes rather than
+    // showing an error for a feature that is not there.
+    if (/\b404\b/.test(e.message)) {
+      for (const id of ["prefix-head", "prefix-body"]) {
+        const el = document.getElementById(id);
+        if (el) el.hidden = true;
+      }
+      return;
+    }
+    body.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
+  }
+}
+
+function renderPrefix(s) {
+  const body = document.getElementById("prefix-body");
+  const cur = s.prefix || "";
+  // The example is the point of the field: "a" means nothing until you see what it produces.
+  const sample = cur ? `${cur}-docs-main` : "docs-main";
+
+  body.innerHTML = `
+    <div class="field">
+      <label for="p-prefix">Hostname prefix</label>
+      <span class="prefixrow">
+        <input id="p-prefix" class="prefixbox" value="${esc(cur)}" placeholder="none"
+          maxlength="12" spellcheck="false" ${s.can_write ? "" : "disabled"}>
+        <span class="took" id="p-prefix-eg">${esc(sample)}</span>
+        ${s.can_write ? `<button class="btn" data-save-prefix="1">Save</button>` : ""}
+      </span>
+      <div class="why">Every preview is published as <code>&lt;prefix&gt;-&lt;name&gt;</code>. Twelve
+        characters, a hostname label. Existing previews keep the names they were published under
+        until they are rebuilt.${s.can_write ? "" :
+          " Read-only from here: this changes every preview URL, so it is only editable on the " +
+          "machine running docpreview."}</div>
+    </div>`;
+
+  const input = document.getElementById("p-prefix");
+  const eg = document.getElementById("p-prefix-eg");
+  if (input && eg) {
+    input.oninput = () => {
+      const v = input.value.trim();
+      eg.textContent = v ? `${v}-docs-main` : "docs-main";
+    };
+  }
+
+  const save = body.querySelector("[data-save-prefix]");
+  if (save) {
+    save.onclick = () => run(save, async () => {
+      await api("PUT", "/api/settings/prefix", {prefix: input.value.trim()});
+      toast("Saved. Existing previews keep their names until they are rebuilt.");
+      await loadPrefix();
+    }, {render: () => {}, body: "prefix-body"});
+  }
+}
+
 // zrokRootRow describes one environment directory: where it is, what is in it, and
 // whether it is the one being used.
 function zrokRootRow(s, which, info, label) {
@@ -5242,8 +5548,9 @@ function zrokWizard(s, preselect) {
              startup, so this takes effect on the next start.</li>` : ""}
         <li>Set <code>exposer.kind: zrok2</code> in the config if it is not already, then
           restart. The panel behind this dialog says which exposer is in use.</li>
-        <li>Give this installation a name prefix on <a href="/projects">Projects</a> if
-          another one shares the same zrok account, so their preview names cannot collide.</li>
+        <li>Give this installation a name prefix under <strong>Preview hostnames</strong> on this
+          page if another one shares the same zrok account, so their preview names cannot
+          collide.</li>
       </ul>`,
       acts: [{label: "Done", primary: true, act: finish}],
     };
@@ -5484,6 +5791,21 @@ const currentPath = location.pathname.replace(/\/+$/, "");
 const isSetupPage = currentPath === "/secrets";
 const isProjectsPage = currentPath === "/projects";
 
+/* One project's settings, at its own address.
+
+   `/projects/new` for one that does not exist yet, `/projects/<platform>/<owner>/<repo>` for one
+   that does. Both are this same document — the daemon serves it for either path — and the page
+   reads its own location rather than being told.
+
+   editKey is the row's key as projectKey spells it (`platform/owner/repo`), or NEW. Null on every
+   other page, which is what the boot switch tests. */
+const editKey = (() => {
+  if (currentPath === "/projects/new") return NEW;
+  const m = currentPath.match(/^\/projects\/([^/]+)\/([^/]+)\/([^/]+)$/);
+  return m ? `${m[1]}/${m[2]}/${m[3]}` : null;
+})();
+const isProjectEditPage = editKey !== null;
+
 /* ── Projects ─────────────────────────────────────────────────────────────
    A project is a repository docpreview will build, and how. The row lives in
    sqlite and wins over the repository's own .docpreview.yml, because that file
@@ -5496,11 +5818,85 @@ const isProjectsPage = currentPath === "/projects";
 
 async function loadProjects() {
   const body = document.getElementById("projects-body");
+
+  /* `?new` is gone. It opened the add form as this page arrived, and existed only because the form
+     had no address of its own — the switcher's link now goes straight to /projects/new, which is a
+     page. A parameter that a page reads and acts on is a second way to reach a thing that already
+     has a first one. */
   try {
     renderProjectsPage(await api("GET", "/api/projects"));
   } catch (e) {
     body.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
   }
+}
+
+/* ── One project's settings, as its own page ──────────────────────────────
+
+   The form was a panel that expanded inside the list. Nineteen fields are taller than the list
+   they open in, so editing the first project pushed the fourth off the screen, and the reader lost
+   the thing they were comparing against. A page has no position to get wrong, it is linkable, and
+   the browser's own back button is the way out.
+
+   Both addresses land here: /projects/new and /projects/<platform>/<owner>/<repo>. */
+async function loadProjectEdit() {
+  const body = document.getElementById("projedit-body");
+  try {
+    const s = await api("GET", "/api/projects");
+    renderProjectEdit(s);
+  } catch (e) {
+    body.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`;
+  }
+}
+
+function renderProjectEdit(s) {
+  const body = document.getElementById("projedit-body");
+  const adding = editKey === NEW;
+  const p = adding ? null : (s.projects || []).find(x => projectKey(x) === editKey);
+
+  // A URL for a project that is not there. Reachable from a stale bookmark, or after somebody
+  // deleted it in another tab — so it says which one and offers the way back rather than
+  // rendering an empty form that would create a project nobody asked for.
+  if (!adding && !p) {
+    body.innerHTML = `<h2>Not found</h2>
+      <div class="notice">No project <code>${esc(editKey)}</code> on this daemon. It may have been
+      deleted, or the address may be wrong.
+      <p><a class="control" href="/projects">Back to projects</a></p></div>`;
+    return;
+  }
+
+  if (!s.can_write) {
+    body.innerHTML = `<h2>${adding ? "New project" : esc(projectLabel(p))}</h2>
+      <div class="notice warn"><strong>Read-only from here.</strong> ${esc(s.read_only_why || "")}
+      <p>A project decides what command runs on the build host, so it can only be changed on that
+      machine.</p></div>
+      ${adding ? "" : projectFacts(p)}`;
+    return;
+  }
+
+  // The heading is the project, with its identity under it — the same shape as a row in the list,
+  // so arriving here from there is continuous.
+  const head = adding
+    ? `<h2>New project</h2>
+       <p class="pedit-sub">A repository docpreview will build, and how. Everything but the
+       repository itself is optional: blank defers to that repository's own
+       <code>.docpreview.yml</code>.</p>`
+    : `<div class="pedit-head">
+         ${avatarHTML(p)}
+         <span class="pcard-id">
+           <span class="name">${esc(projectLabel(p))}</span>
+           <span class="sub">${esc(platformLabel(p.platform))} · ${esc(p.owner)}/${esc(p.repo)}</span>
+         </span>
+         ${p.enabled ? "" : `<span class="flag off">disabled</span>`}
+         <span class="grow"></span>
+         ${branchInline(p, false)}
+       </div>`;
+
+  body.innerHTML = `${head}
+    ${adding ? "" : credentialWanted(p, s)}
+    <div class="pedit-form">${projectForm(s, p)}</div>`;
+
+  wireProjectHandlers(s);
+  document.getElementById(adding ? "p-url" : "p-dir")?.focus();
 }
 
 /* Which project's detail is open, and which panel of it. One at a time: the page
@@ -5528,8 +5924,29 @@ let formDirty = false;
    seconds later — a second save, another panel opening — does not replay it. The element
    removes *itself* on a timer rather than being cleared by a re-render, because a
    re-render at an arbitrary moment would throw away whatever somebody had started typing
-   in another panel. */
-let projFlash = "";
+   in another panel.
+
+   In sessionStorage rather than in a variable, because saving now happens on the form's own page
+   and then navigates to the list: a variable is gone the moment the document is replaced, and the
+   save would land silently. Per tab, and cleared as it is read, so two tabs do not steal each
+   other's message and a reload does not replay one. */
+const projFlashKey = "docpreview.projFlash";
+
+function setFlash(msg) {
+  try { sessionStorage.setItem(projFlashKey, msg); }
+  catch { /* private mode or storage disabled: the message is not carried, which is not a failure */ }
+}
+
+// takeFlash reads and clears in one step, so there is no path that reads without clearing.
+function takeFlash() {
+  try {
+    const v = sessionStorage.getItem(projFlashKey) || "";
+    if (v) sessionStorage.removeItem(projFlashKey);
+    return v;
+  } catch {
+    return "";
+  }
+}
 
 /* toast says something happened, over the page rather than in it.
 
@@ -5706,39 +6123,24 @@ function renderProjectsPage(s) {
 
      Edit stays inline, in the card, because that form belongs to a row and being beside it
      is the thing that says which. */
-  const adder = ro ? ""
-    : `<div class="act projadd">
-         <button class="btn primary" id="p-new">New project</button>
-         <span class="grow"></span>
-         ${prefixField(s)}
-       </div>`;
+  /* No adder row. The button moved into the page's action row beside Settings, and the hostname
+     prefix moved to the Settings page entirely — it belongs to the installation rather than to any
+     project, and a field with its own Save button sitting above a list of cards read as though it
+     were the first card's. */
+  const adder = "";
 
-  const dialog = (!ro && projOpen.key === NEW)
-    ? `<div class="modal" id="p-new-modal">
-         <div class="modal-card wide" role="dialog" aria-modal="true" aria-label="New project">
-           <div class="modal-body">
-             <!-- Pinned, not merely at the top: the body scrolls, and a close control that
-                  scrolled away with the first field left the only way out at the bottom of
-                  nineteen of them. Sticky keeps it where it was found.
+  /* No dialog. Adding a project is /projects/new — a page, like editing one.
 
-                  Same handler as the Cancel button below, so it goes through the same
-                  discard guard — a form with this many fields must not vanish on one
-                  click. -->
-             <div class="modal-x-row">
-               <button class="modal-x" data-close-panel="1" title="Close" aria-label="Close">✕</button>
-             </div>
-             ${projectForm(s, null)}
-           </div>
-         </div>
-       </div>`
-    : "";
-
-  el.innerHTML = `${banner}${adder}${rows}${dialog}`;
+     It was a modal because the form had nowhere better to be: below the list it opened at the
+     bottom of a long page, and a dialog at least has no position to get wrong. A page is better
+     than both. It is linkable, the browser's back button is the way out, and a nineteen-field form
+     is not something to read through a 64rem window over a dimmed list. */
+  el.innerHTML = `${banner}${adder}${rows}`;
 
   // Read once and cleared, so it cannot reappear on an unrelated render.
-  if (projFlash) {
-    toast(projFlash);
-    projFlash = "";
+  const flash = takeFlash();
+  if (flash) {
+    toast(flash);
   }
 
   // Something the server did alongside the request that did not work — today only a
@@ -5754,7 +6156,9 @@ function renderProjectsPage(s) {
 
 // NEW is the pseudo-key the add form opens under, so one piece of state covers both
 // "editing this project" and "adding one".
-const NEW = " new";
+// Hoisted to the top of this script, beside `admin`: the path is parsed into `editKey` during
+// initialisation and compared against NEW, and a const declared here is in its temporal dead zone
+// at that point — which throws and takes the rest of the script with it.
 
 // A leading space in NEW, so it can never collide with a real `platform/owner/repo`
 // — projectFromRequest rejects a space in any of the three.
@@ -5764,31 +6168,66 @@ function projectCard(p, s, ro) {
   const open = projOpen.key === key ? projOpen.tab : null;
   const dockered = p.driver === "docker" || (!p.driver && s.defaults.driver === "docker");
 
+  /* One row per project, with the settings behind a disclosure.
+
+     Four arrangements of this page have been rejected as a wall, and every one was the same shape:
+     a card that renders everything it knows. Six settings, a branch strip, a notes line and an
+     environment-variables bar, times four projects, is forty lines of small grey text with nothing
+     to rest on — and almost none of it is what anybody came for. What they came for is the link to
+     the site and whether the last build worked, so that is the row, and the rest opens when asked.
+
+     Nothing is hidden from anybody: the settings are one click away, behind the same kind of
+     disclosure the environment variables already used, and a project with none says so instead of
+     offering an empty one.
+
+     `owner/repo` shows always, not only when a display name overrides it: two projects called
+     `docs` are otherwise identical, and the repository path is what an operator matches against a
+     URL. It sits under the name with the platform, rather than beside it as another chip, because
+     name-then-path is one identity and reads as one thing.
+
+     The `enabled` chip is gone. Every project has it, so it was on every card saying nothing; a
+     disabled one dims the row and says so. The driver chip went too — it is a setting, and it is in
+     the settings now. */
+  const detailsOpen = projDetailsOpen.has(key) || open === "build";
+  const hasDetails = Boolean(
+    p.build_dir || p.build_command || p.build_output || p.base_url || p.detect_script ||
+    p.image || p.timeout || p.notes || (p.secrets || []).length);
+
   return `<div class="pcard${p.enabled ? "" : " pcard-off"}" data-card="${esc(key)}">
     <div class="pcard-head">
       ${avatarHTML(p)}
-      <span class="name">${esc(projectLabel(p))}</span>
-      ${p.display_name ? `<span class="sub">${esc(p.owner)}/${esc(p.repo)}</span>` : ""}
-      <span class="flag opt">${esc(platformLabel(p.platform))}</span>
-      <span class="flag ${p.enabled ? "on" : "off"}">${p.enabled ? "enabled" : "disabled"}</span>
-      <span class="flag ${dockered ? "on" : "opt"}">${esc(p.driver || s.defaults.driver)}${
-        p.driver ? "" : " (default)"}</span>
+      <span class="pcard-id">
+        <span class="name">${esc(projectLabel(p))}</span>
+        <span class="sub">${esc(platformLabel(p.platform))} · ${esc(p.owner)}/${esc(p.repo)}</span>
+      </span>
+      ${p.enabled ? "" : `<span class="flag off">disabled</span>`}
       <span class="grow"></span>
-      ${ro ? "" : `<button class="btn" data-tab="build" data-key="${esc(key)}"
-          aria-pressed="${open === "build"}">Edit</button>
-        <!-- No "Build open PRs" here. It queued one build per open pull request, which is
-             what adding a project already does, and on a repository with several it read as
-             having picked one at random. The scan still runs when a project is added; the
-             button that invited it by hand did not earn its place on every card. -->
-        <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
+      ${branchInline(p, ro)}
     </div>
-    ${branchStrip(p, ro)}
-    ${projectFacts(p)}
-    ${credentialWanted(p, s)}
-    ${unlinkedSection(p, ro)}
-    ${p.notes ? `<div class="hint pcard-notes">${esc(p.notes)}</div>` : ""}
-    ${open === "build" ? `<div class="panel">${projectForm(s, p)}</div>` : ""}
-    ${secretsSection(p, s)}
+    <div class="pcard-body">
+      ${credentialWanted(p, s)}
+      ${unlinkedSection(p, ro)}
+      <div class="pcard-acts">
+        ${hasDetails ? `<button class="linkish" data-details="${esc(key)}"
+            aria-expanded="${detailsOpen}">${detailsOpen ? "Hide settings" : "Settings"}</button>`
+          : `<span class="hint">Everything comes from the repository's .docpreview.yml.</span>`}
+        <span class="grow"></span>
+        ${ro ? "" : `<a class="btn" href="/projects/${esc(key)}">Edit</a>
+          <!-- A link, not a button that expands a panel here. The form is a page now: nineteen
+               fields expanding in place pushed every project below it off the screen, which is
+               the one thing a list of projects must not do.
+
+               No "Build open PRs" either. It queued one build per open pull request, which is
+               what adding a project already does, and on a repository with several it read as
+               having picked one at random. -->
+          <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
+      </div>
+      ${detailsOpen ? `<div class="pcard-details">
+        ${projectFacts(p)}
+        ${p.notes ? `<div class="hint pcard-notes">${esc(p.notes)}</div>` : ""}
+        ${secretsSection(p, s)}
+      </div>` : ""}
+    </div>
   </div>`;
 }
 
@@ -5945,6 +6384,14 @@ function projectFacts(p) {
    Outside the render because the page rebuilds its markup on every save — the same reason
    the credential page holds its accordion state outside the DOM. */
 const projSecretsOpen = new Set();
+
+/* Which projects have their settings expanded, by key.
+
+   Outside the render for the same reason: the page rebuilds its markup on every save, and an
+   expanded card that collapsed itself when a variable was added would be the page throwing away
+   where you were. A set, not a single key, because comparing two projects' settings is the reason
+   somebody opens a second one. */
+const projDetailsOpen = new Set();
 
 /* secretsSection is the project's own environment variables, as an accordion.
 
@@ -6258,29 +6705,16 @@ function scmCredentialFields(s, p, id) {
     </div>`;
 }
 
-/* prefixField is the installation's name prefix, beside New project.
+/* The installation's name prefix used to be rendered here, beside New project. It is on the
+   Settings page now — see renderPrefix — because it belongs to no project: it starts every
+   hostname this daemon publishes, and a field with its own Save button above a list of cards read
+   as though it were the first card's.
 
-   Not on a project card, because it is not a project's: it starts every hostname this daemon
-   publishes. It is here rather than in config.yml because the moment somebody needs it is the
-   moment they are standing up a second installation against the same exposer account — and
-   that is not a moment when they want to hand-edit YAML on a host they have just built.
-
-   Names are scoped to the exposer *account* while shares are scoped to the environment, so
-   two daemons on one account do not reap each other's shares — they collide on names, and
-   this is what separates them.
-
-   The example is live rather than described. "a" is an abstraction; `a-docs-main` is the
-   thing that will be in a URL, and it is the only way to make the trailing-hyphen question
-   answer itself. */
-function prefixField(s) {
-  const cur = (s.defaults && s.defaults.prefix) || "";
-  const sample = cur ? `${esc(cur)}-docs-main` : "docs-main";
-  return `<label class="hint" for="p-prefix">Hostname prefix</label>
-    <input id="p-prefix" class="prefixbox" value="${esc(cur)}" placeholder="none"
-      maxlength="12" spellcheck="false" aria-label="hostname prefix">
-    <span class="took" id="p-prefix-eg">${sample}</span>
-    <button class="btn" data-save-prefix="1">Save</button>`;
-}
+   Why it is editable from a browser at all: the moment somebody needs it is the moment they are
+   standing up a second installation against the same exposer account, which is not a moment when
+   they want to hand-edit YAML on a host they have just built. Names are scoped to the exposer
+   *account* while shares are scoped to the environment, so two daemons on one account do not reap
+   each other's shares — they collide on names, and this is what separates them. */
 
 /* branchStrip is the project's permanent preview of its default branch.
 
@@ -6293,6 +6727,45 @@ function prefixField(s) {
    the daemon could reach the platform has no branch preview at all, and an empty space there
    is indistinguishable from a feature that is not working — so it says so and offers to start
    one. */
+/* branchInline is the default branch's preview, in the project's own header row.
+
+   It was a bordered strip of its own under the header, which on a page of four projects meant four
+   more boxes to read past. It is the one thing on the card anybody actually came for — the live
+   link and whether the last build worked — so it belongs on the line with the project's name, at
+   the end, where a list of them forms a column the eye can run down.
+
+   Three states, and the absent one is why this is not simply a link: a project added before the
+   daemon could reach the platform has no branch preview at all, and an empty space there is
+   indistinguishable from a feature that is not working. */
+function branchInline(p, ro) {
+  const b = p.branch;
+  const key = projectKey(p);
+  if (!b) {
+    if (ro) return "";
+    return `<span class="pbranch none">
+      <span class="hint">no default-branch preview</span>
+      <button class="btn" data-branch="${esc(key)}"
+        title="Build this repository's default branch and keep it published">Build it</button>
+    </span>`;
+  }
+
+  const st = state(b.state);
+  const live = safeURL(b.url);
+  return `<span class="pbranch" style="--edge:${st.color}">
+    <span class="dot${st.work ? " work" : ""}" style="--edge:${st.color}"></span>
+    <span class="bname">${esc(b.name)}</span>
+    <span class="took">${esc(st.label.toLowerCase())}${
+      b.commit ? ` · ${esc(b.commit.slice(0, 7))}` : ""}</span>
+    ${live
+      // Only when there is one. A branch preview whose first build failed has a row and no URL,
+      // and a link to nothing is worse than the button beside it.
+      ? `<a class="btn" href="${esc(live)}" target="_blank" rel="noreferrer">Open ↗</a>`
+      : `<span class="hint">no URL</span>`}
+    ${ro ? "" : `<button class="btn" data-branch="${esc(key)}"
+      title="Build ${esc(b.name)} again at its current tip">Rebuild</button>`}
+  </span>`;
+}
+
 function branchStrip(p, ro) {
   const b = p.branch;
   const key = projectKey(p);
@@ -6666,6 +7139,21 @@ function projectForm(s, p) {
   const field = (f, label, control, why) => `<div class="field">
     <label for="${id(f)}">${label}</label>${control}
     ${why ? `<div class="why">${why}</div>` : ""}</div>`;
+  /* A titled group of fields, with one sentence saying what the group decides.
+
+     Nineteen fields under three grey captions was the "no logical groupings, mushy screen"
+     complaint: the captions were the same size and weight as everything else, and nothing bounded
+     one group from the next. A group is a box with a title and a purpose — five of them, each
+     answering a question somebody actually has: which repository, where the site is, how it runs,
+     when to build, how it looks. */
+  const group = (title, why, fields) => `<section class="fgroup">
+    <div class="fgroup-head">
+      <h4>${title}</h4>
+      ${why ? `<p>${why}</p>` : ""}
+    </div>
+    <div class="fgroup-body">${fields}</div>
+  </section>`;
+
   const text = (f, placeholder) => `<input class="control" id="${id(f)}"
     value="${v(f === "dir" ? "build_dir" : f === "command" ? "build_command"
       : f === "output" ? "build_output" : f === "baseurl" ? "base_url"
@@ -6680,14 +7168,17 @@ function projectForm(s, p) {
   const preset = (s.defaults.frameworks || []).find(
     f => f.id === (p ? (p.framework || "") : (s.defaults.framework || ""))) || {};
 
-  return `<h3>${p ? `Settings for ${esc(projectLabel(p))}` : "New project"}</h3>
+  return `<h3 class="form-title">${p ? `Settings for ${esc(projectLabel(p))}` : "New project"}</h3>
+    <p class="form-title-why">${p
+      ? "Every field left blank defers to the repository's own <code>.docpreview.yml</code>."
+      : "Paste a repository URL and the rest fills itself in. Everything below the identity " +
+        "is optional: blank means the repository's own <code>.docpreview.yml</code> decides."}</p>
     <div class="grid-form">
-      <div class="field-head">Identity</div>
-      ${p ? "" : `
+      ${p ? "" : group("Repository", "Which repository this project is, and where it lives. This is " +
+        "what a webhook delivery is matched against.", `
         ${field("url", "Repository URL",
           `<input class="control" id="p-url" placeholder="https://github.com/acme/docs">`,
-          "Paste one and the three fields below fill themselves. They are what a " +
-          "webhook is matched against, so they can also be typed.")}
+          "Paste one and the three fields below fill themselves.")}
         ${field("platform", "Platform", `<select class="control" id="p-platform">
           <option value="github">github</option>
           <option value="bitbucket">bitbucket</option>
@@ -6697,59 +7188,60 @@ function projectForm(s, p) {
           `<input class="control" id="p-owner" placeholder="acme">`,
           "The organisation or workspace. For filesystem, whatever you file it under.")}
         ${field("repo", "Repository",
-          `<input class="control" id="p-repo" placeholder="docs">`)}`}
-      ${field("name", "Name",
-        `<input class="control" id="${id("name")}" maxlength="120"
-          value="${v("display_name")}" placeholder="${p ? esc(p.repo) : "the repository name"}">`,
-        "What to call it on this page. Blank uses the repository name.")}
-      ${field("avatar", "Badge", avatarField(p, id("avatar")),
-        "One or two characters, or an emoji. Blank derives initials and a colour from " +
-        "the name. A <code>data:</code> URI renders as an image — inlined, never " +
-        "fetched, because this page asks the internet for nothing.")}
+          `<input class="control" id="p-repo" placeholder="docs">`)}`)}
 
-      <div class="field-head">Build <span class="field-note">— blank means the preset,
-        or the repository, decides</span></div>
-      ${field("framework", "Framework preset", frameworkSelect(s, p, id("framework")),
-        "Fills the two fields below with what that generator uses. Leave them blank to " +
-        "follow the preset, or type to override one. There is no install command: it " +
-        "comes from the lockfile the repository committed, which knows which package " +
-        "manager owns the tree." +
-        `<div class="notice warn" id="framework-tool" hidden></div>`)}
-      ${field("driver", "Driver", driverSelect(s, p, id("driver")), driverWhy(s))}
-      ${field("image", "Container image", imagePicker(id("image"), v("image"), s),
-        "Pick one or type your own — a private mirror is a normal answer. Needs node and " +
-        "<code>git</code> if the build clones other repositories, which the " +
-        "<code>-slim</code> images do not have; alpine's musl breaks dependencies that " +
-        "ship prebuilt binaries.")}
-      ${field("dir", "Build directory", text("dir", esc(preset.dir || "www")),
-        "Where <code>package.json</code> lives, relative to the repository root. Blank " +
-        "means the preset's directory, or the root if it names none.")}
-      ${field("command", "Build command",
-        text("command", esc(preset.build_command || s.defaults.build_command || "npm run build")),
-        "Run by <code>sh -lc</code> inside the image, so pipes and <code>&amp;&amp;</code> " +
-        "work and <code>bash</code>, <code>node</code> or <code>python</code> work if the " +
-        "image has them.")}
-      ${field("output", "Output directory", text("output", esc(preset.output || "build")),
-        "Relative to the build directory.")}
-      ${field("baseurl", "Base URL", text("baseurl", "/"),
-        "Must start and end with a slash. Docusaurus bakes it in at build time, so " +
-        "getting it wrong 404s every asset.")}
-      ${field("detect", "Ignore-build script", text("detect", "ci/needs-build.sh"),
-        "Executed directly, so its shebang decides the interpreter. Gets the changed " +
-        "paths on stdin; exit 0 to build, 78 to skip. Blank uses path matching.")}
-      ${field("timeout", "Build timeout", text("timeout", esc(s.defaults.timeout || "15m0s")),
-        "How long one build of this project may run before it is killed. Blank uses the " +
-        "server's <code>build.timeout</code>, shown above as the placeholder. A duration " +
-        "with a unit — <code>45m</code>, <code>2h</code> — because a repository that " +
-        "clones seven others is not a two-minute build and every other project should " +
-        "not have to wait that long to be told it hung.")}
+      ${group("Where the site is", "The four fields that decide what gets built and where the " +
+        "output lands. Blank follows the preset, or the repository's own .docpreview.yml.", `
+        ${field("framework", "Framework preset", frameworkSelect(s, p, id("framework")),
+          "Fills the command and output below with what that generator uses. There is no install " +
+          "command: it comes from the lockfile the repository committed, which knows which " +
+          "package manager owns the tree." +
+          `<div class="notice warn" id="framework-tool" hidden></div>`)}
+        ${field("dir", "Build directory", text("dir", esc(preset.dir || "www")),
+          "Where <code>package.json</code> lives, relative to the repository root.")}
+        ${field("command", "Build command",
+          text("command", esc(preset.build_command || s.defaults.build_command || "npm run build")),
+          "Run by <code>sh -lc</code> inside the image, so pipes and <code>&amp;&amp;</code> " +
+          "work.")}
+        ${field("output", "Output directory", text("output", esc(preset.output || "build")),
+          "Relative to the build directory.")}
+        ${field("baseurl", "Base URL", text("baseurl", "/"),
+          "Must start and end with a slash. Docusaurus bakes it in at build time, so getting it " +
+          "wrong 404s every asset.")}`)}
+
+      ${group("How it runs", "Where the build executes, and for how long.", `
+        ${field("driver", "Driver", driverSelect(s, p, id("driver")), driverWhy(s))}
+        ${field("image", "Container image", imagePicker(id("image"), v("image"), s),
+          "Pick one or type your own — a private mirror is a normal answer. Needs node, and " +
+          "<code>git</code> if the build clones other repositories, which the <code>-slim</code> " +
+          "images do not have; alpine's musl breaks dependencies that ship prebuilt binaries.")}
+        ${field("timeout", "Build timeout", text("timeout", esc(s.defaults.timeout || "15m0s")),
+          "How long one build may run before it is killed. Blank uses the server's " +
+          "<code>build.timeout</code>, shown as the placeholder. A duration with a unit — " +
+          "<code>45m</code>, <code>2h</code> — because a repository that clones seven others is " +
+          "not a two-minute build, and no other project should wait that long to be told it hung.")}`)}
+
+      ${group("When to build", "Every pull request is built unless something says otherwise. " +
+        "Blank matches changed paths against the documentation globs.", `
+        ${field("detect", "Ignore-build script", text("detect", ".docpreview/detect"),
+          "A path in the repository, not a command — it is executed directly, so its shebang " +
+          "decides the interpreter and arguments would be read as part of the filename. Gets the " +
+          "changed paths on stdin; exit 0 to build, 78 to skip.")}`)}
 
       ${scmCredentialFields(s, p, id)}
 
-      <div class="field-head">Notes</div>
-      ${field("notes", "Notes", `<textarea class="control" id="${id("notes")}"
-        maxlength="5000" placeholder="Why this project is set up the way it is. Nothing
-        reads this but the next person.">${v("notes")}</textarea>`)}
+      ${group("Appearance", "How this project reads on the dashboard. Neither affects a build.", `
+        ${field("name", "Name",
+          `<input class="control" id="${id("name")}" maxlength="120"
+            value="${v("display_name")}" placeholder="${p ? esc(p.repo) : "the repository name"}">`,
+          "Blank uses the repository name.")}
+        ${field("avatar", "Badge", avatarField(p, id("avatar")),
+          "One or two characters, or an emoji. Blank derives initials and a colour from the name. " +
+          "A <code>data:</code> URI renders as an image — inlined, never fetched, because this " +
+          "page asks the internet for nothing.")}
+        ${field("notes", "Notes", `<textarea class="control" id="${id("notes")}"
+          maxlength="5000" placeholder="Why this project is set up the way it is. Nothing reads
+          this but the next person.">${v("notes")}</textarea>`)}`)}
     </div>
     <div class="act formact">
       <!-- Primary, so which button commits is not a reading exercise. Cancel is beside
@@ -6997,40 +7489,50 @@ function wireImageCheck(root) {
   }
 }
 
-function wireProjectHandlers(s) {
-  const el = document.getElementById("projects-body");
+/* Wires every control the projects markup emits, on whichever container holds it.
+
+   Two pages emit that markup now: the list, and one project's own settings page. The container was
+   hardcoded to #projects-body, so on the settings page every querySelectorAll found nothing and
+   Save, Cancel and Disable were buttons that did not do anything — the page rendered perfectly and
+   was inert. */
+function wireProjectHandlers(s, container) {
+  const el = container ||
+    document.getElementById(isProjectEditPage ? "projedit-body" : "projects-body");
+  if (!el) return;
   const val = id => (document.getElementById(id)?.value || "").trim();
 
-  // Any typing in an open panel makes it dirty. One listener on the container rather
-  // than one per field, so a field added later is covered without anybody remembering.
+  // Any typing in the form makes it dirty. One listener on the container rather than one per field,
+  // so a field added later is covered without anybody remembering.
   el.addEventListener("input", e => {
-    if (e.target.closest(".panel, .pcard [data-save]")) formDirty = true;
+    if (e.target.closest(".panel, .pedit-form, .pcard [data-save]")) formDirty = true;
   });
 
-  const newBtn = document.getElementById("p-new");
+  /* The button lives in the page's action row, outside the body this render replaces — so it is
+     shown or hidden here rather than emitted, and its handler is bound every render onto an element
+     that survives them. A read-only page never reveals it: there is nothing it could submit. */
+  const newBtn = document.getElementById("p-new-top");
   if (newBtn) {
-    newBtn.onclick = () => {
-      if (!confirmDiscard()) return;
-      projOpen = {key: NEW, tab: "build"};
-      renderProjectsPage(s);
-    };
+    // From the payload, not from renderProjectsPage's local: this function is called with `s`
+    // and nothing else, and reaching for a variable it does not have threw on every render —
+    // which the page reported as "ro is not defined" where the project list should have been.
+    newBtn.hidden = !s.can_write;
+    // A page now, not a dialog rendered into this one.
+    newBtn.onclick = () => { location.href = "/projects/new"; };
   }
 
-  // Escape closes the new-project dialog, through the same discard guard the Cancel button
-  // uses — a form with eleven fields in it must not vanish on a stray keypress.
-  //
-  // Deliberately no click-away. The boot report has one because it holds nothing; this
-  // holds typing, and losing a half-filled form to a misplaced click is worse than having
-  // to aim at Cancel.
-  const modal = document.getElementById("p-new-modal");
-  if (modal) {
-    // Focus the first field, so the dialog is typeable without a click.
-    document.getElementById("p-url")?.focus();
-    modal.onkeydown = e => {
-      if (e.key !== "Escape") return;
-      if (!confirmDiscard()) return;
-      projOpen = {key: null, tab: null};
-      renderProjectsPage(s);
+  /* No Escape-to-close handler any more: the form is a page, and the way out of a page is its own
+     back link or the browser's button. Both go through the unsaved-edits guard below.
+
+     What replaces it is beforeunload — leaving the page is how a half-filled form is now lost, and
+     that includes the back button, a typed address, and the tab closing. `confirm` cannot be used
+     there; the browser shows its own prompt when preventDefault is called. */
+  if (isProjectEditPage) {
+    window.onbeforeunload = e => {
+      if (!formDirty) return undefined;
+      e.preventDefault();
+      // Ignored by every current browser, which shows its own wording. Returned because the
+      // older API required it and costs nothing.
+      return "Leave without saving?";
     };
   }
 
@@ -7135,6 +7637,13 @@ function wireProjectHandlers(s) {
   for (const b of el.querySelectorAll("[data-close-panel]")) {
     b.onclick = () => {
       if (!confirmDiscard()) return;
+      // On the form's own page, cancelling means going back to the list. The panel it used to
+      // close no longer exists.
+      if (isProjectEditPage) {
+        formDirty = false;   // confirmDiscard already asked; beforeunload must not ask again
+        location.href = "/projects";
+        return;
+      }
       projOpen = {key: null, tab: null};
       renderProjectsPage(s);
     };
@@ -7160,6 +7669,17 @@ function wireProjectHandlers(s) {
     d.ontoggle = () => {
       if (d.open) projSecretsOpen.add(d.dataset.secrets);
       else projSecretsOpen.delete(d.dataset.secrets);
+    };
+  }
+
+  // The settings disclosure on each row. State lives in projDetailsOpen rather than in the DOM,
+  // because every save rebuilds this markup.
+  for (const b of el.querySelectorAll("[data-details]")) {
+    b.onclick = () => {
+      const key = b.dataset.details;
+      if (projDetailsOpen.has(key)) projDetailsOpen.delete(key);
+      else projDetailsOpen.add(key);
+      renderProjectsPage(s);
     };
   }
 
@@ -7254,10 +7774,10 @@ function wireProjectHandlers(s) {
         // on screen would be indistinguishable from the form before the click.
         if (editing) {
           projOpen = {key: null, tab: null};
-          projFlash = needsToken
+          setFlash(needsToken
             ? `Saved. ${key.split("/").slice(1).join("/")} is private with no credential — ` +
               `open it and paste an access token, then Test credential.`
-            : `Saved ${key.split("/").slice(1).join("/")}.`;
+            : `Saved ${key.split("/").slice(1).join("/")}.`);
         }
 
         // A new project builds what is already open. Without this, adding a repository
@@ -7269,8 +7789,8 @@ function wireProjectHandlers(s) {
           // A private repository with nothing to clone with: say what to do next, and the
           // card carries the same sentence until it is done.
           if (needsToken) {
-            projFlash = `Created. It is private with no credential — press Edit and paste ` +
-              `an access token before it can build.`;
+            setFlash(`Created. It is private with no credential — press Edit and paste ` +
+              `an access token before it can build.`);
             return out;
           }
 
@@ -7288,19 +7808,32 @@ function wireProjectHandlers(s) {
               // A missing credential is the ordinary case on a first save, so it gets a
               // sentence that says what to do rather than the raw platform error.
               const missing = /no Bitbucket credential|credential/i.test(scan.error);
-              projFlash = missing
+              setFlash(missing
                 ? `Saved. No builds queued yet — add an access token to this project, ` +
                   `then use Build now.`
-                : `Saved, but nothing could be queued: ${scan.error}`;
+                : `Saved, but nothing could be queued: ${scan.error}`);
             } else if (scan.queued) {
-              projFlash = `Saved. ${scan.queued} open pull request${
-                scan.queued === 1 ? "" : "s"} queued — watch the dashboard.`;
+              setFlash(`Saved. ${scan.queued} open pull request${
+                scan.queued === 1 ? "" : "s"} queued — watch the dashboard.`);
             } else {
-              projFlash = "Saved. That repository has no open pull requests yet.";
+              setFlash("Saved. That repository has no open pull requests yet.");
             }
           } catch (e) {
-            projFlash = `Saved, but the scan failed: ${e.message}`;
+            setFlash(`Saved, but the scan failed: ${e.message}`);
           }
+        }
+
+        /* Saved from the form's own page: go back to the list, where the flash is read.
+
+           Staying put after a save on a page whose whole content is the form would look exactly
+           like the form before the click — the failure the panel version solved by closing. The
+           list is also where the result is visible: the new row, or the changed settings under
+           the row's disclosure.
+
+           formDirty is already false, so the leave guard does not fire. */
+        if (isProjectEditPage) {
+          location.href = "/projects";
+          return out;
         }
         return out;
       });
@@ -7348,7 +7881,7 @@ function wireProjectHandlers(s) {
         // list a week later: nothing already published is renamed. Renaming in place would
         // mean withdrawing and recreating every share — minutes of 404s, and a comment on
         // every open pull request pointing at a URL that had moved.
-        projFlash = "Saved. Previews already published keep their names until rebuilt.";
+        setFlash("Saved. Previews already published keep their names until rebuilt.");
         return st;
       });
     };
@@ -7362,9 +7895,9 @@ function wireProjectHandlers(s) {
       const key = b.dataset.branch;
       await runProject(b, async () => {
         const r = await api("POST", `${projectPath(key)}/branch`, {});
-        projFlash = r.error
+        setFlash(r.error
           ? `Nothing queued: ${r.error}`
-          : `Building ${r.branch} — watch the dashboard.`;
+          : `Building ${r.branch} — watch the dashboard.`);
         return api("GET", "/api/projects");
       });
     };
@@ -7384,9 +7917,9 @@ function wireProjectHandlers(s) {
         const r = await api("POST", `${projectPath(key)}/link`, {number});
         // The daemon answers 200 with an error when the pull request is closed or gone,
         // which is a stale list rather than a broken installation.
-        projFlash = r.error
+        setFlash(r.error
           ? `Nothing queued: ${r.error}`
-          : `Queued a build for #${number} — watch the dashboard.`;
+          : `Queued a build for #${number} — watch the dashboard.`);
         return api("GET", "/api/projects");
       });
     };
@@ -7858,6 +8391,14 @@ if (isSetupPage) {
   // form and leaves this one perfectly usable — and folding them together would mean a
   // locked vault hiding the panel that gets previews onto the internet.
   loadZrok();
+  // A third, for the same reason: the prefix is readable while the vault is locked and while the
+  // exposer is unconfigured, and one payload carrying all three would hide two working panels
+  // behind whichever of them failed.
+  loadPrefix();
+} else if (isProjectEditPage) {
+  hideOperationsChrome("project");
+  document.getElementById("projedit").hidden = false;
+  loadProjectEdit();
 } else if (isProjectsPage) {
   hideOperationsChrome("projects");
   document.getElementById("projects").hidden = false;
@@ -7922,9 +8463,9 @@ async function showAdminLinks() {
   wireClearCache(document.getElementById("cache-clear"));
 }
 
-// admin is what /api/admin last said. Absent until it answers, which is why every
-// consumer treats a missing answer as "no".
-let admin = {};
+// admin moved to the top of the script, beside ui. It is read during the first render — the
+// switcher hides its add row when the projects page is not published — and a `let` declared here
+// is in its temporal dead zone at that point, which threw and aborted the rest of the script.
 
 // The daemon instance this page loaded against, and the banner shown when it
 // changes.

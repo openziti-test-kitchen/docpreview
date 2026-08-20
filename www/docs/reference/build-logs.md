@@ -125,6 +125,29 @@ reading further up is the most irritating thing a log viewer can do.
 
 **After the fact**, the same panel replays the most recent log from disk.
 
+**Every line carries the time it arrived**, as `18:31:18.128`, and hovering one answers the questions a bare
+timestamp cannot:
+
+| | |
+|---|---|
+| Your zone | `Aug 13, 2026, 6:31:18 PM` |
+| UTC | `2026-08-13 22:31:18.128 UTC` |
+| Relative | `6 minutes ago` |
+| Relative to start | `1.5s` |
+| Relative to previous | `112ms` |
+
+The last two are what a build log is usually read for: the gap before a line is how long the step above it took.
+The stamp itself has no date and no zone, because a column of them has to stay one width — the date comes from the
+build's start and the zone from the daemon, which is not necessarily yours.
+
+:::note The stamp is when docpreview *read* the line, not when the build printed it
+
+Output inside the container is a pipe rather than a terminal, so node, yarn and Docusaurus switch to block
+buffering and flush several kilobytes at once. Every line in such a flush gets a near-identical stamp. The stamps
+are therefore exact about arrival and approximate about origin, which still answers "what took fifty seconds".
+
+:::
+
 **As a file:**
 
 ```text
@@ -169,6 +192,32 @@ Logs can contain anything a build printed, so an unbounded pile of them is a lia
 
 A failed build still produces a log, and the failure appears on the dashboard with its reason so there is
 something to click.
+
+**Including a failure before the build starts.** A clone that cannot authenticate, a `.docpreview.yml` that does
+not parse, a detect script at a path that does not exist — none of those reach the build, and all of them write a
+log saying so:
+
+```text
+$ this build did not start
+detect script ".docpreview/detect": lstat /var/lib/docpreview/workspaces/4f38/scripts: no such file or directory
+```
+
+The wording distinguishes the two: `did not start` means nothing was built, and `did not publish` means the build
+succeeded and the preview could not be served — a name already taken, an exhausted quota, a controller refusing
+state changes. They send you to different places.
+
+**The publish narrates itself** into the same log, so the time between a finished build and a live URL is
+accounted for rather than silent:
+
+```text
+$ build finished 1m57s
+$ registering the zrok name a-acme-docs-add-guide
+$ creating the public share
+$ opening the listener for share wfcx1nwrfsze
+$ zrok is rate limiting state changes (open listener wfcx1nwrfsze) — retrying in 15s
+$ published https://a-acme-docs-add-guide.shares.zrok.io/
+$ preview is live at https://a-acme-docs-add-guide.shares.zrok.io/ (1m3s)
+```
 
 One subtlety worth knowing: if a preview was already published and a *rebuild* fails, the old preview stays
 live and its card keeps saying `Ready`. That is the truth — the URL still works and still serves the last good

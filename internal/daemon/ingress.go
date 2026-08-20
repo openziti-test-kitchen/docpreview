@@ -255,6 +255,20 @@ func (i *Ingress) routes() http.Handler {
 		// path where it cannot gate a panel inside "/".
 		mux.HandleFunc("GET /projects", i.dashboard)
 		mux.HandleFunc("GET /projects/{$}", i.dashboard)
+
+		// One project's settings, at its own address: /projects/github/acme/docs, and
+		// /projects/new for one that does not exist yet.
+		//
+		// The form used to expand inside the list, which on a page of projects pushed every
+		// other one down the screen — a nineteen-field form is taller than the list it opens
+		// in, so editing the first project put the fourth off screen. A page has no position
+		// to get wrong, and it is linkable: "look at what unified-doc is set to" is a URL.
+		//
+		// The same handler as /projects, because it is the same document switched on
+		// pathname. The daemon does not parse these; the page reads its own location and
+		// asks /api/projects for the row.
+		mux.HandleFunc("GET /projects/new", i.dashboard)
+		mux.HandleFunc("GET /projects/{platform}/{owner}/{repo}", i.dashboard)
 	}
 	return mux
 }

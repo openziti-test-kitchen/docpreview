@@ -400,12 +400,20 @@ func (v *Vault) RevealPrefix(prefix string) map[string]string {
 // Save encrypts and writes the vault. The write goes to a temporary file in the
 // same directory and is then renamed over the target, so a crash mid-write
 // cannot leave a truncated — and therefore unrecoverable — vault behind.
+//
+// The recipient is snapshotted under the same lock as the secrets, not read where it is used.
+//
+// It was write-once at construction until Rekey existed, which made an unsynchronized read here
+// harmless. It is not any more: a Set or a Save in flight while Rekey swaps the key is a data race,
+// and the value read decides which key the file on disk can be opened with. Taking both under one
+// lock also means the ciphertext is a consistent pair — these secrets, that key.
 func (v *Vault) Save() error {
 	v.mu.RLock()
 	onDisk := make(map[string]string, len(v.secrets))
 	for k, s := range v.secrets {
 		onDisk[k] = s.RevealString()
 	}
+	recipient := v.recipient
 	v.mu.RUnlock()
 
 	plain, err := json.Marshal(onDisk)
@@ -419,7 +427,7 @@ func (v *Vault) Save() error {
 	}
 
 	var buf bytes.Buffer
-	w, err := age.Encrypt(&buf, v.recipient)
+	w, err := age.Encrypt(&buf, recipient)
 	if err != nil {
 		return fmt.Errorf("starting vault encryption: %w", err)
 	}
@@ -454,6 +462,69 @@ func (v *Vault) Save() error {
 	}
 	if err := os.Rename(tmpName, v.path); err != nil {
 		return fmt.Errorf("installing vault: %w", err)
+	}
+	return nil
+}
+
+// Rekey re-encrypts the vault under a new master key, keeping every secret.
+//
+// # Why it exists
+//
+// Without it, changing the master key means re-storing every credential by hand, which requires
+// still having each plaintext — and the vault exists precisely so that nobody has to keep those. A
+// key chosen hastily during setup was therefore permanent in practice, and a key that cannot be
+// changed is one nobody admits is too weak.
+//
+// # What it does not do
+//
+// The secrets are unchanged. Anybody who read them under the old key still knows them, so this
+// answers "the key is too weak" and not "these credentials leaked" — the second needs each
+// credential rotated at the platform that issued it.
+//
+// # The ordering, which is the dangerous part
+//
+// The caller installs the new key wherever `vault.key_source` points, and must do it **after** this
+// returns. In between, the key on disk and the vault on disk disagree, and the recovery is to put
+// the old key back — which only works while the old key still exists. A caller that replaces the key
+// first has a vault nothing can open and nothing to go back to.
+//
+// Save writes a temp file and renames over the target, so a crash inside this call leaves the vault
+// readable by the *old* key rather than by neither.
+//
+// # The daemon must not be running
+//
+// An unlocked daemon holds this vault's old recipient in memory, and its next write would re-encrypt
+// under the old key and silently undo the rekey. Nothing here can detect that, which is why the
+// command that calls it says so and takes a confirmation.
+//
+// An empty key is refused, for the same reason Open refuses one: an empty scrypt passphrase is valid
+// age, and produces a vault anybody can open.
+func (v *Vault) Rekey(newKey string) error {
+	newKey = strings.TrimSpace(newKey)
+	if newKey == "" {
+		return fmt.Errorf("%w: empty key", ErrLocked)
+	}
+
+	id, rcp, err := keyFromString(newKey)
+	if err != nil {
+		return err
+	}
+
+	v.mu.Lock()
+	oldID, oldRcp := v.identity, v.recipient
+	v.identity, v.recipient = id, rcp
+	v.mu.Unlock()
+
+	if err := v.Save(); err != nil {
+		// Put the object back. The file on disk is still the old key's — Save renames over the
+		// target, so a failure means nothing was replaced — and an object left holding the new key
+		// would encrypt its *next* write to a key the caller believes was never installed. The
+		// process exits here today; a caller that retries, or a dashboard action that reuses the
+		// vault, is what this protects.
+		v.mu.Lock()
+		v.identity, v.recipient = oldID, oldRcp
+		v.mu.Unlock()
+		return err
 	}
 	return nil
 }
@@ -542,6 +613,13 @@ func GenerateIdentity() (string, error) {
 	}
 	return id.String(), nil
 }
+
+// Zero overwrites a buffer that held key material.
+//
+// Exported for callers outside this package that read a key or a secret into a byte slice — a
+// command reading stdin, say. The plaintext otherwise stays on the heap for the life of the process,
+// which for the master key is the single value most worth not leaving there.
+func Zero(b []byte) { zero(b) }
 
 func zero(b []byte) {
 	for i := range b {

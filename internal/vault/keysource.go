@@ -199,6 +199,89 @@ func (k KeySource) readFile() (string, error) {
 	return key, nil
 }
 
+// WriteKeyFile installs a master key at path, replacing whatever is there.
+//
+// Here rather than in the command, beside the code that *reads* a key file, because this package
+// owns what a key file is: the mode it must have, the fact that the mode check is Unix-only, and the
+// consequence of getting either wrong. A writer living in cmd/ had to restate two of those rules
+// from outside and promise by hand to stay in step with readFile.
+//
+// The write is a temp file in the same directory, synced, then renamed — the same sequence as Save,
+// for the same reason. An interrupted write that left a truncated key is indistinguishable from the
+// wrong key and just as fatal, and a rename is the only way to make the replacement atomic.
+//
+// **Replacing is the caller's decision, and the dangerous one.** An existing key file may be the
+// only thing that can open an existing vault, so overwriting it destroys every secret in that vault
+// with no error. Use CreateKeyFile unless the vault has already been re-encrypted to this key.
+//
+// A symlinked path is replaced by a regular file: rename unlinks the destination rather than
+// following it. Same behaviour as Save has always had on vault.age.
+func WriteKeyFile(path, key string) error {
+	if strings.TrimSpace(key) == "" {
+		return fmt.Errorf("%w: refusing to write an empty key file", ErrLocked)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
+
+	tmp, err := os.CreateTemp(dir, ".master-key-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating a temp file in %s: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+
+	// 0600 or the vault refuses to read what was just written — see readFile. Skipped on Windows,
+	// where a mode bit does not describe an ACL.
+	if err := tmp.Chmod(0o600); err != nil && !isWindows() {
+		tmp.Close()
+		return fmt.Errorf("securing %s: %w", tmpName, err)
+	}
+	if _, err := tmp.WriteString(key + "\n"); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing %s: %w", tmpName, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("syncing %s: %w", tmpName, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+// CreateKeyFile writes a master key and refuses to overwrite one.
+//
+// The refusal is atomic — O_EXCL, where a Stat-then-create loses a race with a second keygen against
+// the same path — and it is not politeness: the file it would clobber may be the only key to a vault
+// full of credentials.
+func CreateKeyFile(path, key string) error {
+	if strings.TrimSpace(key) == "" {
+		return fmt.Errorf("%w: refusing to write an empty key file", ErrLocked)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		return fmt.Errorf("%s already exists: it may be the only key to an existing vault, "+
+			"and overwriting it would make every secret in that vault unreadable. "+
+			"Move it aside first if you mean to replace it", path)
+	}
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", path, err)
+	}
+	if _, err := f.WriteString(key + "\n"); err != nil {
+		f.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return f.Close()
+}
+
 func (k KeySource) readExec() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
 	defer cancel()
