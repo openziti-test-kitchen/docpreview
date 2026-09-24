@@ -389,6 +389,13 @@ demoted to a fallback and locked-boot the default. See
       Opens under the current key first, backs the vault up, re-encrypts, and installs the new key last; the
       ordering and its one unprotected window are in
       [docs/design/05-secrets.md](docs/design/05-secrets.md#changing-it).
+- [ ] **The first production installation is still on its original four-character key.** It sits in front of the
+      GitHub App private key, six Bitbucket repository tokens and two webhook secrets. It buys nothing on that
+      host — anything that can read `vault.age` can read the key file beside it — and everything wherever the
+      vault travels *without* the key file: a volume snapshot, a backup, the copy taken before a migration. The
+      command to fix it exists now, so what is left is a maintenance window with the daemon stopped, and it has
+      not been taken. Rekeying answers "the key is too weak" and not "the credentials leaked"; each credential
+      would still have to be rotated at the platform that issued it.
 - [ ] **Nothing detects a daemon during a rekey.** A running daemon holds the old recipient in memory and its next
       write undoes the rekey — after step 4 it does so with the old key file already replaced, which is the one
       state with no recovery. `-yes` is the operator asserting the daemon is stopped, not a check. An advisory
@@ -404,7 +411,9 @@ demoted to a fallback and locked-boot the default. See
 - [ ] **Nothing expires.** The same guidance wants secrets created to expire and rotated on a schedule. Vault
       entries have no timestamp at all, so there is nothing to age out or report on. The GitHub installation
       token is already short-lived and minted per use, which is the shape the rest should follow; the App
-      private key and the webhook secret are the static ones.
+      private key and the webhook secret are the static ones. **Nothing has ever been rotated**, on any
+      installation, and the absence of a timestamp is what stops that being reportable: there is no query that
+      answers "which of these is stale", so the condition is invisible rather than merely unaddressed.
 
 [owasp]: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
 
@@ -532,6 +541,13 @@ test having been the next thing to do rather than more tests.
 - [ ] **A password on the secrets surface.** The locality gate is a boundary, not authentication, and it assumes
       nothing proxies to the daemon while stripping forwarding headers. Managing credentials from anywhere but
       the host needs a real credential of its own.
+
+      This is what makes the admin surface unreachable in practice: editing a project or touching a credential
+      means `ssh -N -L 8471:127.0.0.1:8471 <host>` first, and the tunnel that makes it reachable is the same
+      thing that weakens the gate. A tunnelled request from the internet arrives with a loopback `RemoteAddr`,
+      so the forwarding-header check is the only thing left between a stranger and the credential API. The
+      console login already exists and already authenticates a person, so the work is deciding whether an admin
+      session is sufficient on its own and what else has to be true beside it.
 - [ ] **A GitHub Action that calls the webhook over OpenZiti**, removing the tunnel entirely. The webhook is the
       only route that must be reachable from outside, and an overlay dial authenticates the caller in a way a
       public URL plus an HMAC does not.
@@ -550,8 +566,29 @@ a DNS suffix — but it is a **bare hostname**, not a URL, so anything putting i
       `internal/scm/github/api_test.go` is the beginning of one — it covers the token exchange, rate-limit
       classification and the 401 retry. The comment upsert, `ChangedFiles` pagination and the deterministic
       supersede test are the valuable remainder.
-- [ ] **Nothing stops every pull request on an installed repository being built.** A repository allowlist plus a
-      required `.docpreview.yml`, and stop writing the queued comment before the build decision. See
+- [x] **A webhook delivery for a repository with no project row builds nothing.** The allowlist is the projects
+      table, which already existed and was advisory: any repository the App was installed on built from its own
+      `.docpreview.yml`. That is what made a publicly installable App unsafe, because the webhook secret is one
+      value for the whole App — GitHub signs every installation's deliveries with it, so a valid signature proves
+      GitHub sent the delivery and says nothing about whether the operator wanted the repository. Now
+      `Daemon.DeliveryAllowed` refuses at the ingress, before `handleBuild` and so before the queued report, which
+      is the half that matters second: a check sited after it would let an uninvited repository make the App write
+      a comment into its own pull request. The delivery is still answered `202`, since a distinguishable refusal
+      would report the operator's project list one probe at a time. Operator-initiated builds are unaffected —
+      Rebuild, Build now, `LinkPR` and the scan all reach `handleBuild` from behind the admin gate. The local
+      platform is exempt: its repositories are directories the operator put under `local.repos_dir`. Covered by
+      `internal/daemon/deliverygate_test.go`.
+- [ ] **Self-service onboarding, now that requiring a row has closed it.** Installing the App used to be the whole
+      of it and is now half: somebody with dashboard access has to add the project before the first build, so the
+      person installing gets a silent `202` and a preview that never appears. That is the correct failure and it
+      is a bad first experience. The shapes worth weighing are an `installation_repositories` handler that creates
+      *disabled* rows for whatever the App was just installed on, so the operator approves a list rather than
+      typing one; a pending-installations panel that says "these four repositories are asking"; and doing
+      nothing but saying so on the install screen. The first is the most useful and the one that needs care,
+      because the row it creates is written from a stranger's event.
+- [ ] **A required `.docpreview.yml`, on top of the row.** The second half of the original item: a project row
+      says the operator allows the repository, and the file says the repository has opted in. Together they mean a
+      repository added by an operator that never configures itself stops queueing a build per pull request. See
       [12-github-roadmap.md](docs/design/12-github-roadmap.md).
 - [ ] **Uninstalling the App leaves previews serving with no way to stop them.** The `installation` and
       `installation_repositories` deleted events are unhandled.
@@ -560,7 +597,9 @@ a DNS suffix — but it is a **bare hostname**, not a URL, so anything putting i
       `$HOME/.zrok2`) and frontdoor (the tag carries the preview ID and nothing identifying the instance). An
       instance identity in `Spec` and `Reap` is worth doing while there are four exposers rather than eight, and
       it is the first of the five HA blockers in
-      [14-production-deployment.md](docs/design/14-production-deployment.md).
+      [14-production-deployment.md](docs/design/14-production-deployment.md). **Nothing enforces or notices the
+      condition**, so there is no error to read: the symptom is one daemon's live previews vanishing when the
+      other one starts, at the moment `Reap` runs, which looks like previews expiring on their own.
 - [ ] **A zrok name race.** The collision check drops the lock before `CreateShare`, and the daemon's commit
       lock is per preview, so two previews rendering to one name both pass and the loser's `reapName` deletes
       the winner's fresh share. See [16-exposer-zrok.md](docs/design/16-exposer-zrok.md).
@@ -682,6 +721,14 @@ revocation story**.
       dashboard read-only previously had nothing to check. It also reports whether a login is required and
       whether the exposer came from the dashboard rather than the config file, both being things that now change
       behaviour invisibly.
+- [ ] **A restore has never been rehearsed.** The database and the vault are backed up nowhere today — see the
+      item under Improvements — but even once they are, "we have a copy" and "we can come back from it" are
+      different claims and only the second one matters. The rehearsal is a second host, the two files, and a
+      daemon that boots, opens its vault and republishes what it claims to own.
+- [ ] **Downgrading has never been tried.** `dnf install` of an older rpm ought to work and nothing has run it.
+      The database migrates forward — `ALTER TABLE` added `builds.name` and `builds.url` — and nothing tests
+      that a binary from before that migration tolerates a schema from after it. So the rollback step in every
+      upgrade runbook is written on the assumption that it works.
 - [ ] A real Ziti Desktop Edge import against a `configure ziti`-provisioned network. The SDK dial is the
       equivalent proof minus DNS and TUN, and ZDEW was confirmed manually in the earlier trial, but not
       against the provisioned objects.
@@ -841,6 +888,14 @@ Not bugs. Listed so nobody rediscovers them as surprises.
   split is missed.
 - **Fork pull requests are refused.** Building one means executing a stranger's `package.json` under an
   installation token. There is no flag for this and there should not be.
+- **`.docpreview.yml` arrives in the pull request, and `build.command` is honoured.** Whoever can open a pull
+  request chooses what the build host runs. Under the docker driver the blast radius is a container; under
+  `local` it is the daemon's own user on the build host, which is why `local` sits behind
+  `build.allow_local_driver` and is false by default. Documented at length in
+  [www/docs/reference/security.md](www/docs/reference/security.md). It is the largest deliberate hole in the
+  design, and it is deliberate because a preview that cannot run the repository's own build command is not a
+  preview. What bounds it is the fork refusal above and, once it exists, the requirement that a project row
+  exist before a delivery builds.
 
 ## Agents (research only — see the spike below)
 
@@ -899,6 +954,31 @@ The four things that made this harder than a form, all still load-bearing and no
 
 ## Improvements worth making
 
+- [ ] **Nothing is backed up.** `<data_dir>/docpreview.db` and `vault.age` are the entire installation — every
+      project row, every preview, the console password hashes, and every credential — and on the production
+      host they sit on one volume with no snapshot schedule. Two files is a small enough unit that a timer and
+      a copy off the box would do, and the vault is already encrypted at rest, so the backup of it is only as
+      exposed as its master key. Rehearsing the restore is the other half; it is under Verification gaps.
+- [ ] **Nothing watches it.** No alert fires when the daemon is down, when a project's builds start failing in a
+      row, when the disk fills, or when the exposer begins refusing state changes. Every one of those is
+      currently discovered by a person opening a preview link that 404s, which means the first report always
+      arrives from whoever was least able to act on it. `/status` and `/readyz` already carry most of what a
+      check would ask; what is missing is something asking on a schedule and somewhere for it to say so.
+- [ ] **The service account is in the `docker` group, which is root-equivalent on the host.** Anyone who can
+      reach that socket can start a container mounting anything. `packaging/postinstall.sh` and
+      `install/install.sh` both announce it rather than doing it quietly, and `www/docs/guides/linux-service.md`
+      carries the caution — which is honest and does not make it safe. The two ways out are docker's rootless
+      mode and a socket proxy that permits only the calls a build makes; neither has been tried, and both are a
+      larger change than the group membership they replace.
+- [ ] **Skip a single pull request** without editing the repository. A label, or a comment on the pull request,
+      so that a draft or a dependency bump nobody wants a preview of can be opted out at the moment somebody
+      notices — rather than by changing `.docpreview.yml` on that branch, which is a commit in the diff under
+      review.
+- [ ] **Nothing rotates the daemon's log file.** `log_file` is appended to forever by design — see the done item
+      below, where rotation is left to whatever supervises the process — and on the production host nothing
+      supervises it that way, so the file grows without bound on the same volume the database is on. A logrotate
+      fragment shipped with the packages is the whole fix, and it needs the daemon to reopen on `SIGHUP` or the
+      rotation to be `copytruncate`.
 - [ ] **One shared status poller.** `statusPollInterval` runs per SSE connection, so each open dashboard costs
       two sqlite reads every 700ms. Fanning one poller out to subscribers — the way `buildlog.Writer` already
       does for log lines — removes that. Deferred because two open dashboards is the realistic ceiling.
@@ -923,6 +1003,12 @@ The four things that made this harder than a form, all still load-bearing and no
       docpreview sets no per-container limit and cannot see what it was given. Worth detecting — a container
       killed for memory is distinguishable from a build that failed on its own, and saying so would save the
       afternoon this cost.
+
+      The same shape takes the whole host down rather than one build. `workers: 2` with `memory: 3g` on a
+      machine with 3.7 GB reached load 43 with SSH unreachable, because two containers were each allowed most
+      of the box. It runs at `workers: 3` now, since the per-container limit is what actually bounds
+      concurrency, and that is a setting chosen by measurement rather than anything the daemon enforces: there
+      is no check that `workers × memory` fits in the host.
 - [x] **The daemon has a log file.** `log_file` in the server config, teed with an `io.MultiWriter` so the output
       still reaches the terminal somebody may be watching. Appended to, never rotated — rotation belongs to
       whatever supervises the process, and truncating on boot would delete the evidence from before the restart
@@ -955,7 +1041,8 @@ The four things that made this harder than a form, all still load-bearing and no
       what makes a new pull request's first build warm — but it also means nothing deletes it: preview teardown
       used to, and must not any more, since every other pull request on that repository is using it. One
       dependency tree per repository is a small number, and the projects page can clear one, but there is no
-      age-based prune and no accounting of what is on the disk.
+      age-based prune and no accounting of what is on the disk. Measured before the last upgrade: 27 stale
+      per-preview volumes and 9.8 GB, left by the older per-preview keying and collected by nothing.
 - [ ] **Preview diffing.** Vercel shows what changed visually between deployments. Not attempted.
 - [ ] **`internal/scm/local` has no tests.** The package is exercised end to end by the demo but has no unit
       tests of its own; `VerifyWebhook`, `ChangedFiles` and the path checks all deserve them.
