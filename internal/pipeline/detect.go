@@ -65,10 +65,45 @@ func (d *Detector) Detect(ctx context.Context, ws *Workspace, cfg config.RepoCon
 	}
 
 	if cfg.Detect.Script != "" {
-		return d.runScript(ctx, ws, cfg.Detect.Script, changed)
+		decision, err := d.runScript(ctx, ws, cfg.Detect.Script, changed)
+		if !errors.Is(err, errNoDetectScript) {
+			return decision, err
+		}
+
+		/* The script is configured and this commit does not contain it, so the globs decide.
+
+		   A project row names a path, and the file lives in the branch, so the two disagree on every
+		   branch that predates the file or removed it. Failing the build there is the wrong answer
+		   twice over: nothing is wrong with the branch, and the pull request gets a red comment
+		   about a path its author has never heard of.
+
+		   Live on 2026-08-27: `netfoundry/docusaurus-shared` had `.docpreview/detect` set on the
+		   project before the file was committed, and every open pull request failed with
+		   `lstat .../.docpreview: no such file or directory`.
+
+		   Falling back rather than building unconditionally, because the globs are what this
+		   repository used before the script was configured, and they are the documented default.
+		   The reason says the script was missing, so the pull request comment carries it and the
+		   operator can see the row and the branch disagree. */
+		d.log.Warn("the configured detect script is not in this commit; using the path globs instead",
+			"script", cfg.Detect.Script,
+			"fix", "commit it to this branch, or clear the field on the project")
+
+		fallback := d.matchGlobs(cfg.Detect.Paths, changed)
+		fallback.Reason = fmt.Sprintf("`%s` is not in this commit, so paths were matched instead. %s",
+			cfg.Detect.Script, fallback.Reason)
+		return fallback, nil
 	}
 	return d.matchGlobs(cfg.Detect.Paths, changed), nil
 }
+
+/* errNoDetectScript means the configured script is not in the commit being built.
+
+   A sentinel rather than an os.IsNotExist test at the call site, because only one of the several
+   things runScript does can produce a missing file that is safe to ignore. A symlink that resolves
+   outside the repository, a script that is not executable and a script that exits 3 are all
+   different failures, and none of them should quietly become "match the globs". */
+var errNoDetectScript = errors.New("the configured detect script is not in this commit")
 
 // matchGlobs tests the changed paths against the configured globs.
 func (d *Detector) matchGlobs(patterns, changed []string) Decision {
@@ -117,6 +152,12 @@ func (d *Detector) runScript(ctx context.Context, ws *Workspace, script string, 
 	// could point anywhere, and the working tree is attacker-controlled.
 	resolved, err := filepath.EvalSymlinks(abs)
 	if err != nil {
+		// Absent is a different answer from unreadable, and only absent is safe to fall back from.
+		// See errNoDetectScript: the row names a path and the file lives in the branch, so the two
+		// disagree on any branch that predates it.
+		if os.IsNotExist(err) {
+			return Decision{}, fmt.Errorf("%w: %s", errNoDetectScript, script)
+		}
 		return Decision{}, fmt.Errorf("detect script %q: %w", script, err)
 	}
 	rootResolved, err := filepath.EvalSymlinks(ws.Dir)
