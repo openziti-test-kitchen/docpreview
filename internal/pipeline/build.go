@@ -434,10 +434,35 @@ func (b *Builder) buildLocal(ctx context.Context, ws *Workspace, buildDir string
 // version and is rejected outright by the other: --frozen-lockfile is yarn 1,
 // --immutable is yarn 2+. Falling back to a plain install is worse than failing
 // on a drifted lockfile, but better than refusing to build at all.
+//
+// # The yarn 1 mutex, and why it is not optional
+//
+// The dependency cache is one docker volume per repository — see CacheScope — so every
+// preview of one repository installs into the same cache directory. Yarn 1 does no locking
+// there by default, and two installs filling a cold cache at once shred each other's
+// half-extracted entries. Each process then fails on a file the other was mid-write on,
+// reported as `Extracting tar content of undefined failed, the file appears to be corrupt`
+// or a bare ENOENT — neither of which names contention, so it reads as a broken lockfile.
+//
+// Live on 2026-09-24: saving the `netfoundry/zlan` project queued its branch preview and its
+// open pull request in the same second, both started, and both failed three times over.
+// Reproduced on the build host with two concurrent installs against one cold volume, and
+// fixed by this flag with both completing.
+//
+// The mutex file lives *inside the cache folder*, so its scope is exactly the set of
+// processes that can corrupt each other: same volume, same lock. `${YARN_CACHE_FOLDER}` is
+// what the docker driver sets when it mounts that volume, and the fallback keeps the command
+// valid under the local driver, where there is no shared cache and so nothing to serialize.
+//
+// Yarn 2+ rejects `--mutex` and needs no equivalent: its cache is content-addressed zips
+// and it locks its own installs. So the flag goes on the yarn 1 command only, and a Berry
+// repository still falls through to `--immutable` exactly as before.
 func installCommand(dir string) string {
 	switch {
 	case exists(filepath.Join(dir, "yarn.lock")):
-		return "yarn install --frozen-lockfile --non-interactive || yarn install --immutable || yarn install"
+		return "yarn install --frozen-lockfile --non-interactive " +
+			"--mutex file:${YARN_CACHE_FOLDER:-/tmp}/.yarn-mutex" +
+			" || yarn install --immutable || yarn install"
 	case exists(filepath.Join(dir, "pnpm-lock.yaml")):
 		return "pnpm install --frozen-lockfile || pnpm install"
 	case exists(filepath.Join(dir, "package-lock.json")):
