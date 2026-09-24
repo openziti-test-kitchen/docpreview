@@ -1574,6 +1574,61 @@ func (d *Daemon) markUnpublished(ctx context.Context, p store.Preview, cause err
 	})
 }
 
+// DeliveryAllowed reports whether a webhook delivery for this repository may do any work.
+//
+// A project row is the operator saying "this repository is mine". Without one, a verified
+// delivery is acknowledged and dropped.
+//
+// This is what makes the App safe to install publicly. The webhook secret is one value for
+// the whole App, and GitHub signs every delivery from every installation with it — so a
+// signature proves the delivery came from GitHub and says nothing about whether the operator
+// wanted this repository. Anyone who can install the App could otherwise get a build of a
+// branch of their choosing on the host holding the App private key and every project's
+// tokens, with `.docpreview.yml` arriving in the pull request to say what the build runs.
+//
+// Checked here rather than in handleBuild, and that is deliberate. handleBuild is the funnel
+// for every route to a build including the operator's own — Rebuild, Build now, LinkPR, the
+// scan that runs when a project is added — and those are requests from somebody already
+// through the admin gate, for whom a missing row is a reason to make one rather than a reason
+// to refuse. What this gates is the one path a stranger can reach.
+//
+// Before anything is written to the platform, which is the property that matters second. The
+// queued report in handleBuild is a comment on somebody's pull request, so a check sited after
+// it would let an uninvited repository make the App write into it.
+//
+// The local platform is exempt. Its repositories are directories the operator put under
+// `local.repos_dir` themselves, so the choice this row exists to record has already been made
+// on the filesystem, and there is no stranger who can install anything.
+//
+// A lookup failure refuses, which is the opposite of how applyProject treats the same error
+// and is right for the opposite reason: that one is choosing settings for a repository already
+// known to be allowed, and this one is deciding whether it is allowed at all. A failed query is
+// not evidence of a project row. The cost of being wrong is a dropped delivery on a repository
+// that is configured, which GitHub's Redeliver button replays.
+func (d *Daemon) DeliveryAllowed(ctx context.Context, repo model.Repo) bool {
+	if repo.Platform == model.PlatformLocal {
+		return true
+	}
+
+	_, err := d.store.ProjectFor(ctx, string(repo.Platform), repo.Owner, repo.Name)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, store.ErrNoProject):
+		// Info rather than Warn. On a publicly installable App this is the ordinary
+		// outcome of somebody installing it, not a fault, and logging it as one would
+		// let a stranger fill the operator's log with warnings.
+		d.log.Info("ignoring a webhook delivery for a repository with no project",
+			"repo", repo.String(),
+			"fix", "add it on the projects page if this repository is yours")
+		return false
+	default:
+		d.log.Error("could not check whether this repository has a project; "+
+			"not building it", "repo", repo.String(), "error", err)
+		return false
+	}
+}
+
 // Handle processes a normalized webhook event.
 func (d *Daemon) Handle(ctx context.Context, ev scm.Event) error {
 	switch ev.Kind {

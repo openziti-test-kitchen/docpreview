@@ -338,6 +338,13 @@ func (i *Ingress) webhook(platform model.Platform) http.HandlerFunc {
 		// build takes microseconds, but the report that follows it is a network
 		// round trip back to GitHub, which is exactly the kind of thing that
 		// occasionally takes eleven seconds.
+		//
+		// The same 202 whether or not anything comes of it, and that is the right
+		// answer rather than a shortcut. A delivery for a repository the operator
+		// never added is refused below, and telling the sender so would report the
+		// operator's project list one probe at a time. GitHub is being told the
+		// delivery arrived, which is true; what docpreview did with it is the
+		// operator's business and is in the log.
 		w.WriteHeader(http.StatusAccepted)
 		io.WriteString(w, "accepted\n")
 
@@ -346,6 +353,14 @@ func (i *Ingress) webhook(platform model.Platform) http.HandlerFunc {
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				defer cancel()
+
+				// A verified delivery still needs a project row. The signature proves
+				// GitHub sent it, not that this repository is one the operator wanted
+				// built. See Daemon.DeliveryAllowed.
+				if !i.daemon.DeliveryAllowed(ctx, ev.PR.Repo) {
+					return
+				}
+
 				if err := i.daemon.Handle(ctx, ev); err != nil {
 					i.log.Error("handling event",
 						"kind", ev.Kind, "pr", ev.PR.String(), "delivery", ev.Delivery, "error", err)

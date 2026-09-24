@@ -266,6 +266,15 @@ func TestIngressAcceptsVerifiedWebhookImmediately(t *testing.T) {
 	client := &fakeClient{events: []scm.Event{{Kind: scm.EventBuild, PR: pr, Delivery: "d1"}}}
 	ingress, _, st := testIngress(t, client)
 
+	// The project row, because a delivery without one is acknowledged and dropped — see
+	// Daemon.DeliveryAllowed. This test is about the response not waiting on the work, so
+	// it needs a delivery that produces work.
+	if err := st.SaveProject(context.Background(), store.Project{
+		Platform: string(pr.Repo.Platform), Owner: pr.Repo.Owner, Repo: pr.Repo.Name,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	rec := post(t, ingress.Handler(), "/webhook/github", []byte(`{}`))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", rec.Code)
