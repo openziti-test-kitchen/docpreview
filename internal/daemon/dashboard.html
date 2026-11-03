@@ -1128,21 +1128,26 @@ input.control::placeholder { color: var(--muted) }
   background: color-mix(in srgb, var(--critical) 7%, transparent);
 }
 /* Toasts. Fixed, so nothing in the document moves when one appears — a banner that pushes
-   a list down is its own small confusion, and the list is what somebody is reading. */
+   a list down is its own small confusion, and the list is what somebody is reading.
+
+   Bottom right, not top right. The buttons that raise them sit at the bottom of long forms
+   and the ends of card rows, and a message at the top of the window was a screen away from
+   the eye — see toast(). */
 #toasts {
-  position: fixed; z-index: 60; top: 0.9rem; right: 0.9rem;
-  display: flex; flex-direction: column; gap: 0.4rem;
+  position: fixed; z-index: 60; bottom: 0.9rem; right: 0.9rem;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem;
   /* The host ignores the pointer so it never blocks the page behind it; each toast takes
      it back, because a message you cannot select is a message you have to retype into a
      search box. */
   pointer-events: none;
 }
 .toast {
+  display: flex; align-items: flex-start; gap: 0.5rem;
   background: var(--ink); color: var(--plane);
   font-size: 0.82rem; font-weight: 500;
   padding: 0.5rem 0.75rem; border-radius: var(--r-md);
   box-shadow: var(--shadow-pop);
-  max-width: 22rem;
+  max-width: 26rem;
   pointer-events: auto; user-select: text; cursor: text;
   /* A platform error carries URLs and bracketed IPv6 addresses, which have no spaces to
      break at — so they were drawn straight through the rounded corner. `anywhere` breaks
@@ -1150,24 +1155,40 @@ input.control::placeholder { color: var(--muted) }
   overflow-wrap: anywhere;
   /* And a cap, so one enormous error cannot fill the screen. */
   max-height: 40vh; overflow-y: auto;
-  animation: toastin 140ms ease-out, fadeout 5s ease-in forwards;
+  animation: toastin 140ms ease-out;
+  transition: opacity 200ms ease-in;
 }
-@keyframes toastin { from { opacity: 0; transform: translateY(-0.4rem) } to { opacity: 1 } }
-@keyframes fadeout { 0%, 82% { opacity: 1 } 100% { opacity: 0 } }
-@media (prefers-reduced-motion: reduce) { .toast { animation: none } }
-/* A failure toast reads as one, and its fade matches its own lifetime — the default
-   animation is timed to the 5s removal, so a 9s toast styled with it would go
-   invisible four seconds before it left the DOM and take clicks nowhere near it. */
-.toast.bad {
-  background: var(--critical); color: #fff;
-  animation: toastin 140ms ease-out, fadeout 9s ease-in forwards;
-}
-/* Green for a confirmed success, because the one thing a test result has to convey before
-   it is read is which of the two answers it is. */
+.toast-text { flex: 1; min-width: 0 }
+/* Leaving is a class rather than a keyframe timed to a fixed life: a toast under the pointer
+   waits, and a failure waits for its close button, so no animation can know when it ends. */
+.toast.leaving { opacity: 0 }
+@keyframes toastin { from { opacity: 0; transform: translateY(0.4rem) } to { opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; transition: none } }
+/* A failure reads as one. */
+.toast.bad { background: var(--critical); color: #fff }
+/* Green for a confirmed success, because the one thing a result has to convey before it is
+   read is which of the two answers it is. */
 .toast.good { background: var(--good); color: #fff }
 /* A failure is the one worth copying — an error naming a scope or an address is going into
-   a search or a ticket — so it says so and takes a click. */
-.toast.bad { cursor: copy }
+   a search or a ticket — so its text says so and takes a click. */
+.toast.bad .toast-text { cursor: copy }
+.toast-x {
+  flex: none; border: 0; background: none; color: inherit; cursor: pointer;
+  font: 700 1rem/1 var(--sans); padding: 0 0.1rem; opacity: 0.85;
+}
+.toast-x:hover { opacity: 1 }
+/* A result left beside the button that asked for it — see actNote(). Full width under the row,
+   because the rows are one-line flex headers and a sentence inside one shoves the name off. */
+.actnote {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  margin: 0.4rem 0 0.2rem; padding: 0.45rem 0.6rem;
+  border: 1px solid var(--hairline); border-left: 3px solid var(--muted);
+  border-radius: var(--r-md); background: var(--raised);
+  font-size: 0.82rem; overflow-wrap: anywhere;
+}
+.actnote-text { flex: 1; min-width: 0; user-select: text }
+.actnote.bad { border-left-color: var(--critical); color: var(--critical) }
+.actnote.good { border-left-color: var(--good) }
 .toast .copied {
   display: block; margin-top: 0.3rem; font-size: 0.7rem; opacity: 0.85;
   text-transform: uppercase; letter-spacing: 0.06em;
@@ -6095,8 +6116,10 @@ let formDirty = false;
    other's message and a reload does not replay one. */
 const projFlashKey = "docpreview.projFlash";
 
-function setFlash(msg) {
-  try { sessionStorage.setItem(projFlashKey, msg); }
+function setFlash(msg, kind) {
+  // With its kind, so a refusal carried across a navigation is still shown as one. A plain
+  // string was shown in the neutral style, and "Nothing queued: ..." read as a confirmation.
+  try { sessionStorage.setItem(projFlashKey, JSON.stringify({msg, kind: kind || ""})); }
   catch { /* private mode or storage disabled: the message is not carried, which is not a failure */ }
 }
 
@@ -6104,67 +6127,131 @@ function setFlash(msg) {
 function takeFlash() {
   try {
     const v = sessionStorage.getItem(projFlashKey) || "";
-    if (v) sessionStorage.removeItem(projFlashKey);
-    return v;
+    if (!v) return null;
+    sessionStorage.removeItem(projFlashKey);
+    // A bare string is a flash written by the page before this one was deployed.
+    try {
+      const f = JSON.parse(v);
+      if (f && typeof f.msg === "string") return f;
+    } catch {}
+    return {msg: v, kind: ""};
   } catch {
-    return "";
+    return null;
   }
 }
 
 /* toast says something happened, over the page rather than in it.
 
-   An inline notice is too easy to miss: it would land where the form had been, which after
-   a save is not where the eye is looking. This sits in a fixed corner, outside the document
-   flow, so nothing below it shifts — a banner that pushes a list down is its own small
-   confusion.
+   Bottom right, and a failure stays until it is dismissed.
 
-   Detached from any render. The element removes itself on a timer, because clearing it by
-   re-rendering would throw away whatever somebody had started typing in another panel. */
+   It was top right and every toast was gone in five or nine seconds. The buttons that raise
+   them are mostly at the bottom of a long form or the end of a card row, so the message arrived
+   in the corner furthest from the eye and left before anybody went looking — "I get no output"
+   about a daemon that had answered every time. The bottom edge is nearer where the click was,
+   and a failure is usually a sentence about what to fix, which is not something to race.
+
+   A success still goes on its own, after six seconds, and waits while the pointer is over it so
+   it can be read or selected. A failure has a close button and never times out. Five at most:
+   past that the oldest goes, so a burst of identical refusals cannot pile up the screen.
+
+   Detached from any render, so a re-render does not take a message with it — and it never
+   clears anything somebody had typed in another panel. */
 function toast(text, kind, detail) {
   let host = document.getElementById("toasts");
   if (!host) {
     host = document.createElement("div");
     host.id = "toasts";
+    // Polite rather than assertive: a toast is never more urgent than what is being typed.
+    host.setAttribute("aria-live", "polite");
     document.body.appendChild(host);
   }
   const t = document.createElement("div");
   t.className = kind ? `toast ${kind}` : "toast";
-  t.textContent = text;
-  // The long form, on hover. A success needs one line; the five facts behind it are worth
-  // keeping and not worth reading every time.
-  if (detail) t.title = detail;
+  const msg = document.createElement("span");
+  msg.className = "toast-text";
+  msg.textContent = text;
+  t.appendChild(msg);
+  // The long form, on hover. A success needs one line; the facts behind it are worth keeping
+  // and not worth reading every time.
+  if (detail && detail !== text) t.title = detail;
 
-  // Click to copy, for a failure. A platform error names a missing scope or an address that
-  // is about to be pasted into a search or a ticket, and selecting text inside something
-  // that disappears on a timer is a race nobody should have to win.
+  const remove = () => {
+    t.classList.add("leaving");
+    setTimeout(() => t.remove(), 200);
+  };
+
   if (kind === "bad") {
+    // Click to copy. A platform error names a missing scope or an address that is about to be
+    // pasted into a search or a ticket.
     t.title = "Click to copy";
-    t.onclick = async () => {
+    msg.onclick = async () => {
       try {
         await navigator.clipboard.writeText(text);
       } catch {
-        // No clipboard permission, or an insecure context. Selecting the text is the
-        // fallback that always works, so say so rather than failing silently.
+        // No clipboard permission, or an insecure context. Selecting the text is the fallback
+        // that always works, so do that rather than failing silently.
         const sel = window.getSelection();
         const range = document.createRange();
-        range.selectNodeContents(t);
+        range.selectNodeContents(msg);
         sel.removeAllRanges();
         sel.addRange(range);
         return;
       }
-      if (t.querySelector(".copied")) return;
+      if (msg.querySelector(".copied")) return;
       const note = document.createElement("span");
       note.className = "copied";
       note.textContent = "copied";
-      t.appendChild(note);
+      msg.appendChild(note);
     };
+    const x = document.createElement("button");
+    x.className = "toast-x";
+    x.type = "button";
+    x.title = "Dismiss";
+    x.setAttribute("aria-label", "Dismiss");
+    x.textContent = "×";
+    x.onclick = e => { e.stopPropagation(); remove(); };
+    t.appendChild(x);
+  } else {
+    // Timed, and paused under the pointer: a message somebody is reading or selecting must not
+    // leave mid-sentence.
+    let timer = setTimeout(remove, 6000);
+    t.onmouseenter = () => clearTimeout(timer);
+    t.onmouseleave = () => { timer = setTimeout(remove, 2500); };
   }
 
   host.appendChild(t);
-  // Long enough to read a sentence, and it does not block anything while it is there.
-  // A failure is left up longer: it is usually a sentence about what to type instead,
-  // and it appears at the moment somebody's attention is on the form they just broke.
-  setTimeout(() => t.remove(), kind === "bad" ? 9000 : 5000);
+  while (host.children.length > 5) host.firstElementChild.remove();
+}
+
+/* actNote puts a result beside the button that asked for it, and keeps it there.
+
+   For the answers a toast loses. "Nothing queued: reading branch main ... context canceled"
+   is the whole explanation for a button that otherwise appears to have done nothing, and it
+   belongs under the row the button is in rather than in a corner. It stays until it is
+   dismissed, the button is pressed again, or the row is re-rendered — the last being the
+   moment it stops describing what is on screen.
+
+   Inserted after the button's row rather than into it: the rows are single-line flex headers,
+   and a sentence inside one would push the project's own name off the line. */
+function actNote(btn, text, kind) {
+  const row = btn.closest(".pcard-head, .pedit-head, .pcard-branch") || btn.parentElement;
+  if (!row) return;
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains("actnote")) next.remove();
+  const n = document.createElement("div");
+  n.className = `actnote ${kind || ""}`.trim();
+  n.setAttribute("role", kind === "bad" ? "alert" : "status");
+  const msg = document.createElement("span");
+  msg.className = "actnote-text";
+  msg.textContent = text;
+  const x = document.createElement("button");
+  x.className = "btn icon";
+  x.type = "button";
+  x.title = "Dismiss";
+  x.textContent = "×";
+  x.onclick = () => n.remove();
+  n.append(msg, x);
+  row.insertAdjacentElement("afterend", n);
 }
 
 /* ask puts a question in a dialog and resolves to what the reader chose.
@@ -6303,7 +6390,7 @@ function renderProjectsPage(s) {
   // Read once and cleared, so it cannot reappear on an unrelated render.
   const flash = takeFlash();
   if (flash) {
-    toast(flash);
+    toast(flash.msg, flash.kind);
   }
 
   // Something the server did alongside the request that did not work — today only a
@@ -8277,7 +8364,7 @@ function wireProjectHandlers(s, container) {
               setFlash(missing
                 ? `Saved. No builds queued yet — add an access token to this project, ` +
                   `then use Build now.`
-                : `Saved, but nothing could be queued: ${scan.error}`);
+                : `Saved, but nothing could be queued: ${scan.error}`, missing ? "" : "bad");
             } else if (scan.queued) {
               setFlash(`Saved. ${scan.queued} open pull request${
                 scan.queued === 1 ? "" : "s"} queued — watch the dashboard.`);
@@ -8285,7 +8372,7 @@ function wireProjectHandlers(s, container) {
               setFlash("Saved. That repository has no open pull requests yet.");
             }
           } catch (e) {
-            setFlash(`Saved, but the scan failed: ${e.message}`);
+            setFlash(`Saved, but the scan failed: ${e.message}`, "bad");
           }
         }
 
@@ -8356,16 +8443,46 @@ function wireProjectHandlers(s, container) {
   // The branch preview: build it, or build it again. One handler for both, because the
   // request is identical — the server reads the repository's default branch either way, so
   // "start one" and "rebuild it" differ only in what the button said.
+  //
+  // Not through runProject. A refusal comes back as 200 {queued:false, error}, and runProject
+  // re-rendered the list on any 200 — replacing the button that was pressed and leaving only a
+  // neutral-styled toast at the far corner of the window to say nothing had been queued. On
+  // the edit page it was worse: the render went into the hidden list, and the page stayed as
+  // it was. So a refusal now stays beside the button, red, until it is dismissed; only a build
+  // that was actually queued re-renders, because the row's state is what changed.
   for (const b of el.querySelectorAll("[data-branch]")) {
     b.onclick = async () => {
       const key = b.dataset.branch;
-      await runProject(b, async () => {
-        const r = await api("POST", `${projectPath(key)}/branch`, {});
-        setFlash(r.error
-          ? `Nothing queued: ${r.error}`
-          : `Building ${r.branch} — watch the dashboard.`);
-        return api("GET", "/api/projects");
-      });
+      const label = b.textContent;
+      b.disabled = true;
+      b.textContent = "Queuing…";
+      let r;
+      try {
+        r = await api("POST", `${projectPath(key)}/branch`, {});
+      } catch (e) {
+        r = {queued: false, error: e.message};
+      }
+      b.disabled = false;
+      b.textContent = label;
+      if (r.error || r.queued === false) {
+        actNote(b, `Nothing queued: ${r.error || "the daemon did not say why"}`, "bad");
+        return;
+      }
+      const msg = `Building ${r.branch || "the default branch"} — watch the dashboard.`;
+      if (isProjectEditPage) {
+        // The edit page holds a form that may have unsaved edits in it, so it is not
+        // re-rendered for a build starting; the note says so where the button is.
+        actNote(b, msg, "good");
+        return;
+      }
+      setFlash(msg, "good");
+      try {
+        renderProjectsPage(await api("GET", "/api/projects"));
+      } catch (e) {
+        // Queued, and only the refresh failed. Said beside the button, because the build
+        // did start and the page simply has not caught up.
+        actNote(b, `${msg} (The list could not be refreshed: ${e.message})`, "good");
+      }
     };
   }
 
@@ -8385,7 +8502,7 @@ function wireProjectHandlers(s, container) {
         // which is a stale list rather than a broken installation.
         setFlash(r.error
           ? `Nothing queued: ${r.error}`
-          : `Queued a build for #${number} — watch the dashboard.`);
+          : `Queued a build for #${number} — watch the dashboard.`, r.error ? "bad" : "good");
         return api("GET", "/api/projects");
       });
     };

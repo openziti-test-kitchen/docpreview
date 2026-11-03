@@ -12,12 +12,16 @@
 //   - Delete went through the project list's renderer, which on the edit page drew the list
 //     into its hidden container and left the form exactly as it was.
 //
+// And the same failure one step over: a refused Build it was a neutral toast in the far corner,
+// gone in five seconds, so "context canceled" read as nothing having happened.
+//
 // # What it asserts
 //
 // The test panel appears inside the box the moment the button is pressed, with three rows each
 // spinning; it settles each row to pass, fail or not attempted; it shows the masked header the
 // server sent and nothing else; and the row's chip, placeholder and Delete button follow a save
-// and a delete without the form being rebuilt.
+// and a delete without the form being rebuilt. A refused Build it leaves a red note under its
+// row; a failure toast stays until closed while a success toast leaves on its own.
 //
 // # Running it
 //
@@ -41,7 +45,7 @@ const PATH = "/projects/" + KEY;
 
 // One private Bitbucket project. `scm` is mutable: the fake server keeps it, so a save and a
 // delete change what the next response says, as the real one does.
-function server({scm = [], testAnswer}) {
+function server({scm = [], testAnswer, branchAnswer}) {
   const st = {scm: [...scm]};
   const payload = () => ({
     can_write: true, read_only_why: "", secrets_available: true, vault_locked: false,
@@ -67,6 +71,7 @@ function server({scm = [], testAnswer}) {
     release() { release && release(); },
     async handle(method, url, body) {
       if (url === "/api/admin") return [200, {secrets: true, projects: true}];
+      if (url.endsWith("/branch") && branchAnswer) return branchAnswer();
       if (url.endsWith("/scm-test")) {
         if (gate.wait) await gate.wait;
         return testAnswer();
@@ -277,6 +282,62 @@ console.log("saving a token updates the row, not just the header");
     if (head2 !== "missing") fail(`header chip after delete = ${JSON.stringify(head2)}`);
     else ok("the header says missing");
   }
+}
+
+console.log("");
+console.log("a refused Build it stays beside the button, red, until dismissed");
+{
+  const srv = server({scm: ["scm.access_token"], testAnswer: passing, branchAnswer: () => [200, {
+    queued: false,
+    error: "reading branch main on bitbucket:netfoundry/k8s-on-prem-installations: context canceled",
+  }]});
+  const {doc} = await open(srv);
+  const btn = doc.querySelector(".pedit-head [data-branch]");
+  if (!btn) {
+    fail("no Build it button in the edit page's header");
+  } else {
+    click(doc, btn);
+    await wait(150);
+    const note = doc.querySelector(".pedit-head + .actnote.bad");
+    if (!note || !note.textContent.includes("Nothing queued: reading branch main")) {
+      fail(`no red note under the header: ${note ? note.textContent : "(none)"}`);
+    } else ok("the refusal is under the row the button is in");
+    if (btn.disabled) fail("the button stayed disabled");
+    // Pressed again, the note is replaced rather than stacked.
+    click(doc, btn);
+    await wait(150);
+    const n = doc.querySelectorAll(".actnote").length;
+    if (n !== 1) fail(`${n} notes after two presses, want 1`);
+    else ok("a second press replaces the note");
+    doc.querySelector(".actnote button")?.dispatchEvent(
+      new doc.defaultView.MouseEvent("click", {bubbles: true}));
+    if (doc.querySelector(".actnote")) fail("the note did not dismiss");
+    else ok("dismissable");
+  }
+}
+
+console.log("");
+console.log("a failure toast stays; a success toast goes on its own");
+{
+  const srv = server({scm: [], testAnswer: passing});
+  const {doc, win} = await open(srv);
+  win.eval(`toast("a failure that names a scope", "bad"); toast("a success", "good")`);
+  const host = doc.getElementById("toasts");
+  const cs = win.getComputedStyle(host);
+  if (cs.bottom === "auto" || cs.bottom === "" || (cs.top && cs.top !== "auto")) {
+    fail(`toasts are anchored top=${cs.top} bottom=${cs.bottom}, want the bottom edge`);
+  } else ok("anchored at the bottom");
+  if (!doc.querySelector("#toasts .toast.bad .toast-x")) fail("a failure toast has no close button");
+  if (doc.querySelector("#toasts .toast.good .toast-x")) fail("a success toast has a close button");
+  await wait(6600);
+  if (!doc.querySelector("#toasts .toast.bad")) fail("the failure toast timed out");
+  else ok("the failure is still there after the success has gone");
+  if (doc.querySelector("#toasts .toast.good")) fail("the success toast never left");
+  doc.querySelector("#toasts .toast.bad .toast-x").dispatchEvent(
+    new doc.defaultView.MouseEvent("click", {bubbles: true}));
+  await wait(300);
+  if (doc.querySelector("#toasts .toast.bad")) fail("the close button did not close it");
+  else ok("and closes when asked");
 }
 
 console.log("");
