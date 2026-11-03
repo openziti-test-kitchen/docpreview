@@ -6281,9 +6281,10 @@ function noteEl(text, kind, running) {
    edit page now, and it runs on its own when a save gives a project its first usable
    credential.
 
-   The count is the point of the sentence. The list page dropped a "Build open PRs" button
+   The count is the point of the sentence. The list page once dropped a "Build open PRs" button
    because one build appearing for a repository with several open read as a random pick, so
-   this says how many and that it is one per open pull request. */
+   this says how many and that it is one per open pull request. The list cards have it again,
+   as "Build all open PRs", and use this same answer. */
 async function runScan(key) {
   let r;
   try {
@@ -6518,9 +6519,14 @@ function projectCard(p, s, ro) {
                fields expanding in place pushed every project below it off the screen, which is
                the one thing a list of projects must not do.
 
-               No "Build open PRs" either. It queued one build per open pull request, which is
-               what adding a project already does, and on a repository with several it read as
-               having picked one at random. -->
+               "Build all open PRs" was taken off here once: labelled "Build open PRs", on a
+               repository with several open it read as having picked one at random. clint
+               approved bringing it back with a label that says all of them, and the note it
+               leaves says how many it queued. It is the edit page's "Scan pull requests"
+               handler; the note lands under this row, since a card has no header to hang it on. -->
+          ${p.enabled ? `<button class="btn" data-scan="${esc(key)}"
+            title="Queue one build for each pull request open on this repository right now"
+            >Build all open PRs</button>` : ""}
           <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
       </div>
       ${detailsOpen ? `<div class="pcard-details">
@@ -8575,8 +8581,9 @@ function wireProjectHandlers(s, container) {
     };
   }
 
-  // Scanning for open pull requests, from the edit page's header. The answer goes under the
-  // header, where the branch button's does, and stays until dismissed.
+  // Scanning for open pull requests, from the edit page's header or a list card's actions.
+  // The answer goes under the header (or under the card's action row), where the branch
+  // button's does, and stays until dismissed.
   for (const b of el.querySelectorAll("[data-scan]")) {
     b.onclick = async () => {
       const label = b.textContent;
