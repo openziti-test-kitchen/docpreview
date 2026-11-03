@@ -926,7 +926,9 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 	// — the project row is correct and the branch build can be asked for again from its card.
 	branchNote := ""
 	if isNew && p.Enabled && a.brancher != nil {
-		branch, err := a.brancher(r.Context(), model.Repo{
+		qctx, cancel := queueContext(r)
+		defer cancel()
+		branch, err := a.brancher(qctx, model.Repo{
 			Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
 		}, "")
 		switch {
@@ -993,7 +995,9 @@ func (a *ProjectsAdmin) scan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queued, err := a.scanner(r.Context(), model.Repo{
+	qctx, cancel := queueContext(r)
+	defer cancel()
+	queued, err := a.scanner(qctx, model.Repo{
 		Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
 	})
 	if err != nil {
@@ -1044,7 +1048,9 @@ func (a *ProjectsAdmin) rebuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	found, err := a.rebuilder(r.Context(), preview)
+	qctx, cancel := queueContext(r)
+	defer cancel()
+	found, err := a.rebuilder(qctx, preview)
 	if err != nil {
 		a.log.Error("rebuilding a preview", "preview", preview, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -1125,7 +1131,9 @@ func (a *ProjectsAdmin) link(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
-	if err := a.linker(r.Context(), repo, body.Number); err != nil {
+	qctx, cancel := queueContext(r)
+	defer cancel()
+	if err := a.linker(qctx, repo, body.Number); err != nil {
 		// 200 with an error, as scan does: the message is the operator's next step —
 		// usually that the number is closed or does not exist — and this is a button on
 		// a page that stays open, not a form submission.
@@ -1190,6 +1198,28 @@ func (a *ProjectsAdmin) setNamePrefix(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
+// queueBudget bounds the platform calls a queueing button makes once it is detached from
+// the request. Bitbucket's client retries a 429 or a 5xx three times with a growing wait, so
+// this is generous; it is a backstop against a hung connection, not a deadline anybody meets.
+const queueBudget = 90 * time.Second
+
+// queueContext is the context for work a button queues: resolve a branch or a pull request on
+// the platform, then enqueue a build.
+//
+// Not r.Context(). That one is cancelled the moment the browser drops the request — a reload,
+// a tab closed, a proxy timing out, a second click — and the platform call it was carrying
+// fails with "context canceled", so nothing is queued. Seen in production on 2026-11-03: Build
+// it on netfoundry/k8s-on-prem-installations logged "reading branch main ... context
+// canceled" and queued nothing, and the same click three minutes later worked. The credential
+// and the branch were both fine; the request had simply gone away under the call.
+//
+// WithoutCancel keeps the request's values, so the role and anything else hung on it still
+// reach the work, and drops only its cancellation. The timeout replaces that cancellation with
+// one nobody can trigger by closing a tab.
+func queueContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(r.Context()), queueBudget)
+}
+
 // branch builds a preview of a branch, with no pull request behind it.
 //
 // An absent or empty `branch` means the repository's default, read from the platform. That
@@ -1219,7 +1249,12 @@ func (a *ProjectsAdmin) branch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
-	branch, err := a.brancher(r.Context(), repo, strings.TrimSpace(body.Branch))
+	// Detached from the request: see queueContext. The answer is still written synchronously,
+	// for the reason below — a browser that has gone away simply never reads it, and the
+	// build it asked for is queued regardless.
+	qctx, cancel := queueContext(r)
+	defer cancel()
+	branch, err := a.brancher(qctx, repo, strings.TrimSpace(body.Branch))
 	if err != nil {
 		// 200 with an error, as scan and link do: the message is the operator's next step —
 		// an App not installed there, a credential that cannot read the repository, an empty
