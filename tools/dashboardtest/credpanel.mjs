@@ -45,7 +45,7 @@ const PATH = "/projects/" + KEY;
 
 // One private Bitbucket project. `scm` is mutable: the fake server keeps it, so a save and a
 // delete change what the next response says, as the real one does.
-function server({scm = [], testAnswer, branchAnswer}) {
+function server({scm = [], testAnswer, branchAnswer, scanAnswer}) {
   const st = {scm: [...scm]};
   const payload = () => ({
     can_write: true, read_only_why: "", secrets_available: true, vault_locked: false,
@@ -72,6 +72,10 @@ function server({scm = [], testAnswer, branchAnswer}) {
     async handle(method, url, body) {
       if (url === "/api/admin") return [200, {secrets: true, projects: true}];
       if (url.endsWith("/branch") && branchAnswer) return branchAnswer();
+      if (url.endsWith("/scan")) {
+        st.scans = (st.scans || 0) + 1;
+        return scanAnswer ? scanAnswer() : [200, {queued: 2}];
+      }
       if (url.endsWith("/scm-test")) {
         if (gate.wait) await gate.wait;
         return testAnswer();
@@ -314,6 +318,50 @@ console.log("a refused Build it stays beside the button, red, until dismissed");
     if (doc.querySelector(".actnote")) fail("the note did not dismiss");
     else ok("dismissable");
   }
+}
+
+console.log("");
+console.log("Scan pull requests answers under the header, with the count");
+{
+  const srv = server({scm: ["scm.access_token"], testAnswer: passing,
+    scanAnswer: () => [200, {queued: 1, error: "pull request 14: the queue is closed"}]});
+  const {doc} = await open(srv);
+  const btn = doc.querySelector(".pedit-head [data-scan]");
+  if (!btn) {
+    fail("no Scan pull requests button on the edit page");
+  } else {
+    click(doc, btn);
+    await wait(150);
+    const note = doc.querySelector(".pedit-head + .actnote.bad");
+    if (!note || !note.textContent.includes("Queued 1 build, but not every open pull request") ||
+        !note.textContent.includes("pull request 14")) {
+      fail(`partial scan reported as ${note ? JSON.stringify(note.textContent) : "nothing"}`);
+    } else ok("a partial scan says how many and which failed");
+  }
+}
+
+console.log("");
+console.log("the first usable token scans on its own; a rotation does not");
+{
+  const srv = server({scm: [], testAnswer: passing});
+  const {doc} = await open(srv);
+  const row = doc.querySelector('[data-scmrow="scm.access_token"]');
+  row.querySelector("input").value = "ATCTT3x-the-first-token-0001";
+  click(doc, row.querySelector("[data-set-scm]"));
+  await wait(250);
+  if (srv.st.scans !== 1) fail(`${srv.st.scans || 0} scans after the first token, want 1`);
+  else ok("scanned once");
+  const host = doc.querySelector(".credbox [data-scan-host]");
+  if (!host || !host.textContent.includes("Queued 2 builds, one per open pull request")) {
+    fail(`scan result in the credential box: ${host ? JSON.stringify(host.textContent) : "(no host)"}`);
+  } else ok("the result is in the credential box");
+  if (host && host.querySelector(".spinner")) fail("the scan note is still spinning");
+
+  row.querySelector("input").value = "ATCTT3x-the-rotated-token-0002";
+  click(doc, row.querySelector("[data-set-scm]"));
+  await wait(250);
+  if (srv.st.scans !== 1) fail("rotating the token scanned again, rebuilding every open pull request");
+  else ok("a rotation does not scan");
 }
 
 console.log("");

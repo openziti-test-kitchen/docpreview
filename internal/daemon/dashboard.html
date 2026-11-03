@@ -6073,6 +6073,9 @@ function renderProjectEdit(s) {
          ${p.enabled ? "" : `<span class="flag off">disabled</span>`}
          <span class="grow"></span>
          ${branchInline(p, false)}
+         ${p.enabled ? `<button class="btn" data-scan="${esc(projectKey(p))}"
+           title="Queue a build for every pull request open on this repository right now"
+           >Scan pull requests</button>` : ""}
        </div>`;
 
   body.innerHTML = `${head}
@@ -6238,20 +6241,68 @@ function actNote(btn, text, kind) {
   if (!row) return;
   const next = row.nextElementSibling;
   if (next && next.classList.contains("actnote")) next.remove();
+  row.insertAdjacentElement("afterend", noteEl(text, kind));
+}
+
+// noteEl builds one note. A running note has a spinner and no close button: there is nothing
+// to dismiss yet, and closing it would hide the answer when it arrives.
+function noteEl(text, kind, running) {
   const n = document.createElement("div");
   n.className = `actnote ${kind || ""}`.trim();
   n.setAttribute("role", kind === "bad" ? "alert" : "status");
+  if (running) {
+    const sp = document.createElement("span");
+    sp.className = "spinner";
+    sp.setAttribute("aria-hidden", "true");
+    n.appendChild(sp);
+  }
   const msg = document.createElement("span");
   msg.className = "actnote-text";
   msg.textContent = text;
-  const x = document.createElement("button");
-  x.className = "btn icon";
-  x.type = "button";
-  x.title = "Dismiss";
-  x.textContent = "×";
-  x.onclick = () => n.remove();
-  n.append(msg, x);
-  row.insertAdjacentElement("afterend", n);
+  n.appendChild(msg);
+  if (!running) {
+    const x = document.createElement("button");
+    x.className = "btn icon";
+    x.type = "button";
+    x.title = "Dismiss";
+    x.textContent = "×";
+    x.onclick = () => n.remove();
+    n.appendChild(x);
+  }
+  return n;
+}
+
+/* runScan asks the daemon to queue a build for every open pull request on one repository, and
+   says what happened in a sentence.
+
+   The scan used to run once, when a project was created — and a private Bitbucket project
+   cannot have its token until after it is created, so for exactly the projects that needed it
+   the scan always ran with nothing to clone with and never ran again. It is a button on the
+   edit page now, and it runs on its own when a save gives a project its first usable
+   credential.
+
+   The count is the point of the sentence. The list page dropped a "Build open PRs" button
+   because one build appearing for a repository with several open read as a random pick, so
+   this says how many and that it is one per open pull request. */
+async function runScan(key) {
+  let r;
+  try {
+    r = await api("POST", `${projectPath(key)}/scan`);
+  } catch (e) {
+    r = {queued: 0, error: e.message};
+  }
+  const n = r.queued || 0;
+  const builds = `${n} build${n === 1 ? "" : "s"}`;
+  if (r.error) {
+    return {kind: "bad", text: n
+      ? `Queued ${builds}, but not every open pull request: ${r.error}`
+      : `Nothing queued: ${r.error}`};
+  }
+  if (!n) {
+    return {kind: "", text: "No open pull requests, so nothing to build. The next one opened " +
+      "builds when the platform announces it."};
+  }
+  return {kind: "good", text: `Queued ${builds}, one per open pull request — watch the dashboard.`};
 }
 
 /* ask puts a question in a dialog and resolves to what the reader chose.
@@ -6949,7 +7000,10 @@ function scmCredentialFields(s, p, id) {
            window while this box sits at the bottom of a long form, so the answer arrived
            somewhere nobody was looking and a passing test read as a dead button. Filled by
            the Test handler; empty until it is pressed. -->
-      <div data-ctest-host></div>` : ""}
+      <div data-ctest-host></div>
+      <!-- The open-pull-request scan that runs when a save gives this project its first usable
+           credential. Here because the save button that triggered it is here. -->
+      <div data-scan-host></div>` : ""}
     </div>
     </div>`;
 }
@@ -7273,7 +7327,14 @@ function refreshSCMRow(s, p, container) {
   updateSCMFlag(s);
   // A test result describes the token that was tested. Once that token has been replaced or
   // removed, leaving the panel up would be a green "Works" about a credential that is gone.
-  for (const host of root.querySelectorAll("[data-ctest-host]")) host.innerHTML = "";
+  for (const host of root.querySelectorAll("[data-ctest-host], [data-scan-host]")) {
+    host.innerHTML = "";
+  }
+  // The "needs a Bitbucket access token" notice above the form, once one is stored. Not
+  // re-added on a delete: the header chip says "missing" by then, which is the same fact.
+  if (stored.has("scm.access_token") || stored.has("scm.api_token")) {
+    for (const n of document.querySelectorAll(".pcard-wants")) n.remove();
+  }
 }
 
 /* adoptProjectState takes the projects payload a write returned and folds this project's row
@@ -8160,6 +8221,14 @@ function wireProjectHandlers(s, container) {
       const label = b.textContent;
       b.disabled = true;
       b.textContent = "…";
+      // Whether this project could clone before this save — its own token, or one inherited.
+      // If it could not, nothing it has open was ever built, and this save is the moment it
+      // can be: see the scan below.
+      const before = (s.projects || []).find(x => projectKey(x) === key);
+      const hadCredential = Boolean(before && (
+        (before.scm || []).some(n => n === "scm.access_token" || n === "scm.api_token") ||
+        ((s.defaults && s.defaults.scm_global) || []).some(
+          n => n === "bitbucket.access_token" || n === "bitbucket.api_token")));
       try {
         const out = await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`,
           {value});
@@ -8173,6 +8242,22 @@ function wireProjectHandlers(s, container) {
         // saying "not set" and "paste to set" over a token that was stored.
         refreshSCMRow(s, p, el);
         toast(`Stored ${name} for ${key.split("/").slice(1).join("/")}.`, "good");
+
+        /* The first usable credential: scan, here, now.
+
+           Only then. Every later save is a rotation, and a scan rebuilds every open pull
+           request and supersedes anything already running — a token rotation should not do
+           that. But a private project with no credential has never built anything, so this
+           save is the moment its open pull requests become buildable, and nothing else will
+           notice: the scan on create ran before the token existed. */
+        const scanHost = b.closest(".credbox")?.querySelector("[data-scan-host]");
+        if (!hadCredential && p && p.enabled &&
+            (name === "scm.access_token" || name === "scm.api_token") && scanHost) {
+          scanHost.replaceChildren(noteEl(
+            "Scanning for open pull requests, now that this repository can be cloned…", "", true));
+          const r = await runScan(key);
+          scanHost.replaceChildren(noteEl(r.text, r.kind));
+        }
       } catch (e) {
         toast(e.message, "bad");
       } finally {
@@ -8362,8 +8447,8 @@ function wireProjectHandlers(s, container) {
               // sentence that says what to do rather than the raw platform error.
               const missing = /no Bitbucket credential|credential/i.test(scan.error);
               setFlash(missing
-                ? `Saved. No builds queued yet — add an access token to this project, ` +
-                  `then use Build now.`
+                ? `Saved. No builds queued yet — add an access token on this project's ` +
+                  `page; its open pull requests are queued as soon as the token is saved.`
                 : `Saved, but nothing could be queued: ${scan.error}`, missing ? "" : "bad");
             } else if (scan.queued) {
               setFlash(`Saved. ${scan.queued} open pull request${
@@ -8483,6 +8568,20 @@ function wireProjectHandlers(s, container) {
         // did start and the page simply has not caught up.
         actNote(b, `${msg} (The list could not be refreshed: ${e.message})`, "good");
       }
+    };
+  }
+
+  // Scanning for open pull requests, from the edit page's header. The answer goes under the
+  // header, where the branch button's does, and stays until dismissed.
+  for (const b of el.querySelectorAll("[data-scan]")) {
+    b.onclick = async () => {
+      const label = b.textContent;
+      b.disabled = true;
+      b.textContent = "Scanning…";
+      const r = await runScan(b.dataset.scan);
+      b.disabled = false;
+      b.textContent = label;
+      actNote(b, r.text, r.kind);
     };
   }
 

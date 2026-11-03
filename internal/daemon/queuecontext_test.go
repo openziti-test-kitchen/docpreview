@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -80,5 +81,33 @@ func TestQueueContextKeepsTheRequestsValues(t *testing.T) {
 	}
 	if d, ok := ctx.Deadline(); !ok || time.Until(d) > queueBudget {
 		t.Errorf("deadline = %v %v", d, ok)
+	}
+}
+
+// TestAPartialScanReportsWhatItQueued. ScanRepo carries on past a pull request whose enqueue
+// failed, so the answer is "queued N, and this one failed" — reporting zero beside the error
+// would send somebody to rebuild previews that are already building.
+func TestAPartialScanReportsWhatItQueued(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	cfg := config.DefaultServer()
+	cfg.DataDir = dir
+	cfg.Listeners = []config.Listener{{TCP: "127.0.0.1:8471"}}
+
+	h := NewProjectsAdmin(st, cfg, slog.New(slog.DiscardHandler)).
+		WithScanner(func(context.Context, model.Repo) (int, error) {
+			return 2, errors.New("pull request 14: the queue is closed")
+		}).Handler()
+	rec := secretCall(t, h, "POST", "/api/projects/bitbucket/acme/docs/scan", "", localCaller)
+
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != http.StatusOK || body["queued"] != float64(2) ||
+		body["error"] != "pull request 14: the queue is closed" {
+		t.Errorf("answer = %d %s, want 200 queued:2 with the error", rec.Code, rec.Body)
 	}
 }

@@ -1003,8 +1003,13 @@ func (a *ProjectsAdmin) scan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// The project itself saved. This is a separate action that failed, and its
 		// message is the operator's next step — usually "install the App there".
-		a.log.Warn("scanning for open pull requests", "project", p.Key(), "error", err)
-		writeJSON(w, http.StatusOK, map[string]any{"queued": 0, "error": err.Error()})
+		//
+		// The real count, not zero. ScanRepo carries on past a pull request whose enqueue
+		// failed, so "queued 2, and #14 failed because ..." is a true answer, and reporting 0
+		// beside it would send somebody to rebuild two previews that are already building.
+		a.log.Warn("scanning for open pull requests", "project", p.Key(),
+			"queued", queued, "error", err)
+		writeJSON(w, http.StatusOK, map[string]any{"queued": queued, "error": err.Error()})
 		return
 	}
 	a.log.Info("queued builds for open pull requests", "project", p.Key(), "queued", queued)
