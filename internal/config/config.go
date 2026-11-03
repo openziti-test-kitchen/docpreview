@@ -977,6 +977,28 @@ type RepoDetect struct {
 	// PathsFromRepo records that the repository's own .docpreview.yml set Paths, so
 	// ScopeToBuildDir leaves them alone. Never read from the file.
 	PathsFromRepo bool `yaml:"-"`
+
+	// Implicit marks a Script that nobody configured: DefaultDetectScript, filled in by
+	// the daemon under the docker driver. A branch without that file is the normal case,
+	// so its absence is logged and the globs decide, without the warning a missing
+	// configured script earns.
+	Implicit bool `yaml:"-"`
+}
+
+// DetectScriptName is the detect script looked for in the build directory when none is
+// configured.
+//
+// No extension, because the shebang picks the interpreter, and `.sh` on a node script
+// would be a lie.
+const DetectScriptName = "docpreview-detect"
+
+// DefaultDetectScript is where the implicit detect script lives for a build directory.
+func DefaultDetectScript(buildDir string) string {
+	dir := strings.Trim(filepath.ToSlash(filepath.Clean(buildDir)), "/")
+	if dir == "" || dir == "." {
+		return DetectScriptName
+	}
+	return dir + "/" + DetectScriptName
 }
 
 /* ScopeToBuildDir narrows the default globs to the build directory.

@@ -1337,6 +1337,33 @@ func (d *Daemon) confineToDriver(
 	return cfg
 }
 
+/* detectorFor returns the detector for a build under driver, and fills in the implicit detect script.
+
+   Under docker the script runs in a container, and a build directory's `docpreview-detect` is used
+   when nothing else is configured. The project and the repository both outrank it, and a branch
+   without the file falls back to the globs.
+
+   Under local neither happens. The script would run on this host, and a file any pull request can
+   add is not something the operator chose; confineToDriver drops a branch-named script there for
+   the same reason. */
+func (d *Daemon) detectorFor(driver, image string, cfg *config.RepoConfig) *pipeline.Detector {
+	if driver != config.DriverDocker {
+		return d.detector
+	}
+	if cfg.Detect.Script == "" {
+		cfg.Detect.Script = config.DefaultDetectScript(cfg.Build.Dir)
+		cfg.Detect.Implicit = true
+	}
+	if image == "" {
+		image = config.DefaultImage
+	}
+	return d.detector.InContainer(pipeline.DetectContainer{
+		Image:  image,
+		CPUs:   d.cfg.Build.CPUs,
+		Memory: d.cfg.Build.Memory,
+	})
+}
+
 // projectDriver returns the build driver and image for a pull request.
 //
 // Per-project, falling back to the server default. A project that runs a command
@@ -2615,7 +2642,8 @@ func (d *Daemon) runPipeline(
 			return out, pipeline.Decision{}, err
 		}
 
-		decision, err = d.detector.Detect(ctx, ws, repoCfg, changed)
+		detector := d.detectorFor(driver, image, &repoCfg)
+		decision, err = detector.Detect(ctx, ws, repoCfg, changed)
 		if err != nil {
 			return out, decision, err
 		}

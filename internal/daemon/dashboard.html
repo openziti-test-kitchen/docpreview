@@ -7827,11 +7827,14 @@ function projectForm(s, p) {
           "images do not have; alpine's musl breaks dependencies that ship prebuilt binaries.")}`)}
 
       ${group("When to build", `
-        ${field("detect", "Detect script", text("detect", ".docpreview/detect"),
+        ${field("detect", "Detect script", text("detect", "docusaurus/docpreview-detect"),
           "A path in the repository, not a command — it is executed directly, so its shebang " +
           "decides the interpreter and arguments would be read as part of the filename. Gets the " +
-          "changed paths on stdin; exit 0 to build, 78 to skip. Blank matches the changed paths " +
-          "against globs instead: <code>detect.paths</code> from the repository's own " +
+          "changed paths on stdin; exit 0 to build, 78 to skip. Under docker it runs in the build " +
+          "image with no network and a read-only checkout. Blank under docker runs " +
+          "<code>docpreview-detect</code> from the <b>Directory</b> above when the branch has one. " +
+          "Otherwise the changed paths are matched against globs: <code>detect.paths</code> from " +
+          "the repository's own " +
           "<code>.docpreview.yml</code> if it sets them, otherwise everything under the " +
           "<b>Directory</b> above, otherwise a Docusaurus layout anywhere in the repository.")}`)}
 

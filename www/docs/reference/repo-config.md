@@ -233,9 +233,21 @@ detect:
   script: .docpreview/detect
 ```
 
-The script has a 60-second timeout and a **three-variable** environment — `PATH`, `HOME` pointed at the workspace,
-and `DOCPREVIEW=1`. It does not inherit the host's environment, because a build server's environment contains things
-a pull request author should not be handed.
+The script has a 60-second timeout and a minimal environment: `HOME` and `DOCPREVIEW=1`, plus `PATH`. It does not
+inherit the host's environment or the build's injected variables, because both contain things a pull request author
+should not be handed.
+
+**Under the `docker` driver the script runs in a container**, using the project's build image. The checkout is
+mounted read-only at `/workspace`, which is the working directory, and the container has no network. A script that
+needs `git` must use an image that has it. Under `local` the script runs on the host, and only a script the project
+names is run; a script named in this file is ignored there.
+
+### The default script: `docpreview-detect`
+
+Under `docker`, when neither the project nor this file names a script, docpreview looks for `docpreview-detect` in
+the build directory, for example `docusaurus/docpreview-detect`. If the file is there, it decides, with the rules
+above. If it is not, the daemon logs that and the globs decide. No extension: the shebang picks the interpreter.
+The default is not used under `local`, because any pull request could add the file.
 
 ## A project row overrides all of this
 
