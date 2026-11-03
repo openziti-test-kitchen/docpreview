@@ -2582,6 +2582,8 @@ func (d *Daemon) runPipeline(
 	// driver runs it. An operator-authored project row cannot be edited by a
 	// contributor, so where the two disagree the row is the trustworthy one.
 	repoCfg = d.applyProject(ctx, pr, repoCfg)
+	// After the project, because the project's build directory is the one that counts.
+	repoCfg.ScopeToBuildDir()
 
 	// Resolved here rather than beside the builder below, because the driver decides
 	// what the *detector* is allowed to run and the detector runs first.

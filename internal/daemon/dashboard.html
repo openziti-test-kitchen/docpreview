@@ -7828,11 +7828,12 @@ function projectForm(s, p) {
 
       ${group("When to build", `
         ${field("detect", "Detect script", text("detect", ".docpreview/detect"),
-          "Every pull request is built unless this says otherwise. A path in the repository, not " +
-          "a command — it is executed directly, so its shebang decides the interpreter and " +
-          "arguments would be read as part of the filename. Gets the changed paths on stdin; " +
-          "exit 0 to build, 78 to skip. Blank matches the changed paths against the globs in " +
-          "the repository's own <code>.docpreview.yml</code>.")}`)}
+          "A path in the repository, not a command — it is executed directly, so its shebang " +
+          "decides the interpreter and arguments would be read as part of the filename. Gets the " +
+          "changed paths on stdin; exit 0 to build, 78 to skip. Blank matches the changed paths " +
+          "against globs instead: <code>detect.paths</code> from the repository's own " +
+          "<code>.docpreview.yml</code> if it sets them, otherwise everything under the " +
+          "<b>Directory</b> above, otherwise a Docusaurus layout anywhere in the repository.")}`)}
 
       ${scmCredentialFields(s, p, id)}
 

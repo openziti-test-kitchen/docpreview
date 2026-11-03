@@ -179,6 +179,11 @@ preview, which looks the same as the tool being broken.
 
 `**/` matches zero or more segments, so a root-level `docs/intro.md` still matches `**/docs/**`.
 
+**A build directory other than `.` replaces these defaults.** When `build.dir` (or the project's
+**Directory**) is `docusaurus`, the list becomes `docusaurus/**` and `.docpreview.yml`. The site lives
+in that directory, so a change outside it cannot change the preview. A `paths` list you write here is
+used as written and is never narrowed.
+
 An **empty** list is treated as a mistake and builds everything rather than nothing. A misconfigured
 repository should be noisy, not silently dead.
 

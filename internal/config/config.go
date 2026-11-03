@@ -973,6 +973,33 @@ type RepoDetect struct {
 	// Script, if set, is a path within the repository that overrides the glob
 	// check entirely. Exit 0 means build, exit 78 means skip.
 	Script string `yaml:"script"`
+
+	// PathsFromRepo records that the repository's own .docpreview.yml set Paths, so
+	// ScopeToBuildDir leaves them alone. Never read from the file.
+	PathsFromRepo bool `yaml:"-"`
+}
+
+/* ScopeToBuildDir narrows the default globs to the build directory.
+
+   The defaults match a Docusaurus layout anywhere in the repository. That is right when the site is the
+   repository and wrong when it is one directory of it. `netfoundry/k8s-on-prem-installations` builds
+   from `docusaurus/`, and every README or `docs/` change elsewhere in it built a preview of a site that
+   had not changed.
+
+   A build directory says where the site is, so nothing outside it can change what the preview shows.
+   Paths the repository wrote itself are kept, because that file is the more specific statement. A
+   build directory of `.` is left alone too: the whole repository is the site, and the defaults fit.
+
+   .docpreview.yml stays in the list because it decides, from the root, how the site is built. */
+func (c *RepoConfig) ScopeToBuildDir() {
+	if c.Detect.PathsFromRepo {
+		return
+	}
+	dir := strings.Trim(filepath.ToSlash(filepath.Clean(c.Build.Dir)), "/")
+	if dir == "" || dir == "." {
+		return
+	}
+	c.Detect.Paths = []string{dir + "/**", RepoConfigName}
 }
 
 // DefaultRepoConfig is what a repository gets when it ships no .docpreview.yml.
@@ -1029,6 +1056,16 @@ func LoadRepoConfig(repoRoot string) (RepoConfig, error) {
 	}
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		return cfg, fmt.Errorf("parsing %s: %w", RepoConfigName, err)
+	}
+	// A second pass, because the first decodes onto the defaults and cannot say whether the
+	// list it holds is theirs or the file's.
+	var probe struct {
+		Detect struct {
+			Paths *[]string `yaml:"paths"`
+		} `yaml:"detect"`
+	}
+	if err := yaml.Unmarshal(raw, &probe); err == nil && probe.Detect.Paths != nil {
+		cfg.Detect.PathsFromRepo = true
 	}
 	if err := cfg.validate(); err != nil {
 		return cfg, fmt.Errorf("invalid %s: %w", RepoConfigName, err)
