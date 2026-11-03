@@ -338,6 +338,53 @@ input.control::placeholder { color: var(--muted) }
 .credbox input[type=password], .credbox input[type=text], .credbox textarea {
   font: 12.5px/1.5 var(--mono);
 }
+/* The credential test's answer, inside the box and directly under its button, full width
+   like every field on the edit page. The border takes the outcome's colour once there is one;
+   while it runs it stays the box's own hairline, because a yellow frame around three spinners
+   would be saying "warning" about a check that has not answered yet. */
+.ctest {
+  margin: 0 0 0.6rem;
+  border: 1px solid var(--hairline); border-radius: var(--r-md);
+  background: var(--raised); padding: 0.55rem 0.7rem;
+  font-size: 0.82rem;
+}
+.ctest.good { border-color: var(--good) }
+.ctest.bad  { border-color: var(--critical) }
+.ctest-head { display: flex; align-items: center; gap: 0.5rem; font-weight: 600 }
+.ctest-head > span { flex: 1 }
+.ctest.good .ctest-head { color: var(--good) }
+.ctest.bad  .ctest-head { color: var(--critical) }
+.ctest-x { flex: none }
+.ctest-cred { color: var(--ink-2); margin: 0.25rem 0 0.4rem; font-size: 0.78rem }
+.ctest-hdr, .ctest-req { font: 11.5px/1.5 var(--mono); overflow-wrap: anywhere }
+.ctest-steps { list-style: none; margin: 0; padding: 0 }
+.ctest-step {
+  display: grid; grid-template-columns: 1.3rem minmax(0, 1fr); gap: 0.3rem;
+  padding: 0.35rem 0; border-top: 1px solid var(--hairline);
+}
+/* The mark column holds the spinner while the step runs and a glyph once it settles. Fixed
+   width, so a row does not shift sideways the moment its spinner becomes a tick. */
+.ctest-mark {
+  display: flex; align-items: center; justify-content: center;
+  height: 1.3em; font-weight: 700;
+}
+.ctest-step.pass .ctest-mark { color: var(--good) }
+.ctest-step.fail .ctest-mark { color: var(--critical) }
+.ctest-step.not_attempted .ctest-mark { color: var(--muted) }
+.ctest-name { font-weight: 600 }
+.ctest-why { font-weight: 400; color: var(--muted) }
+/* The outcome as a word as well as a mark, on the right, so the three states are not told
+   apart by colour alone. Grey for "not attempted": it is neither a pass nor a failure. */
+.ctest-out {
+  float: right; font-weight: 500; font-size: 0.72rem;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+}
+.ctest-step.pass .ctest-out { color: var(--good) }
+.ctest-step.fail .ctest-out { color: var(--critical) }
+.ctest-req { display: block; color: var(--ink-2) }
+.ctest-msg { margin-top: 0.15rem; color: var(--ink-2); overflow-wrap: anywhere }
+.ctest-step.fail .ctest-msg { color: var(--critical) }
+.ctest-step.not_attempted .ctest-name, .ctest-step.not_attempted .ctest-msg { color: var(--muted) }
 
 /* The environment-variables disclosure, quieted right down.
 
@@ -6697,14 +6744,7 @@ function scmCredentialFields(s, p, id) {
   }
 
   // What a blank field will actually do, stated once at the top of the section.
-  const inheritLine = stored.size
-    ? `This repository uses its own credential below${
-        inherits ? ", overriding the workspace-wide one" : ""}.`
-    : inherits
-      ? `Blank fields inherit the workspace-wide credential from
-         <a href="/secrets">/secrets</a>. Fill one in to override it for this repository only.`
-      : `No workspace-wide credential is stored, so a private repository needs its own
-         token here. <a href="/secrets">/secrets</a> holds the shared one if you have one.`;
+  const inheritLine = scmInheritLine(s, p);
 
   /* One credential per row, in the same shape /secrets uses for a secret: name and its
      state on the left, a masked box with an expand control in the middle, its own Save on
@@ -6719,9 +6759,10 @@ function scmCredentialFields(s, p, id) {
   const secretRow = (name, label, elID, hint) => `
     <div class="sec" data-scmrow="${esc(name)}">
       <div>
-        <div class="name">${esc(label)} ${stored.has(name)
-          ? `<span class="flag on">set</span>`
-          : `<span class="flag opt">not set</span>`}</div>
+        <!-- The chip is in its own span so refreshSCMRow can replace it after a save or a
+             delete. It was rendered once and never touched again, so a stored token sat
+             under a row still saying "not set" — which read as the save having failed. -->
+        <div class="name">${esc(label)} <span data-scmrow-flag>${scmRowFlag(stored.has(name))}</span></div>
       </div>
       <!-- Masked like the tokens, including the email. An address is not itself a secret,
            but it is half of an Authorization header and half of a clone URL, it is stored
@@ -6764,7 +6805,7 @@ function scmCredentialFields(s, p, id) {
             data-privtoggle="1"${p && p.private ? " checked" : ""}>
             Needs a credential to clone</label>
         </div>
-        <div class="why">${inheritLine}</div>
+        <div class="why" id="scm-inherit">${inheritLine}</div>
       </div>
       <!-- One field, because one is all a Bitbucket access token needs.
            This offered a choice between an access token and an account email plus API
@@ -6816,7 +6857,12 @@ function scmCredentialFields(s, p, id) {
           <span class="hint">Confirms the token can read the repository and its pull
             requests. Write cannot be checked without writing something.</span>
         </div>
-      </div>` : ""}
+      </div>
+      <!-- The test's answer, here and not in a toast. The toast rendered at the top of the
+           window while this box sits at the bottom of a long form, so the answer arrived
+           somewhere nobody was looking and a passing test read as a dead button. Filled by
+           the Test handler; empty until it is pressed. -->
+      <div data-ctest-host></div>` : ""}
     </div>
     </div>`;
 }
@@ -7068,6 +7114,223 @@ function updateSCMFlag(s) {
   const key = priv.id.startsWith(prefix) ? priv.id.slice(prefix.length) : "";
   const p = key ? (s.projects || []).find(x => projectKey(x) === key) : null;
   box.innerHTML = scmFlag(s, p);
+}
+
+/* scmInheritLine is the sentence under "Private repository" saying what a blank field does.
+
+   A function rather than a local of scmCredentialFields, because a save or a delete changes
+   the answer and refreshSCMRow has to be able to say it again without re-rendering a form
+   somebody may be halfway through editing. */
+function scmInheritLine(s, p) {
+  const stored = new Set((p && p.scm) || []);
+  const global = new Set((s.defaults && s.defaults.scm_global) || []);
+  const inherits = global.has("bitbucket.access_token") || global.has("bitbucket.api_token");
+  return stored.size
+    ? `This repository uses its own credential below${
+        inherits ? ", overriding the workspace-wide one" : ""}.`
+    : inherits
+      ? `Blank fields inherit the workspace-wide credential from
+         <a href="/secrets">/secrets</a>. Fill one in to override it for this repository only.`
+      : `No workspace-wide credential is stored, so a private repository needs its own
+         token here. <a href="/secrets">/secrets</a> holds the shared one if you have one.`;
+}
+
+// scmRowFlag is one credential row's own chip.
+function scmRowFlag(isSet) {
+  return isSet ? `<span class="flag on">set</span>` : `<span class="flag opt">not set</span>`;
+}
+
+/* refreshSCMRow brings everything on the form that describes a project's stored credentials
+   back in line with p.scm, after a save or a delete.
+
+   In place rather than by re-rendering the form. The row's Save is deliberately outside the
+   form's own save, so a re-render would throw away whatever else had been typed — and the
+   previous answer, not refreshing at all, left the section's header chip saying "set" over a
+   row still saying "not set", which read as the save having failed when it had not.
+
+   Four things move: the row's chip, its placeholder, whether it offers Delete, and the
+   section's header chip and inherit sentence. A row that no longer exists in p.scm and has
+   no data-scmrow of its own — the stale account pair — is removed outright. */
+function refreshSCMRow(s, p, container) {
+  const stored = new Set((p && p.scm) || []);
+  const root = container || document;
+  for (const row of root.querySelectorAll("[data-scmrow]")) {
+    const name = row.dataset.scmrow;
+    const isSet = stored.has(name);
+    const flag = row.querySelector("[data-scmrow-flag]");
+    if (flag) flag.innerHTML = scmRowFlag(isSet);
+    const input = row.querySelector("input");
+    if (input) input.placeholder = isSet ? "paste to replace" : "paste to set";
+    const act = row.querySelector(".act");
+    const del = act && act.querySelector("[data-clear-scm]");
+    if (isSet && act && !del) {
+      const b = document.createElement("button");
+      b.className = "btn";
+      b.dataset.clearScm = name;
+      b.dataset.key = projectKey(p);
+      b.textContent = "Delete";
+      act.appendChild(b);
+      wireClearSCM(b, s, container);
+    } else if (!isSet && del) {
+      del.remove();
+    }
+  }
+  // The stale account pair has no row of its own to refresh: once neither half is stored,
+  // the line warning about it is simply wrong, so it goes.
+  if (!stored.has("scm.email") && !stored.has("scm.api_token")) {
+    const pair = root.querySelector('[data-clear-scm="scm.email,scm.api_token"]');
+    if (pair) pair.closest(".sec")?.remove();
+  }
+  const why = document.getElementById("scm-inherit");
+  if (why) why.innerHTML = scmInheritLine(s, p);
+  updateSCMFlag(s);
+  // A test result describes the token that was tested. Once that token has been replaced or
+  // removed, leaving the panel up would be a green "Works" about a credential that is gone.
+  for (const host of root.querySelectorAll("[data-ctest-host]")) host.innerHTML = "";
+}
+
+/* adoptProjectState takes the projects payload a write returned and folds this project's row
+   into the page's own copy, so the next refresh reads what the server stored rather than what
+   the page guessed it stored. Returns the project, or null. */
+function adoptProjectState(s, key, out) {
+  const fresh = out && Array.isArray(out.projects)
+    ? out.projects.find(x => projectKey(x) === key) : null;
+  const p = (s.projects || []).find(x => projectKey(x) === key);
+  if (p && fresh) p.scm = fresh.scm || [];
+  return p || null;
+}
+
+/* wireClearSCM binds one credential Delete button.
+
+   Its own function because refreshSCMRow creates a Delete after a first save, and that button
+   has to behave like the ones rendered with the form. In place for the same reason Save is: the
+   edit page's form is not something to rebuild under somebody. It used to go through
+   runProject, whose renderer is the project list — on the edit page that drew the list into
+   its hidden container and left the form saying "set" about a credential just deleted. */
+function wireClearSCM(b, s, container) {
+  b.onclick = async () => {
+    const names = b.dataset.clearScm.split(",");
+    const key = b.dataset.key;
+    if (!confirm(`Remove ${names.join(" and ")} from ${key}? The values cannot be ` +
+        `recovered, and this repository falls back to the workspace-wide credential if ` +
+        `there is one.`)) {
+      return;
+    }
+    const label = b.textContent;
+    b.disabled = true;
+    b.textContent = "…";
+    try {
+      // Sequentially, and the last answer is the one kept: each write returns the whole
+      // state, so the final one is the only current picture.
+      let out;
+      for (const name of names) {
+        out = await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`,
+          {value: ""});
+      }
+      const p = adoptProjectState(s, key, out);
+      if (p && !(out && Array.isArray(out.projects))) {
+        p.scm = (p.scm || []).filter(n => !names.includes(n));
+      }
+      refreshSCMRow(s, p, container);
+      toast(`Removed ${names.join(" and ")} from ${key.split("/").slice(1).join("/")}.`, "good");
+    } catch (e) {
+      b.disabled = false;
+      b.textContent = label;
+      toast(e.message, "bad");
+    }
+  };
+}
+
+/* The credential test panel.
+
+   Rendered inside the green credential box, under the button that started it, because that is
+   where the eye is when the button is pressed. It was a toast at the top of the window, a long
+   form's height away, and a passing test read as nothing having happened.
+
+   Three rows, shown the moment the button is pressed and each with its own spinner, so it is
+   clear before any answer arrives what is about to be asked and of whom. The server's answer
+   replaces each row's request with the URL it actually called and settles each spinner to one
+   of three marks — the third, "not attempted", because one permission cannot be checked
+   without writing to a pull request, and calling that a pass would be the page claiming
+   something nobody checked.
+
+   The credential line shows where the token came from and the shape of the header it went out
+   in, masked by the server to its last four characters. The page never holds more than that:
+   nothing in this system reads a secret back, and a test button is exactly where that would
+   quietly stop being true. */
+function credTestPending(key) {
+  const [, owner, repo] = key.split("/");
+  const base = `/2.0/repositories/${owner}/${repo}`;
+  return {
+    repo: `${owner}/${repo}`,
+    state: "running",
+    credential: null,
+    checks: [
+      {name: "Repository read", request: `GET ${base}`, outcome: "running"},
+      {name: "Pull request read", request: `GET ${base}/pullrequests?state=OPEN&pagelen=1`,
+       outcome: "running"},
+      {name: "Pull request write", request: "", outcome: "running"},
+    ],
+  };
+}
+
+// What each row proves, in the operator's terms. Keyed by the server's step name, so a step
+// added on the server without one here still renders — just without the gloss.
+const credTestWhy = {
+  "Repository read": "what a clone needs",
+  "Pull request read": "what a build needs to list a pull request's changes",
+  "Pull request write": "what posting the preview comment needs",
+};
+
+function credTestHTML(r) {
+  const marks = {
+    running: `<span class="spinner" aria-hidden="true"></span>`,
+    pass: "✓", fail: "✕", not_attempted: "–",
+  };
+  const words = {running: "checking…", pass: "passed", fail: "failed",
+                 not_attempted: "not attempted"};
+  const failed = r.checks.some(c => c.outcome === "fail");
+  const head = r.state === "running"
+    ? `Testing the credential for <code>${esc(r.repo)}</code>…`
+    : failed
+      ? `Failed — the step marked ✕ says what Bitbucket refused.`
+      : `Works — read access to <code>${esc(r.repo)}</code> confirmed.`;
+  const cred = r.credential
+    ? `Sent with ${esc(r.credential.source)}, as
+       <code class="ctest-hdr">${esc(r.credential.header)}</code>`
+    : r.state === "running"
+      ? `Resolving which credential this project uses…`
+      : `No request was sent.`;
+  const rows = r.checks.map(c => {
+    const o = marks[c.outcome] ? c.outcome : "not_attempted";
+    const why = credTestWhy[c.name];
+    return `
+      <li class="ctest-step ${o}">
+        <span class="ctest-mark" aria-hidden="true">${marks[o]}</span>
+        <div class="ctest-body">
+          <div class="ctest-name">${esc(c.name)}${why
+            ? ` <span class="ctest-why">— ${esc(why)}</span>` : ""}
+            <span class="ctest-out">${words[o]}</span></div>
+          <code class="ctest-req">${c.request ? esc(c.request) : "no request is made"}</code>
+          ${c.message ? `<div class="ctest-msg">${esc(c.message)}</div>` : ""}
+        </div>
+      </li>`;
+  }).join("");
+  const tone = r.state === "running" ? "running" : failed ? "bad" : "good";
+  return `
+    <div class="ctest ${tone}" role="status" aria-live="polite">
+      <div class="ctest-head"><span>${head}</span>
+        ${r.state === "running" ? "" :
+          `<button class="btn icon ctest-x" data-ctest-close title="Dismiss">×</button>`}</div>
+      <div class="ctest-cred">${cred}</div>
+      <ol class="ctest-steps">${rows}</ol>
+    </div>`;
+}
+
+function renderCredTest(host, r) {
+  host.innerHTML = credTestHTML(r);
+  const x = host.querySelector("[data-ctest-close]");
+  if (x) x.onclick = () => { host.innerHTML = ""; };
 }
 
 /* scmCredentialAvailable reports whether a clone of this project could authenticate:
@@ -7811,12 +8074,18 @@ function wireProjectHandlers(s, container) {
       b.disabled = true;
       b.textContent = "…";
       try {
-        await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`, {value});
+        const out = await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`,
+          {value});
         field.value = "";
-        const p = (s.projects || []).find(x => projectKey(x) === key);
-        if (p) p.scm = [...new Set([...(p.scm || []), name])];
-        updateSCMFlag(s);
-        toast(`Stored ${name} for ${key.split("/").slice(1).join("/")}.`);
+        // The server's answer when it sent one, the page's own bookkeeping when it did not.
+        const p = adoptProjectState(s, key, out);
+        if (p && !(out && Array.isArray(out.projects))) {
+          p.scm = [...new Set([...(p.scm || []), name])];
+        }
+        // The row as well as the header. Only the header used to move, so the row went on
+        // saying "not set" and "paste to set" over a token that was stored.
+        refreshSCMRow(s, p, el);
+        toast(`Stored ${name} for ${key.split("/").slice(1).join("/")}.`, "good");
       } catch (e) {
         toast(e.message, "bad");
       } finally {
@@ -7829,27 +8098,7 @@ function wireProjectHandlers(s, container) {
   // Clearing one. An empty value is how the endpoint deletes, so this is the same route.
   // Clearing one credential, or the account pair as a unit. An empty value is how the
   // endpoint deletes, so this is the same route either way.
-  for (const b of el.querySelectorAll("[data-clear-scm]")) {
-    b.onclick = async () => {
-      const names = b.dataset.clearScm.split(",");
-      const key = b.dataset.key;
-      if (!confirm(`Remove ${names.join(" and ")} from ${key}? The values cannot be ` +
-          `recovered, and this repository falls back to the workspace-wide credential if ` +
-          `there is one.`)) {
-        return;
-      }
-      await runProject(b, async () => {
-        // Sequentially, and the last answer is what the page renders: each write returns
-        // the whole state, so the final one is the only current picture.
-        let out;
-        for (const name of names) {
-          out = await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`,
-            {value: ""});
-        }
-        return out;
-      });
-    };
-  }
+  for (const b of el.querySelectorAll("[data-clear-scm]")) wireClearSCM(b, s, el);
 
   for (const b of el.querySelectorAll("[data-close-panel]")) {
     b.onclick = () => {
@@ -8170,25 +8419,54 @@ function wireProjectHandlers(s, container) {
   //
   // Not through runProject, which re-renders the whole page on success — that would close
   // the form the button is inside, which is where somebody is about to fix the token if the
-  // answer is bad. The result is a toast and the form stays put.
+  // answer is bad. The result renders in the credential box, under the button; see
+  // credTestHTML for why it is no longer a toast.
   for (const b of el.querySelectorAll("[data-test-scm]")) {
     b.onclick = async () => {
       const key = b.dataset.testScm;
+      const host = b.closest(".credbox")?.querySelector("[data-ctest-host]");
       const label = b.textContent;
       b.disabled = true;
       b.textContent = "…";
+      const pending = credTestPending(key);
+      if (host) renderCredTest(host, pending);
+      // A floor under the spinner, so an answer in eighty milliseconds still reads as a check
+      // that ran rather than as the panel flickering. Concurrent with the request, so it adds
+      // nothing to a slow one.
+      const floor = new Promise(res => setTimeout(res, 450));
+      let result;
       try {
         const out = await api("POST", `${projectPath(key)}/scm-test`);
-        // Headline first, detail behind it: the server sends both, separated by a newline.
-        const [headline, ...rest] = String(out.ok || "Works.").split("\n");
-        toast(headline, "good", rest.join(" "));
+        result = {
+          repo: pending.repo, state: "done",
+          credential: out.credential || null,
+          checks: Array.isArray(out.checks) && out.checks.length ? out.checks : [
+            {name: "Repository read", request: pending.checks[0].request, outcome: "fail",
+             message: "The daemon answered without any steps. It may be older than this page."},
+          ],
+        };
       } catch (e) {
-        // The platform's own message, which names the missing scope where this code
-        // cannot. Long, so it gets the failure toast's longer life.
-        toast(e.message, "bad");
-      } finally {
-        b.disabled = false;
-        b.textContent = label;
+        // The check could not start — no credential stored anywhere, or no client for the
+        // platform. Nothing was sent, so the first row carries the reason and the others say
+        // they were never reached rather than spinning on forever.
+        result = {
+          repo: pending.repo, state: "done", credential: null,
+          checks: pending.checks.map((c, i) => i === 0
+            ? {...c, outcome: "fail", message: e.message}
+            : {...c, outcome: "not_attempted", message: "Not attempted — nothing could be sent."}),
+        };
+      }
+      await floor;
+      b.disabled = false;
+      b.textContent = label;
+      if (host) {
+        renderCredTest(host, result);
+      } else {
+        // No panel to render into is a page this handler does not know; say something
+        // rather than nothing.
+        const bad = result.checks.find(c => c.outcome === "fail");
+        toast(bad ? `${bad.name}: ${bad.message}` : "Works — read access confirmed.",
+          bad ? "bad" : "good");
       }
     };
   }

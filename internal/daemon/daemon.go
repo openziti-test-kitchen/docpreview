@@ -1842,15 +1842,15 @@ func (d *Daemon) RebuildPreview(ctx context.Context, previewID string) (bool, er
 // optional interface because only one platform needs it — a GitHub App's installation is
 // the check, while a Bitbucket access token is pasted in and unverified until something
 // uses it.
-func (d *Daemon) CheckRepoCredential(ctx context.Context, repo model.Repo) (string, error) {
+func (d *Daemon) CheckRepoCredential(ctx context.Context, repo model.Repo) (scm.RepoCheck, error) {
 	client, ok := d.client(repo.Platform)
 	if !ok {
-		return "", fmt.Errorf("no %s client is configured on this daemon "+
+		return scm.RepoCheck{}, fmt.Errorf("no %s client is configured on this daemon "+
 			"(store its credentials on /secrets)", repo.Platform)
 	}
 	checker, ok := client.(scm.RepoChecker)
 	if !ok {
-		return "", fmt.Errorf("the %s client has nothing to test: its credential is "+
+		return scm.RepoCheck{}, fmt.Errorf("the %s client has nothing to test: its credential is "+
 			"scoped by the platform rather than pasted in here", repo.Platform)
 	}
 	return checker.CheckRepo(ctx, repo)

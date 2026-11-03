@@ -13,6 +13,7 @@ import (
 	"github.com/netfoundry/docpreview/internal/config"
 	"github.com/netfoundry/docpreview/internal/model"
 	"github.com/netfoundry/docpreview/internal/pipeline"
+	"github.com/netfoundry/docpreview/internal/scm"
 	"github.com/netfoundry/docpreview/internal/store"
 	"github.com/netfoundry/docpreview/internal/vault"
 )
@@ -85,9 +86,10 @@ type ProjectsAdmin struct {
 	setPrefix  func(ctx context.Context, prefix string) error
 
 	// scmChecker verifies that a project's source-control credential reaches its
-	// repository, returning what it found. Nil for a daemon with no platform that can be
-	// checked, in which case the route answers 501 rather than pretending.
-	scmChecker func(ctx context.Context, repo model.Repo) (string, error)
+	// repository, returning one entry per permission it tried. Nil for a daemon with no
+	// platform that can be checked, in which case the route answers 501 rather than
+	// pretending.
+	scmChecker func(ctx context.Context, repo model.Repo) (scm.RepoCheck, error)
 
 	// planNamer renders the preview name this installation would ask its exposer for.
 	// Nil leaves the plan's name line out rather than guessing at one — every test that
@@ -174,7 +176,7 @@ func (a *ProjectsAdmin) WithNamePrefix(read func() string,
 }
 
 // WithSCMChecker installs the credential test behind the projects page's Test button.
-func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (string, error)) *ProjectsAdmin {
+func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (scm.RepoCheck, error)) *ProjectsAdmin {
 	a.scmChecker = fn
 	return a
 }
@@ -1394,16 +1396,24 @@ func (a *ProjectsAdmin) testSCM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := a.scmChecker(r.Context(), model.Repo{
+	res, err := a.scmChecker(r.Context(), model.Repo{
 		Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
 	})
 	if err != nil {
-		// The platform's own message, which is the useful half: "credentials lack one or
-		// more required privilege scopes" names the fix in a way this code cannot.
+		// Nothing could be checked at all — no credential stored anywhere, or no client for
+		// the platform. Not a refused request, so there are no steps to report.
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"ok": detail})
+	// 200 whether or not a step failed. The check ran and this is its answer; a refused
+	// request is the result being asked for, not a fault in the endpoint, and the page
+	// renders each step's outcome rather than one error string.
+	//
+	// The credential in here is already masked — by the client, before it got this far.
+	writeJSON(w, http.StatusOK, struct {
+		OK bool `json:"ok"`
+		scm.RepoCheck
+	}{res.OK(), res})
 }
 
 func (a *ProjectsAdmin) delSecret(w http.ResponseWriter, r *http.Request) {

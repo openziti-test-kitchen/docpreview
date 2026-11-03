@@ -205,7 +205,7 @@ type Event struct {
 }
 
 // RepoChecker is implemented by clients that can verify their credential reaches one
-// repository, returning a sentence describing what they found.
+// repository, returning one entry per permission it tried.
 //
 // Optional, and needed by exactly one platform for a reason worth stating: a GitHub App is
 // installed on repositories, so the installation *is* the check and a token that cannot
@@ -213,8 +213,67 @@ type Event struct {
 // creation and pasted in by hand, so nothing has confirmed it reaches anything until
 // something tries — and both ways of getting it wrong are quiet, one failing twenty seconds
 // into a clone and the other at the comment after a successful build.
+//
+// The error is for a check that could not start at all — no credential stored anywhere. A
+// check that ran and was refused is not an error: it is a RepoCheck with a failed step,
+// because which step failed is the answer the operator is asking for.
 type RepoChecker interface {
-	CheckRepo(ctx context.Context, repo model.Repo) (string, error)
+	CheckRepo(ctx context.Context, repo model.Repo) (RepoCheck, error)
+}
+
+// The outcomes a CheckStep settles to.
+//
+// Three rather than two, because one of the permissions a build needs cannot be proven
+// without writing to a pull request, and reporting it as a pass would be the page claiming
+// something nobody checked — while reporting it as a failure would send somebody to fix a
+// token that may be fine.
+const (
+	CheckPass         = "pass"
+	CheckFail         = "fail"
+	CheckNotAttempted = "not_attempted"
+)
+
+// RepoCheck is what a credential test found, structured so the page can say what was
+// tested and how, rather than printing one sentence that does not say which half failed.
+type RepoCheck struct {
+	Credential CheckedCredential `json:"credential"`
+	Checks     []CheckStep       `json:"checks"`
+}
+
+// OK reports whether nothing failed. A step that was not attempted is not a failure.
+func (r RepoCheck) OK() bool {
+	for _, c := range r.Checks {
+		if c.Outcome == CheckFail {
+			return false
+		}
+	}
+	return len(r.Checks) > 0
+}
+
+// CheckedCredential says which credential the requests went out with.
+//
+// Masked by the client, before it leaves the process. Nothing in this system reads a
+// secret back, and a test button is exactly the place that would quietly become the
+// exception — so Header carries the shape of the Authorization header and at most the last
+// four characters of the token, never the value, and there is no field that could hold it.
+type CheckedCredential struct {
+	// Source names where it came from: the project's own token or the workspace's.
+	Source string `json:"source"`
+	// Header is the Authorization header as sent, masked: "Authorization: Bearer ••••••9f2c".
+	Header string `json:"header"`
+}
+
+// CheckStep is one request the check made, or declined to make.
+type CheckStep struct {
+	// Name is what the request proves, in the operator's terms: "Repository read".
+	Name string `json:"name"`
+	// Request is the method and URL, so the reader can see exactly what was asked.
+	Request string `json:"request"`
+	// Outcome is one of CheckPass, CheckFail, CheckNotAttempted.
+	Outcome string `json:"outcome"`
+	// Message is what came back. On a failure it is the platform's own message, which names
+	// a missing scope in a way this code cannot.
+	Message string `json:"message"`
 }
 
 // PullRequestLister is implemented by clients that can be asked what is open on a
