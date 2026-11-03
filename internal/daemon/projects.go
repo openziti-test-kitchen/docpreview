@@ -89,6 +89,11 @@ type ProjectsAdmin struct {
 	// checked, in which case the route answers 501 rather than pretending.
 	scmChecker func(ctx context.Context, repo model.Repo) (string, error)
 
+	// planNamer renders the preview name this installation would ask its exposer for.
+	// Nil leaves the plan's name line out rather than guessing at one — every test that
+	// builds this admin directly has no exposer behind it.
+	planNamer func(pr model.PullRequest) (string, error)
+
 	// The docker volume operations behind the cache controls, injectable because they are
 	// destructive and reach the real docker daemon.
 	//
@@ -174,6 +179,14 @@ func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (str
 	return a
 }
 
+// WithPlanNamer installs the preview-name renderer behind the form's plan panel. It is
+// the daemon's own previewName, so the name the form shows is rendered through the same
+// template and prefix the build will use rather than through a second copy of them.
+func (a *ProjectsAdmin) WithPlanNamer(fn func(pr model.PullRequest) (string, error)) *ProjectsAdmin {
+	a.planNamer = fn
+	return a
+}
+
 // WithDocker records what the startup probe found.
 func (a *ProjectsAdmin) WithDocker(ok bool, why string) *ProjectsAdmin {
 	a.dockerOK, a.dockerWhy = ok, why
@@ -206,6 +219,11 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects", a.list)
 	mux.HandleFunc("GET /api/projects/{$}", a.list)
 	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}", a.gated(a.save))
+
+	// What a row would actually build, resolved server-side. Not under a project path
+	// because the row it answers for is the one in the form, which may not exist yet —
+	// and gated because it answers with the server's own driver, image and timeout.
+	mux.HandleFunc("POST /api/projects/plan", a.gated(a.plan))
 	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}", a.gated(a.remove))
 
 	// A project's own environment variables. Routed under the project rather than

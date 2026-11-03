@@ -26,6 +26,19 @@
 
   --term-bg:  #14140f;
   --term-fg:  #d8d6cc;
+
+  /* The focus ring. The ink at low alpha rather than a hue of its own, because a focused
+     field has to be legible against both schemes and the ink is the one colour guaranteed
+     to contrast with the surface under it. */
+  --focus-ring: rgba(11,11,11,0.18);
+
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  /* The radius and shadow ladders. Named rather than written out at each use, because the
+     thing that makes a form look considered is that its corners agree with each other. */
+  --r-sm: 6px; --r-md: 9px; --r-lg: 12px; --r-pill: 999px;
+  --shadow-pop: 0 14px 34px rgba(11,11,11,0.14);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -36,6 +49,9 @@
     --ink-2:    #c3c2b7;
     --hairline: #2c2c2a;
     --ring:     rgba(255,255,255,0.10);
+
+    --focus-ring: rgba(255,255,255,0.22);
+    --shadow-pop: 0 14px 34px rgba(0,0,0,0.6);
   }
 }
 
@@ -43,7 +59,7 @@
 body {
   margin: 0; padding: 0 0 3rem;
   background: var(--plane); color: var(--ink);
-  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 15px/1.55 var(--sans);
 }
 a { color: inherit; }
 h1 { font-size: 1.05rem; margin: 0; letter-spacing: -0.01em; font-weight: 650; }
@@ -84,7 +100,9 @@ h2 span { color: var(--ink-2); text-transform: none; letter-spacing: 0 }
 .seg button:first-child { border-left: 0 }
 .seg button:hover { background: var(--raised) }
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--plane) }
-.seg button[aria-pressed="true"] .dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--plane) 35%, transparent) }
+.seg button[aria-pressed="true"] .dot {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--plane) 35%, transparent);
+}
 .seg .n { font-variant-numeric: tabular-nums; font-weight: 650 }
 .seg .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--edge, var(--idle)); flex: none }
 /* The Building counter turns while anything is building, so the fact that work
@@ -109,18 +127,37 @@ h2 span { color: var(--ink-2); text-transform: none; letter-spacing: 0 }
 
 .control {
   font: inherit; font-size: 0.82rem;
-  background: var(--surface); color: var(--ink);
-  border: 1px solid var(--ring); border-radius: 8px;
+  background: var(--raised); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: var(--r-md);
   padding: 0.42rem 0.6rem;
+  transition: border-color .14s, box-shadow .14s;
 }
-.control:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px }
+.control:hover { border-color: var(--muted) }
+/* Focus is drawn on the border plus a soft ring rather than as an outline. An outline
+   sits outside the box and is clipped by anything that scrolls, so a focused field at the
+   edge of a scrolling panel stopped showing that it was focused. The ring is part of the
+   control and travels with it. */
+.control:focus-visible, .control:focus {
+  outline: none; border-color: var(--ink);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
 /* Secrets is a link to /secrets rather than a toggle, and an anchor is inline and
    underlined by default — both of which make it sit wrong beside the inputs. */
 a.control { display: inline-block; text-decoration: none; line-height: normal }
 /* A select rather than a chip per project: at three projects chips are nicer,
    at three hundred they are a wall. The search box beside it covers the case
    where you know the branch but not the project. */
-select.control { max-width: 15rem }
+select.control {
+  max-width: 15rem;
+  appearance: none; cursor: pointer; padding-right: 1.9rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-2) 50%),
+    linear-gradient(135deg, var(--ink-2) 50%, transparent 50%);
+  background-position: calc(100% - 1.05rem) 55%, calc(100% - 0.75rem) 55%;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+}
+/* The popup list is drawn by the OS, which does not inherit the field's colours. */
+select.control option { background: var(--raised); color: var(--ink) }
 input.control { width: 13rem }
 input.control::placeholder { color: var(--muted) }
 
@@ -282,7 +319,7 @@ input.control::placeholder { color: var(--muted) }
    the same reason: a reader who has seen that page knows what this is. */
 .credbox {
   border: 1px solid var(--ring); border-left: 3px solid var(--good);
-  border-radius: 8px; padding: 0.5rem 0.8rem;
+  border-radius: var(--r-lg); padding: 0.5rem 0.8rem;
   background: var(--raised);
   background: color-mix(in srgb, var(--good) 5%, var(--surface));
   margin-bottom: 0.4rem;
@@ -299,7 +336,7 @@ input.control::placeholder { color: var(--muted) }
 /* The masked boxes keep the monospace, raised look they have on the credential page: a
    token is not prose, and the shape is what says so at a glance. */
 .credbox input[type=password], .credbox input[type=text], .credbox textarea {
-  font: 12.5px/1.5 ui-monospace, Consolas, monospace;
+  font: 12.5px/1.5 var(--mono);
 }
 
 /* The environment-variables disclosure, quieted right down.
@@ -358,10 +395,14 @@ input.control::placeholder { color: var(--muted) }
 /* type=text is in the list because the new-entry row's Name box is one. Without it that
    field rendered as a bare browser input beside a styled value box. */
 .sec textarea, .sec input[type=password], .sec input[type=text] {
-  font: 12.5px/1.5 ui-monospace, Consolas, monospace;
+  font: 12.5px/1.5 var(--mono);
   width: 100%; background: var(--raised); color: var(--ink);
-  border: 1px solid var(--ring); border-radius: 6px; padding: 0.4rem 0.5rem;
-  resize: vertical;
+  border: 1px solid var(--ring); border-radius: var(--r-md);
+  padding: 0.4rem 0.5rem; resize: vertical;
+  transition: border-color .14s, box-shadow .14s;
+}
+.sec textarea:focus, .sec input[type=password]:focus, .sec input[type=text]:focus {
+  outline: none; border-color: var(--ink); box-shadow: 0 0 0 3px var(--focus-ring);
 }
 .sec textarea { min-height: 2.4rem }
 .sec .act { display: flex; gap: 0.35rem; align-items: center }
@@ -582,7 +623,7 @@ input.control::placeholder { color: var(--muted) }
    Not danger-coloured: nothing in the wizard is destructive, and every step is either
    reversible with Back or has not happened yet. */
 .btn.solid {
-  background: var(--ink); border-color: var(--ink); color: var(--surface);
+  background: var(--ink); border-color: var(--ink); color: var(--plane);
 }
 .btn.solid:hover { filter: brightness(1.15) }
 /* The destructive button is filled, and it is not the one that has focus. A dialog that
@@ -1026,13 +1067,19 @@ input.control::placeholder { color: var(--muted) }
   max-width: 52rem;
 }
 .btn.primary {
-  background: var(--ink); color: var(--plane); border-color: var(--ink); font-weight: 600;
+  background: var(--ink); color: var(--plane); border-color: var(--ink);
 }
 .btn.primary:hover { opacity: 0.9 }
 /* Destructive, and it borrows the failed colour rather than inventing one: red on this
    page already means a build that is not going to finish, which is what this makes. */
-.btn.danger { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 40%, var(--ring)) }
-.btn.danger:hover { border-color: var(--critical) }
+.btn.danger {
+  color: var(--critical); background: transparent;
+  border-color: color-mix(in srgb, var(--critical) 40%, var(--ring));
+}
+.btn.danger:hover {
+  border-color: var(--critical);
+  background: color-mix(in srgb, var(--critical) 7%, transparent);
+}
 /* Toasts. Fixed, so nothing in the document moves when one appears — a banner that pushes
    a list down is its own small confusion, and the list is what somebody is reading. */
 #toasts {
@@ -1046,8 +1093,8 @@ input.control::placeholder { color: var(--muted) }
 .toast {
   background: var(--ink); color: var(--plane);
   font-size: 0.82rem; font-weight: 500;
-  padding: 0.5rem 0.75rem; border-radius: 8px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  padding: 0.5rem 0.75rem; border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
   max-width: 22rem;
   pointer-events: auto; user-select: text; cursor: text;
   /* A platform error carries URLs and bracketed IPv6 addresses, which have no spaces to
@@ -1096,7 +1143,11 @@ input.control::placeholder { color: var(--muted) }
 .field textarea {
   font: inherit; font-size: 0.82rem; width: 100%; min-height: 4.5rem; resize: vertical;
   background: var(--raised); color: var(--ink);
-  border: 1px solid var(--ring); border-radius: 6px; padding: 0.4rem 0.5rem;
+  border: 1px solid var(--ring); border-radius: var(--r-md);
+  padding: 0.4rem 0.5rem; transition: border-color .14s, box-shadow .14s;
+}
+.field textarea:focus {
+  outline: none; border-color: var(--ink); box-shadow: 0 0 0 3px var(--focus-ring);
 }
 /* A titled group of fields.
 
@@ -1105,32 +1156,32 @@ input.control::placeholder { color: var(--muted) }
    the "mushy screen". A group is a card with a heading, a sentence saying what it decides, and a
    visible end. */
 .fgroup {
-  border: 1px solid var(--ring); border-radius: 10px; background: var(--surface);
+  border: 1px solid var(--ring); border-radius: var(--r-lg);
+  background: var(--surface);
   margin: 0 0 1rem; overflow: hidden;
 }
-.fgroup-head {
-  padding: 0.6rem 0.9rem; background: var(--raised); border-bottom: 1px solid var(--ring);
-}
+/* The group title is an eyebrow rather than a heading: it names the group for somebody
+   scanning for it and then gets out of the way of the labels, which are what you read
+   when you are filling the thing in. A titlebar the weight of the old one competed with
+   every field under it. */
+.fgroup-head { padding: 1rem 1.1rem 0 }
 .fgroup-head h4 {
-  margin: 0; font-size: 0.9rem; font-weight: 650; letter-spacing: -0.01em; color: var(--ink);
+  margin: 0; font: 600 0.68rem/1 var(--sans); letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--ink-2);
 }
-.fgroup-head p { margin: 0.15rem 0 0; font-size: 0.78rem; color: var(--muted); max-width: 60ch }
-.fgroup-body { padding: 0.75rem 0.9rem 0.9rem }
+.fgroup-head p { margin: 0.35rem 0 0; font-size: 0.72rem; color: var(--muted); max-width: 60ch }
+.fgroup-body { padding: 0.9rem 1.1rem 0.2rem }
 /* Kept for the two places that still emit a bare caption rather than a group. */
 .field-head {
-  margin: 1.1rem 0 0.4rem; font-size: 0.7rem; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--ink-2); font-weight: 700;
-  padding-bottom: 0.3rem; border-bottom: 1px solid var(--ring);
+  margin: 1.1rem 0 0.5rem; font: 600 0.68rem/1 var(--sans); text-transform: uppercase;
+  letter-spacing: 0.16em; color: var(--ink-2);
 }
 .field-head:first-child { margin-top: 0.2rem }
 /* The form's own title. It was 0.72rem uppercase grey — the same treatment as a field caption —
    so on a page whose entire purpose is one form, the form's name was the quietest text on it. */
-h3.form-title {
-  font-size: 1.15rem; font-weight: 650; letter-spacing: -0.015em;
-  text-transform: none; color: var(--ink); margin: 0 0 0.2rem;
-}
+/* The lede, and the only prose above the fields. */
 .form-title-why {
-  margin: 0 0 1.1rem; font-size: 0.85rem; color: var(--muted); max-width: 68ch;
+  margin: 0 0 1.1rem; font-size: 0.85rem; line-height: 1.6; color: var(--muted); max-width: 86ch;
 }
 
 /* ── One project's settings, as a page ──────────────────────────────────── */
@@ -1141,15 +1192,25 @@ h3.form-title {
    command is a shell line and an image is a registry path, and both were being read through a
    letterbox. Stacked, the value gets the whole width and the label is directly above it, which is
    also the arrangement that survives a phone. */
-.pedit-form .field {
-  display: block; padding: 0.5rem 0; border-top: 1px solid var(--hairline);
+/* Two columns, and a field takes both unless it is short enough not to need them. A rule
+   per line was a column of full-width boxes for a four-character timeout, which made the
+   form twice as tall as it had anything to be. */
+.pedit-form .fgroup-body {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 1.4rem;
 }
-.pedit-form .fgroup-body > .field:first-child { border-top: 0; padding-top: 0.1rem }
+.pedit-form .field { display: block; padding: 0; margin-bottom: 1.15rem; grid-column: 1 / -1 }
+.pedit-form .field.half { grid-column: auto }
+@media (max-width: 52rem) {
+  .pedit-form .fgroup-body { grid-template-columns: minmax(0, 1fr) }
+  .pedit-form .field.half { grid-column: 1 / -1 }
+}
 .pedit-form .field > label {
-  display: block; margin-bottom: 0.25rem; font-size: 0.82rem; font-weight: 600; color: var(--ink);
+  display: block; margin-bottom: 0.4rem; font: 600 0.66rem/1 var(--sans);
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2);
 }
 .pedit-form .field .why {
-  grid-column: auto; margin: 0.3rem 0 0; font-size: 0.76rem; max-width: 78ch;
+  grid-column: auto; margin: 0.35rem 0 0; font-size: 0.72rem; line-height: 1.55;
+  color: var(--muted); max-width: 76ch;
 }
 .pedit-form .field .control { width: 100% }
 /* A path, a command, an image and a duration are all machine text. Monospace says so, and makes a
@@ -1173,15 +1234,23 @@ h3.form-title {
   display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
   padding-bottom: 0.7rem; margin-bottom: 0.9rem; border-bottom: 1px solid var(--ring);
 }
-.pedit-head .grow { flex: 1 }
-.pedit-sub { margin: 0.1rem 0 1.1rem; font-size: 0.85rem; color: var(--muted); max-width: 68ch }
+.pedit-head .grow { flex: 1; min-width: 0 }
+.pedit-head.new { align-items: flex-start }
+.pedit-eyebrow {
+  font: 600 0.66rem/1 var(--sans); letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 0.55rem;
+}
+h2.pedit-title {
+  margin: 0; font: 600 1.25rem/1.25 var(--sans); letter-spacing: -0.015em;
+  text-transform: none; color: var(--ink);
+}
 /* The actions, held at the bottom of the viewport rather than at the bottom of the form. Five
    groups of fields is more than one screen, so a Save at the end of them is a Save you have to go
    looking for — and on a form this long, "did that save?" is the question worth designing out. */
 .pedit-form .formact {
   position: sticky; bottom: 0; z-index: 2;
   margin: 0.4rem 0 0; padding: 0.7rem 0.1rem;
-  background: linear-gradient(to top, var(--bg) 62%, transparent);
+  background: linear-gradient(to top, var(--surface) 62%, var(--surface) 72%, transparent);
 }
 @media (max-width: 40rem) {
   .field { grid-template-columns: minmax(0, 1fr); gap: 0.15rem }
@@ -1410,13 +1479,24 @@ select.control.sm {
 }
 select.control.sm:disabled { opacity: 0.6 }
 .btn {
-  font: inherit; font-size: 0.75rem;
+  font: inherit; font-size: 0.75rem; font-weight: 600;
   background: var(--surface); color: var(--ink-2);
-  border: 1px solid var(--ring); border-radius: 6px;
+  border: 1px solid var(--ring); border-radius: var(--r-sm);
   padding: 0.22rem 0.55rem; cursor: pointer; text-decoration: none;
+  transition: color .14s, background .14s, border-color .14s, transform .14s;
 }
-.btn:hover { border-color: var(--muted) }
-.btn[aria-pressed="true"] { background: var(--ink); color: var(--plane); border-color: var(--ink) }
+/* The 1px lift is behind a hover query: on a touch screen :hover sticks after a tap, so
+   without it the last button pressed stays raised until something else is tapped. */
+@media (hover: hover) {
+  .btn:hover {
+    color: var(--ink); background: var(--raised); border-color: var(--muted);
+    transform: translateY(-1px);
+  }
+}
+.btn:active { transform: translateY(0) }
+.btn[aria-pressed="true"] {
+  background: var(--ink); color: var(--plane); border-color: var(--ink);
+}
 a.btn:not([href]) { opacity: 0.45; cursor: default; pointer-events: none }
 
 /* What the pane is showing, above the pane. A log with no label is assumed to
@@ -1438,6 +1518,38 @@ a.btn:not([href]) { opacity: 0.45; cursor: default; pointer-events: none }
 /* The log is a fixed, modest height by default. The old page gave it 30rem
    whether or not anything was in it, which pushed everything else off screen.
    Tall is one click away for when you actually need it. */
+/* ── What will run ──────────────────────────────────────────────────────────
+   The resolved build, in the log pane's own colours. A build is read on this page as
+   terminal output, so the thing that says what the build *will* be is the same surface:
+   the operator is comparing the plan against a log either way. */
+.plan {
+  background: var(--term-bg); color: var(--term-fg);
+  border-radius: var(--r-md); padding: 0.6rem 0.75rem;
+  font: 12.5px/1.6 var(--mono);
+}
+.planrow {
+  display: grid; grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+  gap: 0.25rem 0.7rem; align-items: baseline; padding: 0.12rem 0;
+}
+.planrow .k { color: var(--muted) }
+.planrow .v { color: var(--ink); overflow-wrap: anywhere }
+/* The note sits under the value rather than beside it: these run to a sentence, and a
+   fourth column of prose would push the values into a letterbox. */
+.planrow .note {
+  grid-column: 2 / -1; color: var(--muted); font-size: 11px; line-height: 1.5;
+  font-family: var(--sans); max-width: 70ch;
+}
+.plan .flag { font-family: var(--sans); align-self: center }
+/* The name is the one line that is not a step, so it is separated from the steps. */
+.planname {
+  margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--hairline);
+  display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap;
+}
+.planname .v { color: var(--good); overflow-wrap: anywhere }
+.planname .why { color: var(--muted); font-family: var(--sans); font-size: 11px }
+/* Waiting, and failed. Both are one line, because a panel that is only ever a courtesy
+   must not become the loudest thing on the form when it cannot be drawn. */
+.plan.quiet { color: var(--muted) }
 pre.term {
   margin: 0; padding: 0.7rem 0.8rem;
   background: var(--term-bg); color: var(--term-fg);
@@ -1519,11 +1631,13 @@ pre.term .lts:hover { color: #b9c2cf }
   font: inherit; font-size: 0.7rem; line-height: 1;
   display: inline-flex; align-items: center; gap: 0.28rem;
   background: var(--raised); color: var(--ink-2);
-  border: 1px solid var(--ring); border-radius: 999px;
+  border: 1px solid var(--ring); border-radius: var(--r-pill);
   padding: 0.22rem 0.5rem; cursor: pointer;
 }
-.feed-filters button:hover { border-color: var(--muted) }
-.feed-filters button[aria-pressed="true"] { background: var(--ink); color: var(--plane); border-color: var(--ink) }
+.feed-filters button:hover { border-color: var(--muted); color: var(--ink) }
+.feed-filters button[aria-pressed="true"] {
+  background: var(--ink); color: var(--plane); border-color: var(--ink);
+}
 .feed-filters .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--edge, var(--idle)) }
 .feed-filters .c { opacity: 0.6; font-variant-numeric: tabular-nums }
 
@@ -5876,10 +5990,12 @@ function renderProjectEdit(s) {
   // The heading is the project, with its identity under it — the same shape as a row in the list,
   // so arriving here from there is continuous.
   const head = adding
-    ? `<h2>New project</h2>
-       <p class="pedit-sub">A repository docpreview will build, and how. Everything but the
-       repository itself is optional: blank defers to that repository's own
-       <code>.docpreview.yml</code>.</p>`
+    ? `<div class="pedit-head new">
+         <div class="grow">
+           <div class="pedit-eyebrow">Projects</div>
+           <h2 class="pedit-title">New project</h2>
+         </div>
+       </div>`
     : `<div class="pedit-head">
          ${avatarHTML(p)}
          <span class="pcard-id">
@@ -7009,6 +7125,7 @@ function frameworkSelect(s, p, elID) {
   return `<select class="control" id="${elID}" data-framework="1">${
     list.map(f => `<option value="${esc(f.id)}"${f.id === cur ? " selected" : ""}
       data-build="${esc(f.build_command || "")}" data-output="${esc(f.output || "")}"
+      data-dir="${esc(f.dir || "")}"
       data-tool="${esc(f.needs_tool || "")}">${esc(f.label)}</option>`).join("")}</select>`;
 }
 
@@ -7043,6 +7160,85 @@ function syncFramework() {
     warn.textContent = `${opt.textContent.trim()} needs ${tool} in the container image. ` +
       `The node images above do not have it — name one that does.`;
   }
+}
+
+/* ── What will run ──────────────────────────────────────────────────────────
+
+   The form has nineteen fields and most of them are blank, and a blank one resolves
+   through the framework preset, then the server default, then a file in the repository
+   that is not on this machine. Nobody can hold that in their head, so the answer is asked
+   for rather than reasoned out: the row as currently typed goes to the daemon, which
+   resolves it with the function a build calls and sends back the steps.
+
+   Asked of the server for exactly that reason. Resolving the precedence here as well
+   would be a second implementation of it, and the way two implementations differ is a
+   form that promises one build command while the build runs another — which is the
+   failure the preset table is already sent down to the page to avoid. */
+
+// planTimer debounces the request. Typing a build command is a dozen keystrokes and each
+// one would otherwise be a round trip; 350ms is long enough to be one request per pause.
+let planTimer = null;
+// planSeq drops a response that a later request has already superseded. Without it a slow
+// answer for "npm ru" lands after the fast one for "npm run build" and the panel shows
+// the older of the two, which is the one that is wrong.
+let planSeq = 0;
+
+function schedulePlan() {
+  clearTimeout(planTimer);
+  planTimer = setTimeout(refreshPlan, 350);
+}
+
+async function refreshPlan() {
+  const out = document.getElementById("plan");
+  if (!out) return;
+
+  // Unsuffixed ids throughout: the panel is emitted on the new-project form only, and
+  // that form is the one whose fields are not keyed by a project that already exists.
+  const val = f => (document.getElementById(`p-${f}`)?.value || "").trim();
+
+  const body = {
+    platform: val("platform"), owner: val("owner"), repo: val("repo"),
+    framework: val("framework"), build_dir: val("dir"), build_command: val("command"),
+    build_output: val("output"), base_url: val("baseurl"), driver: val("driver"),
+    image: val("image"), timeout: val("timeout"),
+  };
+  if (!body.repo) {
+    out.className = "plan quiet";
+    out.textContent = "Fill in a repository and this says what a build of it would do.";
+    return;
+  }
+
+  const seq = ++planSeq;
+  let plan;
+  try {
+    plan = await api("POST", "/api/projects/plan", body);
+  } catch (e) {
+    if (seq !== planSeq) return;
+    // Quiet, and it stays quiet. This panel is a courtesy: the form still saves, and a
+    // red block where the plan goes would read as something being wrong with the project
+    // rather than with one request for a description of it.
+    out.className = "plan quiet";
+    out.textContent = `Could not resolve this: ${e.message}`;
+    return;
+  }
+  if (seq !== planSeq) return;
+
+  const flag = src => src === "project" ? "on" : "opt";
+  const rows = (plan.lines || []).map(l => `<div class="planrow">
+    <span class="k">${esc(l.key)}</span>
+    <span class="v">${esc(l.value)}</span>
+    <span class="flag ${flag(l.from)}">${esc(l.from)}</span>
+    ${l.note ? `<div class="note">${esc(l.note)}</div>` : ""}
+  </div>`).join("");
+
+  out.className = "plan";
+  out.innerHTML = rows +
+    (plan.name ? `<div class="planname">
+       <span class="k">name</span>
+       <span class="v">${esc(plan.name)}</span>
+       <span class="why">${esc(plan.name_why || "")}</span>
+     </div>` : "") +
+    (plan.warn ? `<div class="notice warn">${esc(plan.warn)}</div>` : "");
 }
 
 // driverSelect offers only what this daemon will actually accept.
@@ -7136,21 +7332,22 @@ function parseRepoURL(raw) {
 function projectForm(s, p) {
   const v = f => esc(p ? (p[f] || "") : "");
   const id = f => p ? `p-${f}-${projectKey(p)}` : `p-${f}`;
-  const field = (f, label, control, why) => `<div class="field">
+  const field = (f, label, control, why, half) => `<div class="field${half ? " half" : ""}">
     <label for="${id(f)}">${label}</label>${control}
     ${why ? `<div class="why">${why}</div>` : ""}</div>`;
-  /* A titled group of fields, with one sentence saying what the group decides.
+  /* A titled group of fields.
 
      Nineteen fields under three grey captions was the "no logical groupings, mushy screen"
      complaint: the captions were the same size and weight as everything else, and nothing bounded
-     one group from the next. A group is a box with a title and a purpose — five of them, each
+     one group from the next. A group is a bounded panel with a title — five of them, each
      answering a question somebody actually has: which repository, where the site is, how it runs,
-     when to build, how it looks. */
-  const group = (title, why, fields) => `<section class="fgroup">
-    <div class="fgroup-head">
-      <h4>${title}</h4>
-      ${why ? `<p>${why}</p>` : ""}
-    </div>
+     when to build, how it looks.
+
+     The title is all the group gets. The sentence that used to sit under each one restated the
+     title in longer words, and five of them put a paragraph between the reader and every set of
+     fields on the page. */
+  const group = (title, fields) => `<section class="fgroup">
+    <div class="fgroup-head"><h4>${title}</h4></div>
     <div class="fgroup-body">${fields}</div>
   </section>`;
 
@@ -7168,80 +7365,90 @@ function projectForm(s, p) {
   const preset = (s.defaults.frameworks || []).find(
     f => f.id === (p ? (p.framework || "") : (s.defaults.framework || ""))) || {};
 
-  return `<h3 class="form-title">${p ? `Settings for ${esc(projectLabel(p))}` : "New project"}</h3>
-    <p class="form-title-why">${p
-      ? "Every field left blank defers to the repository's own <code>.docpreview.yml</code>."
-      : "Paste a repository URL and the rest fills itself in. Everything below the identity " +
-        "is optional: blank means the repository's own <code>.docpreview.yml</code> decides."}</p>
+  return `<p class="form-title-why">${p
+      ? "A field left blank defers to the framework preset, then to the repository's own " +
+        "<code>.docpreview.yml</code>."
+      : "Everything except the URL is optional. A blank field falls through to the framework " +
+        "preset, then to the repository's own <code>.docpreview.yml</code>."}</p>
     <div class="grid-form">
-      ${p ? "" : group("Repository", "Which repository this project is, and where it lives. This is " +
-        "what a webhook delivery is matched against.", `
-        ${field("url", "Repository URL",
-          `<input class="control" id="p-url" placeholder="https://github.com/acme/docs">`,
-          "Paste one and the three fields below fill themselves.")}
+      ${p ? "" : group("Repository", `
+        ${field("url", "URL",
+          `<input class="control" id="p-url" placeholder="https://github.com/acme/docs">`)}
         ${field("platform", "Platform", `<select class="control" id="p-platform">
           <option value="github">github</option>
           <option value="bitbucket">bitbucket</option>
           <option value="local">filesystem — a bare repository on this machine</option>
-        </select>`)}
+        </select>`, "", true)}
         ${field("owner", "Owner",
           `<input class="control" id="p-owner" placeholder="acme">`,
-          "The organisation or workspace. For filesystem, whatever you file it under.")}
-        ${field("repo", "Repository",
+          "For filesystem, whatever you file it under.", true)}
+        ${field("repo", "Name",
           `<input class="control" id="p-repo" placeholder="docs">`)}`)}
 
-      ${group("Where the site is", "The four fields that decide what gets built and where the " +
-        "output lands. Blank follows the preset, or the repository's own .docpreview.yml.", `
-        ${field("framework", "Framework preset", frameworkSelect(s, p, id("framework")),
-          "Fills the command and output below with what that generator uses. There is no install " +
-          "command: it comes from the lockfile the repository committed, which knows which " +
-          "package manager owns the tree." +
+      ${group("Where the site is", `
+        ${field("framework", "Framework", frameworkSelect(s, p, id("framework")),
+          "There is no install command: it comes from the lockfile the repository committed, " +
+          "which knows which package manager owns the tree." +
           `<div class="notice warn" id="framework-tool" hidden></div>`)}
-        ${field("dir", "Build directory", text("dir", esc(preset.dir || "www")),
+        ${field("dir", "Directory", text("dir", esc(preset.dir || "www")),
           "Where <code>package.json</code> lives, relative to the repository root.")}
-        ${field("command", "Build command",
+        ${field("command", "Command",
           text("command", esc(preset.build_command || s.defaults.build_command || "npm run build")),
           "Run by <code>sh -lc</code> inside the image, so pipes and <code>&amp;&amp;</code> " +
-          "work.")}
-        ${field("output", "Output directory", text("output", esc(preset.output || "build")),
-          "Relative to the build directory.")}
+          "work.", true)}
+        ${field("output", "Output", text("output", esc(preset.output || "build")),
+          "Relative to the build directory.", true)}
         ${field("baseurl", "Base URL", text("baseurl", "/"),
           "Must start and end with a slash. Docusaurus bakes it in at build time, so getting it " +
           "wrong 404s every asset.")}`)}
 
-      ${group("How it runs", "Where the build executes, and for how long.", `
-        ${field("driver", "Driver", driverSelect(s, p, id("driver")), driverWhy(s))}
-        ${field("image", "Container image", imagePicker(id("image"), v("image"), s),
-          "Pick one or type your own — a private mirror is a normal answer. Needs node, and " +
-          "<code>git</code> if the build clones other repositories, which the <code>-slim</code> " +
-          "images do not have; alpine's musl breaks dependencies that ship prebuilt binaries.")}
-        ${field("timeout", "Build timeout", text("timeout", esc(s.defaults.timeout || "15m0s")),
+      ${group("How it runs", `
+        ${field("driver", "Driver", driverSelect(s, p, id("driver")), driverWhy(s), true)}
+        ${field("timeout", "Timeout", text("timeout", esc(s.defaults.timeout || "15m0s")),
           "How long one build may run before it is killed. Blank uses the server's " +
           "<code>build.timeout</code>, shown as the placeholder. A duration with a unit — " +
           "<code>45m</code>, <code>2h</code> — because a repository that clones seven others is " +
-          "not a two-minute build, and no other project should wait that long to be told it hung.")}`)}
+          "not a two-minute build, and no other project should wait that long to be told it " +
+          "hung.", true)}
+        ${field("image", "Image", imagePicker(id("image"), v("image"), s),
+          "Pick one or type your own — a private mirror is a normal answer. Needs node, and " +
+          "<code>git</code> if the build clones other repositories, which the <code>-slim</code> " +
+          "images do not have; alpine's musl breaks dependencies that ship prebuilt binaries.")}`)}
 
-      ${group("When to build", "Every pull request is built unless something says otherwise. " +
-        "Blank matches changed paths against the documentation globs.", `
-        ${field("detect", "Ignore-build script", text("detect", ".docpreview/detect"),
-          "A path in the repository, not a command — it is executed directly, so its shebang " +
-          "decides the interpreter and arguments would be read as part of the filename. Gets the " +
-          "changed paths on stdin; exit 0 to build, 78 to skip.")}`)}
+      ${group("When to build", `
+        ${field("detect", "Detect script", text("detect", ".docpreview/detect"),
+          "Every pull request is built unless this says otherwise. A path in the repository, not " +
+          "a command — it is executed directly, so its shebang decides the interpreter and " +
+          "arguments would be read as part of the filename. Gets the changed paths on stdin; " +
+          "exit 0 to build, 78 to skip. Blank matches the changed paths against the globs in " +
+          "the repository's own <code>.docpreview.yml</code>.")}`)}
 
       ${scmCredentialFields(s, p, id)}
 
-      ${group("Appearance", "How this project reads on the dashboard. Neither affects a build.", `
-        ${field("name", "Name",
+      ${group("Appearance", `
+        ${field("name", "Display name",
           `<input class="control" id="${id("name")}" maxlength="120"
             value="${v("display_name")}" placeholder="${p ? esc(p.repo) : "the repository name"}">`,
-          "Blank uses the repository name.")}
+          "", true)}
         ${field("avatar", "Badge", avatarField(p, id("avatar")),
           "One or two characters, or an emoji. Blank derives initials and a colour from the name. " +
           "A <code>data:</code> URI renders as an image — inlined, never fetched, because this " +
-          "page asks the internet for nothing.")}
+          "page asks the internet for nothing.", true)}
         ${field("notes", "Notes", `<textarea class="control" id="${id("notes")}"
           maxlength="5000" placeholder="Why this project is set up the way it is. Nothing reads
           this but the next person.">${v("notes")}</textarea>`)}`)}
+
+      ${p ? "" : `<section class="fgroup" id="plan-box">
+        <div class="fgroup-head"><h4>What will run</h4></div>
+        <div class="fgroup-body">
+          <div class="field">
+            <div class="plan quiet" id="plan">Fill in a repository and this says what a
+              build of it would do.</div>
+            <div class="why">Resolved by the daemon, not by this page — the same
+              precedence a build applies, so what is here is what will run.</div>
+          </div>
+        </div>
+      </section>`}
     </div>
     <div class="act formact">
       <!-- Primary, so which button commits is not a reading exercise. Cancel is beside
@@ -7507,6 +7714,14 @@ function wireProjectHandlers(s, container) {
     if (e.target.closest(".panel, .pedit-form, .pcard [data-save]")) formDirty = true;
   });
 
+  // The plan follows the form. Both events: typing fires input, and a select fires only
+  // change — and the framework select is the field that moves the most lines at once.
+  if (document.getElementById("plan-box")) {
+    el.addEventListener("input", schedulePlan);
+    el.addEventListener("change", schedulePlan);
+    refreshPlan();
+  }
+
   /* The button lives in the page's action row, outside the body this render replaces — so it is
      shown or hidden here rather than emitted, and its handler is bound every render onto an element
      that survives them. A read-only page never reveals it: there is nothing it could submit. */
@@ -7551,8 +7766,10 @@ function wireProjectHandlers(s, container) {
       document.getElementById("p-owner").value = got.owner;
       document.getElementById("p-repo").value = got.repo;
       // Setting .value from script fires no change event, so the credential block would
-      // stay hidden for a Bitbucket URL that had just filled the form in.
+      // stay hidden for a Bitbucket URL that had just filled the form in — and the plan
+      // would go on saying there was no repository for one that had just been pasted.
       syncSCMFields();
+      schedulePlan();
     };
   }
 

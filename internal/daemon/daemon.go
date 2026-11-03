@@ -1190,13 +1190,30 @@ func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg con
 		return cfg
 	}
 
-	// The framework preset, before the project's own fields overlay it.
-	//
-	// Precedence, top down: the project's explicit field, then its preset, then the repository's own
-	// .docpreview.yml. A preset outranks the repository's file because an operator who chose "Docusaurus"
-	// in the dashboard has said something more recent and more specific. The blank preset defers to the
-	// repository, and it is the default, so an untouched project behaves as if there were no preset at all.
-	//
+	return resolveProject(cfg, p, func(msg string, args ...any) {
+		d.log.Warn(msg, append([]any{"repo", pr.Repo.String()}, args...)...)
+	})
+}
+
+// resolveProject overlays one project row onto a repository's own configuration.
+//
+// Split out of applyProject so the projects page can be shown the same answer the build
+// will reach. A second copy of this precedence, written against the same fields in the
+// browser, is a form that promises one build command and a build that runs another —
+// which is the specific failure the preset table is sent to the page to avoid.
+//
+// Precedence, top down: the project's explicit field, then its preset, then the
+// repository's own .docpreview.yml. A preset outranks the repository's file because an
+// operator who chose "Docusaurus" in the dashboard has said something more recent and
+// more specific. The blank preset defers to the repository, and it is the default, so an
+// untouched project behaves as if there were no preset at all.
+//
+// warn reports a value that had to be dropped. It is a callback rather than a logger
+// because the caller knows what the value belongs to — a build knows its repository, the
+// projects page knows only the row it was handed.
+func resolveProject(cfg config.RepoConfig, p store.Project,
+	warn func(msg string, args ...any),
+) config.RepoConfig {
 	// An unknown id is ignored rather than refused: it means this binary does not have a
 	// preset the row names — a downgrade, or an entry since removed — and falling back to
 	// the repository's own configuration is better than failing the build.
@@ -1235,8 +1252,7 @@ func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg con
 		if dur, err := time.ParseDuration(p.Timeout); err == nil && dur > 0 {
 			cfg.Build.Timeout = dur
 		} else {
-			d.log.Warn("ignoring an unusable project build timeout",
-				"repo", pr.Repo.String(), "timeout", p.Timeout,
+			warn("ignoring an unusable project build timeout", "timeout", p.Timeout,
 				"fix", "set it to a duration like 45m on the projects page")
 		}
 	}
@@ -3187,6 +3203,11 @@ func (d *Daemon) loadNamePrefix(ctx context.Context) {
 	v = model.NamePrefix(v)
 	d.namePrefix.Store(&v)
 }
+
+// PreviewName renders the name this installation would publish a pull request under,
+// without publishing anything. The projects form uses it to show what a row it is about
+// to save would be reachable as.
+func (d *Daemon) PreviewName(pr model.PullRequest) (string, error) { return d.previewName(pr) }
 
 // previewName renders the configured name template for the active exposer.
 func (d *Daemon) previewName(pr model.PullRequest) (string, error) {
