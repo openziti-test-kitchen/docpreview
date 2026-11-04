@@ -2276,38 +2276,19 @@ function matches(p) {
 // "Newest" is by state first, then time: a failure nobody has looked at is more
 // interesting than a build that went green a minute later, and a project whose
 // row says Ready while one of its branches is broken is a lie of omission.
-/* inList decides what the previews list is *for*.
+/* Every preview is in the list, a project's branch preview included.
 
-   Pull requests, and a branch preview only while it is doing something.
-
-   A branch preview is permanent by design — it is the state of `main`, and it is meant to
-   sit there answering. That makes it the one row nobody needs to look at: this list is a
-   worklist, and a row that is always green and always present is furniture. It has a link
-   on its project card, which is where somebody who wants `main` goes.
-
-   Kept while queued or building, and that exception is not a compromise — it is what stops
-   the removal creating a dead end. The log pane opens from a row, so with the row gone there
-   would be nowhere to watch a branch build happen and nowhere for an activity entry to
-   reveal. Live it appears, finished it steps out of the way.
-
-   Number 0 is the branch preview; see model.PullRequest.IsBranch. */
-const inList = p => p.number > 0 || isLive(p.state);
-
-/* pinned reports whether this preview is the one a reader has selected in its project.
-
-   The exception that keeps `inList` from breaking the log pane. Clicking an activity entry
-   for a finished branch build pins that preview. Without this check the pin would point at a
-   preview the list excludes, so the very next render would decide the pin was stale, reset it
-   to the project's newest, and jump the pane to a different preview's log while somebody was
-   reading it — a click that works for one tick and then undoes itself. */
-const pinned = p => ui.pick[project(p)] === p.preview_id;
-
+   The branch preview used to step out of the list once it finished, on the reasoning that an
+   always-green `main` row is furniture in a worklist. In practice that hid the one row a new
+   project has: a project is added, `main` builds, goes Ready, and the project vanishes from
+   PROJECTS while the activity feed still reports the build, and it only came back when
+   somebody clicked that activity entry. clint's rule: once a project is added its `main`
+   builds, and `main` stays in the list until another build replaces it. A branch preview keeps
+   one id for its branch (model.PullRequest.PreviewID), so a rebuild replaces the row in place
+   and there is never more than one `main` row per project. */
 function groups() {
   const by = new Map();
-  // `|| pinned(p)`, so a selected branch preview stays in its project's list for as long as
-  // it is selected. It leaves again when the reader picks something else or closes the row,
-  // which is what keeps the list a worklist rather than accumulating furniture.
-  for (const p of ui.previews.filter(p => inList(p) || pinned(p)).filter(matches)) {
+  for (const p of ui.previews.filter(matches)) {
     const k = project(p);
     if (!by.has(k)) by.set(k, []);
     by.get(k).push(p);
@@ -2333,10 +2314,10 @@ function groups() {
 /* ── Counters ─────────────────────────────────────────────────────────── */
 
 function renderCounters() {
-  // Counted over the same set the list shows, not over every preview. A counter that
+  // Counted over the same set the list shows, which is every preview. A counter that
   // says four while the list holds three is the page arguing with itself, and the
   // reader has no way to tell which half is wrong.
-  const counted = ui.previews.filter(inList);
+  const counted = ui.previews;
   const by = k => counted.filter(p => p.state === k).length;
   const cells = [
     {label: "All",      n: counted.length,     key: null},
@@ -3080,7 +3061,10 @@ function updateBody(item, g) {
   // on a build; this one deletes a preview, its shares and its comment, and offering it
   // to a reader who will get a 403 teaches them to distrust the page.
   const unlink = body.querySelector('[data-role="unlink"]');
-  unlink.hidden = !admin.projects;
+  // Not on a branch preview either. There is no pull request to stop rediscovering, and the
+  // ignore it would record is for "#0"; `main` stays listed until its next build replaces
+  // it, and leaves with its project.
+  unlink.hidden = !admin.projects || p.number === 0;
   unlink.title = `Remove this preview and stop building ${p.branch} #${p.number}`;
   unlink.onclick = async () => {
     const yes = await ask({
@@ -3218,7 +3202,8 @@ function updatePicker(sel, g) {
     sel.innerHTML = g.list.map(p => {
       const when = pickerWhen(p);
       return `<option value="${esc(p.preview_id)}">` +
-        `${esc(p.branch)} · #${p.number} · ${esc(state(p.state).label)}` +
+        // A branch preview is named by its branch alone; "main · #0" reads as a bug.
+        `${esc(p.branch)}${p.number > 0 ? ` · #${p.number}` : ""} · ${esc(state(p.state).label)}` +
         // Omitted rather than left as a trailing separator: a live preview has no time here.
         `${when ? " · " + esc(when) : ""}` +
         `</option>`;
@@ -6281,9 +6266,10 @@ function noteEl(text, kind, running) {
    edit page now, and it runs on its own when a save gives a project its first usable
    credential.
 
-   The count is the point of the sentence. The list page dropped a "Build open PRs" button
+   The count is the point of the sentence. The list page once dropped a "Build open PRs" button
    because one build appearing for a repository with several open read as a random pick, so
-   this says how many and that it is one per open pull request. */
+   this says how many and that it is one per open pull request. The list cards have it again,
+   as "Build all open PRs", and use this same answer. */
 async function runScan(key) {
   let r;
   try {
@@ -6518,9 +6504,14 @@ function projectCard(p, s, ro) {
                fields expanding in place pushed every project below it off the screen, which is
                the one thing a list of projects must not do.
 
-               No "Build open PRs" either. It queued one build per open pull request, which is
-               what adding a project already does, and on a repository with several it read as
-               having picked one at random. -->
+               "Build all open PRs" was taken off here once: labelled "Build open PRs", on a
+               repository with several open it read as having picked one at random. clint
+               approved bringing it back with a label that says all of them, and the note it
+               leaves says how many it queued. It is the edit page's "Scan pull requests"
+               handler; the note lands under this row, since a card has no header to hang it on. -->
+          ${p.enabled ? `<button class="btn" data-scan="${esc(key)}"
+            title="Queue one build for each pull request open on this repository right now"
+            >Build all open PRs</button>` : ""}
           <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
       </div>
       ${detailsOpen ? `<div class="pcard-details">
@@ -8575,8 +8566,9 @@ function wireProjectHandlers(s, container) {
     };
   }
 
-  // Scanning for open pull requests, from the edit page's header. The answer goes under the
-  // header, where the branch button's does, and stays until dismissed.
+  // Scanning for open pull requests, from the edit page's header or a list card's actions.
+  // The answer goes under the header (or under the card's action row), where the branch
+  // button's does, and stays until dismissed.
   for (const b of el.querySelectorAll("[data-scan]")) {
     b.onclick = async () => {
       const label = b.textContent;

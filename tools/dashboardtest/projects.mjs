@@ -126,7 +126,8 @@ const dom = new JSDOM(readFileSync(dashboard, "utf8"), {
         return {ok: false, status: 409, statusText: "Conflict",
           text: async () => JSON.stringify({error: msg}), json: async () => ({error: msg})};
       }
-      const body = url === "/api/admin" ? {secrets: true, projects: true} : state();
+      const body = url === "/api/admin" ? {secrets: true, projects: true}
+        : url.endsWith("/scan") ? {queued: 2} : state();
       return {ok: true, status: 200, statusText: "OK",
         json: async () => body, text: async () => JSON.stringify(body)};
     };
@@ -474,14 +475,44 @@ console.log("\nsecrets panel");
   }
 }
 
-console.log("\nno per-card build button");
+console.log("\nBuild all open PRs on an enabled card");
 {
-  // It queued one build per open pull request — the same thing adding a project does — and
-  // on a repository with several it read as having picked one at random. Adding a project
-  // still scans; the button that invited it by hand is gone from every card.
-  if (btn("Build open PRs") || btn("Build now")) {
-    fail("a per-card build button is back on the project cards");
-  } else ok("no Build control on a card");
+  /* It was taken off once: labelled "Build open PRs", one build appearing on a repository with
+     several open read as having picked one at random. clint approved it back with a label that
+     says all of them, and a note that says how many it queued. Only on an enabled project: a
+     disabled one ignores its webhooks, and building its pull requests by hand would contradict
+     the switch. "Build now" stays gone. */
+  if (btn("Build now")) fail("a Build now button is back on the project cards");
+  const on = $('.pcard[data-card="github/netfoundry/unified-doc"] [data-scan]');
+  const off = $('.pcard[data-card="bitbucket/netfoundry/customer-connect-docs"] [data-scan]');
+  if (!on) {
+    fail("no Build all open PRs on the enabled card");
+  } else if (on.textContent.trim() !== "Build all open PRs") {
+    fail(`the scan button reads ${JSON.stringify(on.textContent.trim())}`);
+  } else if (!/one build for each pull request/.test(on.title)) {
+    fail(`the scan button's title does not say one build per pull request: ${JSON.stringify(on.title)}`);
+  } else {
+    ok("Build all open PRs on the enabled card, titled one build per pull request");
+  }
+  if (off) fail("a disabled project offers Build all open PRs");
+  else ok("not on a disabled project");
+
+  if (on) {
+    calls.length = 0;
+    await click(on);
+    const post = calls.find(c => c.method === "POST" && c.url.endsWith("/scan"));
+    if (!post || !post.url.includes("unified-doc")) {
+      fail(`the button sent ${JSON.stringify(calls)}`);
+    } else ok(`posted ${post.url}`);
+    const note = $('.pcard[data-card="github/netfoundry/unified-doc"] .pcard-acts + .actnote');
+    if (!note || !note.textContent.includes("Queued 2 builds, one per open pull request")) {
+      fail(`the card's note: ${note ? JSON.stringify(note.textContent) : "(none)"}`);
+    } else ok("the count lands under the card's actions");
+    const again = $('.pcard[data-card="github/netfoundry/unified-doc"] [data-scan]');
+    if (again?.disabled || again?.textContent.trim() !== "Build all open PRs") {
+      fail("the button did not come back after the scan answered");
+    }
+  }
 
   /* Edit is a link to the form's own page, not a button that expands a panel here.
 
