@@ -5,10 +5,9 @@
 //    re-attempting anything grows the rail: the row is meant to change from queued to
 //    building to its outcome, not accumulate one row per state.
 //
-// 2. **A finished branch preview is not in the previews list.** It is permanent by design,
-//    which makes it the one row nobody needs: always green, always there. It lives on its
-//    project card instead. While it is queued or building it *does* appear, because the log
-//    pane opens from a row and without one there would be nowhere to watch a branch build.
+// 2. **A branch preview is always in the previews list**, finished or not: one `main` row
+//    per project, which the next build of `main` replaces. Hiding it once it went Ready made
+//    a project whose only preview is `main` vanish from PROJECTS on the live update.
 //
 // Both are properties of a render over a given payload, which is why they are tested here
 // rather than reasoned about.
@@ -53,7 +52,7 @@ const previews = [
   {preview_id: "aaa", repo: REPO, number: 7, branch: "add-guide", name: "add-guide",
    url: "https://add-guide.example/", state: "ready", commit: "85912e2",
    updated_at: "2026-07-31T09:00:40Z"},
-  // The permanent one. Finished, so it belongs on the project card and not here.
+  // The permanent one. Finished, and listed all the same.
   {preview_id: "bbb", repo: REPO, number: 0, branch: "main", name: "docs-main",
    url: "https://docs-main.example/", state: "ready", commit: "cf9f37d",
    updated_at: "2026-07-31T08:30:00Z"},
@@ -238,11 +237,12 @@ console.log("\nthe message is not in the row");
   else ok("kept as the row's tooltip");
 }
 
-console.log("\na finished branch preview is not in the previews list");
+console.log("\na finished branch preview stays in the previews list");
 {
-  // Asserted against the *preview picker*, not the row headers. Rows are one per project,
-  // carrying whichever preview ranks highest, so a second preview of one project is never
-  // its own row: it is an option in that row's dropdown, plus a number in the counters.
+  // clint's rule: once a project is added its `main` builds, and `main` stays in the list
+  // until another build replaces it. Asserted against the *preview picker*, not the row
+  // headers: rows are one per project, carrying whichever preview ranks highest, so a second
+  // preview of one project is an option in that row's dropdown, plus a number in the counters.
   const head = $$(".item .head").find(h => h.textContent.includes("docs"));
   if (head) head.dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
   await settle();
@@ -251,64 +251,118 @@ console.log("\na finished branch preview is not in the previews list");
     .map(o => o.textContent.replace(/\s+/g, " ").trim());
   if (!options.length) {
     fail("no preview picker to check");
-  } else if (options.some(o => o.includes("main"))) {
-    fail(`the permanent branch preview is still offered: ${JSON.stringify(options)}`);
-  } else ok(`the picker offers only ${JSON.stringify(options)}`);
+  } else if (!options.some(o => o.includes("main"))) {
+    fail(`the finished branch preview is not offered: ${JSON.stringify(options)}`);
+  } else ok(`the picker offers ${JSON.stringify(options)}`);
+  if (options.some(o => o.includes("#0"))) {
+    fail(`the branch preview is labelled #0 in the picker: ${JSON.stringify(options)}`);
+  }
 
-  // And it must not be counted either — a counter disagreeing with the list is the page
-  // arguing with itself.
+  // Counted too, over the same set the list shows: a counter disagreeing with the list is
+  // the page arguing with itself.
   const all = $("#counters button .n");
-  if (all && all.textContent.trim() !== "1") {
-    fail(`the All counter says ${all.textContent.trim()}, want 1 — the branch preview is counted`);
-  } else ok("not counted");
+  if (all && all.textContent.trim() !== "2") {
+    fail(`the All counter says ${all.textContent.trim()}, want 2 — the branch preview is not counted`);
+  } else ok("counted");
 
-  // Its build still appears in the activity feed: that history is not the thing being
-  // hidden, the permanent row is.
   if (!rowText().some(t => t.includes("cf9f37d"))) {
-    fail("the branch build vanished from the activity feed too");
-  } else ok("its builds are still in the feed");
-}
+    fail("the branch build is missing from the activity feed");
+  } else ok("its builds are in the feed");
 
-console.log("\na branch preview that is building does appear");
-{
-  // The exception that stops the removal creating a dead end: the log pane opens from a
-  // row, so a branch build with no row could not be watched or revealed from the feed.
-  const building = {
-    ...status,
-    previews: [previews[0], {...previews[1], state: "building", url: ""}],
-  };
-  // Clear the pin the previous section's click left behind. A row shows whichever preview
-  // ranks highest *unless* somebody has chosen one, and `ui.pick` outlives a render — so
-  // without this the assertion below reads a selection this test made rather than what the
-  // page would show on its own.
   const ui = win.eval("ui");
   ui.pick = {};
   ui.open = null;
-  await apply(building);
+  await apply(status);
+}
 
-  const heads = $$(".item .head").map(h => h.textContent.replace(/\s+/g, " ").trim());
-  if (!heads.some(h => h.includes("main"))) {
-    fail("a building branch preview has no row, so there is nowhere to watch it");
-  } else ok("present while building");
+console.log("\na project whose only preview is main keeps its row through a live update");
+{
+  // The bug this pins. A newly added project's only preview is its branch preview. It was
+  // listed while queued and building, then dropped out of PROJECTS the moment it went Ready —
+  // the live update re-rendered the list correctly, over a set that excluded it — and came
+  // back only when somebody clicked its activity entry, which pinned it. Driven through
+  // applyStatus, the function every stream message and poll goes through, with no click.
+  const K8S = "bitbucket:netfoundry/k8s-on-prem-installations";
+  const k8sMain = {preview_id: "kkk", repo: K8S, number: 0, branch: "main",
+    name: "k8s-on-prem-installations-main", url: "", state: "building", commit: "4e1d2c0",
+    updated_at: "2026-07-31T09:10:00Z"};
+  const k8sEvent = kind => ({at: kind === "ready" ? "2026-07-31T09:11:00Z" : "2026-07-31T09:10:00Z",
+    kind, repo: K8S, preview_id: "kkk", number: 0, branch: "main", commit: "4e1d2c0",
+    message: kind, openable: true});
+  const payload = (state, kind) => ({
+    ...status,
+    projects: [...status.projects, {key: K8S, label: "k8s-on-prem-installations", avatar: ""}],
+    previews: [...previews, {...k8sMain, state,
+      url: state === "ready" ? "https://k8s-main.example/" : ""}],
+    events: [k8sEvent(kind), ...events],
+  });
+  const ui = win.eval("ui");
+  ui.pick = {};
+  ui.open = null;
+  const applyStatus = win.eval("applyStatus");
+  const k8sRow = () => $$(".item .head")
+    .find(h => h.textContent.includes("k8s-on-prem-installations"));
+  // The list's own heading: the project switcher also says "All projects (n)", counted from
+  // the configured projects rather than the rows, so it would pass with the row missing.
+  const projectsCount = () =>
+    ($("#list-heading")?.textContent.match(/^Projects \((\d+)\)/) || [])[1];
 
+  applyStatus(payload("building", "building"));
+  await settle();
+  if (!k8sRow()) fail("the building branch preview has no row");
+  else ok("listed while building");
+
+  applyStatus(payload("ready", "ready"));
+  await settle();
+  if (!k8sRow()) {
+    fail("the project vanished from PROJECTS when its main went Ready");
+  } else ok("still listed once Ready, with nothing clicked");
+  if (projectsCount() !== "2") {
+    fail(`the list heading says Projects (${projectsCount()}), want 2`);
+  } else ok("Projects (2)");
+  const ready = $$("#counters button").find(b => b.textContent.includes("Ready"));
+  const readyN = ready?.querySelector(".n")?.textContent.trim();
+  if (readyN !== "3") fail(`the Ready counter says ${readyN}, want 3`);
+  else ok("the Ready counter agrees with the list: 3");
+  if (Object.values(ui.pick).includes("kkk")) {
+    fail("the row is there only because something pinned it");
+  }
+
+  // Opened, it offers no Unlink: there is no pull request to stop rediscovering, and main is
+  // meant to stay until its next build replaces it.
+  k8sRow()?.dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
+  await settle();
+  const unlink = $('.item.open [data-role="unlink"]');
+  if (!unlink) fail("the opened main row has no actions to check");
+  else if (!unlink.hidden) fail("a branch preview offers Unlink");
+  else ok("no Unlink on a branch preview");
+  ui.open = null;
+
+  // The next main build replaces the row rather than adding one: a branch preview keeps one
+  // id for its branch, so a rebuild is the same preview in a new state.
+  applyStatus({...payload("building", "building"),
+    previews: [...previews, {...k8sMain, commit: "9a0b1c2", updated_at: "2026-07-31T09:30:00Z"}]});
+  await settle();
+  const k8sRows = $$(".item .head")
+    .filter(h => h.textContent.includes("k8s-on-prem-installations"));
+  if (k8sRows.length !== 1) fail(`${k8sRows.length} rows for one project's main, want 1`);
+  else ok("a rebuild replaces the main row in place");
+
+  ui.pick = {};
+  ui.open = null;
   await apply(status);
 }
 
 console.log("\na selected branch preview survives the next render");
 {
-  // The reason `pinned()` exists.
-  //
-  // Clicking an activity entry for a finished branch build pins that preview. Without
-  // `pinned()`, the pin would point at a preview `inList` excludes, so the very next
-  // render would decide it was stale, reset it to the project's newest, and jump the
-  // pane to a different preview's log while somebody was reading it — a click that
-  // works for one tick and then silently undoes itself.
+  // Clicking an activity entry for a finished branch build pins that preview. The pin has to
+  // survive the next render rather than resetting to the project's newest and jumping the
+  // pane to a different preview's log while somebody is reading it.
   const ui = win.eval("ui");
   ui.pick = {};
   ui.open = null;
   await apply(status);
 
-  // The branch preview, which is finished and therefore not in the list.
   const branch = status.previews.find(p => p.number === 0);
   if (!branch) {
     fail("the fixture has no finished branch preview to pin");
@@ -323,23 +377,23 @@ console.log("\na selected branch preview survives the next render");
       fail(`the render reset the pin to ${ui.pick[name]}`);
     } else ok("the pin survives a render");
 
-    // And it is offered in the picker, so the row can actually show it — a pin the row
-    // cannot render is the same jump by another route.
     const options = $$('.item.open [data-role="pick"] option').map(o => o.value);
     if (!options.includes(branch.preview_id)) {
       fail(`the selected preview is not in its own picker: ${JSON.stringify(options)}`);
     } else ok("and the row offers it");
 
-    // Deselecting lets it leave again: the list is a worklist, and a permanent green row is
-    // furniture. Without this the fix would quietly undo the exclusion it exists to protect.
+    // Deselecting no longer makes it leave: it is listed whether or not anybody picked it.
     delete ui.pick[name];
     ui.open = null;
     win.eval("render()");
     await settle();
-    const heads = $$(".item .head").map(h => h.textContent.replace(/\s+/g, " ").trim());
-    if (heads.some(h => h.includes("main"))) {
-      fail("the branch preview stayed in the list after being deselected");
-    } else ok("it leaves again when deselected");
+    const head = $$(".item .head").find(h => h.textContent.includes("docs"));
+    if (head) head.dispatchEvent(new win.MouseEvent("click", {bubbles: true}));
+    await settle();
+    const after = $$('.item.open [data-role="pick"] option').map(o => o.value);
+    if (!after.includes(branch.preview_id)) {
+      fail(`the branch preview left the list after being deselected: ${JSON.stringify(after)}`);
+    } else ok("it stays when deselected");
   }
 }
 
