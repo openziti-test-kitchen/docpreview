@@ -1190,13 +1190,30 @@ func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg con
 		return cfg
 	}
 
-	// The framework preset, before the project's own fields overlay it.
-	//
-	// Precedence, top down: the project's explicit field, then its preset, then the repository's own
-	// .docpreview.yml. A preset outranks the repository's file because an operator who chose "Docusaurus"
-	// in the dashboard has said something more recent and more specific. The blank preset defers to the
-	// repository, and it is the default, so an untouched project behaves as if there were no preset at all.
-	//
+	return resolveProject(cfg, p, func(msg string, args ...any) {
+		d.log.Warn(msg, append([]any{"repo", pr.Repo.String()}, args...)...)
+	})
+}
+
+// resolveProject overlays one project row onto a repository's own configuration.
+//
+// Split out of applyProject so the projects page can be shown the same answer the build
+// will reach. A second copy of this precedence, written against the same fields in the
+// browser, is a form that promises one build command and a build that runs another —
+// which is the specific failure the preset table is sent to the page to avoid.
+//
+// Precedence, top down: the project's explicit field, then its preset, then the
+// repository's own .docpreview.yml. A preset outranks the repository's file because an
+// operator who chose "Docusaurus" in the dashboard has said something more recent and
+// more specific. The blank preset defers to the repository, and it is the default, so an
+// untouched project behaves as if there were no preset at all.
+//
+// warn reports a value that had to be dropped. It is a callback rather than a logger
+// because the caller knows what the value belongs to — a build knows its repository, the
+// projects page knows only the row it was handed.
+func resolveProject(cfg config.RepoConfig, p store.Project,
+	warn func(msg string, args ...any),
+) config.RepoConfig {
 	// An unknown id is ignored rather than refused: it means this binary does not have a
 	// preset the row names — a downgrade, or an entry since removed — and falling back to
 	// the repository's own configuration is better than failing the build.
@@ -1235,8 +1252,7 @@ func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg con
 		if dur, err := time.ParseDuration(p.Timeout); err == nil && dur > 0 {
 			cfg.Build.Timeout = dur
 		} else {
-			d.log.Warn("ignoring an unusable project build timeout",
-				"repo", pr.Repo.String(), "timeout", p.Timeout,
+			warn("ignoring an unusable project build timeout", "timeout", p.Timeout,
 				"fix", "set it to a duration like 45m on the projects page")
 		}
 	}
@@ -1319,6 +1335,33 @@ func (d *Daemon) confineToDriver(
 		cfg.Detect.Script = ""
 	}
 	return cfg
+}
+
+/* detectorFor returns the detector for a build under driver, and fills in the implicit detect script.
+
+   Under docker the script runs in a container, and a build directory's `docpreview-detect` is used
+   when nothing else is configured. The project and the repository both outrank it, and a branch
+   without the file falls back to the globs.
+
+   Under local neither happens. The script would run on this host, and a file any pull request can
+   add is not something the operator chose; confineToDriver drops a branch-named script there for
+   the same reason. */
+func (d *Daemon) detectorFor(driver, image string, cfg *config.RepoConfig) *pipeline.Detector {
+	if driver != config.DriverDocker {
+		return d.detector
+	}
+	if cfg.Detect.Script == "" {
+		cfg.Detect.Script = config.DefaultDetectScript(cfg.Build.Dir)
+		cfg.Detect.Implicit = true
+	}
+	if image == "" {
+		image = config.DefaultImage
+	}
+	return d.detector.InContainer(pipeline.DetectContainer{
+		Image:  image,
+		CPUs:   d.cfg.Build.CPUs,
+		Memory: d.cfg.Build.Memory,
+	})
 }
 
 // projectDriver returns the build driver and image for a pull request.
@@ -1574,6 +1617,61 @@ func (d *Daemon) markUnpublished(ctx context.Context, p store.Preview, cause err
 	})
 }
 
+// DeliveryAllowed reports whether a webhook delivery for this repository may do any work.
+//
+// A project row is the operator saying "this repository is mine". Without one, a verified
+// delivery is acknowledged and dropped.
+//
+// This is what makes the App safe to install publicly. The webhook secret is one value for
+// the whole App, and GitHub signs every delivery from every installation with it — so a
+// signature proves the delivery came from GitHub and says nothing about whether the operator
+// wanted this repository. Anyone who can install the App could otherwise get a build of a
+// branch of their choosing on the host holding the App private key and every project's
+// tokens, with `.docpreview.yml` arriving in the pull request to say what the build runs.
+//
+// Checked here rather than in handleBuild, and that is deliberate. handleBuild is the funnel
+// for every route to a build including the operator's own — Rebuild, Build now, LinkPR, the
+// scan that runs when a project is added — and those are requests from somebody already
+// through the admin gate, for whom a missing row is a reason to make one rather than a reason
+// to refuse. What this gates is the one path a stranger can reach.
+//
+// Before anything is written to the platform, which is the property that matters second. The
+// queued report in handleBuild is a comment on somebody's pull request, so a check sited after
+// it would let an uninvited repository make the App write into it.
+//
+// The local platform is exempt. Its repositories are directories the operator put under
+// `local.repos_dir` themselves, so the choice this row exists to record has already been made
+// on the filesystem, and there is no stranger who can install anything.
+//
+// A lookup failure refuses, which is the opposite of how applyProject treats the same error
+// and is right for the opposite reason: that one is choosing settings for a repository already
+// known to be allowed, and this one is deciding whether it is allowed at all. A failed query is
+// not evidence of a project row. The cost of being wrong is a dropped delivery on a repository
+// that is configured, which GitHub's Redeliver button replays.
+func (d *Daemon) DeliveryAllowed(ctx context.Context, repo model.Repo) bool {
+	if repo.Platform == model.PlatformLocal {
+		return true
+	}
+
+	_, err := d.store.ProjectFor(ctx, string(repo.Platform), repo.Owner, repo.Name)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, store.ErrNoProject):
+		// Info rather than Warn. On a publicly installable App this is the ordinary
+		// outcome of somebody installing it, not a fault, and logging it as one would
+		// let a stranger fill the operator's log with warnings.
+		d.log.Info("ignoring a webhook delivery for a repository with no project",
+			"repo", repo.String(),
+			"fix", "add it on the projects page if this repository is yours")
+		return false
+	default:
+		d.log.Error("could not check whether this repository has a project; "+
+			"not building it", "repo", repo.String(), "error", err)
+		return false
+	}
+}
+
 // Handle processes a normalized webhook event.
 func (d *Daemon) Handle(ctx context.Context, ev scm.Event) error {
 	switch ev.Kind {
@@ -1771,15 +1869,15 @@ func (d *Daemon) RebuildPreview(ctx context.Context, previewID string) (bool, er
 // optional interface because only one platform needs it — a GitHub App's installation is
 // the check, while a Bitbucket access token is pasted in and unverified until something
 // uses it.
-func (d *Daemon) CheckRepoCredential(ctx context.Context, repo model.Repo) (string, error) {
+func (d *Daemon) CheckRepoCredential(ctx context.Context, repo model.Repo) (scm.RepoCheck, error) {
 	client, ok := d.client(repo.Platform)
 	if !ok {
-		return "", fmt.Errorf("no %s client is configured on this daemon "+
+		return scm.RepoCheck{}, fmt.Errorf("no %s client is configured on this daemon "+
 			"(store its credentials on /secrets)", repo.Platform)
 	}
 	checker, ok := client.(scm.RepoChecker)
 	if !ok {
-		return "", fmt.Errorf("the %s client has nothing to test: its credential is "+
+		return scm.RepoCheck{}, fmt.Errorf("the %s client has nothing to test: its credential is "+
 			"scoped by the platform rather than pasted in here", repo.Platform)
 	}
 	return checker.CheckRepo(ctx, repo)
@@ -2511,6 +2609,8 @@ func (d *Daemon) runPipeline(
 	// driver runs it. An operator-authored project row cannot be edited by a
 	// contributor, so where the two disagree the row is the trustworthy one.
 	repoCfg = d.applyProject(ctx, pr, repoCfg)
+	// After the project, because the project's build directory is the one that counts.
+	repoCfg.ScopeToBuildDir()
 
 	// Resolved here rather than beside the builder below, because the driver decides
 	// what the *detector* is allowed to run and the detector runs first.
@@ -2542,7 +2642,8 @@ func (d *Daemon) runPipeline(
 			return out, pipeline.Decision{}, err
 		}
 
-		decision, err = d.detector.Detect(ctx, ws, repoCfg, changed)
+		detector := d.detectorFor(driver, image, &repoCfg)
+		decision, err = detector.Detect(ctx, ws, repoCfg, changed)
 		if err != nil {
 			return out, decision, err
 		}
@@ -3132,6 +3233,11 @@ func (d *Daemon) loadNamePrefix(ctx context.Context) {
 	v = model.NamePrefix(v)
 	d.namePrefix.Store(&v)
 }
+
+// PreviewName renders the name this installation would publish a pull request under,
+// without publishing anything. The projects form uses it to show what a row it is about
+// to save would be reachable as.
+func (d *Daemon) PreviewName(pr model.PullRequest) (string, error) { return d.previewName(pr) }
 
 // previewName renders the configured name template for the active exposer.
 func (d *Daemon) previewName(pr model.PullRequest) (string, error) {

@@ -105,6 +105,7 @@ docpreview serve -log-level debug
 
 | Log line | Meaning |
 |---|---|
+| `ignoring a webhook delivery for a repository with no project` | The App is installed on it and you have not added it. Add the row at `/projects`. See [Projects](./reference/projects.md). |
 | `refusing to build a fork pull request` | Working as intended. Forks are never built. |
 | `ignoring pull_request action` | The action was `labeled`, `assigned`, or similar. Only `opened`, `synchronize`, `reopened`, and `ready_for_review` build. |
 | `documentation change detected` | It is building. |

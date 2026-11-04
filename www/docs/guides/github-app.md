@@ -200,6 +200,25 @@ your documentation repository → **Install**.
 Selecting individual repositories rather than "All repositories" is worth the extra click. The App can clone
 anything it is installed on.
 
+## Step 6b — add the project
+
+Installing the App is half of it. **A repository with no project row is never built**: the delivery is verified,
+answered `202`, and dropped, with a line in the server log naming the repository. Add the row at
+`http://127.0.0.1:8471/projects` — **New project**, then the platform, owner and repository. Leave every build
+field blank unless you want to override what the repository's own `.docpreview.yml` says.
+
+:::info Why this is not automatic
+
+The webhook secret is one value for the whole App, and GitHub signs every installation's deliveries with it. So a
+valid signature proves GitHub sent the delivery and says nothing about whether you wanted that repository. Without
+this row, anybody who could install the App would get a branch of their choosing cloned and its `.docpreview.yml`
+honoured on the machine holding the App private key and every project's tokens.
+
+The cost is that installing the App is not self-service: somebody with access to the dashboard has to add the row
+before the first build happens. See [Projects](../reference/projects.md).
+
+:::
+
 ## Step 7 — verify
 
 ```powershell
@@ -239,7 +258,7 @@ Recent Deliveries** lists every webhook with its request and response.
 | `401 unauthorized` | Signature mismatch. The webhook secret in the App and in the vault differ. |
 | `404 not found` | Wrong path. It must be exactly `/webhook/github`. |
 | `502 bad gateway` | The tunnel is up, the daemon behind it is not. See [502](./webhook-tunnel.md#what-a-502-means). |
-| `202 accepted`, no comment | docpreview took it. Look at the server log — most likely the change was skipped as non-documentation. |
+| `202 accepted`, no comment | docpreview took it. Look at the server log. The two usual reasons are no project row for this repository — the log says so and names it — or the change being skipped as non-documentation. |
 
 Every delivery has a **Redeliver** button, so you can iterate without pushing more commits.
 

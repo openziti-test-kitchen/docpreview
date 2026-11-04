@@ -13,6 +13,7 @@ import (
 	"github.com/netfoundry/docpreview/internal/config"
 	"github.com/netfoundry/docpreview/internal/model"
 	"github.com/netfoundry/docpreview/internal/pipeline"
+	"github.com/netfoundry/docpreview/internal/scm"
 	"github.com/netfoundry/docpreview/internal/store"
 	"github.com/netfoundry/docpreview/internal/vault"
 )
@@ -85,9 +86,15 @@ type ProjectsAdmin struct {
 	setPrefix  func(ctx context.Context, prefix string) error
 
 	// scmChecker verifies that a project's source-control credential reaches its
-	// repository, returning what it found. Nil for a daemon with no platform that can be
-	// checked, in which case the route answers 501 rather than pretending.
-	scmChecker func(ctx context.Context, repo model.Repo) (string, error)
+	// repository, returning one entry per permission it tried. Nil for a daemon with no
+	// platform that can be checked, in which case the route answers 501 rather than
+	// pretending.
+	scmChecker func(ctx context.Context, repo model.Repo) (scm.RepoCheck, error)
+
+	// planNamer renders the preview name this installation would ask its exposer for.
+	// Nil leaves the plan's name line out rather than guessing at one — every test that
+	// builds this admin directly has no exposer behind it.
+	planNamer func(pr model.PullRequest) (string, error)
 
 	// The docker volume operations behind the cache controls, injectable because they are
 	// destructive and reach the real docker daemon.
@@ -169,8 +176,16 @@ func (a *ProjectsAdmin) WithNamePrefix(read func() string,
 }
 
 // WithSCMChecker installs the credential test behind the projects page's Test button.
-func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (string, error)) *ProjectsAdmin {
+func (a *ProjectsAdmin) WithSCMChecker(fn func(context.Context, model.Repo) (scm.RepoCheck, error)) *ProjectsAdmin {
 	a.scmChecker = fn
+	return a
+}
+
+// WithPlanNamer installs the preview-name renderer behind the form's plan panel. It is
+// the daemon's own previewName, so the name the form shows is rendered through the same
+// template and prefix the build will use rather than through a second copy of them.
+func (a *ProjectsAdmin) WithPlanNamer(fn func(pr model.PullRequest) (string, error)) *ProjectsAdmin {
+	a.planNamer = fn
 	return a
 }
 
@@ -206,6 +221,11 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects", a.list)
 	mux.HandleFunc("GET /api/projects/{$}", a.list)
 	mux.HandleFunc("PUT /api/projects/{platform}/{owner}/{repo}", a.gated(a.save))
+
+	// What a row would actually build, resolved server-side. Not under a project path
+	// because the row it answers for is the one in the form, which may not exist yet —
+	// and gated because it answers with the server's own driver, image and timeout.
+	mux.HandleFunc("POST /api/projects/plan", a.gated(a.plan))
 	mux.HandleFunc("DELETE /api/projects/{platform}/{owner}/{repo}", a.gated(a.remove))
 
 	// A project's own environment variables. Routed under the project rather than
@@ -906,7 +926,9 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 	// — the project row is correct and the branch build can be asked for again from its card.
 	branchNote := ""
 	if isNew && p.Enabled && a.brancher != nil {
-		branch, err := a.brancher(r.Context(), model.Repo{
+		qctx, cancel := queueContext(r)
+		defer cancel()
+		branch, err := a.brancher(qctx, model.Repo{
 			Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
 		}, "")
 		switch {
@@ -973,14 +995,21 @@ func (a *ProjectsAdmin) scan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queued, err := a.scanner(r.Context(), model.Repo{
+	qctx, cancel := queueContext(r)
+	defer cancel()
+	queued, err := a.scanner(qctx, model.Repo{
 		Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
 	})
 	if err != nil {
 		// The project itself saved. This is a separate action that failed, and its
 		// message is the operator's next step — usually "install the App there".
-		a.log.Warn("scanning for open pull requests", "project", p.Key(), "error", err)
-		writeJSON(w, http.StatusOK, map[string]any{"queued": 0, "error": err.Error()})
+		//
+		// The real count, not zero. ScanRepo carries on past a pull request whose enqueue
+		// failed, so "queued 2, and #14 failed because ..." is a true answer, and reporting 0
+		// beside it would send somebody to rebuild two previews that are already building.
+		a.log.Warn("scanning for open pull requests", "project", p.Key(),
+			"queued", queued, "error", err)
+		writeJSON(w, http.StatusOK, map[string]any{"queued": queued, "error": err.Error()})
 		return
 	}
 	a.log.Info("queued builds for open pull requests", "project", p.Key(), "queued", queued)
@@ -1024,7 +1053,9 @@ func (a *ProjectsAdmin) rebuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	found, err := a.rebuilder(r.Context(), preview)
+	qctx, cancel := queueContext(r)
+	defer cancel()
+	found, err := a.rebuilder(qctx, preview)
 	if err != nil {
 		a.log.Error("rebuilding a preview", "preview", preview, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -1105,7 +1136,9 @@ func (a *ProjectsAdmin) link(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
-	if err := a.linker(r.Context(), repo, body.Number); err != nil {
+	qctx, cancel := queueContext(r)
+	defer cancel()
+	if err := a.linker(qctx, repo, body.Number); err != nil {
 		// 200 with an error, as scan does: the message is the operator's next step —
 		// usually that the number is closed or does not exist — and this is a button on
 		// a page that stays open, not a form submission.
@@ -1170,6 +1203,28 @@ func (a *ProjectsAdmin) setNamePrefix(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
+// queueBudget bounds the platform calls a queueing button makes once it is detached from
+// the request. Bitbucket's client retries a 429 or a 5xx three times with a growing wait, so
+// this is generous; it is a backstop against a hung connection, not a deadline anybody meets.
+const queueBudget = 90 * time.Second
+
+// queueContext is the context for work a button queues: resolve a branch or a pull request on
+// the platform, then enqueue a build.
+//
+// Not r.Context(). That one is cancelled the moment the browser drops the request — a reload,
+// a tab closed, a proxy timing out, a second click — and the platform call it was carrying
+// fails with "context canceled", so nothing is queued. Seen in production on 2026-11-03: Build
+// it on netfoundry/k8s-on-prem-installations logged "reading branch main ... context
+// canceled" and queued nothing, and the same click three minutes later worked. The credential
+// and the branch were both fine; the request had simply gone away under the call.
+//
+// WithoutCancel keeps the request's values, so the role and anything else hung on it still
+// reach the work, and drops only its cancellation. The timeout replaces that cancellation with
+// one nobody can trigger by closing a tab.
+func queueContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(r.Context()), queueBudget)
+}
+
 // branch builds a preview of a branch, with no pull request behind it.
 //
 // An absent or empty `branch` means the repository's default, read from the platform. That
@@ -1199,7 +1254,12 @@ func (a *ProjectsAdmin) branch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo := model.Repo{Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo}
-	branch, err := a.brancher(r.Context(), repo, strings.TrimSpace(body.Branch))
+	// Detached from the request: see queueContext. The answer is still written synchronously,
+	// for the reason below — a browser that has gone away simply never reads it, and the
+	// build it asked for is queued regardless.
+	qctx, cancel := queueContext(r)
+	defer cancel()
+	branch, err := a.brancher(qctx, repo, strings.TrimSpace(body.Branch))
 	if err != nil {
 		// 200 with an error, as scan and link do: the message is the operator's next step —
 		// an App not installed there, a credential that cannot read the repository, an empty
@@ -1376,16 +1436,24 @@ func (a *ProjectsAdmin) testSCM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := a.scmChecker(r.Context(), model.Repo{
+	res, err := a.scmChecker(r.Context(), model.Repo{
 		Platform: model.Platform(p.Platform), Owner: p.Owner, Name: p.Repo,
 	})
 	if err != nil {
-		// The platform's own message, which is the useful half: "credentials lack one or
-		// more required privilege scopes" names the fix in a way this code cannot.
+		// Nothing could be checked at all — no credential stored anywhere, or no client for
+		// the platform. Not a refused request, so there are no steps to report.
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"ok": detail})
+	// 200 whether or not a step failed. The check ran and this is its answer; a refused
+	// request is the result being asked for, not a fault in the endpoint, and the page
+	// renders each step's outcome rather than one error string.
+	//
+	// The credential in here is already masked — by the client, before it got this far.
+	writeJSON(w, http.StatusOK, struct {
+		OK bool `json:"ok"`
+		scm.RepoCheck
+	}{res.OK(), res})
 }
 
 func (a *ProjectsAdmin) delSecret(w http.ResponseWriter, r *http.Request) {

@@ -88,6 +88,12 @@ Four steps, and the order is the whole design:
 4. **Install the new key, last.** Only a `file:` source can be written; `exec:` and the environment variable are
    somewhere this process cannot reach, so the key is printed once and installing it is the operator's step.
 
+**An empty key is refused before step 1.** An empty scrypt passphrase is valid age, so a rekey to nothing would
+encrypt, decrypt and report success — leaving a vault whose protection is a key file containing no bytes, and no
+error anywhere to say so. `Rekey` answers `ErrLocked` instead, and the command refuses a whitespace-only key from
+stdin before it writes the backup, so a refused rekey leaves no half-finished state behind
+(`TestRekeyRefusesAnEmptyKey`, `TestVaultRekeyRefusesWhitespaceStdinWithoutWritingABackup`).
+
 Between 3 and 4 the key on disk and the vault disagree, and the recovery is to put the old key back — which works
 only while the old key still exists. Reversed, the failure is total: a vault nothing can open and nothing to go
 back to. That window is the reason this is one command rather than a documented sequence of two.

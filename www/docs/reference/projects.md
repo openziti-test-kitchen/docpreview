@@ -9,18 +9,23 @@ sidebar_position: 3
 A **project** is a repository docpreview is willing to build, plus the operator's answers about how. It lives in
 the daemon's database and is managed at `http://127.0.0.1:8471/projects`.
 
-Projects are optional. A repository the GitHub App is installed on builds from its own
-[`.docpreview.yml`](./repo-config.md) with no project row at all. Adding one is how you take a decision out of the
-branch.
+**A repository with no project row is never built.** A webhook delivery for one is verified, acknowledged with a
+`202`, and dropped — nothing is cloned, nothing is queued, and nothing is written back to the pull request. This is
+what makes an App that anybody can install safe to run: the webhook secret is one value for the whole App, so
+GitHub signs every installation's deliveries with it and a valid signature proves only that GitHub sent it. The row
+is where you say the repository is yours.
+
+Every build field on the row may still be blank, and blank means "defer to the repository's own
+[`.docpreview.yml`](./repo-config.md)". A row naming only a repository is valid and is the common case: it says the
+repository is allowed, not that you want to restate its configuration.
+
+Installing the App on a repository is therefore two steps, and the second one is here. Install it, then add the
+project — in either order, since a delivery that arrives first is simply dropped and the next push builds.
 
 ## Why a project wins over the repository
 
 `.docpreview.yml` arrives in the pull request, so on any repository where opening one is not a privilege, its
 author chooses what the file says. A project row is yours. Where both state a field, the project's answer is used.
-
-Every build field on a project may be left blank, and blank means "defer to the repository". A row that names only
-a repository is valid and is the common case: it says the repository is allowed, not that you want to restate its
-configuration.
 
 ## The page
 

@@ -126,6 +126,33 @@ type credential struct {
 
 func (c credential) empty() bool { return len(c.authz.Reveal()) == 0 }
 
+// masked is the Authorization header's scheme and the shape of what follows it, with at
+// most the last four characters of the token — enough to tell two tokens apart on the Test
+// panel, and nothing that would help anyone use one.
+//
+// The Basic form is described rather than encoded. Its real value is base64 of email and
+// token, and the last four characters of *that* would be four characters of the token
+// anyway, in a form nobody can read.
+func (c credential) masked() string {
+	tail := maskTail(string(c.pass.Reveal()))
+	if c.user == "x-token-auth" {
+		return "Bearer " + tail
+	}
+	return "Basic base64(email:" + tail + ")"
+}
+
+// maskTail hides a token, keeping its last four characters only when the token is long
+// enough that four of them are a small part of it. A real Bitbucket token is far past that
+// floor; a short value is a test fixture or a mistake, and either way shows nothing.
+func maskTail(token string) string {
+	const dots = "••••••"
+	r := []rune(token)
+	if len(r) < 16 {
+		return dots
+	}
+	return dots + string(r[len(r)-4:])
+}
+
 // bearer builds a credential from an access token: a repository, project or workspace
 // token, which is the recommended shape.
 func bearer(token string) credential {
@@ -375,47 +402,103 @@ func (c *Client) CloneURL(_ context.Context, pr model.PullRequest) (string, erro
 // seconds and then reports an authentication error, or worse, a comment that never
 // appears because the token has read access and not write.
 //
-// Two calls, because two permissions are needed and only one of them is exercised by
-// reading: the repository read that a clone needs, and the pull request read that
-// ChangedFiles needs. Write cannot be checked without writing something, so the message
-// says which scope is still unproven rather than implying everything is fine.
-func (c *Client) CheckRepo(ctx context.Context, repo model.Repo) (string, error) {
+// Three steps, two of them requests, because two permissions can be proven by reading and
+// one cannot: the repository read that a clone needs, the pull request read that
+// ChangedFiles needs, and the pull request write that commenting needs. The third is
+// reported as not attempted rather than passed, so the page never claims more than was
+// checked.
+//
+// Each step names the request it made, and the result names the credential it went out
+// with — masked here, before it leaves the client, because a page that showed the token
+// would be the one place in this system that reads a secret back.
+func (c *Client) CheckRepo(ctx context.Context, repo model.Repo) (scm.RepoCheck, error) {
+	cred, err := c.credentialFor(repo.Owner, repo.Name)
+	if err != nil {
+		return scm.RepoCheck{}, err
+	}
+	out := scm.RepoCheck{
+		Credential: scm.CheckedCredential{
+			Source: c.credentialSource(repo.Owner, repo.Name),
+			Header: "Authorization: " + cred.masked(),
+		},
+	}
+
+	repoPath := fmt.Sprintf("/2.0/repositories/%s/%s", repo.Owner, repo.Name)
+	prPath := repoPath + "/pullrequests?state=OPEN&pagelen=1"
+
+	read := scm.CheckStep{
+		Name:    "Repository read",
+		Request: http.MethodGet + " " + c.cfg.APIBase + repoPath,
+	}
 	var meta struct {
 		FullName  string `json:"full_name"`
 		IsPrivate bool   `json:"is_private"`
-		Project   struct {
-			Key string `json:"key"`
-		} `json:"project"`
 	}
-	if err := c.do(ctx, repo.Owner, repo.Name, http.MethodGet,
-		fmt.Sprintf("/2.0/repositories/%s/%s", repo.Owner, repo.Name), nil, &meta); err != nil {
-		return "", err
+	if err := c.do(ctx, repo.Owner, repo.Name, http.MethodGet, repoPath, nil, &meta); err != nil {
+		read.Outcome, read.Message = scm.CheckFail, checkFailure(err, "Repositories: Read")
+	} else {
+		visibility := "public"
+		if meta.IsPrivate {
+			visibility = "private"
+		}
+		read.Outcome = scm.CheckPass
+		read.Message = fmt.Sprintf("%s answered: it is %s, and a clone can authenticate.",
+			meta.FullName, visibility)
 	}
+	out.Checks = append(out.Checks, read)
 
-	var prs struct {
-		Size int `json:"size"`
+	prs := scm.CheckStep{
+		Name:    "Pull request read",
+		Request: http.MethodGet + " " + c.cfg.APIBase + prPath,
 	}
-	if err := c.do(ctx, repo.Owner, repo.Name, http.MethodGet,
-		fmt.Sprintf("/2.0/repositories/%s/%s/pullrequests?state=OPEN&pagelen=1", repo.Owner, repo.Name),
-		nil, &prs); err != nil {
-		return "", fmt.Errorf("the token can read the repository but not its pull requests "+
-			"(add the pullrequest scope): %w", err)
+	if read.Outcome != scm.CheckPass {
+		// Not run. The same token against the same repository would fail the same way, and
+		// two red rows for one cause read as two problems.
+		prs.Outcome = scm.CheckNotAttempted
+		prs.Message = "Not attempted — the repository read failed first."
+	} else {
+		var page struct {
+			Size int `json:"size"`
+		}
+		if err := c.do(ctx, repo.Owner, repo.Name, http.MethodGet, prPath, nil, &page); err != nil {
+			prs.Outcome, prs.Message = scm.CheckFail, checkFailure(err, "Pull requests: Read")
+		} else {
+			prs.Outcome = scm.CheckPass
+			prs.Message = fmt.Sprintf("Answered with %d open pull request(s), so a build can "+
+				"list what each one changed.", page.Size)
+		}
 	}
+	out.Checks = append(out.Checks, prs)
 
-	visibility := "public"
-	if meta.IsPrivate {
-		visibility = "private"
+	out.Checks = append(out.Checks, scm.CheckStep{
+		Name:    "Pull request write",
+		Outcome: scm.CheckNotAttempted,
+		Message: "Not attempted — cannot be checked without writing to a pull request. " +
+			"Commenting needs Pull requests: Write; a token without it builds and then " +
+			"fails at the comment.",
+	})
+	return out, nil
+}
+
+// checkFailure turns a refused request into the line the Test panel shows.
+//
+// Bitbucket's own message first, because "credentials lack one or more required privilege
+// scopes" names the fix where a status code does not. Which scope this step needed goes
+// after it, since Bitbucket's sentence does not say.
+func checkFailure(err error, scope string) string {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return err.Error()
 	}
-	// Two lines separated by a newline: a headline and the detail behind it.
-	//
-	// This was one sentence carrying five facts, which is a paragraph to say "it worked".
-	// The caller shows the first line and keeps the rest for a tooltip — the detail is worth
-	// having when a workspace-wide token answers for a project somebody thought they had
-	// overridden, and worth hiding every other time.
-	return fmt.Sprintf("Works — read access confirmed.\n%s is %s with %d open pull "+
-		"request(s), reached with %s. Commenting needs pullrequest:write, which cannot be "+
-		"checked without writing something.",
-		meta.FullName, visibility, prs.Size, c.credentialSource(repo.Owner, repo.Name)), nil
+	switch apiErr.Status {
+	case http.StatusUnauthorized:
+		return err.Error() + " — the token is invalid, expired or revoked."
+	case http.StatusForbidden:
+		return err.Error() + " — this step needs the " + scope + " scope."
+	case http.StatusNotFound:
+		return err.Error() + " — no such repository, or the token cannot see it."
+	}
+	return err.Error()
 }
 
 // credentialSource names where the credential for one repository came from, for messages.

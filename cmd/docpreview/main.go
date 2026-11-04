@@ -712,6 +712,10 @@ func cmdServe(args []string) error {
 			// changed from the dashboard. Stored in the database, because config.yml is
 			// hand-written and rewriting it would destroy its comments.
 			WithNamePrefix(d.NamePrefix, d.SetNamePrefix).
+			// So the form can state the command that will run, rather than leaving the
+			// operator to resolve a preset against a server default against a file in
+			// the repository and hope they got it right.
+			WithPlanNamer(d.PreviewName).
 			// So the form can grey out a driver that would fail rather than offering
 			// it and letting the operator discover the refusal from a failed build.
 			// So a pasted token can be checked before it is discovered wrong by a build

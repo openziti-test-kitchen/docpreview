@@ -26,6 +26,19 @@
 
   --term-bg:  #14140f;
   --term-fg:  #d8d6cc;
+
+  /* The focus ring. The ink at low alpha rather than a hue of its own, because a focused
+     field has to be legible against both schemes and the ink is the one colour guaranteed
+     to contrast with the surface under it. */
+  --focus-ring: rgba(11,11,11,0.18);
+
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  /* The radius and shadow ladders. Named rather than written out at each use, because the
+     thing that makes a form look considered is that its corners agree with each other. */
+  --r-sm: 6px; --r-md: 9px; --r-lg: 12px; --r-pill: 999px;
+  --shadow-pop: 0 14px 34px rgba(11,11,11,0.14);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -36,6 +49,9 @@
     --ink-2:    #c3c2b7;
     --hairline: #2c2c2a;
     --ring:     rgba(255,255,255,0.10);
+
+    --focus-ring: rgba(255,255,255,0.22);
+    --shadow-pop: 0 14px 34px rgba(0,0,0,0.6);
   }
 }
 
@@ -43,7 +59,7 @@
 body {
   margin: 0; padding: 0 0 3rem;
   background: var(--plane); color: var(--ink);
-  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 15px/1.55 var(--sans);
 }
 a { color: inherit; }
 h1 { font-size: 1.05rem; margin: 0; letter-spacing: -0.01em; font-weight: 650; }
@@ -84,7 +100,9 @@ h2 span { color: var(--ink-2); text-transform: none; letter-spacing: 0 }
 .seg button:first-child { border-left: 0 }
 .seg button:hover { background: var(--raised) }
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--plane) }
-.seg button[aria-pressed="true"] .dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--plane) 35%, transparent) }
+.seg button[aria-pressed="true"] .dot {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--plane) 35%, transparent);
+}
 .seg .n { font-variant-numeric: tabular-nums; font-weight: 650 }
 .seg .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--edge, var(--idle)); flex: none }
 /* The Building counter turns while anything is building, so the fact that work
@@ -109,18 +127,37 @@ h2 span { color: var(--ink-2); text-transform: none; letter-spacing: 0 }
 
 .control {
   font: inherit; font-size: 0.82rem;
-  background: var(--surface); color: var(--ink);
-  border: 1px solid var(--ring); border-radius: 8px;
+  background: var(--raised); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: var(--r-md);
   padding: 0.42rem 0.6rem;
+  transition: border-color .14s, box-shadow .14s;
 }
-.control:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px }
+.control:hover { border-color: var(--muted) }
+/* Focus is drawn on the border plus a soft ring rather than as an outline. An outline
+   sits outside the box and is clipped by anything that scrolls, so a focused field at the
+   edge of a scrolling panel stopped showing that it was focused. The ring is part of the
+   control and travels with it. */
+.control:focus-visible, .control:focus {
+  outline: none; border-color: var(--ink);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
 /* Secrets is a link to /secrets rather than a toggle, and an anchor is inline and
    underlined by default — both of which make it sit wrong beside the inputs. */
 a.control { display: inline-block; text-decoration: none; line-height: normal }
 /* A select rather than a chip per project: at three projects chips are nicer,
    at three hundred they are a wall. The search box beside it covers the case
    where you know the branch but not the project. */
-select.control { max-width: 15rem }
+select.control {
+  max-width: 15rem;
+  appearance: none; cursor: pointer; padding-right: 1.9rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-2) 50%),
+    linear-gradient(135deg, var(--ink-2) 50%, transparent 50%);
+  background-position: calc(100% - 1.05rem) 55%, calc(100% - 0.75rem) 55%;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+}
+/* The popup list is drawn by the OS, which does not inherit the field's colours. */
+select.control option { background: var(--raised); color: var(--ink) }
 input.control { width: 13rem }
 input.control::placeholder { color: var(--muted) }
 
@@ -282,7 +319,7 @@ input.control::placeholder { color: var(--muted) }
    the same reason: a reader who has seen that page knows what this is. */
 .credbox {
   border: 1px solid var(--ring); border-left: 3px solid var(--good);
-  border-radius: 8px; padding: 0.5rem 0.8rem;
+  border-radius: var(--r-lg); padding: 0.5rem 0.8rem;
   background: var(--raised);
   background: color-mix(in srgb, var(--good) 5%, var(--surface));
   margin-bottom: 0.4rem;
@@ -299,8 +336,55 @@ input.control::placeholder { color: var(--muted) }
 /* The masked boxes keep the monospace, raised look they have on the credential page: a
    token is not prose, and the shape is what says so at a glance. */
 .credbox input[type=password], .credbox input[type=text], .credbox textarea {
-  font: 12.5px/1.5 ui-monospace, Consolas, monospace;
+  font: 12.5px/1.5 var(--mono);
 }
+/* The credential test's answer, inside the box and directly under its button, full width
+   like every field on the edit page. The border takes the outcome's colour once there is one;
+   while it runs it stays the box's own hairline, because a yellow frame around three spinners
+   would be saying "warning" about a check that has not answered yet. */
+.ctest {
+  margin: 0 0 0.6rem;
+  border: 1px solid var(--hairline); border-radius: var(--r-md);
+  background: var(--raised); padding: 0.55rem 0.7rem;
+  font-size: 0.82rem;
+}
+.ctest.good { border-color: var(--good) }
+.ctest.bad  { border-color: var(--critical) }
+.ctest-head { display: flex; align-items: center; gap: 0.5rem; font-weight: 600 }
+.ctest-head > span { flex: 1 }
+.ctest.good .ctest-head { color: var(--good) }
+.ctest.bad  .ctest-head { color: var(--critical) }
+.ctest-x { flex: none }
+.ctest-cred { color: var(--ink-2); margin: 0.25rem 0 0.4rem; font-size: 0.78rem }
+.ctest-hdr, .ctest-req { font: 11.5px/1.5 var(--mono); overflow-wrap: anywhere }
+.ctest-steps { list-style: none; margin: 0; padding: 0 }
+.ctest-step {
+  display: grid; grid-template-columns: 1.3rem minmax(0, 1fr); gap: 0.3rem;
+  padding: 0.35rem 0; border-top: 1px solid var(--hairline);
+}
+/* The mark column holds the spinner while the step runs and a glyph once it settles. Fixed
+   width, so a row does not shift sideways the moment its spinner becomes a tick. */
+.ctest-mark {
+  display: flex; align-items: center; justify-content: center;
+  height: 1.3em; font-weight: 700;
+}
+.ctest-step.pass .ctest-mark { color: var(--good) }
+.ctest-step.fail .ctest-mark { color: var(--critical) }
+.ctest-step.not_attempted .ctest-mark { color: var(--muted) }
+.ctest-name { font-weight: 600 }
+.ctest-why { font-weight: 400; color: var(--muted) }
+/* The outcome as a word as well as a mark, on the right, so the three states are not told
+   apart by colour alone. Grey for "not attempted": it is neither a pass nor a failure. */
+.ctest-out {
+  float: right; font-weight: 500; font-size: 0.72rem;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+}
+.ctest-step.pass .ctest-out { color: var(--good) }
+.ctest-step.fail .ctest-out { color: var(--critical) }
+.ctest-req { display: block; color: var(--ink-2) }
+.ctest-msg { margin-top: 0.15rem; color: var(--ink-2); overflow-wrap: anywhere }
+.ctest-step.fail .ctest-msg { color: var(--critical) }
+.ctest-step.not_attempted .ctest-name, .ctest-step.not_attempted .ctest-msg { color: var(--muted) }
 
 /* The environment-variables disclosure, quieted right down.
 
@@ -358,10 +442,14 @@ input.control::placeholder { color: var(--muted) }
 /* type=text is in the list because the new-entry row's Name box is one. Without it that
    field rendered as a bare browser input beside a styled value box. */
 .sec textarea, .sec input[type=password], .sec input[type=text] {
-  font: 12.5px/1.5 ui-monospace, Consolas, monospace;
+  font: 12.5px/1.5 var(--mono);
   width: 100%; background: var(--raised); color: var(--ink);
-  border: 1px solid var(--ring); border-radius: 6px; padding: 0.4rem 0.5rem;
-  resize: vertical;
+  border: 1px solid var(--ring); border-radius: var(--r-md);
+  padding: 0.4rem 0.5rem; resize: vertical;
+  transition: border-color .14s, box-shadow .14s;
+}
+.sec textarea:focus, .sec input[type=password]:focus, .sec input[type=text]:focus {
+  outline: none; border-color: var(--ink); box-shadow: 0 0 0 3px var(--focus-ring);
 }
 .sec textarea { min-height: 2.4rem }
 .sec .act { display: flex; gap: 0.35rem; align-items: center }
@@ -582,7 +670,7 @@ input.control::placeholder { color: var(--muted) }
    Not danger-coloured: nothing in the wizard is destructive, and every step is either
    reversible with Back or has not happened yet. */
 .btn.solid {
-  background: var(--ink); border-color: var(--ink); color: var(--surface);
+  background: var(--ink); border-color: var(--ink); color: var(--plane);
 }
 .btn.solid:hover { filter: brightness(1.15) }
 /* The destructive button is filled, and it is not the one that has focus. A dialog that
@@ -1026,29 +1114,40 @@ input.control::placeholder { color: var(--muted) }
   max-width: 52rem;
 }
 .btn.primary {
-  background: var(--ink); color: var(--plane); border-color: var(--ink); font-weight: 600;
+  background: var(--ink); color: var(--plane); border-color: var(--ink);
 }
 .btn.primary:hover { opacity: 0.9 }
 /* Destructive, and it borrows the failed colour rather than inventing one: red on this
    page already means a build that is not going to finish, which is what this makes. */
-.btn.danger { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 40%, var(--ring)) }
-.btn.danger:hover { border-color: var(--critical) }
+.btn.danger {
+  color: var(--critical); background: transparent;
+  border-color: color-mix(in srgb, var(--critical) 40%, var(--ring));
+}
+.btn.danger:hover {
+  border-color: var(--critical);
+  background: color-mix(in srgb, var(--critical) 7%, transparent);
+}
 /* Toasts. Fixed, so nothing in the document moves when one appears — a banner that pushes
-   a list down is its own small confusion, and the list is what somebody is reading. */
+   a list down is its own small confusion, and the list is what somebody is reading.
+
+   Bottom right, not top right. The buttons that raise them sit at the bottom of long forms
+   and the ends of card rows, and a message at the top of the window was a screen away from
+   the eye — see toast(). */
 #toasts {
-  position: fixed; z-index: 60; top: 0.9rem; right: 0.9rem;
-  display: flex; flex-direction: column; gap: 0.4rem;
+  position: fixed; z-index: 60; bottom: 0.9rem; right: 0.9rem;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem;
   /* The host ignores the pointer so it never blocks the page behind it; each toast takes
      it back, because a message you cannot select is a message you have to retype into a
      search box. */
   pointer-events: none;
 }
 .toast {
+  display: flex; align-items: flex-start; gap: 0.5rem;
   background: var(--ink); color: var(--plane);
   font-size: 0.82rem; font-weight: 500;
-  padding: 0.5rem 0.75rem; border-radius: 8px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
-  max-width: 22rem;
+  padding: 0.5rem 0.75rem; border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  max-width: 26rem;
   pointer-events: auto; user-select: text; cursor: text;
   /* A platform error carries URLs and bracketed IPv6 addresses, which have no spaces to
      break at — so they were drawn straight through the rounded corner. `anywhere` breaks
@@ -1056,24 +1155,40 @@ input.control::placeholder { color: var(--muted) }
   overflow-wrap: anywhere;
   /* And a cap, so one enormous error cannot fill the screen. */
   max-height: 40vh; overflow-y: auto;
-  animation: toastin 140ms ease-out, fadeout 5s ease-in forwards;
+  animation: toastin 140ms ease-out;
+  transition: opacity 200ms ease-in;
 }
-@keyframes toastin { from { opacity: 0; transform: translateY(-0.4rem) } to { opacity: 1 } }
-@keyframes fadeout { 0%, 82% { opacity: 1 } 100% { opacity: 0 } }
-@media (prefers-reduced-motion: reduce) { .toast { animation: none } }
-/* A failure toast reads as one, and its fade matches its own lifetime — the default
-   animation is timed to the 5s removal, so a 9s toast styled with it would go
-   invisible four seconds before it left the DOM and take clicks nowhere near it. */
-.toast.bad {
-  background: var(--critical); color: #fff;
-  animation: toastin 140ms ease-out, fadeout 9s ease-in forwards;
-}
-/* Green for a confirmed success, because the one thing a test result has to convey before
-   it is read is which of the two answers it is. */
+.toast-text { flex: 1; min-width: 0 }
+/* Leaving is a class rather than a keyframe timed to a fixed life: a toast under the pointer
+   waits, and a failure waits for its close button, so no animation can know when it ends. */
+.toast.leaving { opacity: 0 }
+@keyframes toastin { from { opacity: 0; transform: translateY(0.4rem) } to { opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; transition: none } }
+/* A failure reads as one. */
+.toast.bad { background: var(--critical); color: #fff }
+/* Green for a confirmed success, because the one thing a result has to convey before it is
+   read is which of the two answers it is. */
 .toast.good { background: var(--good); color: #fff }
 /* A failure is the one worth copying — an error naming a scope or an address is going into
-   a search or a ticket — so it says so and takes a click. */
-.toast.bad { cursor: copy }
+   a search or a ticket — so its text says so and takes a click. */
+.toast.bad .toast-text { cursor: copy }
+.toast-x {
+  flex: none; border: 0; background: none; color: inherit; cursor: pointer;
+  font: 700 1rem/1 var(--sans); padding: 0 0.1rem; opacity: 0.85;
+}
+.toast-x:hover { opacity: 1 }
+/* A result left beside the button that asked for it — see actNote(). Full width under the row,
+   because the rows are one-line flex headers and a sentence inside one shoves the name off. */
+.actnote {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  margin: 0.4rem 0 0.2rem; padding: 0.45rem 0.6rem;
+  border: 1px solid var(--hairline); border-left: 3px solid var(--muted);
+  border-radius: var(--r-md); background: var(--raised);
+  font-size: 0.82rem; overflow-wrap: anywhere;
+}
+.actnote-text { flex: 1; min-width: 0; user-select: text }
+.actnote.bad { border-left-color: var(--critical); color: var(--critical) }
+.actnote.good { border-left-color: var(--good) }
 .toast .copied {
   display: block; margin-top: 0.3rem; font-size: 0.7rem; opacity: 0.85;
   text-transform: uppercase; letter-spacing: 0.06em;
@@ -1096,7 +1211,11 @@ input.control::placeholder { color: var(--muted) }
 .field textarea {
   font: inherit; font-size: 0.82rem; width: 100%; min-height: 4.5rem; resize: vertical;
   background: var(--raised); color: var(--ink);
-  border: 1px solid var(--ring); border-radius: 6px; padding: 0.4rem 0.5rem;
+  border: 1px solid var(--ring); border-radius: var(--r-md);
+  padding: 0.4rem 0.5rem; transition: border-color .14s, box-shadow .14s;
+}
+.field textarea:focus {
+  outline: none; border-color: var(--ink); box-shadow: 0 0 0 3px var(--focus-ring);
 }
 /* A titled group of fields.
 
@@ -1105,32 +1224,32 @@ input.control::placeholder { color: var(--muted) }
    the "mushy screen". A group is a card with a heading, a sentence saying what it decides, and a
    visible end. */
 .fgroup {
-  border: 1px solid var(--ring); border-radius: 10px; background: var(--surface);
+  border: 1px solid var(--ring); border-radius: var(--r-lg);
+  background: var(--surface);
   margin: 0 0 1rem; overflow: hidden;
 }
-.fgroup-head {
-  padding: 0.6rem 0.9rem; background: var(--raised); border-bottom: 1px solid var(--ring);
-}
+/* The group title is an eyebrow rather than a heading: it names the group for somebody
+   scanning for it and then gets out of the way of the labels, which are what you read
+   when you are filling the thing in. A titlebar the weight of the old one competed with
+   every field under it. */
+.fgroup-head { padding: 1rem 1.1rem 0 }
 .fgroup-head h4 {
-  margin: 0; font-size: 0.9rem; font-weight: 650; letter-spacing: -0.01em; color: var(--ink);
+  margin: 0; font: 600 0.68rem/1 var(--sans); letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--ink-2);
 }
-.fgroup-head p { margin: 0.15rem 0 0; font-size: 0.78rem; color: var(--muted); max-width: 60ch }
-.fgroup-body { padding: 0.75rem 0.9rem 0.9rem }
+.fgroup-head p { margin: 0.35rem 0 0; font-size: 0.72rem; color: var(--muted); max-width: 60ch }
+.fgroup-body { padding: 0.9rem 1.1rem 0.2rem }
 /* Kept for the two places that still emit a bare caption rather than a group. */
 .field-head {
-  margin: 1.1rem 0 0.4rem; font-size: 0.7rem; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--ink-2); font-weight: 700;
-  padding-bottom: 0.3rem; border-bottom: 1px solid var(--ring);
+  margin: 1.1rem 0 0.5rem; font: 600 0.68rem/1 var(--sans); text-transform: uppercase;
+  letter-spacing: 0.16em; color: var(--ink-2);
 }
 .field-head:first-child { margin-top: 0.2rem }
 /* The form's own title. It was 0.72rem uppercase grey — the same treatment as a field caption —
    so on a page whose entire purpose is one form, the form's name was the quietest text on it. */
-h3.form-title {
-  font-size: 1.15rem; font-weight: 650; letter-spacing: -0.015em;
-  text-transform: none; color: var(--ink); margin: 0 0 0.2rem;
-}
+/* The lede, and the only prose above the fields. */
 .form-title-why {
-  margin: 0 0 1.1rem; font-size: 0.85rem; color: var(--muted); max-width: 68ch;
+  margin: 0 0 1.1rem; font-size: 0.85rem; line-height: 1.6; color: var(--muted); max-width: 86ch;
 }
 
 /* ── One project's settings, as a page ──────────────────────────────────── */
@@ -1141,15 +1260,25 @@ h3.form-title {
    command is a shell line and an image is a registry path, and both were being read through a
    letterbox. Stacked, the value gets the whole width and the label is directly above it, which is
    also the arrangement that survives a phone. */
-.pedit-form .field {
-  display: block; padding: 0.5rem 0; border-top: 1px solid var(--hairline);
+/* Two columns, and a field takes both unless it is short enough not to need them. A rule
+   per line was a column of full-width boxes for a four-character timeout, which made the
+   form twice as tall as it had anything to be. */
+.pedit-form .fgroup-body {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 1.4rem;
 }
-.pedit-form .fgroup-body > .field:first-child { border-top: 0; padding-top: 0.1rem }
+.pedit-form .field { display: block; padding: 0; margin-bottom: 1.15rem; grid-column: 1 / -1 }
+.pedit-form .field.half { grid-column: auto }
+@media (max-width: 52rem) {
+  .pedit-form .fgroup-body { grid-template-columns: minmax(0, 1fr) }
+  .pedit-form .field.half { grid-column: 1 / -1 }
+}
 .pedit-form .field > label {
-  display: block; margin-bottom: 0.25rem; font-size: 0.82rem; font-weight: 600; color: var(--ink);
+  display: block; margin-bottom: 0.4rem; font: 600 0.66rem/1 var(--sans);
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2);
 }
 .pedit-form .field .why {
-  grid-column: auto; margin: 0.3rem 0 0; font-size: 0.76rem; max-width: 78ch;
+  grid-column: auto; margin: 0.35rem 0 0; font-size: 0.72rem; line-height: 1.55;
+  color: var(--muted); max-width: 76ch;
 }
 .pedit-form .field .control { width: 100% }
 /* A path, a command, an image and a duration are all machine text. Monospace says so, and makes a
@@ -1173,15 +1302,23 @@ h3.form-title {
   display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
   padding-bottom: 0.7rem; margin-bottom: 0.9rem; border-bottom: 1px solid var(--ring);
 }
-.pedit-head .grow { flex: 1 }
-.pedit-sub { margin: 0.1rem 0 1.1rem; font-size: 0.85rem; color: var(--muted); max-width: 68ch }
+.pedit-head .grow { flex: 1; min-width: 0 }
+.pedit-head.new { align-items: flex-start }
+.pedit-eyebrow {
+  font: 600 0.66rem/1 var(--sans); letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 0.55rem;
+}
+h2.pedit-title {
+  margin: 0; font: 600 1.25rem/1.25 var(--sans); letter-spacing: -0.015em;
+  text-transform: none; color: var(--ink);
+}
 /* The actions, held at the bottom of the viewport rather than at the bottom of the form. Five
    groups of fields is more than one screen, so a Save at the end of them is a Save you have to go
    looking for — and on a form this long, "did that save?" is the question worth designing out. */
 .pedit-form .formact {
   position: sticky; bottom: 0; z-index: 2;
   margin: 0.4rem 0 0; padding: 0.7rem 0.1rem;
-  background: linear-gradient(to top, var(--bg) 62%, transparent);
+  background: linear-gradient(to top, var(--surface) 62%, var(--surface) 72%, transparent);
 }
 @media (max-width: 40rem) {
   .field { grid-template-columns: minmax(0, 1fr); gap: 0.15rem }
@@ -1410,13 +1547,24 @@ select.control.sm {
 }
 select.control.sm:disabled { opacity: 0.6 }
 .btn {
-  font: inherit; font-size: 0.75rem;
+  font: inherit; font-size: 0.75rem; font-weight: 600;
   background: var(--surface); color: var(--ink-2);
-  border: 1px solid var(--ring); border-radius: 6px;
+  border: 1px solid var(--ring); border-radius: var(--r-sm);
   padding: 0.22rem 0.55rem; cursor: pointer; text-decoration: none;
+  transition: color .14s, background .14s, border-color .14s, transform .14s;
 }
-.btn:hover { border-color: var(--muted) }
-.btn[aria-pressed="true"] { background: var(--ink); color: var(--plane); border-color: var(--ink) }
+/* The 1px lift is behind a hover query: on a touch screen :hover sticks after a tap, so
+   without it the last button pressed stays raised until something else is tapped. */
+@media (hover: hover) {
+  .btn:hover {
+    color: var(--ink); background: var(--raised); border-color: var(--muted);
+    transform: translateY(-1px);
+  }
+}
+.btn:active { transform: translateY(0) }
+.btn[aria-pressed="true"] {
+  background: var(--ink); color: var(--plane); border-color: var(--ink);
+}
 a.btn:not([href]) { opacity: 0.45; cursor: default; pointer-events: none }
 
 /* What the pane is showing, above the pane. A log with no label is assumed to
@@ -1438,6 +1586,38 @@ a.btn:not([href]) { opacity: 0.45; cursor: default; pointer-events: none }
 /* The log is a fixed, modest height by default. The old page gave it 30rem
    whether or not anything was in it, which pushed everything else off screen.
    Tall is one click away for when you actually need it. */
+/* ── What will run ──────────────────────────────────────────────────────────
+   The resolved build, in the log pane's own colours. A build is read on this page as
+   terminal output, so the thing that says what the build *will* be is the same surface:
+   the operator is comparing the plan against a log either way. */
+.plan {
+  background: var(--term-bg); color: var(--term-fg);
+  border-radius: var(--r-md); padding: 0.6rem 0.75rem;
+  font: 12.5px/1.6 var(--mono);
+}
+.planrow {
+  display: grid; grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+  gap: 0.25rem 0.7rem; align-items: baseline; padding: 0.12rem 0;
+}
+.planrow .k { color: var(--muted) }
+.planrow .v { color: var(--ink); overflow-wrap: anywhere }
+/* The note sits under the value rather than beside it: these run to a sentence, and a
+   fourth column of prose would push the values into a letterbox. */
+.planrow .note {
+  grid-column: 2 / -1; color: var(--muted); font-size: 11px; line-height: 1.5;
+  font-family: var(--sans); max-width: 70ch;
+}
+.plan .flag { font-family: var(--sans); align-self: center }
+/* The name is the one line that is not a step, so it is separated from the steps. */
+.planname {
+  margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--hairline);
+  display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap;
+}
+.planname .v { color: var(--good); overflow-wrap: anywhere }
+.planname .why { color: var(--muted); font-family: var(--sans); font-size: 11px }
+/* Waiting, and failed. Both are one line, because a panel that is only ever a courtesy
+   must not become the loudest thing on the form when it cannot be drawn. */
+.plan.quiet { color: var(--muted) }
 pre.term {
   margin: 0; padding: 0.7rem 0.8rem;
   background: var(--term-bg); color: var(--term-fg);
@@ -1519,11 +1699,13 @@ pre.term .lts:hover { color: #b9c2cf }
   font: inherit; font-size: 0.7rem; line-height: 1;
   display: inline-flex; align-items: center; gap: 0.28rem;
   background: var(--raised); color: var(--ink-2);
-  border: 1px solid var(--ring); border-radius: 999px;
+  border: 1px solid var(--ring); border-radius: var(--r-pill);
   padding: 0.22rem 0.5rem; cursor: pointer;
 }
-.feed-filters button:hover { border-color: var(--muted) }
-.feed-filters button[aria-pressed="true"] { background: var(--ink); color: var(--plane); border-color: var(--ink) }
+.feed-filters button:hover { border-color: var(--muted); color: var(--ink) }
+.feed-filters button[aria-pressed="true"] {
+  background: var(--ink); color: var(--plane); border-color: var(--ink);
+}
 .feed-filters .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--edge, var(--idle)) }
 .feed-filters .c { opacity: 0.6; font-variant-numeric: tabular-nums }
 
@@ -5876,10 +6058,12 @@ function renderProjectEdit(s) {
   // The heading is the project, with its identity under it — the same shape as a row in the list,
   // so arriving here from there is continuous.
   const head = adding
-    ? `<h2>New project</h2>
-       <p class="pedit-sub">A repository docpreview will build, and how. Everything but the
-       repository itself is optional: blank defers to that repository's own
-       <code>.docpreview.yml</code>.</p>`
+    ? `<div class="pedit-head new">
+         <div class="grow">
+           <div class="pedit-eyebrow">Projects</div>
+           <h2 class="pedit-title">New project</h2>
+         </div>
+       </div>`
     : `<div class="pedit-head">
          ${avatarHTML(p)}
          <span class="pcard-id">
@@ -5889,6 +6073,9 @@ function renderProjectEdit(s) {
          ${p.enabled ? "" : `<span class="flag off">disabled</span>`}
          <span class="grow"></span>
          ${branchInline(p, false)}
+         ${p.enabled ? `<button class="btn" data-scan="${esc(projectKey(p))}"
+           title="Queue a build for every pull request open on this repository right now"
+           >Scan pull requests</button>` : ""}
        </div>`;
 
   body.innerHTML = `${head}
@@ -5932,8 +6119,10 @@ let formDirty = false;
    other's message and a reload does not replay one. */
 const projFlashKey = "docpreview.projFlash";
 
-function setFlash(msg) {
-  try { sessionStorage.setItem(projFlashKey, msg); }
+function setFlash(msg, kind) {
+  // With its kind, so a refusal carried across a navigation is still shown as one. A plain
+  // string was shown in the neutral style, and "Nothing queued: ..." read as a confirmation.
+  try { sessionStorage.setItem(projFlashKey, JSON.stringify({msg, kind: kind || ""})); }
   catch { /* private mode or storage disabled: the message is not carried, which is not a failure */ }
 }
 
@@ -5941,67 +6130,179 @@ function setFlash(msg) {
 function takeFlash() {
   try {
     const v = sessionStorage.getItem(projFlashKey) || "";
-    if (v) sessionStorage.removeItem(projFlashKey);
-    return v;
+    if (!v) return null;
+    sessionStorage.removeItem(projFlashKey);
+    // A bare string is a flash written by the page before this one was deployed.
+    try {
+      const f = JSON.parse(v);
+      if (f && typeof f.msg === "string") return f;
+    } catch {}
+    return {msg: v, kind: ""};
   } catch {
-    return "";
+    return null;
   }
 }
 
 /* toast says something happened, over the page rather than in it.
 
-   An inline notice is too easy to miss: it would land where the form had been, which after
-   a save is not where the eye is looking. This sits in a fixed corner, outside the document
-   flow, so nothing below it shifts — a banner that pushes a list down is its own small
-   confusion.
+   Bottom right, and a failure stays until it is dismissed.
 
-   Detached from any render. The element removes itself on a timer, because clearing it by
-   re-rendering would throw away whatever somebody had started typing in another panel. */
+   It was top right and every toast was gone in five or nine seconds. The buttons that raise
+   them are mostly at the bottom of a long form or the end of a card row, so the message arrived
+   in the corner furthest from the eye and left before anybody went looking — "I get no output"
+   about a daemon that had answered every time. The bottom edge is nearer where the click was,
+   and a failure is usually a sentence about what to fix, which is not something to race.
+
+   A success still goes on its own, after six seconds, and waits while the pointer is over it so
+   it can be read or selected. A failure has a close button and never times out. Five at most:
+   past that the oldest goes, so a burst of identical refusals cannot pile up the screen.
+
+   Detached from any render, so a re-render does not take a message with it — and it never
+   clears anything somebody had typed in another panel. */
 function toast(text, kind, detail) {
   let host = document.getElementById("toasts");
   if (!host) {
     host = document.createElement("div");
     host.id = "toasts";
+    // Polite rather than assertive: a toast is never more urgent than what is being typed.
+    host.setAttribute("aria-live", "polite");
     document.body.appendChild(host);
   }
   const t = document.createElement("div");
   t.className = kind ? `toast ${kind}` : "toast";
-  t.textContent = text;
-  // The long form, on hover. A success needs one line; the five facts behind it are worth
-  // keeping and not worth reading every time.
-  if (detail) t.title = detail;
+  const msg = document.createElement("span");
+  msg.className = "toast-text";
+  msg.textContent = text;
+  t.appendChild(msg);
+  // The long form, on hover. A success needs one line; the facts behind it are worth keeping
+  // and not worth reading every time.
+  if (detail && detail !== text) t.title = detail;
 
-  // Click to copy, for a failure. A platform error names a missing scope or an address that
-  // is about to be pasted into a search or a ticket, and selecting text inside something
-  // that disappears on a timer is a race nobody should have to win.
+  const remove = () => {
+    t.classList.add("leaving");
+    setTimeout(() => t.remove(), 200);
+  };
+
   if (kind === "bad") {
+    // Click to copy. A platform error names a missing scope or an address that is about to be
+    // pasted into a search or a ticket.
     t.title = "Click to copy";
-    t.onclick = async () => {
+    msg.onclick = async () => {
       try {
         await navigator.clipboard.writeText(text);
       } catch {
-        // No clipboard permission, or an insecure context. Selecting the text is the
-        // fallback that always works, so say so rather than failing silently.
+        // No clipboard permission, or an insecure context. Selecting the text is the fallback
+        // that always works, so do that rather than failing silently.
         const sel = window.getSelection();
         const range = document.createRange();
-        range.selectNodeContents(t);
+        range.selectNodeContents(msg);
         sel.removeAllRanges();
         sel.addRange(range);
         return;
       }
-      if (t.querySelector(".copied")) return;
+      if (msg.querySelector(".copied")) return;
       const note = document.createElement("span");
       note.className = "copied";
       note.textContent = "copied";
-      t.appendChild(note);
+      msg.appendChild(note);
     };
+    const x = document.createElement("button");
+    x.className = "toast-x";
+    x.type = "button";
+    x.title = "Dismiss";
+    x.setAttribute("aria-label", "Dismiss");
+    x.textContent = "×";
+    x.onclick = e => { e.stopPropagation(); remove(); };
+    t.appendChild(x);
+  } else {
+    // Timed, and paused under the pointer: a message somebody is reading or selecting must not
+    // leave mid-sentence.
+    let timer = setTimeout(remove, 6000);
+    t.onmouseenter = () => clearTimeout(timer);
+    t.onmouseleave = () => { timer = setTimeout(remove, 2500); };
   }
 
   host.appendChild(t);
-  // Long enough to read a sentence, and it does not block anything while it is there.
-  // A failure is left up longer: it is usually a sentence about what to type instead,
-  // and it appears at the moment somebody's attention is on the form they just broke.
-  setTimeout(() => t.remove(), kind === "bad" ? 9000 : 5000);
+  while (host.children.length > 5) host.firstElementChild.remove();
+}
+
+/* actNote puts a result beside the button that asked for it, and keeps it there.
+
+   For the answers a toast loses. "Nothing queued: reading branch main ... context canceled"
+   is the whole explanation for a button that otherwise appears to have done nothing, and it
+   belongs under the row the button is in rather than in a corner. It stays until it is
+   dismissed, the button is pressed again, or the row is re-rendered — the last being the
+   moment it stops describing what is on screen.
+
+   Inserted after the button's row rather than into it: the rows are single-line flex headers,
+   and a sentence inside one would push the project's own name off the line. */
+function actNote(btn, text, kind) {
+  const row = btn.closest(".pcard-head, .pedit-head, .pcard-branch") || btn.parentElement;
+  if (!row) return;
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains("actnote")) next.remove();
+  row.insertAdjacentElement("afterend", noteEl(text, kind));
+}
+
+// noteEl builds one note. A running note has a spinner and no close button: there is nothing
+// to dismiss yet, and closing it would hide the answer when it arrives.
+function noteEl(text, kind, running) {
+  const n = document.createElement("div");
+  n.className = `actnote ${kind || ""}`.trim();
+  n.setAttribute("role", kind === "bad" ? "alert" : "status");
+  if (running) {
+    const sp = document.createElement("span");
+    sp.className = "spinner";
+    sp.setAttribute("aria-hidden", "true");
+    n.appendChild(sp);
+  }
+  const msg = document.createElement("span");
+  msg.className = "actnote-text";
+  msg.textContent = text;
+  n.appendChild(msg);
+  if (!running) {
+    const x = document.createElement("button");
+    x.className = "btn icon";
+    x.type = "button";
+    x.title = "Dismiss";
+    x.textContent = "×";
+    x.onclick = () => n.remove();
+    n.appendChild(x);
+  }
+  return n;
+}
+
+/* runScan asks the daemon to queue a build for every open pull request on one repository, and
+   says what happened in a sentence.
+
+   The scan used to run once, when a project was created — and a private Bitbucket project
+   cannot have its token until after it is created, so for exactly the projects that needed it
+   the scan always ran with nothing to clone with and never ran again. It is a button on the
+   edit page now, and it runs on its own when a save gives a project its first usable
+   credential.
+
+   The count is the point of the sentence. The list page dropped a "Build open PRs" button
+   because one build appearing for a repository with several open read as a random pick, so
+   this says how many and that it is one per open pull request. */
+async function runScan(key) {
+  let r;
+  try {
+    r = await api("POST", `${projectPath(key)}/scan`);
+  } catch (e) {
+    r = {queued: 0, error: e.message};
+  }
+  const n = r.queued || 0;
+  const builds = `${n} build${n === 1 ? "" : "s"}`;
+  if (r.error) {
+    return {kind: "bad", text: n
+      ? `Queued ${builds}, but not every open pull request: ${r.error}`
+      : `Nothing queued: ${r.error}`};
+  }
+  if (!n) {
+    return {kind: "", text: "No open pull requests, so nothing to build. The next one opened " +
+      "builds when the platform announces it."};
+  }
+  return {kind: "good", text: `Queued ${builds}, one per open pull request — watch the dashboard.`};
 }
 
 /* ask puts a question in a dialog and resolves to what the reader chose.
@@ -6140,7 +6441,7 @@ function renderProjectsPage(s) {
   // Read once and cleared, so it cannot reappear on an unrelated render.
   const flash = takeFlash();
   if (flash) {
-    toast(flash);
+    toast(flash.msg, flash.kind);
   }
 
   // Something the server did alongside the request that did not work — today only a
@@ -6581,14 +6882,7 @@ function scmCredentialFields(s, p, id) {
   }
 
   // What a blank field will actually do, stated once at the top of the section.
-  const inheritLine = stored.size
-    ? `This repository uses its own credential below${
-        inherits ? ", overriding the workspace-wide one" : ""}.`
-    : inherits
-      ? `Blank fields inherit the workspace-wide credential from
-         <a href="/secrets">/secrets</a>. Fill one in to override it for this repository only.`
-      : `No workspace-wide credential is stored, so a private repository needs its own
-         token here. <a href="/secrets">/secrets</a> holds the shared one if you have one.`;
+  const inheritLine = scmInheritLine(s, p);
 
   /* One credential per row, in the same shape /secrets uses for a secret: name and its
      state on the left, a masked box with an expand control in the middle, its own Save on
@@ -6603,9 +6897,10 @@ function scmCredentialFields(s, p, id) {
   const secretRow = (name, label, elID, hint) => `
     <div class="sec" data-scmrow="${esc(name)}">
       <div>
-        <div class="name">${esc(label)} ${stored.has(name)
-          ? `<span class="flag on">set</span>`
-          : `<span class="flag opt">not set</span>`}</div>
+        <!-- The chip is in its own span so refreshSCMRow can replace it after a save or a
+             delete. It was rendered once and never touched again, so a stored token sat
+             under a row still saying "not set" — which read as the save having failed. -->
+        <div class="name">${esc(label)} <span data-scmrow-flag>${scmRowFlag(stored.has(name))}</span></div>
       </div>
       <!-- Masked like the tokens, including the email. An address is not itself a secret,
            but it is half of an Authorization header and half of a clone URL, it is stored
@@ -6648,7 +6943,7 @@ function scmCredentialFields(s, p, id) {
             data-privtoggle="1"${p && p.private ? " checked" : ""}>
             Needs a credential to clone</label>
         </div>
-        <div class="why">${inheritLine}</div>
+        <div class="why" id="scm-inherit">${inheritLine}</div>
       </div>
       <!-- One field, because one is all a Bitbucket access token needs.
            This offered a choice between an access token and an account email plus API
@@ -6700,7 +6995,15 @@ function scmCredentialFields(s, p, id) {
           <span class="hint">Confirms the token can read the repository and its pull
             requests. Write cannot be checked without writing something.</span>
         </div>
-      </div>` : ""}
+      </div>
+      <!-- The test's answer, here and not in a toast. The toast rendered at the top of the
+           window while this box sits at the bottom of a long form, so the answer arrived
+           somewhere nobody was looking and a passing test read as a dead button. Filled by
+           the Test handler; empty until it is pressed. -->
+      <div data-ctest-host></div>
+      <!-- The open-pull-request scan that runs when a save gives this project its first usable
+           credential. Here because the save button that triggered it is here. -->
+      <div data-scan-host></div>` : ""}
     </div>
     </div>`;
 }
@@ -6954,6 +7257,230 @@ function updateSCMFlag(s) {
   box.innerHTML = scmFlag(s, p);
 }
 
+/* scmInheritLine is the sentence under "Private repository" saying what a blank field does.
+
+   A function rather than a local of scmCredentialFields, because a save or a delete changes
+   the answer and refreshSCMRow has to be able to say it again without re-rendering a form
+   somebody may be halfway through editing. */
+function scmInheritLine(s, p) {
+  const stored = new Set((p && p.scm) || []);
+  const global = new Set((s.defaults && s.defaults.scm_global) || []);
+  const inherits = global.has("bitbucket.access_token") || global.has("bitbucket.api_token");
+  return stored.size
+    ? `This repository uses its own credential below${
+        inherits ? ", overriding the workspace-wide one" : ""}.`
+    : inherits
+      ? `Blank fields inherit the workspace-wide credential from
+         <a href="/secrets">/secrets</a>. Fill one in to override it for this repository only.`
+      : `No workspace-wide credential is stored, so a private repository needs its own
+         token here. <a href="/secrets">/secrets</a> holds the shared one if you have one.`;
+}
+
+// scmRowFlag is one credential row's own chip.
+function scmRowFlag(isSet) {
+  return isSet ? `<span class="flag on">set</span>` : `<span class="flag opt">not set</span>`;
+}
+
+/* refreshSCMRow brings everything on the form that describes a project's stored credentials
+   back in line with p.scm, after a save or a delete.
+
+   In place rather than by re-rendering the form. The row's Save is deliberately outside the
+   form's own save, so a re-render would throw away whatever else had been typed — and the
+   previous answer, not refreshing at all, left the section's header chip saying "set" over a
+   row still saying "not set", which read as the save having failed when it had not.
+
+   Four things move: the row's chip, its placeholder, whether it offers Delete, and the
+   section's header chip and inherit sentence. A row that no longer exists in p.scm and has
+   no data-scmrow of its own — the stale account pair — is removed outright. */
+function refreshSCMRow(s, p, container) {
+  const stored = new Set((p && p.scm) || []);
+  const root = container || document;
+  for (const row of root.querySelectorAll("[data-scmrow]")) {
+    const name = row.dataset.scmrow;
+    const isSet = stored.has(name);
+    const flag = row.querySelector("[data-scmrow-flag]");
+    if (flag) flag.innerHTML = scmRowFlag(isSet);
+    const input = row.querySelector("input");
+    if (input) input.placeholder = isSet ? "paste to replace" : "paste to set";
+    const act = row.querySelector(".act");
+    const del = act && act.querySelector("[data-clear-scm]");
+    if (isSet && act && !del) {
+      const b = document.createElement("button");
+      b.className = "btn";
+      b.dataset.clearScm = name;
+      b.dataset.key = projectKey(p);
+      b.textContent = "Delete";
+      act.appendChild(b);
+      wireClearSCM(b, s, container);
+    } else if (!isSet && del) {
+      del.remove();
+    }
+  }
+  // The stale account pair has no row of its own to refresh: once neither half is stored,
+  // the line warning about it is simply wrong, so it goes.
+  if (!stored.has("scm.email") && !stored.has("scm.api_token")) {
+    const pair = root.querySelector('[data-clear-scm="scm.email,scm.api_token"]');
+    if (pair) pair.closest(".sec")?.remove();
+  }
+  const why = document.getElementById("scm-inherit");
+  if (why) why.innerHTML = scmInheritLine(s, p);
+  updateSCMFlag(s);
+  // A test result describes the token that was tested. Once that token has been replaced or
+  // removed, leaving the panel up would be a green "Works" about a credential that is gone.
+  for (const host of root.querySelectorAll("[data-ctest-host], [data-scan-host]")) {
+    host.innerHTML = "";
+  }
+  // The "needs a Bitbucket access token" notice above the form, once one is stored. Not
+  // re-added on a delete: the header chip says "missing" by then, which is the same fact.
+  if (stored.has("scm.access_token") || stored.has("scm.api_token")) {
+    for (const n of document.querySelectorAll(".pcard-wants")) n.remove();
+  }
+}
+
+/* adoptProjectState takes the projects payload a write returned and folds this project's row
+   into the page's own copy, so the next refresh reads what the server stored rather than what
+   the page guessed it stored. Returns the project, or null. */
+function adoptProjectState(s, key, out) {
+  const fresh = out && Array.isArray(out.projects)
+    ? out.projects.find(x => projectKey(x) === key) : null;
+  const p = (s.projects || []).find(x => projectKey(x) === key);
+  if (p && fresh) p.scm = fresh.scm || [];
+  return p || null;
+}
+
+/* wireClearSCM binds one credential Delete button.
+
+   Its own function because refreshSCMRow creates a Delete after a first save, and that button
+   has to behave like the ones rendered with the form. In place for the same reason Save is: the
+   edit page's form is not something to rebuild under somebody. It used to go through
+   runProject, whose renderer is the project list — on the edit page that drew the list into
+   its hidden container and left the form saying "set" about a credential just deleted. */
+function wireClearSCM(b, s, container) {
+  b.onclick = async () => {
+    const names = b.dataset.clearScm.split(",");
+    const key = b.dataset.key;
+    if (!confirm(`Remove ${names.join(" and ")} from ${key}? The values cannot be ` +
+        `recovered, and this repository falls back to the workspace-wide credential if ` +
+        `there is one.`)) {
+      return;
+    }
+    const label = b.textContent;
+    b.disabled = true;
+    b.textContent = "…";
+    try {
+      // Sequentially, and the last answer is the one kept: each write returns the whole
+      // state, so the final one is the only current picture.
+      let out;
+      for (const name of names) {
+        out = await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`,
+          {value: ""});
+      }
+      const p = adoptProjectState(s, key, out);
+      if (p && !(out && Array.isArray(out.projects))) {
+        p.scm = (p.scm || []).filter(n => !names.includes(n));
+      }
+      refreshSCMRow(s, p, container);
+      toast(`Removed ${names.join(" and ")} from ${key.split("/").slice(1).join("/")}.`, "good");
+    } catch (e) {
+      b.disabled = false;
+      b.textContent = label;
+      toast(e.message, "bad");
+    }
+  };
+}
+
+/* The credential test panel.
+
+   Rendered inside the green credential box, under the button that started it, because that is
+   where the eye is when the button is pressed. It was a toast at the top of the window, a long
+   form's height away, and a passing test read as nothing having happened.
+
+   Three rows, shown the moment the button is pressed and each with its own spinner, so it is
+   clear before any answer arrives what is about to be asked and of whom. The server's answer
+   replaces each row's request with the URL it actually called and settles each spinner to one
+   of three marks — the third, "not attempted", because one permission cannot be checked
+   without writing to a pull request, and calling that a pass would be the page claiming
+   something nobody checked.
+
+   The credential line shows where the token came from and the shape of the header it went out
+   in, masked by the server to its last four characters. The page never holds more than that:
+   nothing in this system reads a secret back, and a test button is exactly where that would
+   quietly stop being true. */
+function credTestPending(key) {
+  const [, owner, repo] = key.split("/");
+  const base = `/2.0/repositories/${owner}/${repo}`;
+  return {
+    repo: `${owner}/${repo}`,
+    state: "running",
+    credential: null,
+    checks: [
+      {name: "Repository read", request: `GET ${base}`, outcome: "running"},
+      {name: "Pull request read", request: `GET ${base}/pullrequests?state=OPEN&pagelen=1`,
+       outcome: "running"},
+      {name: "Pull request write", request: "", outcome: "running"},
+    ],
+  };
+}
+
+// What each row proves, in the operator's terms. Keyed by the server's step name, so a step
+// added on the server without one here still renders — just without the gloss.
+const credTestWhy = {
+  "Repository read": "what a clone needs",
+  "Pull request read": "what a build needs to list a pull request's changes",
+  "Pull request write": "what posting the preview comment needs",
+};
+
+function credTestHTML(r) {
+  const marks = {
+    running: `<span class="spinner" aria-hidden="true"></span>`,
+    pass: "✓", fail: "✕", not_attempted: "–",
+  };
+  const words = {running: "checking…", pass: "passed", fail: "failed",
+                 not_attempted: "not attempted"};
+  const failed = r.checks.some(c => c.outcome === "fail");
+  const head = r.state === "running"
+    ? `Testing the credential for <code>${esc(r.repo)}</code>…`
+    : failed
+      ? `Failed — the step marked ✕ says what Bitbucket refused.`
+      : `Works — read access to <code>${esc(r.repo)}</code> confirmed.`;
+  const cred = r.credential
+    ? `Sent with ${esc(r.credential.source)}, as
+       <code class="ctest-hdr">${esc(r.credential.header)}</code>`
+    : r.state === "running"
+      ? `Resolving which credential this project uses…`
+      : `No request was sent.`;
+  const rows = r.checks.map(c => {
+    const o = marks[c.outcome] ? c.outcome : "not_attempted";
+    const why = credTestWhy[c.name];
+    return `
+      <li class="ctest-step ${o}">
+        <span class="ctest-mark" aria-hidden="true">${marks[o]}</span>
+        <div class="ctest-body">
+          <div class="ctest-name">${esc(c.name)}${why
+            ? ` <span class="ctest-why">— ${esc(why)}</span>` : ""}
+            <span class="ctest-out">${words[o]}</span></div>
+          <code class="ctest-req">${c.request ? esc(c.request) : "no request is made"}</code>
+          ${c.message ? `<div class="ctest-msg">${esc(c.message)}</div>` : ""}
+        </div>
+      </li>`;
+  }).join("");
+  const tone = r.state === "running" ? "running" : failed ? "bad" : "good";
+  return `
+    <div class="ctest ${tone}" role="status" aria-live="polite">
+      <div class="ctest-head"><span>${head}</span>
+        ${r.state === "running" ? "" :
+          `<button class="btn icon ctest-x" data-ctest-close title="Dismiss">×</button>`}</div>
+      <div class="ctest-cred">${cred}</div>
+      <ol class="ctest-steps">${rows}</ol>
+    </div>`;
+}
+
+function renderCredTest(host, r) {
+  host.innerHTML = credTestHTML(r);
+  const x = host.querySelector("[data-ctest-close]");
+  if (x) x.onclick = () => { host.innerHTML = ""; };
+}
+
 /* scmCredentialAvailable reports whether a clone of this project could authenticate:
    something stored on the project, something typed into the form right now, or a
    workspace-wide credential to inherit.
@@ -7009,6 +7536,7 @@ function frameworkSelect(s, p, elID) {
   return `<select class="control" id="${elID}" data-framework="1">${
     list.map(f => `<option value="${esc(f.id)}"${f.id === cur ? " selected" : ""}
       data-build="${esc(f.build_command || "")}" data-output="${esc(f.output || "")}"
+      data-dir="${esc(f.dir || "")}"
       data-tool="${esc(f.needs_tool || "")}">${esc(f.label)}</option>`).join("")}</select>`;
 }
 
@@ -7043,6 +7571,85 @@ function syncFramework() {
     warn.textContent = `${opt.textContent.trim()} needs ${tool} in the container image. ` +
       `The node images above do not have it — name one that does.`;
   }
+}
+
+/* ── What will run ──────────────────────────────────────────────────────────
+
+   The form has nineteen fields and most of them are blank, and a blank one resolves
+   through the framework preset, then the server default, then a file in the repository
+   that is not on this machine. Nobody can hold that in their head, so the answer is asked
+   for rather than reasoned out: the row as currently typed goes to the daemon, which
+   resolves it with the function a build calls and sends back the steps.
+
+   Asked of the server for exactly that reason. Resolving the precedence here as well
+   would be a second implementation of it, and the way two implementations differ is a
+   form that promises one build command while the build runs another — which is the
+   failure the preset table is already sent down to the page to avoid. */
+
+// planTimer debounces the request. Typing a build command is a dozen keystrokes and each
+// one would otherwise be a round trip; 350ms is long enough to be one request per pause.
+let planTimer = null;
+// planSeq drops a response that a later request has already superseded. Without it a slow
+// answer for "npm ru" lands after the fast one for "npm run build" and the panel shows
+// the older of the two, which is the one that is wrong.
+let planSeq = 0;
+
+function schedulePlan() {
+  clearTimeout(planTimer);
+  planTimer = setTimeout(refreshPlan, 350);
+}
+
+async function refreshPlan() {
+  const out = document.getElementById("plan");
+  if (!out) return;
+
+  // Unsuffixed ids throughout: the panel is emitted on the new-project form only, and
+  // that form is the one whose fields are not keyed by a project that already exists.
+  const val = f => (document.getElementById(`p-${f}`)?.value || "").trim();
+
+  const body = {
+    platform: val("platform"), owner: val("owner"), repo: val("repo"),
+    framework: val("framework"), build_dir: val("dir"), build_command: val("command"),
+    build_output: val("output"), base_url: val("baseurl"), driver: val("driver"),
+    image: val("image"), timeout: val("timeout"),
+  };
+  if (!body.repo) {
+    out.className = "plan quiet";
+    out.textContent = "Fill in a repository and this says what a build of it would do.";
+    return;
+  }
+
+  const seq = ++planSeq;
+  let plan;
+  try {
+    plan = await api("POST", "/api/projects/plan", body);
+  } catch (e) {
+    if (seq !== planSeq) return;
+    // Quiet, and it stays quiet. This panel is a courtesy: the form still saves, and a
+    // red block where the plan goes would read as something being wrong with the project
+    // rather than with one request for a description of it.
+    out.className = "plan quiet";
+    out.textContent = `Could not resolve this: ${e.message}`;
+    return;
+  }
+  if (seq !== planSeq) return;
+
+  const flag = src => src === "project" ? "on" : "opt";
+  const rows = (plan.lines || []).map(l => `<div class="planrow">
+    <span class="k">${esc(l.key)}</span>
+    <span class="v">${esc(l.value)}</span>
+    <span class="flag ${flag(l.from)}">${esc(l.from)}</span>
+    ${l.note ? `<div class="note">${esc(l.note)}</div>` : ""}
+  </div>`).join("");
+
+  out.className = "plan";
+  out.innerHTML = rows +
+    (plan.name ? `<div class="planname">
+       <span class="k">name</span>
+       <span class="v">${esc(plan.name)}</span>
+       <span class="why">${esc(plan.name_why || "")}</span>
+     </div>` : "") +
+    (plan.warn ? `<div class="notice warn">${esc(plan.warn)}</div>` : "");
 }
 
 // driverSelect offers only what this daemon will actually accept.
@@ -7136,21 +7743,22 @@ function parseRepoURL(raw) {
 function projectForm(s, p) {
   const v = f => esc(p ? (p[f] || "") : "");
   const id = f => p ? `p-${f}-${projectKey(p)}` : `p-${f}`;
-  const field = (f, label, control, why) => `<div class="field">
+  const field = (f, label, control, why, half) => `<div class="field${half ? " half" : ""}">
     <label for="${id(f)}">${label}</label>${control}
     ${why ? `<div class="why">${why}</div>` : ""}</div>`;
-  /* A titled group of fields, with one sentence saying what the group decides.
+  /* A titled group of fields.
 
      Nineteen fields under three grey captions was the "no logical groupings, mushy screen"
      complaint: the captions were the same size and weight as everything else, and nothing bounded
-     one group from the next. A group is a box with a title and a purpose — five of them, each
+     one group from the next. A group is a bounded panel with a title — five of them, each
      answering a question somebody actually has: which repository, where the site is, how it runs,
-     when to build, how it looks. */
-  const group = (title, why, fields) => `<section class="fgroup">
-    <div class="fgroup-head">
-      <h4>${title}</h4>
-      ${why ? `<p>${why}</p>` : ""}
-    </div>
+     when to build, how it looks.
+
+     The title is all the group gets. The sentence that used to sit under each one restated the
+     title in longer words, and five of them put a paragraph between the reader and every set of
+     fields on the page. */
+  const group = (title, fields) => `<section class="fgroup">
+    <div class="fgroup-head"><h4>${title}</h4></div>
     <div class="fgroup-body">${fields}</div>
   </section>`;
 
@@ -7168,80 +7776,94 @@ function projectForm(s, p) {
   const preset = (s.defaults.frameworks || []).find(
     f => f.id === (p ? (p.framework || "") : (s.defaults.framework || ""))) || {};
 
-  return `<h3 class="form-title">${p ? `Settings for ${esc(projectLabel(p))}` : "New project"}</h3>
-    <p class="form-title-why">${p
-      ? "Every field left blank defers to the repository's own <code>.docpreview.yml</code>."
-      : "Paste a repository URL and the rest fills itself in. Everything below the identity " +
-        "is optional: blank means the repository's own <code>.docpreview.yml</code> decides."}</p>
+  return `<p class="form-title-why">${p
+      ? "A field left blank defers to the framework preset, then to the repository's own " +
+        "<code>.docpreview.yml</code>."
+      : "Everything except the URL is optional. A blank field falls through to the framework " +
+        "preset, then to the repository's own <code>.docpreview.yml</code>."}</p>
     <div class="grid-form">
-      ${p ? "" : group("Repository", "Which repository this project is, and where it lives. This is " +
-        "what a webhook delivery is matched against.", `
-        ${field("url", "Repository URL",
-          `<input class="control" id="p-url" placeholder="https://github.com/acme/docs">`,
-          "Paste one and the three fields below fill themselves.")}
+      ${p ? "" : group("Repository", `
+        ${field("url", "URL",
+          `<input class="control" id="p-url" placeholder="https://github.com/acme/docs">`)}
         ${field("platform", "Platform", `<select class="control" id="p-platform">
           <option value="github">github</option>
           <option value="bitbucket">bitbucket</option>
           <option value="local">filesystem — a bare repository on this machine</option>
-        </select>`)}
+        </select>`, "", true)}
         ${field("owner", "Owner",
           `<input class="control" id="p-owner" placeholder="acme">`,
-          "The organisation or workspace. For filesystem, whatever you file it under.")}
-        ${field("repo", "Repository",
+          "For filesystem, whatever you file it under.", true)}
+        ${field("repo", "Name",
           `<input class="control" id="p-repo" placeholder="docs">`)}`)}
 
-      ${group("Where the site is", "The four fields that decide what gets built and where the " +
-        "output lands. Blank follows the preset, or the repository's own .docpreview.yml.", `
-        ${field("framework", "Framework preset", frameworkSelect(s, p, id("framework")),
-          "Fills the command and output below with what that generator uses. There is no install " +
-          "command: it comes from the lockfile the repository committed, which knows which " +
-          "package manager owns the tree." +
+      ${group("Where the site is", `
+        ${field("framework", "Framework", frameworkSelect(s, p, id("framework")),
+          "There is no install command: it comes from the lockfile the repository committed, " +
+          "which knows which package manager owns the tree." +
           `<div class="notice warn" id="framework-tool" hidden></div>`)}
-        ${field("dir", "Build directory", text("dir", esc(preset.dir || "www")),
+        ${field("dir", "Directory", text("dir", esc(preset.dir || "www")),
           "Where <code>package.json</code> lives, relative to the repository root.")}
-        ${field("command", "Build command",
+        ${field("command", "Command",
           text("command", esc(preset.build_command || s.defaults.build_command || "npm run build")),
           "Run by <code>sh -lc</code> inside the image, so pipes and <code>&amp;&amp;</code> " +
-          "work.")}
-        ${field("output", "Output directory", text("output", esc(preset.output || "build")),
-          "Relative to the build directory.")}
+          "work.", true)}
+        ${field("output", "Output", text("output", esc(preset.output || "build")),
+          "Relative to the build directory.", true)}
         ${field("baseurl", "Base URL", text("baseurl", "/"),
           "Must start and end with a slash. Docusaurus bakes it in at build time, so getting it " +
           "wrong 404s every asset.")}`)}
 
-      ${group("How it runs", "Where the build executes, and for how long.", `
-        ${field("driver", "Driver", driverSelect(s, p, id("driver")), driverWhy(s))}
-        ${field("image", "Container image", imagePicker(id("image"), v("image"), s),
-          "Pick one or type your own — a private mirror is a normal answer. Needs node, and " +
-          "<code>git</code> if the build clones other repositories, which the <code>-slim</code> " +
-          "images do not have; alpine's musl breaks dependencies that ship prebuilt binaries.")}
-        ${field("timeout", "Build timeout", text("timeout", esc(s.defaults.timeout || "15m0s")),
+      ${group("How it runs", `
+        ${field("driver", "Driver", driverSelect(s, p, id("driver")), driverWhy(s), true)}
+        ${field("timeout", "Timeout", text("timeout", esc(s.defaults.timeout || "15m0s")),
           "How long one build may run before it is killed. Blank uses the server's " +
           "<code>build.timeout</code>, shown as the placeholder. A duration with a unit — " +
           "<code>45m</code>, <code>2h</code> — because a repository that clones seven others is " +
-          "not a two-minute build, and no other project should wait that long to be told it hung.")}`)}
+          "not a two-minute build, and no other project should wait that long to be told it " +
+          "hung.", true)}
+        ${field("image", "Image", imagePicker(id("image"), v("image"), s),
+          "Pick one or type your own — a private mirror is a normal answer. Needs node, and " +
+          "<code>git</code> if the build clones other repositories, which the <code>-slim</code> " +
+          "images do not have; alpine's musl breaks dependencies that ship prebuilt binaries.")}`)}
 
-      ${group("When to build", "Every pull request is built unless something says otherwise. " +
-        "Blank matches changed paths against the documentation globs.", `
-        ${field("detect", "Ignore-build script", text("detect", ".docpreview/detect"),
+      ${group("When to build", `
+        ${field("detect", "Detect script", text("detect", "docusaurus/docpreview-detect"),
           "A path in the repository, not a command — it is executed directly, so its shebang " +
           "decides the interpreter and arguments would be read as part of the filename. Gets the " +
-          "changed paths on stdin; exit 0 to build, 78 to skip.")}`)}
+          "changed paths on stdin; exit 0 to build, 78 to skip. Under docker it runs in the build " +
+          "image with no network and a read-only checkout. Blank under docker runs " +
+          "<code>docpreview-detect</code> from the <b>Directory</b> above when the branch has one. " +
+          "Otherwise the changed paths are matched against globs: <code>detect.paths</code> from " +
+          "the repository's own " +
+          "<code>.docpreview.yml</code> if it sets them, otherwise everything under the " +
+          "<b>Directory</b> above, otherwise a Docusaurus layout anywhere in the repository.")}`)}
 
       ${scmCredentialFields(s, p, id)}
 
-      ${group("Appearance", "How this project reads on the dashboard. Neither affects a build.", `
-        ${field("name", "Name",
+      ${group("Appearance", `
+        ${field("name", "Display name",
           `<input class="control" id="${id("name")}" maxlength="120"
             value="${v("display_name")}" placeholder="${p ? esc(p.repo) : "the repository name"}">`,
-          "Blank uses the repository name.")}
+          "", true)}
         ${field("avatar", "Badge", avatarField(p, id("avatar")),
           "One or two characters, or an emoji. Blank derives initials and a colour from the name. " +
           "A <code>data:</code> URI renders as an image — inlined, never fetched, because this " +
-          "page asks the internet for nothing.")}
+          "page asks the internet for nothing.", true)}
         ${field("notes", "Notes", `<textarea class="control" id="${id("notes")}"
           maxlength="5000" placeholder="Why this project is set up the way it is. Nothing reads
           this but the next person.">${v("notes")}</textarea>`)}`)}
+
+      ${p ? "" : `<section class="fgroup" id="plan-box">
+        <div class="fgroup-head"><h4>What will run</h4></div>
+        <div class="fgroup-body">
+          <div class="field">
+            <div class="plan quiet" id="plan">Fill in a repository and this says what a
+              build of it would do.</div>
+            <div class="why">Resolved by the daemon, not by this page — the same
+              precedence a build applies, so what is here is what will run.</div>
+          </div>
+        </div>
+      </section>`}
     </div>
     <div class="act formact">
       <!-- Primary, so which button commits is not a reading exercise. Cancel is beside
@@ -7507,6 +8129,14 @@ function wireProjectHandlers(s, container) {
     if (e.target.closest(".panel, .pedit-form, .pcard [data-save]")) formDirty = true;
   });
 
+  // The plan follows the form. Both events: typing fires input, and a select fires only
+  // change — and the framework select is the field that moves the most lines at once.
+  if (document.getElementById("plan-box")) {
+    el.addEventListener("input", schedulePlan);
+    el.addEventListener("change", schedulePlan);
+    refreshPlan();
+  }
+
   /* The button lives in the page's action row, outside the body this render replaces — so it is
      shown or hidden here rather than emitted, and its handler is bound every render onto an element
      that survives them. A read-only page never reveals it: there is nothing it could submit. */
@@ -7551,8 +8181,10 @@ function wireProjectHandlers(s, container) {
       document.getElementById("p-owner").value = got.owner;
       document.getElementById("p-repo").value = got.repo;
       // Setting .value from script fires no change event, so the credential block would
-      // stay hidden for a Bitbucket URL that had just filled the form in.
+      // stay hidden for a Bitbucket URL that had just filled the form in — and the plan
+      // would go on saying there was no repository for one that had just been pasted.
       syncSCMFields();
+      schedulePlan();
     };
   }
 
@@ -7593,13 +8225,43 @@ function wireProjectHandlers(s, container) {
       const label = b.textContent;
       b.disabled = true;
       b.textContent = "…";
+      // Whether this project could clone before this save — its own token, or one inherited.
+      // If it could not, nothing it has open was ever built, and this save is the moment it
+      // can be: see the scan below.
+      const before = (s.projects || []).find(x => projectKey(x) === key);
+      const hadCredential = Boolean(before && (
+        (before.scm || []).some(n => n === "scm.access_token" || n === "scm.api_token") ||
+        ((s.defaults && s.defaults.scm_global) || []).some(
+          n => n === "bitbucket.access_token" || n === "bitbucket.api_token")));
       try {
-        await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`, {value});
+        const out = await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`,
+          {value});
         field.value = "";
-        const p = (s.projects || []).find(x => projectKey(x) === key);
-        if (p) p.scm = [...new Set([...(p.scm || []), name])];
-        updateSCMFlag(s);
-        toast(`Stored ${name} for ${key.split("/").slice(1).join("/")}.`);
+        // The server's answer when it sent one, the page's own bookkeeping when it did not.
+        const p = adoptProjectState(s, key, out);
+        if (p && !(out && Array.isArray(out.projects))) {
+          p.scm = [...new Set([...(p.scm || []), name])];
+        }
+        // The row as well as the header. Only the header used to move, so the row went on
+        // saying "not set" and "paste to set" over a token that was stored.
+        refreshSCMRow(s, p, el);
+        toast(`Stored ${name} for ${key.split("/").slice(1).join("/")}.`, "good");
+
+        /* The first usable credential: scan, here, now.
+
+           Only then. Every later save is a rotation, and a scan rebuilds every open pull
+           request and supersedes anything already running — a token rotation should not do
+           that. But a private project with no credential has never built anything, so this
+           save is the moment its open pull requests become buildable, and nothing else will
+           notice: the scan on create ran before the token existed. */
+        const scanHost = b.closest(".credbox")?.querySelector("[data-scan-host]");
+        if (!hadCredential && p && p.enabled &&
+            (name === "scm.access_token" || name === "scm.api_token") && scanHost) {
+          scanHost.replaceChildren(noteEl(
+            "Scanning for open pull requests, now that this repository can be cloned…", "", true));
+          const r = await runScan(key);
+          scanHost.replaceChildren(noteEl(r.text, r.kind));
+        }
       } catch (e) {
         toast(e.message, "bad");
       } finally {
@@ -7612,27 +8274,7 @@ function wireProjectHandlers(s, container) {
   // Clearing one. An empty value is how the endpoint deletes, so this is the same route.
   // Clearing one credential, or the account pair as a unit. An empty value is how the
   // endpoint deletes, so this is the same route either way.
-  for (const b of el.querySelectorAll("[data-clear-scm]")) {
-    b.onclick = async () => {
-      const names = b.dataset.clearScm.split(",");
-      const key = b.dataset.key;
-      if (!confirm(`Remove ${names.join(" and ")} from ${key}? The values cannot be ` +
-          `recovered, and this repository falls back to the workspace-wide credential if ` +
-          `there is one.`)) {
-        return;
-      }
-      await runProject(b, async () => {
-        // Sequentially, and the last answer is what the page renders: each write returns
-        // the whole state, so the final one is the only current picture.
-        let out;
-        for (const name of names) {
-          out = await api("PUT", `${projectPath(key)}/scm/${encodeURIComponent(name)}`,
-            {value: ""});
-        }
-        return out;
-      });
-    };
-  }
+  for (const b of el.querySelectorAll("[data-clear-scm]")) wireClearSCM(b, s, el);
 
   for (const b of el.querySelectorAll("[data-close-panel]")) {
     b.onclick = () => {
@@ -7809,9 +8451,9 @@ function wireProjectHandlers(s, container) {
               // sentence that says what to do rather than the raw platform error.
               const missing = /no Bitbucket credential|credential/i.test(scan.error);
               setFlash(missing
-                ? `Saved. No builds queued yet — add an access token to this project, ` +
-                  `then use Build now.`
-                : `Saved, but nothing could be queued: ${scan.error}`);
+                ? `Saved. No builds queued yet — add an access token on this project's ` +
+                  `page; its open pull requests are queued as soon as the token is saved.`
+                : `Saved, but nothing could be queued: ${scan.error}`, missing ? "" : "bad");
             } else if (scan.queued) {
               setFlash(`Saved. ${scan.queued} open pull request${
                 scan.queued === 1 ? "" : "s"} queued — watch the dashboard.`);
@@ -7819,7 +8461,7 @@ function wireProjectHandlers(s, container) {
               setFlash("Saved. That repository has no open pull requests yet.");
             }
           } catch (e) {
-            setFlash(`Saved, but the scan failed: ${e.message}`);
+            setFlash(`Saved, but the scan failed: ${e.message}`, "bad");
           }
         }
 
@@ -7890,16 +8532,60 @@ function wireProjectHandlers(s, container) {
   // The branch preview: build it, or build it again. One handler for both, because the
   // request is identical — the server reads the repository's default branch either way, so
   // "start one" and "rebuild it" differ only in what the button said.
+  //
+  // Not through runProject. A refusal comes back as 200 {queued:false, error}, and runProject
+  // re-rendered the list on any 200 — replacing the button that was pressed and leaving only a
+  // neutral-styled toast at the far corner of the window to say nothing had been queued. On
+  // the edit page it was worse: the render went into the hidden list, and the page stayed as
+  // it was. So a refusal now stays beside the button, red, until it is dismissed; only a build
+  // that was actually queued re-renders, because the row's state is what changed.
   for (const b of el.querySelectorAll("[data-branch]")) {
     b.onclick = async () => {
       const key = b.dataset.branch;
-      await runProject(b, async () => {
-        const r = await api("POST", `${projectPath(key)}/branch`, {});
-        setFlash(r.error
-          ? `Nothing queued: ${r.error}`
-          : `Building ${r.branch} — watch the dashboard.`);
-        return api("GET", "/api/projects");
-      });
+      const label = b.textContent;
+      b.disabled = true;
+      b.textContent = "Queuing…";
+      let r;
+      try {
+        r = await api("POST", `${projectPath(key)}/branch`, {});
+      } catch (e) {
+        r = {queued: false, error: e.message};
+      }
+      b.disabled = false;
+      b.textContent = label;
+      if (r.error || r.queued === false) {
+        actNote(b, `Nothing queued: ${r.error || "the daemon did not say why"}`, "bad");
+        return;
+      }
+      const msg = `Building ${r.branch || "the default branch"} — watch the dashboard.`;
+      if (isProjectEditPage) {
+        // The edit page holds a form that may have unsaved edits in it, so it is not
+        // re-rendered for a build starting; the note says so where the button is.
+        actNote(b, msg, "good");
+        return;
+      }
+      setFlash(msg, "good");
+      try {
+        renderProjectsPage(await api("GET", "/api/projects"));
+      } catch (e) {
+        // Queued, and only the refresh failed. Said beside the button, because the build
+        // did start and the page simply has not caught up.
+        actNote(b, `${msg} (The list could not be refreshed: ${e.message})`, "good");
+      }
+    };
+  }
+
+  // Scanning for open pull requests, from the edit page's header. The answer goes under the
+  // header, where the branch button's does, and stays until dismissed.
+  for (const b of el.querySelectorAll("[data-scan]")) {
+    b.onclick = async () => {
+      const label = b.textContent;
+      b.disabled = true;
+      b.textContent = "Scanning…";
+      const r = await runScan(b.dataset.scan);
+      b.disabled = false;
+      b.textContent = label;
+      actNote(b, r.text, r.kind);
     };
   }
 
@@ -7919,7 +8605,7 @@ function wireProjectHandlers(s, container) {
         // which is a stale list rather than a broken installation.
         setFlash(r.error
           ? `Nothing queued: ${r.error}`
-          : `Queued a build for #${number} — watch the dashboard.`);
+          : `Queued a build for #${number} — watch the dashboard.`, r.error ? "bad" : "good");
         return api("GET", "/api/projects");
       });
     };
@@ -7953,25 +8639,54 @@ function wireProjectHandlers(s, container) {
   //
   // Not through runProject, which re-renders the whole page on success — that would close
   // the form the button is inside, which is where somebody is about to fix the token if the
-  // answer is bad. The result is a toast and the form stays put.
+  // answer is bad. The result renders in the credential box, under the button; see
+  // credTestHTML for why it is no longer a toast.
   for (const b of el.querySelectorAll("[data-test-scm]")) {
     b.onclick = async () => {
       const key = b.dataset.testScm;
+      const host = b.closest(".credbox")?.querySelector("[data-ctest-host]");
       const label = b.textContent;
       b.disabled = true;
       b.textContent = "…";
+      const pending = credTestPending(key);
+      if (host) renderCredTest(host, pending);
+      // A floor under the spinner, so an answer in eighty milliseconds still reads as a check
+      // that ran rather than as the panel flickering. Concurrent with the request, so it adds
+      // nothing to a slow one.
+      const floor = new Promise(res => setTimeout(res, 450));
+      let result;
       try {
         const out = await api("POST", `${projectPath(key)}/scm-test`);
-        // Headline first, detail behind it: the server sends both, separated by a newline.
-        const [headline, ...rest] = String(out.ok || "Works.").split("\n");
-        toast(headline, "good", rest.join(" "));
+        result = {
+          repo: pending.repo, state: "done",
+          credential: out.credential || null,
+          checks: Array.isArray(out.checks) && out.checks.length ? out.checks : [
+            {name: "Repository read", request: pending.checks[0].request, outcome: "fail",
+             message: "The daemon answered without any steps. It may be older than this page."},
+          ],
+        };
       } catch (e) {
-        // The platform's own message, which names the missing scope where this code
-        // cannot. Long, so it gets the failure toast's longer life.
-        toast(e.message, "bad");
-      } finally {
-        b.disabled = false;
-        b.textContent = label;
+        // The check could not start — no credential stored anywhere, or no client for the
+        // platform. Nothing was sent, so the first row carries the reason and the others say
+        // they were never reached rather than spinning on forever.
+        result = {
+          repo: pending.repo, state: "done", credential: null,
+          checks: pending.checks.map((c, i) => i === 0
+            ? {...c, outcome: "fail", message: e.message}
+            : {...c, outcome: "not_attempted", message: "Not attempted — nothing could be sent."}),
+        };
+      }
+      await floor;
+      b.disabled = false;
+      b.textContent = label;
+      if (host) {
+        renderCredTest(host, result);
+      } else {
+        // No panel to render into is a page this handler does not know; say something
+        // rather than nothing.
+        const bad = result.checks.find(c => c.outcome === "fail");
+        toast(bad ? `${bad.name}: ${bad.message}` : "Works — read access confirmed.",
+          bad ? "bad" : "good");
       }
     };
   }

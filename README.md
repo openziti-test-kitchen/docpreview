@@ -180,6 +180,26 @@ go test ./cmd/... ./internal/...
 The explicit package list rather than `./...`: the demo's `node_modules` contains Go files that are not part of
 this module. A running daemon holds the built binary open on Windows, so stop it before rebuilding.
 
+### Running one locally
+
+Point a scratch daemon at the `local` exposer, always:
+
+```yaml
+listen: 127.0.0.1:8099
+data_dir: ./scratch
+exposer:
+  kind: local
+```
+
+**A daemon with an empty database deletes shares.** At startup it lists every share its exposer account
+holds, keeps the ones its own database claims, and reaps the rest — which is how a preview survives a
+restart instead of being torn down and rebuilt. A fresh `data_dir` claims nothing, so pointing one at a
+zrok environment that is already in use deletes every preview in it.
+
+The listing is scoped to the environment's ziti identity, so this reaches the shares of whatever machine
+the daemon runs on and no further. That is enough: it is your own workstation's previews that go. The
+`local` exposer touches no account at all.
+
 Requires Go 1.26 (the zrok v2 SDK does). Node 20+ to run documentation builds, unless you use the Docker
 driver.
 
