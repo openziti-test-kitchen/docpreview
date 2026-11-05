@@ -771,7 +771,7 @@ func (c *Client) postBuildStatus(ctx context.Context, r scm.Report) error {
 	return c.do(ctx, r.PR.Repo.Owner, r.PR.Repo.Name, http.MethodPost, path, map[string]string{
 		"key":         statusKey,
 		"state":       state,
-		"name":        "Documentation preview",
+		"name":        scm.TitleOf(r),
 		"description": description,
 		"url":         target,
 	}, nil)

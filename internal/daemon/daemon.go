@@ -3308,6 +3308,9 @@ func (d *Daemon) report(ctx context.Context, r scm.Report) {
 	// A build in flight gets it too, and the comment links the word "Building" to it. The log is
 	// tailed live, so the moment worth watching is while it runs — and a reviewer who has just
 	// pushed is reading the comment then, not after it says failed.
+	if r.Title == "" {
+		r.Title = d.cfg.Preview.Title
+	}
 	if base := strings.TrimRight(d.cfg.DashboardURL, "/"); base != "" {
 		if r.DashboardURL == "" {
 			r.DashboardURL = base + "/"

@@ -606,6 +606,13 @@ type PreviewConfig struct {
 	// to fifty times in an afternoon. The full story — byte caps, a total ceiling,
 	// eviction order, exempting the paid exposers — is in TODO.md.
 	KeepBuilds int `yaml:"keep_builds"`
+
+	// Title heads the pull request comment and names the Bitbucket build status.
+	//
+	// Only the text a reader sees. The comment is found again by its marker and the build status
+	// by its key, so changing this on a running installation edits the existing comments in place
+	// rather than posting new ones.
+	Title string `yaml:"title"`
 }
 
 // DefaultNameTemplate builds the public label for a preview.
@@ -714,6 +721,7 @@ func DefaultServer() Server {
 			TTL:             72 * time.Hour,
 			TeardownOnClose: true,
 			KeepBuilds:      10,
+			Title:           "NetFoundry Preview",
 		},
 	}
 }

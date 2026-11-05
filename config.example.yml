@@ -101,3 +101,7 @@ preview:
   ttl: 72h
 
   teardown_on_close: true
+
+  # Heading of the pull request comment, and the name of the Bitbucket build status.
+  # Changing it edits the existing comments in place; they are found by a hidden marker.
+  title: "NetFoundry Preview"
