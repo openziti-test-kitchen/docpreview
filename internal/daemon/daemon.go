@@ -294,6 +294,11 @@ func (d *Daemon) recordFailure(ctx context.Context, pr model.PullRequest, buildE
 // rebuild: a branch whose latest push touched no documentation still has a working
 // preview of the documentation it did touch, and overwriting that row would make
 // the reaper delete a live share.
+//
+// A row with nothing published does not survive. A pull request whose last build
+// failed and whose next one was skipped would otherwise keep showing the old
+// failure — a 429 from a day ago, say — after a Rebuild that did run and decided
+// there was nothing to build.
 func (d *Daemon) recordSkip(ctx context.Context, pr model.PullRequest, reason string) {
 	id := pr.PreviewID()
 
@@ -306,7 +311,7 @@ func (d *Daemon) recordSkip(ctx context.Context, pr model.PullRequest, reason st
 		return
 	}
 	for _, p := range existing {
-		if p.PreviewID == id {
+		if p.PreviewID == id && (p.State == scm.StateReady || p.URL != "") {
 			return
 		}
 	}
