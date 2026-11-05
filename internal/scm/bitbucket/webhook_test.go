@@ -574,6 +574,48 @@ func TestChangedFilesPaginatesAndHandlesRenames(t *testing.T) {
 	}
 }
 
+// TestChangedFilesFollowsAnEscapedNextLink. Bitbucket's second diffstat page lives at
+// `.../diffstat/owner/repo:<hash>%0D<hash>`. Decoding that %0D turned it into a carriage
+// return and failed the build with "invalid control character in URL".
+func TestChangedFilesFollowsAnEscapedNextLink(t *testing.T) {
+	const spec = "/2.0/repositories/netfoundry/frontdoor/diffstat/netfoundry/frontdoor:e619a530d4fe%0D942cfd8e9ffe"
+	var srv *httptest.Server
+	var second string
+	c, s := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") != "2" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"next": srv.URL + spec + "?pagelen=100&page=2",
+				"values": []map[string]any{
+					{"status": "modified", "new": map[string]string{"path": "docs/a.md"}},
+				},
+			})
+			return
+		}
+		second = r.URL.EscapedPath()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"values": []map[string]any{
+				{"status": "added", "new": map[string]string{"path": "docs/b.md"}},
+			},
+		})
+	}))
+	srv = s
+
+	pr := model.PullRequest{
+		Repo:   model.Repo{Platform: model.PlatformBitbucket, Owner: "netfoundry", Name: "frontdoor"},
+		Number: 23,
+	}
+	files, err := c.ChangedFiles(t.Context(), pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Errorf("files = %v, want both pages", files)
+	}
+	if !strings.EqualFold(second, spec) {
+		t.Errorf("second page path = %q, want %q", second, spec)
+	}
+}
+
 // TestChangedFilesRefusesAnOffHostNextLink. Following a server-supplied URL blindly is
 // how an API response becomes a request to wherever it likes.
 func TestChangedFilesRefusesAnOffHostNextLink(t *testing.T) {
