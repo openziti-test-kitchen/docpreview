@@ -102,6 +102,7 @@ func cmdWebhookOnly(args []string) error {
 	}
 
 	log := newLogger(*logLevel)
+	installShareGate("webhook-only", log)
 
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
@@ -182,7 +183,8 @@ func cmdWebhookOnly(args []string) error {
 		// No frontend auth, and this is not an oversight: the caller is GitHub or Bitbucket,
 		// which hold no account with any OAuth provider. The endpoint's protection is the HMAC
 		// over the body, verified by the daemon with the secret from the vault.
-		ln, url, cleanup, err := zrokListener(*zrokName, *zrokNamespace, zrokFrontendAuth{}, log)
+		ln, url, cleanup, err := zrokListener(*zrokName, *zrokNamespace, zrokFrontendAuth{},
+			expose.ShareReasonWebhook, log)
 		if err != nil {
 			return err
 		}
@@ -249,7 +251,9 @@ type zrokFrontendAuth struct {
 	EmailPatterns []string
 }
 
-func zrokListener(name, namespace string, auth zrokFrontendAuth, log *slog.Logger) (net.Listener, string, func(), error) {
+func zrokListener(
+	name, namespace string, auth zrokFrontendAuth, reason string, log *slog.Logger,
+) (net.Listener, string, func(), error) {
 	root, err := environment.LoadRoot()
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("loading the zrok environment (is zrok2 enabled?): %w", err)
@@ -294,10 +298,15 @@ func zrokListener(name, namespace string, auth zrokFrontendAuth, log *slog.Logge
 	// context.Background() rather than a plumbed context because this runs during startup,
 	// before anything can be cancelled, and the whole budget is a few seconds.
 	var shr *sdk.Share
+	//
+	// Through the share gate, which bounds a unit stuck in a restart loop: each new process finds
+	// the window spent and waits, rather than creating a share every ten seconds.
 	create := func() error {
-		var cerr error
-		shr, cerr = sdk.CreateShare(root, req)
-		return cerr
+		return expose.DefaultShareGate().CreateShare(context.Background(), name, reason, func() error {
+			var cerr error
+			shr, cerr = sdk.CreateShare(root, req)
+			return cerr
+		})
 	}
 	err = expose.RetryZrok(context.Background(), log, "create share "+name, create)
 	if err != nil {

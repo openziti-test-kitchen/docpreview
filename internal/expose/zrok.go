@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-openapi/runtime"
@@ -58,6 +59,25 @@ type zrokShare struct {
 	name      string
 	listener  interface{ Close() error }
 	server    *http.Server
+	site      *swapHandler
+	url       string
+}
+
+// swapHandler is the handler a share serves, replaceable while the share stays up.
+//
+// A rebuild of a branch changes what is served, not where. Swapping the handler keeps the share
+// and its listener, so a push costs no zrok calls at all — where deleting the share and creating
+// another cost one share creation per commit against the account's rate limit.
+type swapHandler struct{ h atomic.Pointer[http.Handler] }
+
+func newSwapHandler(h http.Handler) *swapHandler {
+	s := &swapHandler{}
+	s.h.Store(&h)
+	return s
+}
+
+func (s *swapHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	(*s.h.Load()).ServeHTTP(w, r)
 }
 
 // NewZrok builds a zrok exposer. It loads the on-disk zrok environment
@@ -148,9 +168,14 @@ func (z *Zrok) auth() runtime.ClientAuthInfoWriter {
 // Publish creates a public zrok share bound to spec.Name, opens an overlay
 // listener for it, and serves h there.
 func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publication, error) {
-	// Replacing this preview's own earlier publication is the common path: a
-	// second push to the same branch. Do it before creating the new share so
-	// the name is free.
+	// A second push to the same branch: the share this preview already has keeps serving, now
+	// the new build. See swapHandler.
+	if pub := z.reuse(spec, h); pub != nil {
+		return pub, nil
+	}
+
+	// Otherwise whatever this preview had is replaced: a name that changed, or a share that
+	// was never opened by this process. Do it before creating the new share so the name is free.
 	//
 	// Keyed by preview id, not by name. Name is the label, and two previews can
 	// ask for one label if the name_template does not separate them — keyed by
@@ -227,9 +252,7 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	shr, err := func() (*sdk.Share, error) {
 		var out *sdk.Share
 		err := z.retryTransientTo(ctx, spec.Progress, "create share "+spec.Name, func() error {
-			var attempt error
-			out, attempt = sdk.CreateShare(z.root, req)
-			return attempt
+			return z.gatedCreate(ctx, spec, req, &out)
 		})
 		return out, err
 	}()
@@ -239,7 +262,9 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 		// worth retrying, because it is self-inflicted and recoverable.
 		if reaped := z.reapName(ctx, spec.Name); reaped {
 			z.log.Warn("reclaimed orphaned zrok name and retrying", "name", spec.Name)
-			shr, err = sdk.CreateShare(z.root, req)
+			reclaim := spec
+			reclaim.ShareReason = ShareReasonReclaim
+			err = z.gatedCreate(ctx, reclaim, req, &shr)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("creating zrok share %q in namespace %q: %w", spec.Name, z.namespace, err)
@@ -271,8 +296,9 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 		return nil, fmt.Errorf("opening zrok listener for share %s: %w", shr.Token, err)
 	}
 
+	site := newSwapHandler(h)
 	srv := &http.Server{
-		Handler:           h,
+		Handler:           site,
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	go func() {
@@ -287,6 +313,7 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 		name:      spec.Name,
 		listener:  listener,
 		server:    srv,
+		site:      site,
 	}
 	z.mu.Lock()
 	z.live[spec.Key()] = entry
@@ -314,6 +341,9 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	}
 
 	url := JoinURL(origin, spec.BaseURL)
+	z.mu.Lock()
+	entry.url = url
+	z.mu.Unlock()
 	spec.say("published %s", url)
 	z.log.Info("published preview",
 		"preview", spec.PreviewID, "build", spec.BuildID,
@@ -323,6 +353,56 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 		z.withdrawEntry(spec.Key(), entry)
 		return nil
 	}), nil
+}
+
+// reuse points this preview's live share at h, when it has one under the same name and base URL,
+// and returns the publication for it. Nil means there is nothing to reuse.
+//
+// The entry is copied rather than updated in place: the daemon closes the previous Publication
+// after this returns, and withdrawEntry only tears down the entry it was given. A new entry makes
+// that close a no-op while the share carries on.
+func (z *Zrok) reuse(spec Spec, h http.Handler) *Publication {
+	key := spec.Key()
+	z.mu.Lock()
+	old, ok := z.live[key]
+	if !ok || old.site == nil || old.name != spec.Name || old.url == "" ||
+		!strings.HasSuffix(old.url, JoinURL("", spec.BaseURL)) {
+		z.mu.Unlock()
+		return nil
+	}
+	entry := *old
+	z.live[key] = &entry
+	z.mu.Unlock()
+
+	entry.site.h.Store(&h)
+	spec.say("serving the new build on the existing share %s", entry.url)
+	z.log.Info("published preview on its existing share",
+		"preview", spec.PreviewID, "build", spec.BuildID, "name", spec.Name, "url", entry.url)
+	return NewPublication(entry.url, spec.Name, func() error {
+		z.withdrawEntry(key, &entry)
+		return nil
+	})
+}
+
+// gatedCreate creates one share when the share gate lets it, saying so in the build log while it
+// waits: a queued share can sit for minutes, and the log must not read as a hang.
+func (z *Zrok) gatedCreate(ctx context.Context, spec Spec, req *sdk.ShareRequest, out **sdk.Share) error {
+	reason := spec.ShareReason
+	if reason == "" {
+		reason = ShareReasonPublish
+	}
+	gate := DefaultShareGate()
+	if gate != nil {
+		if st, err := gate.Status(0); err == nil && st.NextSlot.After(time.Now()) {
+			spec.say("zrok share queued: %d of %d used in this window, next slot at %s",
+				st.Used, st.Limit, st.NextSlot.UTC().Format(time.RFC3339))
+		}
+	}
+	return gate.CreateShare(ctx, spec.Name, reason, func() error {
+		var err error
+		*out, err = sdk.CreateShare(z.root, req)
+		return err
+	})
 }
 
 // Adoptable lists the shares this environment already owns, keyed by publication key.
@@ -423,8 +503,9 @@ func (z *Zrok) Adopt(ctx context.Context, spec Spec, a Adoptable, h http.Handler
 		return nil, fmt.Errorf("opening zrok listener for existing share %s: %w", a.Handle, err)
 	}
 
+	site := newSwapHandler(h)
 	srv := &http.Server{
-		Handler:           h,
+		Handler:           site,
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	go func() {
@@ -439,12 +520,16 @@ func (z *Zrok) Adopt(ctx context.Context, spec Spec, a Adoptable, h http.Handler
 		name:      spec.Name,
 		listener:  listener,
 		server:    srv,
+		site:      site,
 	}
 	z.mu.Lock()
 	z.live[spec.Key()] = entry
 	z.mu.Unlock()
 
 	url := JoinURL(a.Origin, spec.BaseURL)
+	z.mu.Lock()
+	entry.url = url
+	z.mu.Unlock()
 	z.log.Info("adopted preview",
 		"preview", spec.PreviewID, "build", spec.BuildID,
 		"name", spec.Name, "url", url, "token", a.Handle)
@@ -697,8 +782,11 @@ func RateLimitedZrok(err error) bool {
 		return false
 	}
 	msg := err.Error()
+	// "(status 429)" is how the generated client renders a 429 it has no type for, which is what
+	// creating a share gets: `[POST /share] share (status 429): {}`.
 	return strings.Contains(msg, "SERVER_TOO_MANY_REQUESTS") ||
-		strings.Contains(msg, "Too many requests to alter state")
+		strings.Contains(msg, "Too many requests to alter state") ||
+		strings.Contains(msg, "(status 429)")
 }
 
 // RetryZrok runs fn, trying again while it fails transiently.

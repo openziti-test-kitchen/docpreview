@@ -995,6 +995,10 @@ func (d *Daemon) recover(ctx context.Context) error {
 // A failed query is an empty list rather than an error. Wrong by a share makes the bar
 // finish early; failing recovery over it restores nothing at all.
 func (d *Daemon) buildSharesToRestore(ctx context.Context, p store.Preview) []store.Build {
+	if !d.cfg.Exposer.BuildShares {
+		// None kept, so the reap deletes any left from when they were on.
+		return nil
+	}
 	rows, err := d.store.BuildsFor(ctx, p.PreviewID)
 	if err != nil {
 		d.log.Warn("listing builds to count their shares", "preview", p.PreviewID, "error", err)
@@ -1088,6 +1092,19 @@ func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
 		d.log.Warn("listing builds to restore their shares", "preview", p.PreviewID, "error", err)
 		return 0
 	}
+	if !d.cfg.Exposer.BuildShares {
+		// Per-build shares are off: forget the URLs of any published while they were on, so
+		// nothing offers a link the reap has just deleted.
+		for _, b := range rows {
+			if b.URL == "" {
+				continue
+			}
+			if err := d.store.ClearBuildShare(ctx, p.PreviewID, b.BuildID); err != nil {
+				d.log.Warn("forgetting a build's URL", "preview", p.PreviewID, "build", b.BuildID, "error", err)
+			}
+		}
+		return 0
+	}
 
 	// Concurrent, bounded, for the same reason recover's own loop is: this is where the
 	// count multiplies. One preview can hold keep_builds shares — ten by default — and at
@@ -1136,11 +1153,12 @@ func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
 			}
 
 			pub, adopted, err := d.publishOrAdopt(ctx, expose.Spec{
-				PreviewID: p.PreviewID,
-				BuildID:   b.BuildID,
-				Name:      b.Name,
-				BaseURL:   p.BaseURL,
-				PR:        p.PR,
+				PreviewID:   p.PreviewID,
+				BuildID:     b.BuildID,
+				Name:        b.Name,
+				BaseURL:     p.BaseURL,
+				PR:          p.PR,
+				ShareReason: expose.ShareReasonRestore,
 			}, site)
 			if err != nil {
 				d.log.Warn("restoring a build share", "build", b.BuildID, "name", b.Name, "error", err)
@@ -1530,10 +1548,11 @@ func (d *Daemon) republish(ctx context.Context, p store.Preview) error {
 	}
 
 	pub, adopted, err := d.publishOrAdopt(ctx, expose.Spec{
-		PreviewID: p.PreviewID,
-		Name:      p.Name,
-		BaseURL:   p.BaseURL,
-		PR:        p.PR,
+		PreviewID:   p.PreviewID,
+		Name:        p.Name,
+		BaseURL:     p.BaseURL,
+		PR:          p.PR,
+		ShareReason: expose.ShareReasonRestore,
 	}, site)
 	if err != nil {
 		return err
@@ -2859,7 +2878,10 @@ func (d *Daemon) runPipeline(
 
 	// A second share, pinned to this commit, beside the branch share that follows
 	// whatever is newest. Best effort: see publishBuildShare.
-	buildURL := d.publishBuildShare(ctx, pr, buildID, name, repoCfg, site, sink)
+	buildURL := ""
+	if d.cfg.Exposer.BuildShares {
+		buildURL = d.publishBuildShare(ctx, pr, buildID, name, repoCfg, site, sink)
+	}
 	if buildURL != "" {
 		// The row was already written as ready above, before this URL existed. The
 		// upsert keeps a non-empty name and url and refreshes the rest, so writing
@@ -3616,6 +3638,11 @@ type Status struct {
 	Pending  int             `json:"pending"`
 	Running  int             `json:"running"`
 	Previews []StatusPreview `json:"previews"`
+
+	// ZrokShares is the zrok share gate: how much of the window is spent, what is queued, when the
+	// next share can be created, and the newest attempts. Absent when this daemon has no gate —
+	// an exposer that is not zrok — or its state cannot be read.
+	ZrokShares *expose.ShareGateStatus `json:"zrok_shares,omitempty"`
 	Events   []Event         `json:"events"`
 
 	// Starting is true while recovery is still running.
@@ -3814,6 +3841,13 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 		Pending:            pending,
 		Running:            len(running),
 		Events:             d.markOpenable(d.events.recent(60)),
+	}
+	if gate := expose.DefaultShareGate(); gate != nil && d.exposer.Kind() == "zrok2" {
+		if gs, err := gate.Status(25); err == nil {
+			out.ZrokShares = &gs
+		} else {
+			d.log.Debug("reading the zrok share gate", "error", err)
+		}
 	}
 
 	// Best effort. The switcher degrades to repository names, which is what it showed

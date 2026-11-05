@@ -1816,6 +1816,7 @@ footer {
   text-underline-offset: 2px;
 }
 .footlink:hover { color: var(--ink-2) }
+.footlink.warn { color: var(--warning) }
 .footlink:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px }
 /* Who is signed in, and Sign out, in the top bar beside the admin links.
    The form is inline because a <form> is a block and would otherwise drop the button onto a
@@ -2031,6 +2032,21 @@ footer {
   </div>
 </div>
 
+<!-- The zrok share queue. zrok limits how fast an account may create shares, so the daemon
+     spends a fixed budget per window and queues the rest; this says how much is spent, what
+     is waiting, and when the next one can go. -->
+<div class="modal" id="zshares" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="zshares-title">
+    <div class="modal-body">
+      <h3 id="zshares-title">zrok shares</h3>
+      <div id="zshares-body"></div>
+      <div class="act">
+        <button class="btn primary" id="zshares-close">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <footer>
   <span id="conn" class="live">connecting…</span> ·
   <a href="/status">/status</a> · <a href="/pr">/pr</a>
@@ -2039,6 +2055,7 @@ footer {
        them. The label carries the duration, so the number the report exists to give is
        readable without opening it. -->
   <span id="boot-link" hidden> · <button class="footlink" id="boot-open"></button></span>
+  <span id="zshares-link" hidden> · <button class="footlink" id="zshares-open"></button></span>
   <!-- Who you are signed in as, and the way out live in the header, not here. Hidden when no
        login was needed, which is every installation that has set no viewer password. -->
 </footer>
@@ -8783,6 +8800,7 @@ function applyStatus(d) {
   // above is the live account of the same thing and the footer would contradict it with a
   // duration from the previous run.
   if (!d.starting) renderBootLink(d);
+  renderShareLink(d);
 
 
   // A project whose last preview was torn down must not keep a stream open
@@ -8826,6 +8844,84 @@ function renderBootLink(s) {
   btn.title = "What the daemon did when it last started";
   btn.onclick = () => openBootReport(r);
   host.hidden = false;
+}
+
+/* renderShareLink puts the zrok share budget in the footer: how much of the window is spent,
+   how many shares are waiting, and when the next can be created. The label carries all three,
+   so the answer to "why has my preview not appeared" is readable without opening anything. */
+let zsharesLast = null;
+function renderShareLink(s) {
+  const z = s && s.zrok_shares;
+  const host = document.getElementById("zshares-link");
+  if (!host) return;
+  if (!z) {
+    host.hidden = true;
+    return;
+  }
+  zsharesLast = z;
+  const queued = (z.queued || []).length;
+  const now = Date.now();
+  const next = z.next_slot && Date.parse(z.next_slot) > now + 1000 ? z.next_slot : "";
+  let label = `zrok shares ${z.used}/${z.limit}`;
+  if (z.quiet_until) label += ` · quiet until ${clock(z.quiet_until)}`;
+  if (queued) label += ` · ${queued} queued`;
+  if (next && !z.quiet_until) label += ` · next ${clock(next)}`;
+  const btn = document.getElementById("zshares-open");
+  btn.textContent = label;
+  btn.classList.toggle("warn", Boolean(queued || z.quiet_until));
+  btn.title = "zrok share creations: the window, the queue and the newest attempts";
+  btn.onclick = () => openShareReport();
+  host.hidden = false;
+  const modal = document.getElementById("zshares");
+  if (modal && !modal.hidden) fillShareReport();
+}
+
+/* fillShareReport writes the share budget into its dialog. Run on every poll while it is open. */
+function fillShareReport() {
+  const z = zsharesLast;
+  if (!z) return;
+  const row = (k, v, cls) => v === "" ? "" :
+    `<div class="boot-row"><dt>${esc(k)}</dt><dd${cls ? ` class="${cls}"` : ""}>${esc(v)}</dd></div>`;
+  const mins = Math.round((z.window_seconds || 600) / 60);
+  const queued = z.queued || [];
+  const next = z.next_slot && Date.parse(z.next_slot) > Date.now() + 1000 ? clock(z.next_slot) : "now";
+  const rows = [
+    row("Limit", `${z.limit} shares per ${mins} minutes, from the first share in a window`),
+    row("Used", z.window_start
+      ? `${z.used} of ${z.limit} — window opened ${clock(z.window_start)}, closes ${clock(z.window_closes)}`
+      : `0 of ${z.limit} — no window open`, z.used >= z.limit ? "warn" : ""),
+    row("Quiet until", z.quiet_until
+      ? `${clock(z.quiet_until)} — zrok refused twice in a row, so nothing is sent until then` : "", "warn"),
+    row("Next share", next),
+    row("Queued", String(queued.length), queued.length ? "warn" : ""),
+  ].join("");
+  const list = (items, fn) => items.length
+    ? `<div class="boot-list">${items.map(fn).join("")}</div>` : "";
+  document.getElementById("zshares-body").innerHTML = `
+    <dl class="boot-rows">${rows}</dl>
+    ${list(queued, w => `<div>${esc(clock(w.since))} · ${esc(w.name)} · ${esc(w.reason)}</div>`)}
+    ${(z.recent || []).length ? `<details class="boot-details" open>
+      <summary>Newest attempts · ${z.recent.length}</summary>
+      ${list(z.recent, a => `<div${a.outcome === "created" ? "" : ` class="bad"`}>${
+        esc(clock(a.at))} · ${esc(a.name)} · ${esc(a.reason)} · ${esc(a.process)} · ${
+        esc(a.outcome)}</div>`)}
+    </details>` : ""}`;
+}
+
+/* openShareReport shows the share budget in full. Called from the footer link only. */
+function openShareReport() {
+  if (!zsharesLast) return;
+  fillShareReport();
+  const modal = document.getElementById("zshares");
+  modal.hidden = false;
+  const close = () => { modal.hidden = true; };
+  document.getElementById("zshares-close").onclick = close;
+  modal.onclick = e => { if (e.target === modal) close(); };
+  document.addEventListener("keydown", function esc(e) {
+    if (e.key !== "Escape") return;
+    close();
+    document.removeEventListener("keydown", esc);
+  });
 }
 
 /* openBootReport builds the dialog and shows it. Called from the footer link only. */

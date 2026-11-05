@@ -359,6 +359,15 @@ type ExposerConfig struct {
 	// `-zrok-name a-docpreview` itself.
 	Prefix string `yaml:"prefix"`
 
+	// BuildShares gives every successful build a second share of its own, pinned to its commit,
+	// beside the branch share that follows the newest build.
+	//
+	// Off by default. Each one is a share creation, and zrok rate-limits those per account: one
+	// per commit, plus all of them again on every restart, is what ran docprev into 429s. With it
+	// off a preview has one share for its branch, created once and reused by every rebuild, and
+	// the shares already published per build are reaped at the next start.
+	BuildShares bool `yaml:"build_shares"`
+
 	Zrok      ZrokConfig      `yaml:"zrok2"`
 	Frontdoor FrontdoorConfig `yaml:"frontdoor"`
 	Ziti      ZitiConfig      `yaml:"ziti"`
