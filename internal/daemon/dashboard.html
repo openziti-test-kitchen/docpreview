@@ -8248,20 +8248,30 @@ function wireProjectHandlers(s, container) {
         refreshSCMRow(s, p, el);
         toast(`Stored ${name} for ${key.split("/").slice(1).join("/")}.`, "good");
 
-        /* The first usable credential: scan, here, now.
+        /* The first usable credential: build the default branch and scan, here, now.
 
            Only then. Every later save is a rotation, and a scan rebuilds every open pull
            request and supersedes anything already running — a token rotation should not do
            that. But a private project with no credential has never built anything, so this
-           save is the moment its open pull requests become buildable, and nothing else will
-           notice: the scan on create ran before the token existed. */
+           save is the moment it becomes buildable, and nothing else will notice: the
+           default branch build and the scan on create both ran before the token existed. */
         const scanHost = b.closest(".credbox")?.querySelector("[data-scan-host]");
         if (!hadCredential && p && p.enabled &&
             (name === "scm.access_token" || name === "scm.api_token") && scanHost) {
           scanHost.replaceChildren(noteEl(
-            "Scanning for open pull requests, now that this repository can be cloned…", "", true));
+            "Building the default branch and scanning for open pull requests, now that this " +
+            "repository can be cloned…", "", true));
+          let br;
+          try {
+            br = await api("POST", `${projectPath(key)}/branch`, {});
+          } catch (e) {
+            br = {queued: false, error: e.message};
+          }
+          const branchNote = (br.error || br.queued === false)
+            ? noteEl(`Default branch not queued: ${br.error || "the daemon did not say why"}`, "bad")
+            : noteEl(`Building ${br.branch || "the default branch"}.`, "good");
           const r = await runScan(key);
-          scanHost.replaceChildren(noteEl(r.text, r.kind));
+          scanHost.replaceChildren(branchNote, noteEl(r.text, r.kind));
         }
       } catch (e) {
         toast(e.message, "bad");
@@ -8453,7 +8463,8 @@ function wireProjectHandlers(s, container) {
               const missing = /no Bitbucket credential|credential/i.test(scan.error);
               setFlash(missing
                 ? `Saved. No builds queued yet — add an access token on this project's ` +
-                  `page; its open pull requests are queued as soon as the token is saved.`
+                  `page; its default branch and open pull requests are queued as soon as ` +
+                  `the token is saved.`
                 : `Saved, but nothing could be queued: ${scan.error}`, missing ? "" : "bad");
             } else if (scan.queued) {
               setFlash(`Saved. ${scan.queued} open pull request${
