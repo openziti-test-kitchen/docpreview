@@ -1034,6 +1034,14 @@ func (d *Daemon) publishOrAdopt(ctx context.Context, spec expose.Spec, h http.Ha
 		if err == nil {
 			return pub, true, nil
 		}
+		// A share that is still there but could not be opened because zrok is busy or refusing
+		// is not replaced. Creating one more share in the middle of a rate limit is what made
+		// restarts worse; the preview is restored by its next build or the next start instead.
+		if expose.TransientZrok(err) {
+			d.log.Warn("adopting an existing share failed; not creating another while zrok is refusing",
+				"publication", spec.Key(), "name", spec.Name, "error", err)
+			return nil, false, err
+		}
 		d.log.Warn("adopting an existing share; creating a new one instead",
 			"publication", spec.Key(), "name", spec.Name, "error", err)
 	}

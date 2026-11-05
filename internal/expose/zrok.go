@@ -580,8 +580,16 @@ func (z *Zrok) withdrawEntry(key string, want *zrokShare) {
 // Releasing is therefore the daemon's decision, made once, in teardown, through
 // ReleaseName. See NameReleaser.
 func (z *Zrok) close(entry *zrokShare) error {
-	var errs []error
+	err := z.stopServing(entry)
+	if derr := sdk.DeleteShare(z.root, &sdk.Share{Token: entry.token}); derr != nil {
+		err = errors.Join(err, fmt.Errorf("deleting share %s: %w", entry.token, derr))
+	}
+	return err
+}
 
+// stopServing closes a share's server and listener and leaves the share itself on the controller.
+func (z *Zrok) stopServing(entry *zrokShare) error {
+	var errs []error
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := entry.server.Shutdown(shutdownCtx); err != nil {
@@ -589,9 +597,6 @@ func (z *Zrok) close(entry *zrokShare) error {
 	}
 	if err := entry.listener.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("closing overlay listener: %w", err))
-	}
-	if err := sdk.DeleteShare(z.root, &sdk.Share{Token: entry.token}); err != nil {
-		errs = append(errs, fmt.Errorf("deleting share %s: %w", entry.token, err))
 	}
 	return errors.Join(errs...)
 }
@@ -1186,6 +1191,11 @@ func endpointsMatchName(endpoints []string, name string) bool {
 }
 
 // Close tears down every live publication.
+//
+// It stops serving and leaves every share on the controller. The next start adopts them through
+// Adoptable, so a restart costs no share creations; deleting them here made every restart create
+// one share per preview at once, which is what ran the account into zrok's rate limit. A share
+// the next start does not want is deleted by its Reap.
 func (z *Zrok) Close() error {
 	z.mu.Lock()
 	entries := make([]*zrokShare, 0, len(z.live))
@@ -1197,7 +1207,7 @@ func (z *Zrok) Close() error {
 
 	var errs []error
 	for _, entry := range entries {
-		if err := z.close(entry); err != nil {
+		if err := z.stopServing(entry); err != nil {
 			errs = append(errs, err)
 		}
 	}

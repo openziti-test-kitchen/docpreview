@@ -90,12 +90,12 @@ func TestShareGateGoesQuietAfterTwo429sInARow(t *testing.T) {
 		t.Fatalf("newest history entry = %+v, want rate-limited", st.Recent[0])
 	}
 
-	start := time.Now()
+	quietEnd := *st.QuietUntil
 	if err := g.CreateShare(context.Background(), "b", ShareReasonPublish, ok); err != nil {
 		t.Fatal(err)
 	}
-	if d := time.Since(start); d < 350*time.Millisecond {
-		t.Fatalf("a share went through %s into the quiet period", d)
+	if early := quietEnd.Sub(time.Now()); early > 0 {
+		t.Fatalf("a share went through %s before the quiet period ended", early)
 	}
 }
 
