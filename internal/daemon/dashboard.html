@@ -1549,7 +1549,9 @@ h2.pedit-title {
 }
 .logfoot .grow { flex: 1 }
 select.control.sm {
-  font-size: 0.75rem; padding: 0.2rem 0.4rem; max-width: 24rem;
+  /* The right padding keeps the text clear of the caret drawn by select.control. A
+     shorthand without it set the right side to 0.4rem, and the time ran under the caret. */
+  font-size: 0.75rem; padding: 0.2rem 1.7rem 0.2rem 0.4rem; max-width: 24rem;
 }
 select.control.sm:disabled { opacity: 0.6 }
 .btn {
