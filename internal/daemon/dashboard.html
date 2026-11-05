@@ -867,6 +867,12 @@ input.control::placeholder { color: var(--muted) }
    the eye reads the column of names down the page, and the path is there when it needs
    disambiguating rather than competing for the same line. */
 .pcard-id { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0 }
+/* The avatar, name and path are one link to the edit page, so the biggest thing on the card is the
+   thing to click. Plain until hovered, because it is also the card's heading. */
+.pcard-title { display: flex; align-items: center; gap: inherit; min-width: 0; color: inherit;
+  text-decoration: none }
+.pcard-title:hover .name { text-decoration: underline; text-underline-offset: 3px }
+.pcard-title:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 3px }
 .pcard-head .name { font-weight: 650; font-size: 1rem; letter-spacing: -0.01em }
 .pcard-head .sub {
   font: 11.5px/1.4 ui-monospace, Consolas, monospace; color: var(--muted);
@@ -6482,11 +6488,13 @@ function projectCard(p, s, ro) {
 
   return `<div class="pcard${p.enabled ? "" : " pcard-off"}" data-card="${esc(key)}">
     <div class="pcard-head">
+      ${ro ? "" : `<a class="pcard-title" href="/projects/${esc(key)}" title="Edit this project">`}
       ${avatarHTML(p)}
       <span class="pcard-id">
         <span class="name">${esc(projectLabel(p))}</span>
         <span class="sub">${esc(platformLabel(p.platform))} · ${esc(p.owner)}/${esc(p.repo)}</span>
       </span>
+      ${ro ? "" : `</a>`}
       ${p.enabled ? "" : `<span class="flag off">disabled</span>`}
       <span class="grow"></span>
       ${branchInline(p, ro)}
