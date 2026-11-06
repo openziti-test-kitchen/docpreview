@@ -375,11 +375,10 @@
   padding: 0.4rem 0.75rem;
   border: 1px solid var(--ifm-color-emphasis-300);
   text-align: left;
+  white-space: nowrap;
 }
 
 .commentTable th {
-  width: 9rem;
-  white-space: nowrap;
   background: var(--ifm-color-emphasis-100);
 }
 
@@ -414,5 +413,14 @@
 
   .commentLayout {
     gap: 1.5rem;
+  }
+}
+
+/* On a phone the five columns do not fit, and the date is the one cell a reader
+   can lose without losing the point of the comment. */
+@media screen and (max-width: 576px) {
+  .commentTable th:last-child,
+  .commentTable td:last-child {
+    display: none;
   }
 }

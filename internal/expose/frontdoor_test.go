@@ -451,6 +451,22 @@ func TestFrontdoorGivesABareHostnameAScheme(t *testing.T) {
 	}
 }
 
+func TestFrontdoorRejectsAnEmptyFrontend(t *testing.T) {
+	// config has no default frontend, so this is the error an operator sees the
+	// first time they select frontdoor. It has to say that an id is wanted.
+	_, err := NewFrontdoor(config.FrontdoorConfig{
+		APIBase: "https://gateway.production.netfoundry.io/frontdoor/fd-1",
+	}, staticToken("t"), discardLogger())
+	if err == nil {
+		t.Fatal("NewFrontdoor accepted an empty frontend")
+	}
+	for _, want := range []string{"exposer.frontdoor.frontend", "id"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q: %v", want, err)
+		}
+	}
+}
+
 func TestFrontdoorRejectsAnAPIBaseWithNoFrontdoorID(t *testing.T) {
 	// Frontdoor's routes are scoped to a frontdoor instance —
 	// POST /frontdoor/{frontdoorId}/shares — and config's default api_base stops

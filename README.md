@@ -47,7 +47,7 @@ boots with a locked vault and waits for a person — the only arrangement with n
 Then expose the webhook — [`www/docs/guides/webhook-tunnel.md`](www/docs/guides/webhook-tunnel.md) — and open
 a pull request touching `docs/`.
 
-> **Documentation preview**
+> **NetFoundry Preview**
 >
 > | | |
 > |---|---|
@@ -214,5 +214,5 @@ driver.
 | Docusaurus builds | Working, local and Docker drivers |
 | Frontdoor exposer | Written; wire format unverified against a live tenant |
 | ziti exposer | Works, but separates previews by a client-supplied `Host` header — so any reader-attributed identity can reach any preview. Not suitable for reviewers you do not trust equally. [18-exposer-ziti.md](docs/design/18-exposer-ziti.md) |
-| Bitbucket | Interface in place, client not written |
+| Bitbucket | Working: webhooks, pull request comments and build statuses |
 | Real HA | Not supported. Five specific blockers, see [14-production-deployment.md](docs/design/14-production-deployment.md) |

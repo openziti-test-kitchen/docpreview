@@ -1,11 +1,14 @@
 # Documentation previews for private Bitbucket repositories
 
-The hosted preview services are built for GitHub first. Support for anything else exists, trails behind, and
-gets thinner the moment the repository is private.
+Hosted preview services like Vercel support Bitbucket, and if that works for your team, it's a fine way to get
+previews. Some of our private documentation lives on Bitbucket Cloud, and one of those repositories had Vercel's
+Bitbucket integration attached. It was a genuinely useful reference while we built our own: we could watch exactly
+how a polished implementation behaved on the same platform.
 
-That combination — Bitbucket Cloud, private source — is where we ended up needing our own answer. This is what
-it takes, and what is genuinely different about Bitbucket once you stop treating it as GitHub with different
-branding.
+We wanted another way for the same reason as on GitHub. In our setup, a pull request on a private repository only
+got built if its author was on our Vercel team, and our documentation contributors come from everywhere. This post
+covers what it takes to run it ourselves on Bitbucket, and what is genuinely different about Bitbucket once you stop
+treating it as GitHub with different branding.
 
 ## The asymmetry that makes self-hosting easy to justify
 
@@ -13,10 +16,8 @@ Our published documentation is public. The source is not always.
 
 That sounds like a problem and it is the opposite. The thing a reviewer needs to look at is already destined to
 be a public web page, so putting a preview of it on a URL costs nothing in exposure. What we are protecting is
-the repository, and the repository never has to leave the machine we already trust with it.
-
-A hosted service inverts that. To show you a preview of a page that will be public, it wants a copy of the
-source that is not, plus permission to run the scripts in your `package.json` on its hardware.
+the repository, and running the build ourselves means the repository never has to leave the machine we already
+trust with it.
 
 ## Repository access tokens are the good part
 
@@ -102,8 +103,8 @@ queues every open pull request, so there is something to look at before anybody 
 After that, a pull request gets a comment with a link, pushing updates the same comment, and closing the pull
 request removes the preview.
 
-No App, no seats, no source leaving your network. The whole thing runs on one VM, and the number of people
-opening documentation pull requests does not change what it costs.
+No App to install, nobody to add to a team, and no source leaving your network. The whole thing runs on one VM,
+and the number of people opening documentation pull requests does not change what it costs.
 
 The setup is written up at
 [Connect Bitbucket Cloud](https://github.com/openziti-test-kitchen/docpreview/blob/main/www/docs/guides/bitbucket.md).

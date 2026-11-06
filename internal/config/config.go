@@ -359,6 +359,15 @@ type ExposerConfig struct {
 	// `-zrok-name a-docpreview` itself.
 	Prefix string `yaml:"prefix"`
 
+	// BuildShares gives every successful build a second share of its own, pinned to its commit,
+	// beside the branch share that follows the newest build.
+	//
+	// Off by default. Each one is a share creation, and zrok rate-limits those per account: one
+	// per commit, plus all of them again on every restart, is what ran docprev into 429s. With it
+	// off a preview has one share for its branch, created once and reused by every rebuild, and
+	// the shares already published per build are reaped at the next start.
+	BuildShares bool `yaml:"build_shares"`
+
 	Zrok      ZrokConfig      `yaml:"zrok2"`
 	Frontdoor FrontdoorConfig `yaml:"frontdoor"`
 	Ziti      ZitiConfig      `yaml:"ziti"`
@@ -369,7 +378,7 @@ type ExposerConfig struct {
 //
 // Unlike every other exposer there is nothing public here at all, and nothing
 // is created per preview: one wildcard service covers all of them and requests
-// are separated by Host header. See www/docs/future/ziti-native-previews.md.
+// are separated by Host header. See docs/design/ziti-native-previews.md.
 type ZitiConfig struct {
 	// IdentityFile is docpreview's own enrolled identity, the one the Bind
 	// policy names. Produced by `ziti edge enroll <jwt> --out <file>`.
@@ -430,6 +439,8 @@ type FrontdoorConfig struct {
 	//
 	// The API's field is `frontendIds` and takes ids only. A name there is accepted by the
 	// JSON decoder and then matches no frontend, so the share is created serving nothing.
+	// There is no default, because no id is valid on more than one tenant: left empty,
+	// the frontdoor exposer refuses to start.
 	Frontend string `yaml:"frontend"`
 
 	// EnvZID is the ziti identity of the enrolled Frontdoor agent that will host the
@@ -606,6 +617,13 @@ type PreviewConfig struct {
 	// to fifty times in an afternoon. The full story — byte caps, a total ceiling,
 	// eviction order, exempting the paid exposers — is in TODO.md.
 	KeepBuilds int `yaml:"keep_builds"`
+
+	// Title heads the pull request comment and names the Bitbucket build status.
+	//
+	// Only the text a reader sees. The comment is found again by its marker and the build status
+	// by its key, so changing this on a running installation edits the existing comments in place
+	// rather than posting new ones.
+	Title string `yaml:"title"`
 }
 
 // DefaultNameTemplate builds the public label for a preview.
@@ -677,8 +695,7 @@ func DefaultServer() Server {
 				NameTemplate: DefaultNameTemplate,
 			},
 			Frontdoor: FrontdoorConfig{
-				APIBase:  "https://gateway.production.netfoundry.io/frontdoor",
-				Frontend: "public",
+				APIBase: "https://gateway.production.netfoundry.io/frontdoor",
 				// Loopback is correct when the Frontdoor agent runs on this
 				// host, which is the arrangement to reach for: nothing is
 				// exposed beyond the loopback interface.
@@ -714,6 +731,7 @@ func DefaultServer() Server {
 			TTL:             72 * time.Hour,
 			TeardownOnClose: true,
 			KeepBuilds:      10,
+			Title:           "NetFoundry Preview",
 		},
 	}
 }

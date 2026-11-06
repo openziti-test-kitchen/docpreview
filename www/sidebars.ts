@@ -56,6 +56,7 @@ const sidebars: SidebarsConfig = {
     section('HOW-TO'),
     'guides/github-app',
     'guides/bitbucket',
+    'guides/bitbucket-add-repository',
     'guides/webhook-tunnel',
     'guides/zrok2',
     'guides/frontdoor',
@@ -82,15 +83,6 @@ const sidebars: SidebarsConfig = {
         'background/docusaurus',
         'background/age',
       ],
-    },
-    {
-      type: 'category',
-      label: 'Research',
-      collapsed: true,
-      // Not features. Each of these says so at the top, and the grouping repeats it
-      // — a reader who finds one of these by search should not go looking for a flag
-      // that does not exist.
-      items: ['future/ziti-native-previews', 'future/vercel-features'],
     },
 
     // Information-oriented. Exhaustive, scannable, and the thing you come back for.

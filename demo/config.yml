@@ -19,6 +19,8 @@ github:
 
 build:
   driver: "local"
+  # The demo runs npm on this host, which the daemon allows only when asked.
+  allow_local_driver: true
   # A real Docusaurus build is a yarn install plus a webpack run. Fifteen
   # minutes is slack for four of them competing for the same disk.
   timeout: 15m0s

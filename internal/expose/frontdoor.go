@@ -64,8 +64,8 @@ import (
 // # The one thing that stops a first publish
 //
 // The API requires `envZId`, the ziti identity of the agent that will host the
-// share, and FrontdoorConfig has no field for it. Until it does, every publish is
-// refused by the gateway; Validate says so once per boot. See shareRequest.EnvZID.
+// share. It comes from `exposer.frontdoor.env_z_id`; while that is empty every
+// publish is refused by the gateway, and Validate says so once per boot.
 //
 // This type deliberately does not implement Adopter, and that is the largest
 // functional gap against zrok. Adoption lets a restart bind a listener to an
@@ -108,7 +108,9 @@ func NewFrontdoor(cfg config.FrontdoorConfig, token TokenFunc, log *slog.Logger)
 		return nil, errors.New("exposer.frontdoor.api_base must be set")
 	}
 	if cfg.Frontend == "" {
-		return nil, errors.New("exposer.frontdoor.frontend must be set")
+		return nil, errors.New("exposer.frontdoor.frontend must be set to the id of the " +
+			"Frontdoor frontend that will serve previews, a value like \"bMTHPrtQ\" from the " +
+			"Frontdoor console; a frontend name does not work")
 	}
 	if token == nil {
 		return nil, errors.New("frontdoor needs a token provider")
@@ -168,7 +170,7 @@ func checkFrontdoorAPIBase(base string) error {
 // listing this code can read.
 //
 // It does *not* confirm the configured frontend exists. Nothing here knows how to
-// ask: `frontend` is a name docpreview sends and never reads back, so a typo in it
+// ask: `frontend` is an id docpreview sends and never reads back, so a typo in it
 // is discovered by the first publish at the earliest and by a reviewer opening a
 // dead link at the latest. Checking it needs whatever the API's frontend-listing
 // endpoint turns out to be, which is one of the questions a live tenant has to
@@ -406,9 +408,8 @@ type shareRequest struct {
 	EnvZID string `json:"envZId,omitempty"`
 
 	// FrontendIDs names the frontends that will serve this share, by ID — values
-	// like "bMTHPrtQ", not names. config.FrontdoorConfig.Frontend is documented as
-	// a name and defaults to "public", which is a name and not an ID; that default
-	// cannot work and is the second half of the same config problem as EnvZID.
+	// like "bMTHPrtQ", not names. config.FrontdoorConfig.Frontend has no default,
+	// because no id is valid on more than one tenant, and NewFrontdoor refuses it empty.
 	FrontendIDs []string `json:"frontendIds,omitempty"`
 
 	// Target is the private URL the agent dials.

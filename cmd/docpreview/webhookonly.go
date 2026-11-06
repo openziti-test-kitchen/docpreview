@@ -102,6 +102,7 @@ func cmdWebhookOnly(args []string) error {
 	}
 
 	log := newLogger(*logLevel)
+	installShareGate("webhook-only", log)
 
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
@@ -182,7 +183,8 @@ func cmdWebhookOnly(args []string) error {
 		// No frontend auth, and this is not an oversight: the caller is GitHub or Bitbucket,
 		// which hold no account with any OAuth provider. The endpoint's protection is the HMAC
 		// over the body, verified by the daemon with the secret from the vault.
-		ln, url, cleanup, err := zrokListener(*zrokName, *zrokNamespace, zrokFrontendAuth{}, log)
+		ln, url, cleanup, err := zrokListener(*zrokName, *zrokNamespace, zrokFrontendAuth{},
+			expose.ShareReasonWebhook, log)
 		if err != nil {
 			return err
 		}
@@ -224,9 +226,9 @@ func cmdWebhookOnly(args []string) error {
 // is deliberate: reserving is an account-level act with a quota behind it, and a
 // process that silently created names would leak one per typo.
 //
-// The returned cleanup deletes the share but not the name. Deleting the share
-// releases the binding so the next run can claim it again; deleting the name
-// would throw away the stable URL that is the whole reason for this path.
+// The returned cleanup closes the listener and leaves the share, so the next run
+// adopts it and creates nothing. Deleting the name would throw away the stable
+// URL that is the whole reason for this path.
 // zrokAuth optionally puts the zrok frontend's own OAuth in front of a share.
 //
 // It exists for the dashboard and deliberately not for previews. A preview URL is pasted into a
@@ -249,7 +251,9 @@ type zrokFrontendAuth struct {
 	EmailPatterns []string
 }
 
-func zrokListener(name, namespace string, auth zrokFrontendAuth, log *slog.Logger) (net.Listener, string, func(), error) {
+func zrokListener(
+	name, namespace string, auth zrokFrontendAuth, reason string, log *slog.Logger,
+) (net.Listener, string, func(), error) {
 	root, err := environment.LoadRoot()
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("loading the zrok environment (is zrok2 enabled?): %w", err)
@@ -293,19 +297,32 @@ func zrokListener(name, namespace string, auth zrokFrontendAuth, log *slog.Logge
 	//
 	// context.Background() rather than a plumbed context because this runs during startup,
 	// before anything can be cancelled, and the whole budget is a few seconds.
+	//
+	// Through the share gate, which bounds a unit stuck in a restart loop: each new process finds
+	// the window spent and waits, rather than creating a share every ten seconds.
 	var shr *sdk.Share
-	create := func() error {
-		var cerr error
-		shr, cerr = sdk.CreateShare(root, req)
-		return cerr
+	var ln net.Listener
+
+	// The share the previous run left, when there is one: a restart creates nothing. Shutdown no
+	// longer deletes it, for exactly this.
+	if old, l := adoptZrokName(root, name, log); l != nil {
+		shr, ln = old, l
 	}
-	err = expose.RetryZrok(context.Background(), log, "create share "+name, create)
-	if err != nil {
-		// A name still held by a share from a previous run. This is the ordinary
-		// case rather than the exceptional one: the share is deleted on graceful
-		// shutdown, and a process serving a tunnel is usually ended by a kill,
-		// which runs no deferred anything. Without this, every restart needs a
-		// manual `zrok2 delete share`.
+
+	create := func() error {
+		return expose.DefaultShareGate().CreateShare(context.Background(), name, reason, func() error {
+			var cerr error
+			shr, cerr = sdk.CreateShare(root, req)
+			return cerr
+		})
+	}
+	if ln == nil {
+		err = expose.RetryZrok(context.Background(), log, "create share "+name, create)
+	}
+	if ln == nil && err != nil {
+		// A name still held by a share that could not be adopted: its listener would
+		// not open, or an older version left it behind. Without this, the restart
+		// needs a manual `zrok2 delete share`.
 		//
 		// Reclaiming is safe precisely because the name is reserved: it belongs to
 		// this account, and the only thing that can be holding it is our own
@@ -319,7 +336,9 @@ func zrokListener(name, namespace string, auth zrokFrontendAuth, log *slog.Logge
 		}
 	}
 
-	ln, err := sdk.NewListener(shr.Token, root)
+	if ln == nil {
+		ln, err = sdk.NewListener(shr.Token, root)
+	}
 	if err != nil {
 		// The share exists but nothing can serve it, and leaving it holds the
 		// name against the next attempt.
@@ -342,14 +361,12 @@ func zrokListener(name, namespace string, auth zrokFrontendAuth, log *slog.Logge
 	}
 	url = strings.TrimRight(url, "/")
 
+	// The share stays on the controller when this process ends, so the next start adopts it
+	// instead of creating another. Only the listener closes.
 	cleanup := func() {
-		if err := sdk.DeleteShare(root, shr); err != nil {
-			log.Error("could not delete the zrok share on shutdown",
-				"token", shr.Token, "error", err,
-				"fix", "zrok2 delete share "+shr.Token)
-			return
+		if err := ln.Close(); err != nil {
+			log.Warn("closing the zrok listener", "token", shr.Token, "error", err)
 		}
-		log.Info("deleted the zrok share", "token", shr.Token)
 	}
 	return ln, url, cleanup, nil
 }
@@ -392,6 +409,36 @@ func reclaimZrokName(root env_core.Root, namespace, name string, log *slog.Logge
 		deleted = true
 	}
 	return deleted
+}
+
+// adoptZrokName finds the share this environment already has bound to name and opens a listener
+// on it. Nil when there is none or it cannot be served, in which case the caller creates one.
+func adoptZrokName(root env_core.Root, name string, log *slog.Logger) (*sdk.Share, net.Listener) {
+	client, err := root.Client()
+	if err != nil {
+		return nil, nil
+	}
+	envZID := root.Environment().ZitiIdentity
+	params := metadata.NewListSharesParams()
+	params.EnvZID = &envZID
+	resp, err := client.Metadata.ListShares(params, zrokAuth(root))
+	if err != nil || resp.Payload == nil {
+		return nil, nil
+	}
+	for _, s := range resp.Payload.Shares {
+		if s == nil || !endpointLabelMatches(s.FrontendEndpoints, name) {
+			continue
+		}
+		ln, err := sdk.NewListener(s.ShareToken, root)
+		if err != nil {
+			log.Warn("could not adopt the existing zrok share; creating a new one",
+				"token", s.ShareToken, "name", name, "error", err)
+			return nil, nil
+		}
+		log.Info("adopted the existing zrok share", "token", s.ShareToken, "name", name)
+		return &sdk.Share{Token: s.ShareToken, FrontendEndpoints: s.FrontendEndpoints}, ln
+	}
+	return nil, nil
 }
 
 func zrokAuth(root env_core.Root) runtime.ClientAuthInfoWriter {

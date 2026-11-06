@@ -53,7 +53,7 @@ func RenderComment(r Report) string {
 	//
 	// Five columns, and every one of them answers a question somebody actually asks: which project,
 	// what state, where do I click, which commit, and is this current.
-	b.WriteString("**Documentation preview**\n\n")
+	b.WriteString("**" + TitleOf(r) + "**\n\n")
 	b.WriteString("| Project | Status | Preview | Commit | Updated (UTC) |\n")
 	b.WriteString("|---|---|---|---|---|\n")
 

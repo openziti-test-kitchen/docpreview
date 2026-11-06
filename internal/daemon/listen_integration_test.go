@@ -171,6 +171,96 @@ func TestOverlayIngressStopsWhenClosed(t *testing.T) {
 	}
 }
 
+// TestOverlayAdminGrantFollowsTheRealDialer is the live half of the admin_identities tests.
+// The offline ones hand the listener a fake conn, so they cannot show that a real router
+// sends the dialer, or that the id it sends is the one the controller lists. This one
+// grants the reader identity, then dials as it and as a second, unlisted identity:
+//
+//	DOCPREVIEW_ZITI_OTHER_IDENTITY=…/other.json  (enrolled, may Dial the service)
+//
+// "No id at all" stays an offline test: a real overlay always names its dialer.
+func TestOverlayAdminGrantFollowsTheRealDialer(t *testing.T) {
+	hostIdentity, readerIdentity, service := adminOverlay(t)
+	otherIdentity := os.Getenv("DOCPREVIEW_ZITI_OTHER_IDENTITY")
+	if otherIdentity == "" {
+		t.Skip("set DOCPREVIEW_ZITI_OTHER_IDENTITY to an enrolled identity not in admin_identities")
+	}
+
+	// The id as the controller reports it to the identity itself. A grant written
+	// from `ziti edge list identities` holds this value.
+	idOf := func(file string) string {
+		zctx, err := ziti.NewContextFromFile(file)
+		if err != nil {
+			t.Fatalf("loading %s: %v", file, err)
+		}
+		defer zctx.Close()
+		if err := zctx.Authenticate(); err != nil {
+			t.Fatalf("authenticating %s: %v", file, err)
+		}
+		me, err := zctx.GetCurrentIdentity()
+		if err != nil {
+			t.Fatalf("asking the controller who %s is: %v", file, err)
+		}
+		return *me.ID
+	}
+	adminID, otherID := idOf(readerIdentity), idOf(otherIdentity)
+
+	listeners, err := Open([]config.Listener{{Ziti: &config.ZitiListener{
+		IdentityFile:    hostIdentity,
+		Service:         service,
+		AdminIdentities: []string{adminID},
+	}}}, discard())
+	if err != nil {
+		t.Fatalf("binding the admin service: %v", err)
+	}
+	defer listeners.Close()
+
+	srv := &http.Server{
+		ConnContext: ConnContext,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			caller, _ := overlayCallerFrom(r.Context())
+			ok, why := isLocalRequest(r)
+			w.Header().Set("X-Dialer", caller.Dialer)
+			if !ok {
+				http.Error(w, why, http.StatusForbidden)
+				return
+			}
+			io.WriteString(w, "may write")
+		}),
+	}
+	go srv.Serve(listeners.Net[0])
+	t.Cleanup(func() { srv.Close() })
+
+	ask := func(identity string) (int, string, string) {
+		resp, err := overlayClient(t, identity, service).Get("http://docpreview.invalid/")
+		if err != nil {
+			t.Fatalf("GET over the overlay as %s: %v", identity, err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("X-Dialer"), string(body)
+	}
+
+	code, dialer, body := ask(readerIdentity)
+	if dialer != adminID {
+		t.Errorf("the listed identity arrived as %q, but the controller calls it %q", dialer, adminID)
+	}
+	if code != http.StatusOK {
+		t.Errorf("the listed identity was refused: %d %q", code, body)
+	}
+
+	code, dialer, body = ask(otherIdentity)
+	if dialer != otherID {
+		t.Errorf("the unlisted identity arrived as %q, but the controller calls it %q", dialer, otherID)
+	}
+	if code != http.StatusForbidden {
+		t.Errorf("the unlisted identity was not refused: %d %q", code, body)
+	}
+	if !strings.Contains(body, otherID) {
+		t.Errorf("the refusal does not name the identity to add: %q", body)
+	}
+}
+
 func firstBytes(b []byte) string {
 	if len(b) > 120 {
 		return string(b[:120]) + "…"

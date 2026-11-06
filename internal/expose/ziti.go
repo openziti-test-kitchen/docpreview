@@ -27,7 +27,7 @@ import (
 //
 // It is also the one exposer that is not one-listener-per-preview. A single
 // wildcard service covers every preview that will ever exist, and requests are
-// separated by Host header. The reasons are in www/docs/future/ziti-native-previews.md;
+// separated by Host header. The reasons are in docs/design/ziti-native-previews.md;
 // the short version is that a service per pull request would create four
 // management-API objects each time someone pushes and would churn DNS rules on
 // every connected tunneler.

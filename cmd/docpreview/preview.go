@@ -4,9 +4,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -76,6 +79,19 @@ func cmdPreview(args []string) error {
 		repoCfg.Build.BaseURL = normalized
 	}
 
+	label := *name
+	if label == "" {
+		label = model.SanitizeName(filepath.Base(target))
+	}
+
+	// The local exposer serves previews under a path on the daemon's listener, and
+	// this command runs no daemon. Without a listener of its own the printed URL
+	// points at a port nothing serves, or at a running daemon that answers 404.
+	pe, pathMounted := w.exposer.(*expose.Local)
+	if pathMounted {
+		repoCfg.Build.BaseURL = foldMountPath(pe.MountPath(label), repoCfg.Build.BaseURL)
+	}
+
 	if *doBuild {
 		w.log.Info("building", "dir", target, "base_url", repoCfg.Build.BaseURL)
 		builder := pipeline.NewBuilder(w.cfg.Build, w.log)
@@ -94,9 +110,12 @@ func cmdPreview(args []string) error {
 		return err
 	}
 
-	label := *name
-	if label == "" {
-		label = model.SanitizeName(filepath.Base(target))
+	if pathMounted {
+		stopServing, err := serveMounts(pe)
+		if err != nil {
+			return err
+		}
+		defer stopServing()
 	}
 
 	pub, err := w.exposer.Publish(ctx, expose.Spec{
@@ -117,4 +136,34 @@ func cmdPreview(args []string) error {
 	<-ctx.Done()
 	fmt.Fprintln(os.Stderr, "withdrawing preview")
 	return nil
+}
+
+// foldMountPath puts a site's own baseUrl beneath the path the local exposer mounts
+// it at. The daemon does the same in previewBaseURL, and for the same reason: the
+// build bakes baseUrl in, so a site built for "/" and served under a prefix 404s
+// every asset.
+func foldMountPath(mount, repoBase string) string {
+	if repoBase == "" || repoBase == "/" {
+		return mount
+	}
+	return mount + strings.TrimPrefix(repoBase, "/")
+}
+
+// serveMounts gives the local exposer a listener of its own on an ephemeral
+// loopback port, so this command and a running daemon never fight over one.
+func serveMounts(l *expose.Local) (stop func(), err error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("binding a port to serve the preview: %w", err)
+	}
+	mux := http.NewServeMux()
+	mux.Handle(expose.MountPrefix, l.Handler())
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 15 * time.Second}
+	go srv.Serve(ln)
+	l.SetOrigin("http://" + ln.Addr().String())
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(ctx)
+	}, nil
 }

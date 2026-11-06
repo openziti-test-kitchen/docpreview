@@ -4,69 +4,70 @@ title: What this is
 sidebar_position: 1
 ---
 
-# docpreview
+# NetFoundry Preview
 
-You push a commit to a branch. A minute later a bot comment appears on the pull request with a link. You
-click it, and there is your documentation site — built from that branch, running at its own URL, ready to
-read. When you push again the same comment updates in place. When the pull request closes, the preview
-disappears.
+You push a commit to a branch. A minute later a bot comment appears on the pull request with a link. You click it,
+and there is your site, built from that branch and running at its own URL. Push again and the same comment updates
+in place. Close the pull request and the preview goes away.
 
-That is what Vercel does for documentation repositories, and that is all this does. The difference is where
-it runs: docpreview is a single Go binary you can start on a laptop, and the public URL comes from
-[zrok](https://docs.zrok.io/) or [NetFoundry Frontdoor](https://netfoundry.io/docs/frontdoor/intro/) rather
-than from somebody else's cloud.
+The site can be anything that builds to static files: a docs site, the Ziti admin console, a marketing page. If
+Vercel already does this for you and you like it, keep using it. If you want the same loop on hardware you run,
+here is another way. NetFoundry Preview is a single Go binary, `docpreview`, that you can start on a laptop.
+The public URL comes from [zrok](https://docs.zrok.io/) or
+[NetFoundry Frontdoor](https://netfoundry.io/docs/frontdoor/intro/), or the preview stays private on an OpenZiti
+overlay.
 
-If you are reading this page in a preview, docpreview built it from a pull request against its own repository.
+If you are reading this page in a preview, NetFoundry Preview built it from a pull request against its own
+repository.
 
 ## Why you might want this
 
-**The docs you cannot send to a SaaS.** Unreleased documentation, internal runbooks, anything under embargo.
-A hosted preview service means handing that content — and a repository access token — to a third party. Here
-the build runs on your hardware and the content never leaves your network except through an ingress you
-control.
+**Content you cannot send to a SaaS.** Unreleased docs, internal runbooks, a console that is not public yet. A
+hosted preview service needs that content and a repository access token. Here the build runs on your hardware, and
+the content leaves your network only through an ingress you control.
 
-**Bitbucket, or Bitbucket *and* GitHub.** Preview tooling clusters around GitHub. If your documentation lives
-in Bitbucket, or in both, you end up either doing without or gluing two systems together.
+**Bitbucket, or Bitbucket *and* GitHub.** Preview tooling clusters around GitHub. If your site lives in Bitbucket,
+or in both, you end up doing without or gluing two systems together.
 
-**Because it should not be complicated.** A documentation site is a directory of static files. Serving one
-behind a URL is not a distributed systems problem, and it should not require a control plane.
+**It should not be complicated.** A built site is a directory of static files. Serving one behind a URL is not a
+distributed systems problem, and it should not need a control plane.
 
 ## What it actually does
 
 ```mermaid
 flowchart LR
     A[Push to a branch] --> B[Webhook]
-    B --> C{Doc change?}
+    B --> E[Clone at the exact commit]
+    E --> C{Site changed?}
     C -->|no| D[Skip, say so on the PR]
-    C -->|yes| E[Clone at the exact commit]
-    E --> F[npm run build]
+    C -->|yes| F[Build the site]
     F --> G[Serve the output]
     G --> H[Publish a public URL]
     H --> I[Edit the PR comment]
 ```
 
-Six steps, one process, one sqlite file. No Kubernetes. Docker is optional and only used to sandbox the build.
+One process, one sqlite file, no Kubernetes. Builds run in a throwaway Docker container by default. Running them
+straight on the host is an opt-in.
 
 ## What it deliberately does not do
 
-- **Production deployments.** This builds previews. Shipping the site to production is your existing
-  pipeline's job, and conflating the two is how a preview URL ends up in a search index.
-- **Fork pull requests.** Building a fork means executing a stranger's `package.json` under your access
-  token. docpreview refuses them at the webhook, before the payload is even queued.
-- **Anything but static sites.** If your documentation needs a server at request time, this is the wrong
-  tool. See [Jamstack](./background/jamstack.md) for why that is a feature.
+- **Production deployments.** This builds previews. Shipping the site is your existing pipeline's job. Mixing the
+  two is how a preview URL ends up in a search index.
+- **Fork pull requests.** Building a fork means running a stranger's `package.json` under your access token. The
+  webhook refuses them before the payload is queued.
+- **Anything but static sites.** If your site needs a server at request time, this is the wrong tool. See
+  [Jamstack](./background/jamstack.md) for why that is a feature.
 
 ## This site is one of the repositories it builds
 
-`www/` is in the docpreview repository, and docpreview previews it on its own pull requests like any other
-project. That is worth one sentence rather than a section: it means the `baseUrl` handling described in
-[Troubleshooting](./troubleshooting.md) got paranoid for a reason, and it means a broken link fails a real build
-rather than being noticed months later.
+`www/` lives in the docpreview repository, and NetFoundry Preview previews it on its own pull requests like any
+other project. So the `baseUrl` check in [Troubleshooting](./troubleshooting.md) got strict for a reason, and a
+broken link fails a real build instead of waiting months for someone to notice.
 
 ## Where to go next
 
-- [Quickstart](./quickstart.md) — running locally in about ten minutes, no account needed
-- [Install on a Linux VM](./guides/linux-service.md) — a cloud VM to a preview URL, as a systemd service
-- [Architecture](./architecture.md) — how the pieces fit and why they are shaped that way
-- [GitHub App guide](./guides/github-app.md) — the click-through you cannot avoid
-- [age](./background/age.md) — what the credential vault is, if that name is unfamiliar
+- [Quickstart](./quickstart.md): running locally in about ten minutes, no account needed
+- [Install on a Linux VM](./guides/linux-service.md): a cloud VM to a preview URL, as a systemd service
+- [Architecture](./architecture.md): how the pieces fit and why they are shaped that way
+- [GitHub App guide](./guides/github-app.md): the click-through you cannot avoid
+- [age](./background/age.md): what the credential vault is, if that name is unfamiliar

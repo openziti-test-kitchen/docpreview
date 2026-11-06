@@ -6,94 +6,92 @@ sidebar_position: 4
 
 # Security model
 
-A preview builder is a machine that clones repositories and executes code from them, holds credentials that
-can write to those repositories, and publishes the result on the internet. It is worth being explicit about
-what is defended and what is not.
+A preview builder clones repositories and runs code from them. It holds credentials that can write to those
+repositories, and it publishes the result on the internet. This page says what NetFoundry Preview defends against
+and what it doesn't.
 
 ## Threat model
 
 **Defended against:**
 
-- Someone who obtains the data directory — a stolen laptop, a leaked backup, a VM snapshot.
+- Someone who gets the data directory: a stolen laptop, a leaked backup, a VM snapshot.
 - Someone who finds the webhook URL and posts forged events.
-- Someone who reads the logs, or the pull request comments, looking for credentials.
-- An outsider opening a fork pull request to get code executed.
-- A path in a repository config pointing somewhere it should not.
+- Someone who reads the logs or the pull request comments looking for credentials.
+- An outsider opening a fork pull request to get code run.
+- A path in a repository config pointing somewhere it shouldn't.
 - Someone who finds the tunnel URL and tries to write a credential through it.
-- Someone who finds the dashboard URL. With a password set, every page but the previews, the webhooks and the
+- Someone who finds the dashboard URL. With a password set, every page except the previews, the webhooks and the
   health endpoints asks for a login.
 
 **Not defended against:**
 
-- Someone already running code as the docpreview user. They have won. No file format changes that.
-- Anything that proxies to the daemon while stripping forwarding headers. The locality route below would read
-  those requests as local. Nothing docpreview ships does this, but a proxy you put in front of it might.
-- A guessed or shared password. There is no rate limit on `/login` and no lockout, so the password is the whole
-  defence — the comparison is constant-time and the hash is argon2id, which slows an offline attack on a stolen
-  database rather than an online one against the form.
-- Anyone at all, until a viewer password is set. Nothing is gated before then, deliberately: a feature that locks
-  people out on upgrade is not shippable.
-- A contributor with push access to a branch, under the `local` build driver. They can run arbitrary code on
-  the build host, by design — that is what `npm run build` is. Use the `docker` driver if that is not
-  acceptable.
+- Someone already running code as the daemon's user. They've won, and no file format changes that.
+- Anything that proxies to the daemon and strips forwarding headers. The locality route below would treat those
+  requests as local. Nothing NetFoundry Preview ships does this, but a proxy you put in front of it might.
+- A guessed or shared password. `/login` has no rate limit and no lockout, so the password is the whole defence. The
+  comparison is constant-time and the hash is argon2id, which slows an offline attack on a stolen database but not
+  an online one against the form.
+- Anyone at all, until a viewer password is set. Nothing is gated before then, on purpose: an upgrade must not lock
+  people out of their own dashboard.
+- A contributor with push access to a branch, under the `local` build driver. They can run any code on the build host.
+  That's what `npm run build` is. Use the `docker` driver if that isn't acceptable.
 - A malicious dependency in the repository's `package.json`. Same category.
 
 ## Credentials at rest
 
 Everything sensitive is in one [age](../background/age.md)-encrypted file: `$DATA_DIR/vault.age`.
 
-[age](https://age-encryption.org) rather than a hand-rolled AEAD, because the ways hand-rolled key derivation
-and nonce handling go wrong are exactly the ways that quietly ruin this kind of file — and both failures still
-encrypt, still decrypt, and still pass every test you would think to write. See
-[age, and why the vault uses it](../background/age.md) for the reasoning and the alternatives considered.
+The vault uses [age](https://age-encryption.org) instead of a hand-rolled AEAD. Hand-rolled key derivation and nonce
+handling fail in ways that quietly ruin this kind of file, and both failures still encrypt, still decrypt and still
+pass every test you'd think to write. See [age, and why the vault uses it](../background/age.md) for the reasoning
+and the alternatives.
 
-Writes go to a temporary file in the same directory and are then renamed over the target, so a crash
-mid-write cannot leave a truncated and therefore unrecoverable vault behind.
+Writes go to a temporary file in the same directory, which is then renamed over the target. A crash mid-write can't
+leave a truncated vault behind.
 
-**Three things are deliberately not in the vault**, and each for the same ordering reason: the page that unlocks
-the vault is served by the daemon, so anything the daemon needs to serve that page cannot be inside it.
+**Three things are kept out of the vault on purpose.** The page that unlocks the vault is served by the daemon, so
+anything the daemon needs to serve that page can't be inside it.
 
 | | Where | Why |
 |---|---|---|
-| The console password hashes | `settings` table, argon2id | A password inside the vault could not be checked to reach the form that opens the vault |
+| The console password hashes | `settings` table, argon2id | A password inside the vault couldn't be checked to reach the form that opens the vault |
 | The session signing key | Memory, generated per process | Nothing persists it, which is why a restart signs everybody out |
-| The zrok account token's other copy | `<data_dir>/zrok2/environment.json`, plaintext | zrok writes that file and docpreview does not control its format. The vault holds a copy so re-enrolling needs no new signup — the file is why that directory sits beside the vault rather than in a home directory |
+| The zrok account token's other copy | `<data_dir>/zrok2/environment.json`, plaintext | zrok writes that file and controls its format. The vault holds a copy so re-enrolling needs no new signup. This file is why that directory sits next to the vault instead of in a home directory |
 
 ### The master key
 
-The vault is a secrets manager, so its own key has nowhere inside the system to live. This is secret zero, and
-there is no configuration that makes it go away — only configurations that decide who or what holds it.
-[OWASP's guidance][owasp] is to move the problem rather than solve it: "you will often have to secure the
-primary secret of that secrets management solution in a secondary secrets management solution."
+The vault is a secrets manager, so its own key has nowhere inside the system to live. This is secret zero. No
+configuration makes it go away. You only choose who or what holds it. [OWASP's guidance][owasp] is to move the
+problem rather than solve it: "you will often have to secure the primary secret of that secrets management solution
+in a secondary secrets management solution."
 
 [owasp]: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
 
-`vault.key_source` is where that secondary mechanism attaches:
+`vault.key_source` is where that second mechanism plugs in:
 
 | Source | Spelling | The trade |
 |---|---|---|
 | A command | `exec:op read op://ops/docpreview` | Recommended. The key exists in the daemon process and nowhere else on the machine. Survives a reboot if the helper can run unattended. |
 | A file | `file:/etc/docpreview/master.key` | Survives a reboot. Anyone who can read that path can read every secret in the vault. |
-| The environment | `$DOCPREVIEW_MASTER_KEY` | Works, not recommended. Readable by every process under the same user, and lands in service definitions, process listings and crash dumps. |
-| A person | nothing configured | **Default.** The only option with no key at rest. The daemon boots locked and serves the dashboard until somebody unlocks it — so a reboot leaves it inert. |
+| The environment | `$DOCPREVIEW_MASTER_KEY` | Works, but not recommended. Every process running as the same user can read it, and it ends up in service definitions, process listings and crash dumps. |
+| A person | nothing configured | **Default.** The only option with no key stored anywhere. The daemon starts locked and serves the dashboard until somebody unlocks it, so after a reboot it does nothing until then. |
 
-Mint a key straight into a file, without it passing through a clipboard or a shell history:
+Write a key straight into a file, without it passing through a clipboard or a shell history:
 
 ```bash
 docpreview vault keygen -out /etc/docpreview/master.key
 ```
 
-Two rules are enforced at startup rather than documented and hoped for:
+Two rules are enforced at startup:
 
-- **A key file may not live inside `data_dir`.** That directory holds `vault.age`, so a key beside it means one
-  directory read yields both halves. Config validation refuses it.
-- **On Unix, a key file readable by group or other is refused.** Its permissions and its location are the only
-  things protecting it. Not checked on Windows, where permissions are ACLs that a mode bit does not describe.
+- **A key file can't live inside `data_dir`.** That directory holds `vault.age`, so a key next to it means one
+  directory read gets both halves. Config validation refuses it.
+- **On Unix, a key file readable by group or other is refused.** Its permissions and location are all that protect
+  it. Windows isn't checked, because its permissions are ACLs that a mode bit doesn't describe.
 
-The `exec:` form runs argv directly and never through a shell, so a config value cannot become command
-construction.
+The `exec:` form runs argv directly, never through a shell, so a config value can't turn into a different command.
 
-The encrypted file leaks nothing, including which secrets exist:
+The encrypted file leaks nothing, not even which secrets exist:
 
 ```bash
 $ grep -c "github" ~/.docpreview/vault.age
@@ -106,26 +104,25 @@ $ grep -c "github" ~/.docpreview/vault.age
 docpreview vault rekey -generate -yes    # with the daemon stopped
 ```
 
-Every secret is kept, so this does not require having the plaintexts — which matters, because the vault exists
-precisely so that nobody keeps a copy of them. Without it, changing the key means re-storing each credential by
-hand, so a key chosen hastily during setup is permanent in practice.
+Every secret is kept, so you don't need the plaintexts. That matters, because the vault exists so nobody keeps a copy
+of them. Without rekey, changing the key means storing each credential again by hand, so a key picked in a hurry
+during setup would be permanent.
 
-Two things it does not do. It does not change the secrets, so anybody who read one under the old key still knows
-it — rotate that credential at the platform that issued it. And it cannot help a daemon that is running: the old
-key is in memory, and the next write would undo the rekey. See [`vault rekey`](./cli.md#vault-rekey) for the
-ordering and what the backup is for.
+Rekey doesn't change the secrets. Anybody who read one under the old key still knows it, so rotate that credential
+where it was issued. It also can't help a running daemon: the old key is in memory, and the next write would undo the
+rekey. See [`vault rekey`](./cli.md#vault-rekey) for the order of steps and what the backup is for.
 
-A weak key is worth changing even when the file permissions look fine. On the host they are what protects the
-secrets — anything that can read `vault.age` can read the key beside it — but a short passphrase protects nothing
-wherever the vault travels without its key: a snapshot, a backup, or a copy left behind by
-[moving an installation](../guides/move-an-installation.md#afterwards). Four characters is ten thousand guesses.
+Change a weak key even if the file permissions look fine. On the host, the permissions protect the secrets, since
+anything that can read `vault.age` can read a key file next to it. But a short passphrase protects nothing once the
+vault travels without its key: a snapshot, a backup, or a copy left behind by
+[moving an installation](../guides/move-an-installation.md#afterwards). Four digits is ten thousand guesses.
 
 ## Credentials in memory
 
-Every credential is wrapped in a `Secret` type that implements `Stringer`, `Formatter`, `GoStringer`, and
+Every credential is wrapped in a `Secret` type that implements `Stringer`, `Formatter`, `GoStringer` and
 `json.Marshaler` to return `***REDACTED***`.
 
-That covers every path a value could accidentally reach an output:
+That covers every path a value could accidentally take to an output:
 
 ```go
 fmt.Sprintf("%v", s)     // ***REDACTED***
@@ -137,178 +134,180 @@ json.Marshal(cfg)        // ***REDACTED***
 slog.Info("x", "key", s) // ***REDACTED***
 ```
 
-`%x` is the interesting one: without `Formatter`, a `[]byte`-backed type would happily hex-dump the
-credential. There is no `UnmarshalJSON`, so no code path outside the vault package can round-trip a secret
-through JSON and get the value back.
+`%x` is the one to watch. Without `Formatter`, a `[]byte`-backed type would hex-dump the credential. There's no
+`UnmarshalJSON`, so no code outside the vault package can round-trip a secret through JSON and get the value back.
 
-Getting a value out requires calling `Reveal()`, which is awkward to type and easy to grep for.
+Getting a value out means calling `Reveal()`, which is awkward to type and easy to grep for.
 
 ## The login
 
-**The whole dashboard is behind a password once one is set**, including from loopback. Two roles, and they are not
-two levels of the same thing:
+**Once a viewer password is set, the whole dashboard is behind a login**, including from loopback. There are two
+roles, and they're different things rather than two levels of one:
 
 | Username | What it can do |
 |---|---|
 | `admin` | Everything, from anywhere the daemon is reachable |
-| `viewer` | Read everything, change nothing |
+| `viewer` | Read everything and rebuild a preview. Nothing else |
 
-Set them with [`docpreview console password`](./cli.md). Until a **viewer** password exists nothing is gated: an
-installation that has set no password is not locked out of its own dashboard by an upgrade.
+Set them with [`docpreview console password`](./cli.md). Until a **viewer** password exists nothing is gated, so an
+upgrade can't lock an installation with no password out of its own dashboard.
 
-What is never gated, and each for a load-bearing reason:
+These are never gated:
 
 | Path | Why |
 |---|---|
-| `/webhook/*` | Authenticated already, by an HMAC over the body, and its callers hold no cookie. A cookie gate here breaks every delivery and the failure reads as a signature problem |
-| `/healthz`, `/readyz` | What a supervisor and the restart script poll. `/readyz` carries counts and a stage name and nothing that identifies a repository — see [the CLI reference](./cli.md) |
-| The previews | A preview URL goes in a pull request for a reviewer who has no login and should not need one. Under `local` that is `/preview/…` on this listener — the other exposers never reach this mux |
-| `/login`, `/logout`, `/auth/*` | The form cannot be behind the form, and the OAuth callback arrives from Google carrying no cookie of ours |
+| `/webhook/*` | Already authenticated by an HMAC over the body, and its callers have no cookie. A cookie gate here would break every delivery, and the failure would look like a signature problem |
+| `/healthz`, `/readyz` | What a supervisor and the restart script poll. `/readyz` carries counts and a stage name and nothing that identifies a repository. See [the CLI reference](./cli.md) |
+| The previews | A preview URL goes in a pull request for a reviewer who has no login and shouldn't need one. Under `local` that's `/preview/…` on this listener. The other exposers never reach this mux |
+| `/login`, `/logout`, `/auth/*` | The form can't be behind the form, and the OAuth callback comes from Google with no cookie of ours |
 
 :::danger Loopback is not exempt
 
-Admitting a request from this machine as admin with no session sounds defensible — anyone who can reach
-`127.0.0.1` can already run the binary — and it is the wrong rule, because "from this machine" is not something the
-daemon can establish. A tunnel in proxy mode connects from a local process, so `RemoteAddr` is loopback for a
-request that arrived from the internet. Betting the login on that hands every visitor an admin session the moment
-something proxies without setting a forwarding header.
+Letting a request from this machine in as admin with no session sounds reasonable, since anyone who can reach
+`127.0.0.1` can already run the binary. It's still the wrong rule, because the daemon can't tell a request is really
+from this machine. A tunnel in proxy mode connects from a local process, so `RemoteAddr` is loopback for a request
+that came from the internet. Trusting that would give every visitor an admin session as soon as something proxies
+without setting a forwarding header.
 
 :::
 
-Sessions are a signed cookie with no server-side store, and the signing key is generated per process — so **every
-restart signs everybody out**. Twelve hours otherwise.
+Sessions are a signed cookie with no server-side store, and the signing key is generated per process. So **every
+restart signs everybody out**. Otherwise a session lasts twelve hours.
 
 ### Google sign-in grants viewer, never admin
 
-Optional, and worth stating exactly: an address at a domain on the allow-list gets **viewer**. Admin is
-password-only, because the two are different claims — "somebody at this company" is not "the person who administers
-this installation". Configure with `docpreview console oauth-domains acme.com`. The check is an exact match on the
-part after the last `@`, not a suffix test, so a list naming `acme.com` does not admit `evil-acme.com`.
+Google sign-in is optional. An address at a domain on the allow-list gets **viewer**. Admin is password-only, because
+"somebody at this company" is not the same claim as "the person who runs this installation". Configure it with
+`docpreview console oauth-domains acme.com`. The check is an exact match on the part after the last `@`, not a suffix
+test, so a list naming `acme.com` doesn't let in `evil-acme.com`.
 
-The client id and secret live in the vault, so a locked vault means the login page offers the password field alone
-rather than a button that cannot work.
+The client id and secret live in the vault. When the vault is locked, the login page shows only the password field,
+not a button that can't work.
 
 ## The mutating surfaces
 
-There are three, and everything else the daemon serves is a `GET`:
+Apart from the webhook and the login routes, three surfaces change anything:
 
 | Surface | Endpoints | What it can do |
 |---|---|---|
 | Credentials | `/api/secrets/…` | Create the vault, unlock it, store a credential, delete one, generate a webhook secret |
-| [Projects](./projects.md) | `/api/projects/…`, `/api/cache/…`, `/api/settings/…` | Decide which repositories build and how, hold a per-project environment variable, clear a build cache, set the hostname prefix |
+| [Projects](./projects.md) | `/api/projects/…`, `/api/builds/…`, `/api/images/…`, `/api/cache/…`, `/api/settings/…` | Decide which repositories build and how, hold a per-project environment variable, cancel, rebuild or unlink a build, clear a build cache, set the hostname prefix |
 | Exposer | `/api/zrok/…` | Sign up for zrok, enrol or un-enrol this host, store the Frontdoor token, enrol a ziti identity, switch which exposer publishes |
 
-They share the gates below, deliberately. **The projects surface is the most dangerous of the three**: a project row
-decides what command runs on the build host, and a project's environment variables are credentials handed to the
-process that runs it — a more direct route to executing code on this machine than reading the vault would be. The
-exposer surface is next: it spends an account's quota and can take every published preview URL down.
+All three share the gates below. **The projects surface is the most dangerous.** A project decides what command runs
+on the build host, and its environment variables are credentials handed to the process that runs it. That's a more
+direct route to running code on this machine than reading the vault. The exposer surface is next: it spends an
+account's quota and can take every published preview URL down.
 
-All of them live on the same listener that serves the dashboard, the previews and the webhook, so how reachable they
-are is a property of your deployment, not of the code. **One of these must hold** before any of them will act
+The one exception is **Rebuild**. Any signed-in user can press it, viewers too. A rebuild runs the command the project
+or the repository already set, at a commit already recorded, so it can't choose what runs.
+
+All of them are on the same listener as the dashboard, the previews and the webhook, so how reachable they are
+depends on your deployment, not on the code. **One of these must be true** before any of them will act
 (`internal/daemon/secrets.go`):
 
-- **The request carries an admin session.** This is authentication, and it is the only one of the three that can be
-  true from another machine — which is the point of having a password, and what makes managing credentials
-  remotely supported at all.
-- **The request arrived over an OpenZiti listener from an identity in `admin_identities`.** See below.
-- **The request arrived locally** — a loopback `RemoteAddr` **and** no `X-Forwarded-For`, `X-Forwarded-Host`,
-  `X-Real-Ip` or `Forwarded` header — *and* every configured listener is loopback or a ziti listener naming
-  `admin_identities`. A daemon bound to `0.0.0.0` refuses on this route however local the request looks.
+- **The request has an admin session.** This is authentication. It's the only one of the three that can be true from
+  another machine, which is the point of having a password and the only way to manage credentials remotely.
+- **The request came over an OpenZiti listener from an identity in `admin_identities`.** See below.
+- **The request came from this machine**: a loopback `RemoteAddr` **and** no `X-Forwarded-For`, `X-Forwarded-Host`,
+  `X-Real-Ip` or `Forwarded` header. On top of that, every configured listener must be loopback or a ziti listener
+  naming `admin_identities`. A daemon bound to `0.0.0.0` refuses on this route however local the request looks.
 
-A **viewer** session does not fall through to the locality test. It is a positive statement that this caller is not
-an admin, so treating a viewer on the loopback interface as one would make signing in as a viewer a way to gain less
-than nothing. It is refused with a reason the page shows.
+A **viewer** session doesn't fall through to the locality test. Signing in as a viewer says this caller is not an
+admin. Treating a viewer on loopback as admin would make signing in as a viewer give you more than not signing in.
+The request is refused with a reason the page shows.
 
 ### Why the locality route needs both halves
 
-Checking where the daemon listens is not enough, and the gap is a tunnel. `zrok2 share public
-http://127.0.0.1:8471` publishes every route the daemon serves while the listener is still loopback, so a listener
-test alone answers yes with `/api/secrets` on the internet — and with the vault unlocked, `PUT`, `DELETE` and
-generate would all succeed for anyone holding the share URL.
+Checking where the daemon listens isn't enough, because of tunnels. `zrok2 share public http://127.0.0.1:8471`
+publishes every route the daemon serves while the listener is still loopback. A listener test alone would say yes
+with `/api/secrets` on the internet. With the vault unlocked, `PUT`, `DELETE` and generate would all work for anyone
+holding the share URL.
 
-`RemoteAddr` alone cannot tell the difference. In zrok's proxy mode the daemon sees the connection from the local
-tunnel process, so the address is loopback too, and `Host` is whatever the client sent. The forwarding-header test
-is what closes it: anything that proxies to the daemon sets one of those headers, including docpreview's own
-`webhook-only` proxy. A caller that adds a header itself only makes the check refuse more, which is the safe
-direction to be wrong in.
+`RemoteAddr` alone can't tell the difference either. In zrok's proxy mode the daemon sees the connection from the
+local tunnel process, so the address is loopback too, and `Host` is whatever the client sent. The forwarding-header
+test catches it. Anything that proxies to the daemon sets one of those headers, including NetFoundry Preview's own
+`webhook-only` proxy. A caller that adds a header itself only makes the check refuse more, which is the safe way to be
+wrong.
 
 ### The locality route is a boundary, not authentication
 
-Taken on its own, the locality test is not a credential check. It answers "did this request originate on this
-machine" from evidence the network arrangement supplies rather than from anything the caller proves, and it assumes
-nothing proxies to the daemon while stripping forwarding headers.
+The locality test doesn't check a credential. It decides whether a request started on this machine from what the
+network setup tells it, not from anything the caller proves. It assumes nothing proxies to the daemon while stripping
+forwarding headers.
 
-That is why it is one of three routes rather than the only one. **Set an admin password and the surface has
-authentication.** The locality route exists so that a fresh installation with no password can be set up from the
-machine it is on, where the boundary is the same one that already protects `docpreview vault set` — anyone who can
-reach `127.0.0.1` can run the binary, and the API adds no reach a shell does not already have.
+So it's one of three routes, not the only one. **Set an admin password and the surface has authentication.** The
+locality route is there so a fresh installation with no password can be set up from its own machine. The boundary
+there is the same one that already protects `docpreview vault set`: anyone who can reach `127.0.0.1` can run the
+binary, and the API gives them nothing a shell doesn't.
 
-Managing credentials from another machine requires the admin password. Without one it is not supported.
+To manage credentials from another machine, set the admin password.
 
-### Over an OpenZiti listener, the gate is an identity instead
+### Over an OpenZiti listener, the gate is an identity
 
-A request that arrives on a [`ziti` listener](./configuration.md#a-ziti-listener) is judged on **who dialed it**
-rather than on where it came from. That is a stronger statement than the locality test above — the overlay
-authenticated the identity and there is no address to spoof — but it is only as good as the grant, so the grant is
-an explicit list of identity ids on the listener, `admin_identities`.
-
-Four properties, and three of them are refusals:
+A request on a [`ziti` listener](./configuration.md#a-ziti-listener) is judged on **who dialed it**, not where it came
+from. That's stronger than the locality test, since the overlay authenticated the identity and there's no address to
+spoof. It's only as good as the grant, though, so the grant is an explicit list of identity ids on the listener:
+`admin_identities`.
 
 | | |
 |---|---|
-| An id in `admin_identities` | May write |
-| A listener naming nobody | Read-only. Being enrolled on the network is not authorization to write a credential, and this is the default |
-| An enrolled id not on the list | Read-only, and the refusal names the id so adding it is a copy and paste |
-| No id at all | Refused. That is what a router which never sent the header produces, and "we cannot tell who this is" is not a grant |
+| An id in `admin_identities` | Can write |
+| A listener naming nobody | Read-only, and the default. Being enrolled on the network doesn't mean you may write a credential |
+| An enrolled id not on the list | Read-only. The refusal names the id, so adding it is a copy and paste |
+| No id at all | Refused. That's what a router that never sent the header produces, and "we can't tell who this is" is not a grant |
 
-The identity is recorded when the connection is accepted, not read from the request — `http.Server.ConnContext` is
-the only hook that sees the connection, and the grant belongs to the listener rather than to the request. It is
-stored under a context key this package alone can write, so a value forged elsewhere in the process grants nothing.
+The identity is recorded when the connection is accepted, not read from the request. `http.Server.ConnContext` is the
+only hook that sees the connection, and the grant belongs to the listener. It's stored under a context key only this
+package can write, so a value forged elsewhere in the process grants nothing.
 
 A mixed configuration is judged on its weakest listener. One `http.Server` serves them all, so allowing writes
-because *a* listener is loopback would allow them through the one that is not.
+because *a* listener is loopback would allow them through the one that isn't.
 
-:::note Not yet exercised against a live overlay
+:::note Tested against a live overlay
 
-The identity plumbing is tested offline, including every refusal. What no test here proves is that the router
-actually sends the dialer on a real circuit, or that the id matches what the controller shows. Until that has been
-run against a live network, treat the overlay grant as untried rather than as load-bearing.
+`TestOverlayAdminGrantFollowsTheRealDialer` binds a real service and grants one identity by the id the controller
+reports for it. The router names the dialer on every circuit, and the id it sends is the one the controller lists. The
+listed identity may write. An unlisted identity is refused, and the refusal names its id. Every overlay client has an
+identity, so the "no id at all" row is tested offline only. Point the test at your own network with the variables in
+`internal/daemon/listen_integration_test.go`.
 
 :::
 
 ### Point the tunnel at `webhook-only`, not the daemon
 
-The architectural half of the fix, and the one that matters more than the header check. `docpreview webhook-only`
-forwards exactly `POST /webhook/github` and answers 404 to everything else, so the credential API is not
-reachable through the tunnel at all and the locality gate becomes a second line rather than the only one. With
-`-zrok-name` it binds no local TCP port either. See the [webhook tunnel guide](../guides/webhook-tunnel.md).
+This matters more than the header check. `docpreview webhook-only` forwards only `POST` to its webhook paths:
+`/webhook/github` by default, or the paths you give it with `-path`, which you can repeat (`-path /webhook/bitbucket`).
+A `GET` on one of those paths gets a `405`, and everything else gets a `404`. The credential API isn't reachable
+through the tunnel at all, so the locality gate is a second line of defence instead of the only one. With `-zrok-name`
+it binds no local TCP port either. See the [webhook tunnel guide](../guides/webhook-tunnel.md).
 
-### Reading is open to anyone who got past the login
+### Reading is open to anyone past the login
 
-`GET /api/secrets`, `GET /api/projects` and `GET /api/zrok` apply no gate of their own. They return names and
-set/unset flags, never a value, and each reports `can_write` plus `read_only_why` so a viewer's dashboard renders
-the panel read-only with the reason on it. A panel that vanished instead would read as a broken feature, and one
-offering buttons that 403 is worse than one that explains itself.
+`GET /api/secrets`, `GET /api/projects` and `GET /api/zrok` have no gate of their own. They return names and
+set/unset flags, never a value. Each one reports `can_write` and `read_only_why`, so a viewer's dashboard shows the
+panel read-only with the reason on it, instead of hiding it or offering buttons that 403.
 
-None of the three ever returns a credential. Not on list, not in an error, not after storing one — including the
-zrok account token, which the signup flow creates and puts straight into the vault without it appearing in any
-response.
+None of the three ever returns a credential: not in a list, not in an error, not after storing one. That includes the
+zrok account token, which signup creates and puts straight into the vault without it appearing in any response.
 
-A refused write is a `403` with the reason in it, and the daemon logs it — `refused a remote credential request` or
+A refused write is a `403` with the reason in it, and the daemon logs `refused a remote credential request` or
 `refused a remote project change`, with the remote address, method and path.
 
-The **Projects**, **Settings** and **Clear caches** controls on the dashboard are drawn from `GET /api/admin`, which
-runs the same check the write endpoints run. The server decides, not the page: a `Host`-header test in the browser
-would be worthless, since `Host` is whatever the client typed. Anything other than an outright yes leaves the links
-absent — which is what happens for a viewer session, and through
-[`dashboard-only`](./cli.md#dashboard-only), where that endpoint is not in the allowlist at all.
+The dashboard's **Projects**, **Settings** and **Clear caches** controls come from `GET /api/admin`, which runs the
+same check as the write endpoints. The server decides, not the page. A `Host`-header test in the browser would be
+worthless, since `Host` is whatever the client typed. Anything short of a clear yes leaves the links out. That's what
+a viewer session sees, and what [`dashboard-only`](./cli.md#dashboard-only) shows, since that endpoint isn't on its
+allowlist.
 
-### One preview URL per build is one more public surface
+### Per-build URLs are one more public surface
 
-Every retained build has its own URL as well as every branch. Nothing about them is guessable — the name carries a
-commit — but they are public in exactly the way the branch URL is, they are `noindex`, and they keep serving until
-the preview is torn down or `preview.keep_builds` evicts them. If a commit contained something that should never have
-been published, tearing the pull request's preview down removes every build's URL, not only the latest.
+This applies only with `exposer.build_shares: true`, which is off by default. Then every retained build has its own
+URL as well as the branch. The names include a commit, so they can't be guessed, but they are as public as the branch
+URL. They are `noindex`, and they keep serving until the preview is torn down or `preview.keep_builds` evicts them.
+If a commit had something in it that should never have been published, tearing down the pull request's preview
+removes every build's URL, not just the latest. When `build_shares` is off, any per-build shares left from before are
+deleted at the next start.
 
 ## Credentials in git output
 
@@ -318,93 +317,93 @@ GitHub App clone URLs carry an installation token:
 https://x-access-token:ghs_...@github.com/acme/docs.git
 ```
 
-Git echoes the remote URL in several of its error messages. Build output is attached to the pull request
-comment. Without intervention, a clone failure would publish a live GitHub credential **to the pull request**.
+Git echoes the remote URL in several of its error messages, and build output goes into the pull request comment. Left
+alone, a clone failure would publish a live GitHub credential **to the pull request**.
 
-So every byte of git output is scrubbed: any `scheme://userinfo@host` becomes
-`scheme://***REDACTED***@host`. Tested, including that the scrubber terminates: rescanning from the start after
-each replacement would spin forever on a line it had already redacted.
+So every byte of git output is scrubbed: any `scheme://userinfo@host` becomes `scheme://***REDACTED***@host`. The
+tests include one proving the scrubber finishes. Rescanning from the start after each replacement would loop forever
+on a line it had already redacted.
 
 ### Userinfo ends at the last `@`, not the first
 
-Splitting on the first `@` leaks the token it was meant to hide. A Bitbucket credential authenticates with an email
-address as the username, so on
+Splitting on the first `@` leaks the token it was meant to hide. A Bitbucket credential uses an email address as the
+username, so on
 
 ```text
 https://someone@example.com:TOKEN@bitbucket.org/ws/docs.git
 ```
 
-that rule redacts `someone` and emits `:TOKEN@bitbucket.org/ws/docs.git` verbatim — into the build log, and from
-there into the pull request comment.
+that rule redacts `someone` and prints `:TOKEN@bitbucket.org/ws/docs.git` as is, into the build log and from there
+into the pull request comment.
 
-The rule is RFC 3986's (`internal/pipeline/clone.go:161`): after `://`, the authority ends at the first `/`, `?`,
-`#` or whitespace, and userinfo is everything before the **last** `@` inside it. Whitespace, because these are
-prose lines with URLs embedded in them rather than bare URLs. An unescaped `@` in userinfo is not legal, but git
-accepts it and people write it, so the scrubber has to be right for input that is wrong.
-`internal/pipeline/clone_test.go` covers the email-username case and two credentialed URLs on one line, and
-asserts the token is **absent** rather than that the output matches a string.
+The rule is RFC 3986's (`scrubLine` in `internal/pipeline/clone.go`). After `://`, the authority ends at the first
+`/`, `?`, `#` or whitespace, and userinfo is everything before the **last** `@` inside it. Whitespace counts because
+these are lines of prose with URLs in them, not bare URLs. An unescaped `@` in userinfo isn't legal, but git accepts
+it and people write it, so the scrubber has to handle input that is wrong. `internal/pipeline/clone_test.go` covers
+the email-username case and two credentialed URLs on one line, and checks that the token is **absent** rather than
+that the output matches a string.
 
 ## Webhook authentication
 
-`X-Hub-Signature-256`, HMAC-SHA256, verified with `hmac.Equal` **before the body is parsed**.
+HMAC-SHA256, in `X-Hub-Signature-256` from GitHub and `X-Hub-Signature` from Bitbucket, verified with `hmac.Equal`
+**before the body is parsed**.
 
-Both halves matter. The endpoint is reachable from the internet by design, so the JSON parser must never see
-bytes that have not been authenticated. And the comparison must be constant-time, or it leaks the expected
-digest one byte at a time.
+Both parts matter. The endpoint is on the internet by design, so the JSON parser must never see bytes that haven't
+been authenticated. And the comparison must be constant-time, or it leaks the expected digest one byte at a time.
 
-A rejected delivery gets a bare `401 unauthorized`. Telling a prober *why* their signature failed helps only
-the prober.
+A rejected delivery gets a bare `401 unauthorized`. Telling a prober why their signature failed only helps the prober.
 
 ## Fork pull requests
 
-Refused, at the webhook, before the payload is queued.
+Refused at the webhook, before the payload is queued.
 
 ```text
 WARN refusing to build a fork pull request pr=acme/docs#7 head_repo=mallory/docs
 ```
 
-Building a fork means cloning an outsider's repository and executing its `package.json` scripts under an
-installation token that can write to yours. There is no configuration flag for this and there should not be.
+Building a fork means cloning an outsider's repository and running its `package.json` scripts with an installation
+token that can write to yours. There's no setting to allow it, and there shouldn't be.
 
 ## Repository config
 
-`.docpreview.yml` is attacker-influenced on any repository where opening a pull request is not a privilege.
-Constraints:
+On any repository where anyone can open a pull request, an attacker can write `.docpreview.yml`. So:
 
-- Paths are rejected if absolute, drive-qualified, or traversing outside the root.
-- `build.command` is honored under **both** drivers, so under `local` it is a shell command on the build host. This
-  is not a hole so much as a restatement of the driver's own posture: `npm run build` already runs `package.json`
-  scripts from the same branch. Treat "who can open a pull request here" and "who I would give a shell to" as the
-  same question under `local`, or run `docker`. A [project](./projects.md) row is how to state the command yourself.
-- `build.env` cannot set reserved variables — a pull request that could set `DOCUSAURUS_BASE_URL` could break
-  its own preview in a way that looks like a docpreview bug.
-- `detect.script` is resolved through symlinks and re-checked against the workspace root, because a symlink
-  inside an attacker-controlled tree can point anywhere.
-- The detect script runs with a three-variable environment — `PATH`, `HOME` pointed at the workspace, and
-  `DOCPREVIEW=1`. A build server's environment contains things a pull request author should not be handed.
-- Under the Docker driver, **a build whose output contains a symlink is refused rather than published.** The preview
-  file server blocks path traversal but follows symlinks out of its root, so `build/leak -> /etc/passwd` would
-  otherwise be served to anyone holding the preview URL.
+- Paths are refused if absolute, drive-qualified or reaching outside the root.
+- `build.command` is honored under **both** drivers, so under `local` it's a shell command on the build host. That
+  only restates what the driver already allows: `npm run build` runs `package.json` scripts from the same branch.
+  Under `local`, "who can open a pull request here" and "who would I give a shell to" are the same question. If the
+  answers differ, run `docker`, or set the command yourself on a [project](./projects.md).
+- `build.env` can't set reserved variables. A pull request that could set `DOCUSAURUS_BASE_URL` could break its own
+  preview in a way that looks like a NetFoundry Preview bug.
+- `detect.script` is resolved through symlinks and checked again against the workspace root, because a symlink in an
+  attacker's tree can point anywhere.
+- The detect script gets a minimal environment. Under `docker` it runs in a container with no network, the checkout
+  mounted read-only, and only `DOCPREVIEW=1` and `HOME=/tmp` set. Under `local` it gets `PATH`, `HOME` pointed at the
+  workspace and `DOCPREVIEW=1`, and only a script the project names runs. A build server's environment holds things a
+  pull request author shouldn't have.
+- **A build whose output contains a symlink is refused, not published**, under either driver. The preview file server
+  blocks path traversal but follows symlinks out of its root, so `build/leak -> /etc/passwd` would be served to anyone
+  with the preview URL.
 
-A [project row](./projects.md) overrides every one of the build fields above, which is the point of having one:
-`.docpreview.yml` arrives in the pull request, and a project row is the operator's. It does not relax any of these
-constraints — a project's `command` still runs, but the operator wrote it.
+A [project](./projects.md) overrides every build field above. That's what projects are for: `.docpreview.yml` comes
+in with the pull request, and the project is yours. A project doesn't relax any of these rules. Its `command` still
+runs, but you wrote it.
 
 ## The preview surface
 
-Previews render HTML that anyone who can open a pull request wrote. Served with:
+Previews serve HTML written by anyone who can open a pull request. They're served with:
 
 | Header | Why |
 |---|---|
 | `Cache-Control: no-store, must-revalidate` | A cached preview means a reviewer refreshes and sees the version they already rejected. |
-| `X-Robots-Tag: noindex, nofollow` | Unreleased documentation has no business in a search index. |
+| `X-Robots-Tag: noindex, nofollow` | An unreleased site doesn't belong in a search index. |
 | `X-Content-Type-Options: nosniff` | |
 | `Referrer-Policy: no-referrer` | |
 
-Only `GET` and `HEAD` are allowed — everything else is `405`. Path traversal is handled by `http.Dir`, which
-also rejects the Windows device names and alternate separators a hand-crafted request might try.
+Only `GET` and `HEAD` are allowed. Everything else gets `405`. Path traversal is handled by `http.Dir`, which also
+rejects the Windows device names and alternate separators a hand-crafted request might try.
 
-These are hardening, not a WAF. For content you genuinely do not trust, put
+These headers harden the previews. They aren't a WAF. For content you really don't trust, put
 [Frontdoor](../guides/frontdoor.md) in front.
 
 ## GitHub App permissions
@@ -418,29 +417,29 @@ Grant these and nothing else:
 | Checks | Read and write |
 | Metadata | Read-only |
 
-Install on **selected repositories**, not all of them.
+Install it on **selected repositories**, not all of them.
 
-Installation tokens last an hour and are cached in memory with a five-minute refresh margin. The App JWT
-lasts nine minutes — GitHub's limit is ten — and is backdated sixty seconds against clock skew, because a host
-running a minute fast otherwise fails every API call with a 401 that says nothing about clocks.
+Installation tokens last an hour and are cached in memory, refreshed five minutes before they expire. The App JWT
+lasts nine minutes, under GitHub's limit of ten, and is backdated sixty seconds for clock skew. Without that, a host
+running a minute fast fails every API call with a 401 that says nothing about clocks.
 
 ## Operational advice
 
-**Set both passwords, first.** `docpreview console password -role admin` and `-role viewer`. Until the viewer one
-exists nothing is gated, and `docpreview console status` says what is set and what this daemon listens on.
+**Set both passwords first.** Run `docpreview console password -role admin` and `-role viewer`. Until the viewer
+password exists nothing is gated. `docpreview console status` shows what is set and what this daemon listens on.
 
-**Bind loopback, and do not share the daemon.** Default `listen` is `127.0.0.1:8471`. Publish
-`docpreview webhook-only` and point the tunnel at that: a share of the daemon publishes the dashboard, every
-preview and `/api/secrets` alongside the webhook. See the [webhook tunnel guide](../guides/webhook-tunnel.md).
-The login is a second line here, not a substitute — `dashboard-only` publishes a read-path allowlist that does not
-include `/api/admin` at all.
+**Bind loopback, and don't share the daemon.** The default `listen` is `127.0.0.1:8471`. Run `docpreview
+webhook-only` and point the tunnel at that. A share of the daemon itself publishes the dashboard, every preview and
+`/api/secrets` along with the webhook. See the [webhook tunnel guide](../guides/webhook-tunnel.md). The login is a
+second line here, not a replacement. `dashboard-only` publishes an allowlist of read paths, plus login, logout and
+rebuild, and `/api/admin` isn't on it.
 
-**Rotate the private key.** See the [GitHub App guide](../guides/github-app.md). Zero-downtime, and the
-step people forget is deleting the old key afterwards.
+**Rotate the private key.** See the [GitHub App guide](../guides/github-app.md). There's no downtime. The step people
+forget is deleting the old key afterwards.
 
-**Keep the master key out of the config file.** `vault.key_source` names where to read it from — a command or a
-file — so the key itself is never a config value. `exec:` is the form that keeps it out of every file on the
-machine. See [the master key](#the-master-key).
+**Keep the master key out of the config file.** `vault.key_source` names where to read it from, a command or a file,
+so the key itself is never a config value. `exec:` keeps it out of every file on the machine. See
+[the master key](#the-master-key).
 
-**Close pull requests.** With `teardown_on_close: true` that withdraws the URL. Otherwise the TTL gets it in
-72 hours.
+**Close pull requests.** With `teardown_on_close: true`, closing one withdraws the URL. Otherwise the TTL removes it
+after 72 hours.

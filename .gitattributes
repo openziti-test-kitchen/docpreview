@@ -49,6 +49,7 @@
 *.docx binary
 *.exe binary
 *.gif binary
+*.ico binary
 *.jpg binary
 *.pdf binary
 *.png binary

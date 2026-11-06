@@ -67,8 +67,14 @@ exposer:
     name_template: "{{.Repo.Name}}-{{.Name}}"
 
   frontdoor:
-    api_base: https://gateway.production.netfoundry.io/frontdoor
-    frontend: public
+    # All three come from your tenant's Frontdoor console and have no working default.
+    # With frontdoor selected, docpreview refuses to start until api_base and frontend
+    # are set, and every publish fails until env_z_id is set.
+    api_base: https://gateway.production.netfoundry.io/frontdoor/<your-frontdoor-id>
+    # The frontend's id, like bMTHPrtQ. A frontend name does not work.
+    frontend: ""
+    # The ziti identity of the enrolled Frontdoor agent that hosts the shares.
+    env_z_id: ""
 
     # Frontdoor's agent dials OUT to the preview, so unlike zrok this binds a
     # real TCP port. This must be an address the agent can reach. Leave it at
@@ -88,11 +94,12 @@ github:
   api_base: https://api.github.com
 
 build:
-  # local: run npm on this host, fast, for repositories you already trust.
-  # docker: run it in a capped throwaway container, for the ones you do not.
-  driver: local
+  # docker (the default): run it in a capped throwaway container.
+  # local: run npm on this host, for repositories you already trust; it also
+  # needs allow_local_driver: true.
+  driver: docker
 
-  image: node:24-bookworm-slim
+  image: node:24-bookworm
   timeout: 15m
 
 preview:
@@ -101,3 +108,7 @@ preview:
   ttl: 72h
 
   teardown_on_close: true
+
+  # Heading of the pull request comment, and the name of the Bitbucket build status.
+  # Changing it edits the existing comments in place; they are found by a hidden marker.
+  title: "NetFoundry Preview"
