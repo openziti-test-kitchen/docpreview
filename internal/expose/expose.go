@@ -68,6 +68,10 @@ type Spec struct {
 	// PR is carried for logging and for name templating.
 	PR model.PullRequest
 
+	// ShareReason says why a share is being created, for the share gate's log and history. Empty
+	// means ShareReasonPublish.
+	ShareReason string
+
 	// Progress is where the exposer narrates the publish, nil to narrate nowhere.
 	//
 	// The daemon points this at the build log, which is what somebody watching a build is

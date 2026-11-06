@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/netfoundry/docpreview/internal/expose"
 )
 
 // dashboardPaths is every route the dashboard needs, and nothing else.
@@ -120,6 +122,7 @@ func cmdDashboardOnly(args []string) error {
 	}
 
 	log := newLogger(*logLevel)
+	installShareGate("dashboard-only", log)
 
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
@@ -196,7 +199,7 @@ func cmdDashboardOnly(args []string) error {
 			return errors.New("-oauth-domain needs -oauth: there is no provider to check it against")
 		}
 
-		ln, shareURL, cleanup, err := zrokListener(*zrokName, *zrokNamespace, auth, log)
+		ln, shareURL, cleanup, err := zrokListener(*zrokName, *zrokNamespace, auth, expose.ShareReasonDashboard, log)
 		if err != nil {
 			return err
 		}
