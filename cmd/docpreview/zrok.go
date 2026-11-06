@@ -182,6 +182,24 @@ func useZrokHome(dir string) error {
 	return expose.UseZrokRoot(expose.ZrokProject, dir)
 }
 
+// installShareGate puts this process's zrok share creations behind the share gate, whose budget
+// lives in the zrok environment directory and is shared with every other process using it.
+//
+// Called after the environment is chosen. A directory that cannot be found leaves the process
+// ungated, with a warning: the controller's own limit still applies.
+func installShareGate(process string, log *slog.Logger) {
+	dir, err := expose.ZrokRootDir()
+	if err == nil {
+		_, err = os.Stat(dir)
+	}
+	if err != nil {
+		log.Warn("no zrok environment directory for the share gate; share creation is not limited",
+			"error", err)
+		return
+	}
+	expose.SetDefaultShareGate(expose.NewShareGate(dir, process, log))
+}
+
 // cmdZrok is the zrok account and environment surface on the command line.
 //
 // The same operations as the dashboard panel, for a host with no browser on it and for the

@@ -71,7 +71,10 @@ function server({scm = [], testAnswer, branchAnswer, scanAnswer}) {
     release() { release && release(); },
     async handle(method, url, body) {
       if (url === "/api/admin") return [200, {secrets: true, projects: true}];
-      if (url.endsWith("/branch") && branchAnswer) return branchAnswer();
+      if (url.endsWith("/branch")) {
+        st.branches = (st.branches || 0) + 1;
+        return branchAnswer ? branchAnswer() : [200, {queued: true, branch: "main"}];
+      }
       if (url.endsWith("/scan")) {
         st.scans = (st.scans || 0) + 1;
         return scanAnswer ? scanAnswer() : [200, {queued: 2}];
@@ -341,7 +344,7 @@ console.log("Scan pull requests answers under the header, with the count");
 }
 
 console.log("");
-console.log("the first usable token scans on its own; a rotation does not");
+console.log("the first usable token builds the default branch and scans on its own; a rotation does not");
 {
   const srv = server({scm: [], testAnswer: passing});
   const {doc} = await open(srv);
@@ -351,10 +354,15 @@ console.log("the first usable token scans on its own; a rotation does not");
   await wait(250);
   if (srv.st.scans !== 1) fail(`${srv.st.scans || 0} scans after the first token, want 1`);
   else ok("scanned once");
+  if (srv.st.branches !== 1) fail(`${srv.st.branches || 0} branch builds after the first token, want 1`);
+  else ok("built the default branch once");
   const host = doc.querySelector(".credbox [data-scan-host]");
   if (!host || !host.textContent.includes("Queued 2 builds, one per open pull request")) {
     fail(`scan result in the credential box: ${host ? JSON.stringify(host.textContent) : "(no host)"}`);
   } else ok("the result is in the credential box");
+  if (!host || !host.textContent.includes("Building main.")) {
+    fail(`branch result in the credential box: ${host ? JSON.stringify(host.textContent) : "(no host)"}`);
+  } else ok("the branch build is in the credential box");
   if (host && host.querySelector(".spinner")) fail("the scan note is still spinning");
 
   row.querySelector("input").value = "ATCTT3x-the-rotated-token-0002";
@@ -362,6 +370,8 @@ console.log("the first usable token scans on its own; a rotation does not");
   await wait(250);
   if (srv.st.scans !== 1) fail("rotating the token scanned again, rebuilding every open pull request");
   else ok("a rotation does not scan");
+  if (srv.st.branches !== 1) fail("rotating the token built the default branch again");
+  else ok("a rotation does not build the default branch");
 }
 
 console.log("");

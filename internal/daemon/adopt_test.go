@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"testing"
@@ -25,8 +26,10 @@ type adoptingExposer struct {
 	created  []string
 	keptSets []map[string]bool
 
-	// failAdopt makes Adopt refuse, to exercise the fall-back to Publish.
+	// failAdopt makes Adopt refuse, to exercise the fall-back to Publish. adoptErr is the
+	// refusal; nil means the share is gone from the controller.
 	failAdopt bool
+	adoptErr  error
 }
 
 func (a *adoptingExposer) Adoptable(context.Context) (map[string]expose.Adoptable, error) {
@@ -37,7 +40,10 @@ func (a *adoptingExposer) Adopt(ctx context.Context, spec expose.Spec, c expose.
 	h http.Handler) (*expose.Publication, error) {
 
 	if a.failAdopt {
-		return nil, context.DeadlineExceeded
+		if a.adoptErr != nil {
+			return nil, a.adoptErr
+		}
+		return nil, errors.New("error creating listener: service 'tok' not found in ziti network")
 	}
 	a.mu.Lock()
 	a.adopted = append(a.adopted, spec.Key())
@@ -125,6 +131,29 @@ func TestAdoptionFallsBackToPublishing(t *testing.T) {
 	}
 	if _, created, _ := ex.took(); len(created) != 1 {
 		t.Errorf("created %v, want the one publication Adopt could not bind", created)
+	}
+}
+
+// TestAdoptionDoesNotCreateWhileZrokRefuses. A share that exists but could not be opened because
+// zrok is rate limiting is not replaced: another share creation inside the refusal is what made
+// restarts run into the limit.
+func TestAdoptionDoesNotCreateWhileZrokRefuses(t *testing.T) {
+	_, d, _ := testIngress(t, &fakeClient{})
+	ex := &adoptingExposer{
+		Exposer:   d.exposer,
+		offer:     map[string]expose.Adoptable{"abc123": {Handle: "tok", Origin: "https://x.example"}},
+		failAdopt: true,
+		adoptErr:  errors.New("no apiSession, authentication attempt failed: SERVER_TOO_MANY_REQUESTS"),
+	}
+	d.exposer = ex
+	d.adoptable = ex.offer
+
+	spec := expose.Spec{PreviewID: "abc123", Name: "docs-main", BaseURL: "/"}
+	if _, _, err := d.publishOrAdopt(t.Context(), spec, http.NotFoundHandler()); err == nil {
+		t.Fatal("a rate-limited adoption reported success")
+	}
+	if _, created, _ := ex.took(); len(created) != 0 {
+		t.Errorf("created %v while zrok was refusing, want none", created)
 	}
 }
 

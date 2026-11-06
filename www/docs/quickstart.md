@@ -318,7 +318,7 @@ gh pr create --fill
 
 Within a minute the pull request gets a comment:
 
-> **Documentation preview**
+> **NetFoundry Preview**
 >
 > | Project | Status | Preview | Commit | Updated (UTC) |
 > |---|---|---|---|---|

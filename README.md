@@ -47,7 +47,7 @@ boots with a locked vault and waits for a person — the only arrangement with n
 Then expose the webhook — [`www/docs/guides/webhook-tunnel.md`](www/docs/guides/webhook-tunnel.md) — and open
 a pull request touching `docs/`.
 
-> **Documentation preview**
+> **NetFoundry Preview**
 >
 > | | |
 > |---|---|

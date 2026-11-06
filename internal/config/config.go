@@ -359,6 +359,15 @@ type ExposerConfig struct {
 	// `-zrok-name a-docpreview` itself.
 	Prefix string `yaml:"prefix"`
 
+	// BuildShares gives every successful build a second share of its own, pinned to its commit,
+	// beside the branch share that follows the newest build.
+	//
+	// Off by default. Each one is a share creation, and zrok rate-limits those per account: one
+	// per commit, plus all of them again on every restart, is what ran docprev into 429s. With it
+	// off a preview has one share for its branch, created once and reused by every rebuild, and
+	// the shares already published per build are reaped at the next start.
+	BuildShares bool `yaml:"build_shares"`
+
 	Zrok      ZrokConfig      `yaml:"zrok2"`
 	Frontdoor FrontdoorConfig `yaml:"frontdoor"`
 	Ziti      ZitiConfig      `yaml:"ziti"`
@@ -606,6 +615,13 @@ type PreviewConfig struct {
 	// to fifty times in an afternoon. The full story — byte caps, a total ceiling,
 	// eviction order, exempting the paid exposers — is in TODO.md.
 	KeepBuilds int `yaml:"keep_builds"`
+
+	// Title heads the pull request comment and names the Bitbucket build status.
+	//
+	// Only the text a reader sees. The comment is found again by its marker and the build status
+	// by its key, so changing this on a running installation edits the existing comments in place
+	// rather than posting new ones.
+	Title string `yaml:"title"`
 }
 
 // DefaultNameTemplate builds the public label for a preview.
@@ -714,6 +730,7 @@ func DefaultServer() Server {
 			TTL:             72 * time.Hour,
 			TeardownOnClose: true,
 			KeepBuilds:      10,
+			Title:           "NetFoundry Preview",
 		},
 	}
 }

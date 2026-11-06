@@ -619,10 +619,13 @@ func (c *Client) samePage(next string) (string, error) {
 	if !strings.EqualFold(u.Host, base.Host) {
 		return "", fmt.Errorf("next link host %q is not %q", u.Host, base.Host)
 	}
+	// EscapedPath, not Path. Bitbucket's diffstat `next` link names the two commits as
+	// `owner/repo:<hash>%0D<hash>`, and Path decodes that %0D to a carriage return, which
+	// the next request then refuses as a control character in the URL.
 	if u.RawQuery == "" {
-		return u.Path, nil
+		return u.EscapedPath(), nil
 	}
-	return u.Path + "?" + u.RawQuery, nil
+	return u.EscapedPath() + "?" + u.RawQuery, nil
 }
 
 // Publish writes the report to the pull request.
@@ -771,7 +774,7 @@ func (c *Client) postBuildStatus(ctx context.Context, r scm.Report) error {
 	return c.do(ctx, r.PR.Repo.Owner, r.PR.Repo.Name, http.MethodPost, path, map[string]string{
 		"key":         statusKey,
 		"state":       state,
-		"name":        "Documentation preview",
+		"name":        scm.TitleOf(r),
 		"description": description,
 		"url":         target,
 	}, nil)

@@ -8,20 +8,24 @@ This is a working document, not a description of code. Delete the parts that get
 ## Part 1 — The App, so the comment looks deliberate
 
 The comment on a pull request is the whole product for everyone who is not the operator. It carries the App's
-avatar and name, and the current one is a test App called `docpreview-dovholuknf-test` with the default
-identicon — which reads as somebody's experiment, because it is.
+avatar and name. The App started as a test App called `docpreview-dovholuknf-test`, owned by a personal account,
+so the comment showed that person's avatar.
 
-### Create the real App
+### The App
 
-**Owner: the NetFoundry organization**, not a personal account. An App owned by a person cannot be transferred
-without the receiving org accepting it, and the account that owns it is the account that can rotate its key.
+On 2026-11-05 the test App was **transferred** to the NetFoundry organization and renamed `netfoundry-preview`. A
+transfer rather than a new App keeps the App ID, the private key, the webhook secret and every installation, so
+docpreview needs no config change: it reads only the App ID, and the name is only logged. A new App would also
+have stranded the comments already on open pull requests, because one App cannot edit another App's comments, so
+each open pull request would have gained a second one.
 
-GitHub → the organization → **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App**.
+To transfer an App: the App's settings → **Advanced** → **Transfer ownership**. An owner of the receiving
+organization has to accept it. Then rename it under **General**.
 
 | Field | Value | Why |
 |---|---|---|
-| **Name** | `docpreview` if it is free, else `docpreview by NetFoundry` | It is the comment author. Global namespace, so the plain one may be taken |
-| **Description** | `Documentation previews for pull requests. Builds the docs on every push and comments with a URL. Self-hosted, over zrok.` | Shown on the install screen, which is the one moment somebody decides whether to trust it |
+| **Name** | `netfoundry-preview` | It is the comment author. GitHub adds a "Bot" badge, so a `-bot` suffix adds nothing |
+| **Description** | `Previews for pull requests. Builds the site on every push and comments with a URL. Self-hosted, over zrok.` | Shown on the install screen, which is the one moment somebody decides whether to trust it |
 | **Homepage URL** | the published docs site | Not the repository. Somebody clicking this wants to know what it does, not to read Go |
 | **Webhook URL** | your tunnel's `/webhook/github` | |
 | **Webhook secret** | generated in docpreview, pasted here | See the [App runbook](../www/docs/guides/github-app.md) |
@@ -30,18 +34,34 @@ Permissions and events are in the runbook; nothing here changes them.
 
 ### The avatar
 
-The one thing that makes it look like a product rather than a script. 200×200 minimum, square, no transparency —
-GitHub composites it onto white in some places and dark in others, so a transparent PNG with a dark mark
-disappears on one of them.
+The files are `www/static/img/netfoundry-preview-logo.png` (what is uploaded) and
+`www/static/img/netfoundry-preview-logo.svg` (the source). Upload under the App's **General** → **Display
+information**, and set **Badge background color** to `e9f7e6`.
 
-What it should carry, in order of importance:
+The design is the NetFoundry icon from
+[netfoundry/branding](https://github.com/netfoundry/branding/blob/main/images/svg/icon/netfoundry-icon-color.svg),
+unchanged, with a green magnifier badge on the bottom-right corner. Rejected along the way:
+
+- **An eye**, as a badge or worked into the icon's blue node. It reads as being watched.
+- **Glyphs inside the blue node** (a browser window, a play arrow, a pull-request icon). Too small to read at
+  comment size, and they alter the brand mark instead of sitting on top of it.
+- **A folder or a page with the icon on it.** It shrinks the mark to make room for the container.
+- **Padding the art to fit a circle.** GitHub's round badge preview already fits the square logo inside the circle
+  with its own padding, so extra padding only makes it smaller. Fill the square edge to edge.
+
+The PNG is transparent outside the art and keeps the white inside the N and the magnifier. GitHub shows the
+square logo on a light grey or dark page in some places and inside the round badge in others, so it was checked on
+white, light grey, GitHub dark and the badge color. Do not use navy for the badge background: it swallows the
+navy disc behind the N.
+
+What an avatar here has to do, in order of importance:
 
 1. **Legible at 20 px.** That is the size on a pull request comment, and it is the only size most people ever see
    it at. Anything with a word in it is a grey smudge.
 2. **A NetFoundry tie.** The house palette, or the mark, so it reads as coming from somewhere rather than from
-   nobody. `www/static/img` already has the brand assets the docs site uses.
-3. **A hint of what it is.** A document with a link, an eye over a page, a branch with a page on it — something
-   about *previewing docs*, not a generic cloud.
+   nobody.
+3. **A hint of what it is.** Previews are not only docs: any site that builds to static files works, so the hint
+   is "look at this", not "a document".
 
 Not a zrok logo. zrok is how the URL gets out and that is worth saying in the description and the docs; putting
 somebody else's mark on the avatar makes it look like a zrok product.

@@ -395,6 +395,7 @@ func setup(configPath, logLevel string) (*wiring, error) {
 		w.Close()
 		return nil, err
 	}
+	installShareGate("daemon", log)
 
 	w.exposer, err = buildExposer(w, cfg, log)
 	if err != nil {
