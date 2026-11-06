@@ -182,6 +182,24 @@ func useZrokHome(dir string) error {
 	return expose.UseZrokRoot(expose.ZrokProject, dir)
 }
 
+// installShareGate puts this process's zrok share creations behind the share gate, whose budget
+// lives in the zrok environment directory and is shared with every other process using it.
+//
+// Called after the environment is chosen. A directory that cannot be found leaves the process
+// ungated, with a warning: the controller's own limit still applies.
+func installShareGate(process string, log *slog.Logger) {
+	dir, err := expose.ZrokRootDir()
+	if err == nil {
+		_, err = os.Stat(dir)
+	}
+	if err != nil {
+		log.Warn("no zrok environment directory for the share gate; share creation is not limited",
+			"error", err)
+		return
+	}
+	expose.SetDefaultShareGate(expose.NewShareGate(dir, process, log))
+}
+
 // cmdZrok is the zrok account and environment surface on the command line.
 //
 // The same operations as the dashboard panel, for a host with no browser on it and for the
@@ -288,8 +306,8 @@ func cmdZrokStatus(args []string) error {
 		fmt.Println("  docpreview zrok use project     # this installation's own")
 		fmt.Println("  docpreview zrok use system      # the one the zrok CLI uses")
 		fmt.Println()
-		fmt.Println("Startup deletes every share it recognises as its own, so a daemon on the")
-		fmt.Println("wrong account deletes whatever else is using that account.")
+		fmt.Println("Startup adopts the shares it needs and deletes every other share it recognises")
+		fmt.Println("as its own, so a daemon on the wrong account deletes whatever else uses it.")
 	}
 	return nil
 }

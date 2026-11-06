@@ -65,7 +65,7 @@ contents:
   # temporary file, which reads as a broken package rather than as a directory mode.
   #
   # Not world-readable. The config names where the master key comes from, and the key itself is
-  # 0640 root:docpreview once written.
+  # 0600 docpreview:docpreview once written; the vault refuses a key any other user can read.
   - dst: /etc/docpreview
     type: dir
     file_info:

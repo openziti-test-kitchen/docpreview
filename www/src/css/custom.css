@@ -19,3 +19,10 @@
 [data-theme='dark'] {
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
 }
+
+/* In dark mode the theme's link color wins over the primary button's text color, so a
+   primary button rendered as a link shows blue text on a blue button. */
+[data-theme='dark'] a.button--primary,
+[data-theme='dark'] a.button--primary:hover {
+  color: #fff;
+}

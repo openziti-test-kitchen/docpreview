@@ -294,6 +294,11 @@ func (d *Daemon) recordFailure(ctx context.Context, pr model.PullRequest, buildE
 // rebuild: a branch whose latest push touched no documentation still has a working
 // preview of the documentation it did touch, and overwriting that row would make
 // the reaper delete a live share.
+//
+// A row with nothing published does not survive. A pull request whose last build
+// failed and whose next one was skipped would otherwise keep showing the old
+// failure — a 429 from a day ago, say — after a Rebuild that did run and decided
+// there was nothing to build.
 func (d *Daemon) recordSkip(ctx context.Context, pr model.PullRequest, reason string) {
 	id := pr.PreviewID()
 
@@ -306,7 +311,7 @@ func (d *Daemon) recordSkip(ctx context.Context, pr model.PullRequest, reason st
 		return
 	}
 	for _, p := range existing {
-		if p.PreviewID == id {
+		if p.PreviewID == id && (p.State == scm.StateReady || p.URL != "") {
 			return
 		}
 	}
@@ -795,12 +800,11 @@ func (d *Daemon) backfillBranchPreviews(ctx context.Context) {
 
 // recover reconciles the world with the database at startup.
 //
-// Nothing is serving any preview yet — the process just started — so every
-// remote share the exposer owns is an orphan, and every artifact directory on
-// disk is either about to be republished or dead. The cheap and correct answer
-// is to reap everything remote, then rebuild each recorded preview from its
-// artifacts on disk. That restores working preview URLs within a second or two
-// of startup without re-cloning or re-running a single npm install.
+// Nothing is serving any preview yet, because the process just started. Each
+// recorded preview adopts the remote share bound to it, when the exposer can
+// adopt, and serves its artifacts from disk; every remote share no preview
+// claims is reaped. Under zrok a restart creates no shares, and no exposer
+// re-runs a clone or an npm install.
 func (d *Daemon) recover(ctx context.Context) error {
 	previews, err := d.store.ListPreviews(ctx)
 	if err != nil {
@@ -995,6 +999,10 @@ func (d *Daemon) recover(ctx context.Context) error {
 // A failed query is an empty list rather than an error. Wrong by a share makes the bar
 // finish early; failing recovery over it restores nothing at all.
 func (d *Daemon) buildSharesToRestore(ctx context.Context, p store.Preview) []store.Build {
+	if !d.cfg.Exposer.BuildShares {
+		// None kept, so the reap deletes any left from when they were on.
+		return nil
+	}
 	rows, err := d.store.BuildsFor(ctx, p.PreviewID)
 	if err != nil {
 		d.log.Warn("listing builds to count their shares", "preview", p.PreviewID, "error", err)
@@ -1029,6 +1037,14 @@ func (d *Daemon) publishOrAdopt(ctx context.Context, spec expose.Spec, h http.Ha
 		pub, err := ad.Adopt(ctx, spec, a, h)
 		if err == nil {
 			return pub, true, nil
+		}
+		// A share that is still there but could not be opened because zrok is busy or refusing
+		// is not replaced. Creating one more share in the middle of a rate limit is what made
+		// restarts worse; the preview is restored by its next build or the next start instead.
+		if expose.TransientZrok(err) {
+			d.log.Warn("adopting an existing share failed; not creating another while zrok is refusing",
+				"publication", spec.Key(), "name", spec.Name, "error", err)
+			return nil, false, err
 		}
 		d.log.Warn("adopting an existing share; creating a new one instead",
 			"publication", spec.Key(), "name", spec.Name, "error", err)
@@ -1088,6 +1104,19 @@ func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
 		d.log.Warn("listing builds to restore their shares", "preview", p.PreviewID, "error", err)
 		return 0
 	}
+	if !d.cfg.Exposer.BuildShares {
+		// Per-build shares are off: forget the URLs of any published while they were on, so
+		// nothing offers a link the reap has just deleted.
+		for _, b := range rows {
+			if b.URL == "" {
+				continue
+			}
+			if err := d.store.ClearBuildShare(ctx, p.PreviewID, b.BuildID); err != nil {
+				d.log.Warn("forgetting a build's URL", "preview", p.PreviewID, "build", b.BuildID, "error", err)
+			}
+		}
+		return 0
+	}
 
 	// Concurrent, bounded, for the same reason recover's own loop is: this is where the
 	// count multiplies. One preview can hold keep_builds shares — ten by default — and at
@@ -1136,11 +1165,12 @@ func (d *Daemon) restoreBuildShares(ctx context.Context, p store.Preview) int {
 			}
 
 			pub, adopted, err := d.publishOrAdopt(ctx, expose.Spec{
-				PreviewID: p.PreviewID,
-				BuildID:   b.BuildID,
-				Name:      b.Name,
-				BaseURL:   p.BaseURL,
-				PR:        p.PR,
+				PreviewID:   p.PreviewID,
+				BuildID:     b.BuildID,
+				Name:        b.Name,
+				BaseURL:     p.BaseURL,
+				PR:          p.PR,
+				ShareReason: expose.ShareReasonRestore,
 			}, site)
 			if err != nil {
 				d.log.Warn("restoring a build share", "build", b.BuildID, "name", b.Name, "error", err)
@@ -1530,10 +1560,11 @@ func (d *Daemon) republish(ctx context.Context, p store.Preview) error {
 	}
 
 	pub, adopted, err := d.publishOrAdopt(ctx, expose.Spec{
-		PreviewID: p.PreviewID,
-		Name:      p.Name,
-		BaseURL:   p.BaseURL,
-		PR:        p.PR,
+		PreviewID:   p.PreviewID,
+		Name:        p.Name,
+		BaseURL:     p.BaseURL,
+		PR:          p.PR,
+		ShareReason: expose.ShareReasonRestore,
 	}, site)
 	if err != nil {
 		return err
@@ -2859,7 +2890,10 @@ func (d *Daemon) runPipeline(
 
 	// A second share, pinned to this commit, beside the branch share that follows
 	// whatever is newest. Best effort: see publishBuildShare.
-	buildURL := d.publishBuildShare(ctx, pr, buildID, name, repoCfg, site, sink)
+	buildURL := ""
+	if d.cfg.Exposer.BuildShares {
+		buildURL = d.publishBuildShare(ctx, pr, buildID, name, repoCfg, site, sink)
+	}
 	if buildURL != "" {
 		// The row was already written as ready above, before this URL existed. The
 		// upsert keeps a non-empty name and url and refreshes the rest, so writing
@@ -3308,6 +3342,9 @@ func (d *Daemon) report(ctx context.Context, r scm.Report) {
 	// A build in flight gets it too, and the comment links the word "Building" to it. The log is
 	// tailed live, so the moment worth watching is while it runs — and a reviewer who has just
 	// pushed is reading the comment then, not after it says failed.
+	if r.Title == "" {
+		r.Title = d.cfg.Preview.Title
+	}
 	if base := strings.TrimRight(d.cfg.DashboardURL, "/"); base != "" {
 		if r.DashboardURL == "" {
 			r.DashboardURL = base + "/"
@@ -3613,6 +3650,11 @@ type Status struct {
 	Pending  int             `json:"pending"`
 	Running  int             `json:"running"`
 	Previews []StatusPreview `json:"previews"`
+
+	// ZrokShares is the zrok share gate: how much of the window is spent, what is queued, when the
+	// next share can be created, and the newest attempts. Absent when this daemon has no gate —
+	// an exposer that is not zrok — or its state cannot be read.
+	ZrokShares *expose.ShareGateStatus `json:"zrok_shares,omitempty"`
 	Events   []Event         `json:"events"`
 
 	// Starting is true while recovery is still running.
@@ -3811,6 +3853,13 @@ func (d *Daemon) Status(ctx context.Context) (Status, error) {
 		Pending:            pending,
 		Running:            len(running),
 		Events:             d.markOpenable(d.events.recent(60)),
+	}
+	if gate := expose.DefaultShareGate(); gate != nil && d.exposer.Kind() == "zrok2" {
+		if gs, err := gate.Status(25); err == nil {
+			out.ZrokShares = &gs
+		} else {
+			d.log.Debug("reading the zrok share gate", "error", err)
+		}
 	}
 
 	// Best effort. The switcher degrades to repository names, which is what it showed

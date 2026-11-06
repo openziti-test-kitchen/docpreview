@@ -6,14 +6,14 @@ sidebar_position: 8
 
 # Move an installation
 
-Moving docpreview to another machine, or into a container, is a copy of four things and one edit. There is no
-export command, because a file copy already gives you everything there is to export.
+Moving NetFoundry Preview to another machine, or into a container, means copying four things and editing one file.
+There is no export command. A file copy already gives you everything an export would.
 
 :::danger Stop the old instance before starting the new one
 
-Two daemons sharing one zrok account **delete each other's live shares**. `Reap` runs at startup on the reasoning
-that every share it finds belongs to a process that is gone — true for one daemon per account, false the moment
-there are two. Both will tear down each other's previews while every log looks healthy.
+Once you copy the zrok environment, both machines hold the same one. At startup a daemon adopts the shares its
+database claims and deletes every other share it published in that environment. Two daemons running at once
+delete each other's newer previews and bind listeners to the same shares, and every log looks healthy.
 
 A move is stop, copy, start. Never an overlap.
 
@@ -23,26 +23,26 @@ A move is stop, copy, start. Never an overlap.
 
 | What | Where it is | |
 |---|---|---|
-| The database | `<data_dir>/docpreview.db` | **and its `-wal` file** — Step 2 |
-| The credential store | `<data_dir>/vault.age` | encrypted — useless without the key |
+| The database | `<data_dir>/docpreview.db` | **and its `-wal` file**, see Step 2 |
+| The credential store | `<data_dir>/vault.age` | encrypted, useless without the key |
 | The master key | wherever `vault.key_source` points | deliberately outside `data_dir` |
-| The zrok environment | `~/.zrok2` **or** `<data_dir>/zrok2` | the identity that owns every reserved name — Step 4 |
+| The zrok environment | `~/.zrok2` **or** `<data_dir>/zrok2` | the identity that owns every reserved name, see Step 4 |
 | A ziti identity, if you use that exposer | `<data_dir>/ziti/*.json` | inside `data_dir`, so it travels with it |
 
-**More travels in the database than you might expect.** The settings table carries the console passwords, the
-hostname prefix, which exposer is selected, which zrok environment directory this installation uses, and the ziti
-service and identity path. None of it is in `config.yml`, so none of it needs re-entering — and the login on the
-new machine is the one you already use.
+**The database carries more than you might expect.** Anything you set on the dashboard or with the CLI lives in
+its settings table and overrides `config.yml`: the console passwords, the hostname prefix, the selected exposer,
+which zrok environment directory this installation uses, and the ziti service and identity path. You don't
+re-enter any of it, and the login on the new machine is the one you already use.
 
-And one thing that is edited rather than copied: `config.yml`, which holds absolute paths in `data_dir` and
+You edit one file instead of copying it as is: `config.yml`, which holds absolute paths such as `data_dir` and
 `vault.key_source`.
 
-Three directories are deliberately left behind. `workspaces/` is one clone per commit and is recreated by the next
-build. `logs/` is build history that nothing reads to work. `artifacts/` is the built sites — see Step 3.
+Three directories stay behind on purpose. `workspaces/` holds one clone per commit and the next build recreates
+it. `logs/` is build history that nothing needs to run. `artifacts/` is the built sites, covered in Step 3.
 
-## Step 1 — Stop everything on the old machine
+## Step 1: Stop everything on the old machine
 
-All three processes: the daemon and both shares.
+Stop all three processes: the daemon and both shares.
 
 ```powershell
 Get-Process docpreview | Stop-Process
@@ -52,26 +52,26 @@ Get-Process docpreview | Stop-Process
 pkill docpreview
 ```
 
-Confirm nothing answers before continuing. A daemon still running is the one failure mode in this guide that
+Make sure nothing answers before you continue. A daemon still running is the one mistake in this guide that
 destroys something:
 
 ```powershell
 curl.exe -s -o NUL -w "%{http_code}" http://127.0.0.1:8471/healthz
 ```
 
-`000` — or a connection error — is what you want. `200` means something is still up.
+You want `000` or a connection error. `200` means something is still up.
 
-## Step 2 — Take the database as one consistent file
+## Step 2: Take the database as one consistent file
 
-docpreview opens sqlite in WAL mode, so a write is appended to `docpreview.db-wal` and folded into
-`docpreview.db` later, at a checkpoint. That is what keeps the reaper's reads from blocking a worker's writes.
+The daemon opens sqlite in WAL mode. A write is appended to `docpreview.db-wal` and folded into `docpreview.db`
+later, at a checkpoint. That keeps the reaper's reads from blocking a worker's writes.
 
 :::warning `docpreview.db` on its own is not the current state
 
-It is the state as of the last checkpoint. Everything since is in the `-wal` file, which is routinely larger than
-the database — on a live instance, a 77 KB database beside a 519 KB WAL is normal. Copy the `.db` alone and the new
-instance starts on a database missing projects, previews and settings, with no error, because what you copied is a
-perfectly valid older database.
+It holds the state as of the last checkpoint. Everything since then is in the `-wal` file, which is often larger
+than the database. On a live instance, a 77 KB database beside a 519 KB WAL is normal. Copy the `.db` alone and the
+new instance starts without some of its projects, previews and settings, and reports no error, because what you
+copied is a valid older database.
 
 :::
 
@@ -81,42 +81,51 @@ perfectly valid older database.
 sqlite3 "$data\docpreview.db" "VACUUM INTO '$out\docpreview.db'"
 ```
 
-Copying all three files together works too, and only with the daemon stopped:
+Copying all three files together also works, as long as the daemon is stopped:
 
 ```powershell
 Copy-Item "$data\docpreview.db*" -Destination $out
 ```
 
-Prefer the first when the destination is a container volume or another host: one file cannot arrive as a database
-with a stale WAL beside it.
+Prefer `VACUUM INTO` when the destination is a container volume or another host. A single file can't arrive with a
+stale WAL beside it.
 
-## Step 3 — Decide about artifacts
+## Step 3: Decide about artifacts
 
-Artifacts are the built sites the previews serve. Without them the new instance republishes every preview URL and
-**serves 404s until each one rebuilds**, because the share is live and the directory behind it is empty.
+Artifacts are the built sites the previews serve. At startup the daemon drops every preview whose artifact
+directory is missing (`dropping preview with missing artifacts` in the log) and deletes its share. Those previews
+disappear from the dashboard until their pull request is pushed to or rebuilt.
 
-Copy them if the URLs have to work the moment the new instance starts:
+Copy them if the preview URLs have to keep working through the move:
 
 ```powershell
 Copy-Item -Recurse "$data\artifacts" "$out\artifacts"
 ```
 
-Skip them if a gap is acceptable — a rebuild from the dashboard replaces each one. They are usually the bulk of the
-data directory, which is what decides it in practice.
+Skip them if a gap is fine. They are usually the bulk of the data directory, which tends to decide it.
 
-## Step 4 — Copy the credentials and the zrok identity
+:::warning Keep the same `data_dir` path
+
+Each preview row stores its artifact directory as an absolute path under the old `data_dir`. If the new machine
+uses a different `data_dir` path, every preview is dropped at startup even when you copied `artifacts/`. The stored
+ziti identity path goes stale the same way. Keep the path the same if you can. If you can't, expect every preview
+to rebuild, and set the ziti identity path again.
+
+:::
+
+## Step 4: Copy the credentials and the zrok identity
 
 ```powershell
 Copy-Item "$data\vault.age" $out
 Copy-Item "$env:LOCALAPPDATA\docpreview\master.key" $out
 ```
 
-The vault is encrypted and the key is not in it. Bringing one without the other produces a daemon that starts,
-serves its setup page, and cannot decrypt anything it holds.
+The key is not inside the encrypted vault. Bring one without the other and the daemon starts, serves its setup page,
+and can't decrypt anything it holds.
 
 ### Which zrok directory to copy
 
-There are two possible ones, and the answer decides how much work this step is:
+There are two possible ones, and which is in use decides how much work this step is:
 
 ```powershell
 docpreview zrok status -config .docpreview\config.yml
@@ -127,29 +136,30 @@ docpreview zrok status -config .docpreview\config.yml
 | `project` | nothing extra | It is `<data_dir>/zrok2` and came with `data_dir` |
 | `system` | `~/.zrok2` → the new machine's `~/.zrok2` | It is outside `data_dir`, under the account the daemon runs as |
 
-`~/.zrok2` is **per user**, so on the new machine it must land in the home directory of whatever account runs the
-daemon — a service account's home, not yours. That mismatch reports as `no zrok environment is enrolled here`
-while `zrok2 overview` in your own shell shows a working environment, and both statements are true.
+`~/.zrok2` is **per user**. On the new machine it must land in the home directory of the account that runs the
+daemon, which is a service account's home, not yours. Get that wrong and the daemon reports
+`no zrok environment is enrolled here` while `zrok2 overview` in your own shell shows a working environment. Both are
+telling the truth.
 
 :::tip Move to the project directory while you are here
 
-`docpreview zrok use project` on the new machine, then move `~/.zrok2`'s contents into `<data_dir>/zrok2`, and the
-next move is a straight copy of one directory. It is also what a container needs, where a home directory is not
-durable.
+Run `docpreview zrok use project` on the new machine and move the contents of `~/.zrok2` into `<data_dir>/zrok2`.
+The next move is then a straight copy of one directory. A container needs this anyway, because a home directory in
+a container does not last.
 
 :::
 
-:::danger The zrok environment is not re-creatable
+:::danger You can't re-create the zrok environment
 
-Enabling a fresh environment on the new machine does not merely lose the preview URLs. The reserved names are
-objects owned by the old environment and counted against the account's quota, and nothing on the new machine can
-reclaim or delete them. See [Publish previews with zrok v2](./zrok2.md).
+Enabling a fresh environment on the new machine loses more than the preview URLs. The reserved names are objects
+owned by the old environment and counted against the account's quota, and nothing on the new machine can reclaim
+or delete them. See [Publish previews with zrok v2](./zrok2.md).
 
 :::
 
-## Step 5 — Place the files and edit the config
+## Step 5: Place the files and edit the config
 
-On the new machine, put the files where they belong, then change the two absolute paths in `config.yml`:
+On the new machine, put the files where they belong, then check the absolute paths in `config.yml`:
 
 ```yaml
 data_dir: "/srv/docpreview/data"
@@ -158,17 +168,17 @@ vault:
   key_source: "file:/etc/docpreview/master.key"
 ```
 
-Everything else in the file is portable. `data_dir` and `key_source` are the two values that were true only on the
-old machine.
+`data_dir` and `key_source` are the usual two. Also check any other absolute path you set, such as `log_file` or
+`exposer.ziti.identity_file`. Everything else in the file is portable.
 
-## Step 6 — Check before starting
+## Step 6: Check before starting
 
 ```powershell
 docpreview doctor -config /srv/docpreview/config.yml
 ```
 
-`doctor` reads the config, the vault and the exposer's settings and reports what it cannot reach. It costs a second
-and answers the question a failed build answers ten minutes later. Four of its lines are the ones to read here:
+`doctor` reads the config, the vault and the exposer's settings and reports what it can't reach. It takes a second
+and answers the question a failed build would answer ten minutes later. Read these four lines:
 
 ```text
 exposer: zrok2 (selected on the dashboard, not from the config file)
@@ -177,66 +187,63 @@ login:   required — either password reaches the dashboard
 scm:     github (app 4420399), bitbucket (access_token)
 ```
 
-`exposer` naming something other than the config file means the choice came from the database and travelled with
-it, which is correct and is worth recognising rather than re-editing the file over.
+If `exposer` names something other than the config file, the choice came from the database and travelled with it.
+That is correct, and you don't need to edit the file to match.
 
-Then start the daemon, and the two shares once it answers — the shares forward to the daemon and log errors until
-it does.
+Then start the daemon, and start the two shares once it answers. Until then the shares log errors.
 
 **If the zrok environment is the project one, both shares need `-zrok-home`.** They read no config file, so they
-cannot derive it, and without the flag they look in `~/.zrok2` — a different account, or nothing at all. A share
-created from the wrong account reserves a name the previews cannot use:
+can't work it out. Without the flag they look in `~/.zrok2`, which is a different account or nothing at all, and
+they fail unless that account happens to hold a name of the same spelling:
 
 ```powershell
 docpreview webhook-only   -zrok-name docpreview      -zrok-home /srv/docpreview/data/zrok2
 docpreview dashboard-only -zrok-name docpreview-dash -zrok-home /srv/docpreview/data/zrok2
 ```
 
-## Step 7 — Confirm the previews came back
+## Step 7: Confirm the previews came back
 
-Startup reaps what it owns and republishes from the database. Watch it finish rather than guessing:
+At startup the daemon lists the shares the environment already has, adopts each one the database claims, deletes
+the rest, and creates shares only for previews it could not adopt. Watch it finish:
 
 ```powershell
 .\demo\Wait-Docpreview.ps1
 ```
 
-Then open the dashboard. Every restored preview should be `ready` with a URL that answers. A preview whose URL 404s
-is one whose artifacts you chose not to bring in Step 3 — rebuild it from the dashboard.
+Then open the dashboard. Every restored preview should be `ready` with a URL that answers. A preview you expected
+and don't see is one whose artifacts did not come across. Push to its pull request or rebuild it.
 
-The console passwords move with the database, so the login on the new machine is the one you already use. If you did
-not bring the database, set them again with `docpreview console password -role admin` and `-role viewer`.
+The console passwords move with the database, so you log in on the new machine as before. If you did not bring the
+database, set them again with `docpreview console password -role admin` and `-role viewer`.
 
-Preview URLs come back **unchanged** under zrok: a name is reserved on the account, and the URL is derived from
-it, so republishing produces what the comments already point at. Nothing is rewritten and nobody's link breaks.
-Under Frontdoor the share id is assigned by the tenant, so those URLs are new and the comments update on the first
-status change after the move.
+Preview URLs come back **unchanged**. Under zrok the name is reserved on the account and the URL comes from it, so
+the adopted share is the one the comments already point at. Nothing is rewritten and no link breaks.
 
 ## Afterwards
 
-The old machine still holds a copy of the vault and the master key. Whether that matters is a decision about the
-credentials inside it rather than about docpreview.
+The old machine still has a copy of the vault and the master key. Whether that matters depends on the credentials
+inside, not on NetFoundry Preview.
 
-**Consider changing the master key on the new machine.** A move leaves `vault.age` on two machines, and if the key
-is short — a passphrase typed during a hurried first setup — the copy you left behind is guessable without the key
-file beside it. With the daemon stopped:
+**Consider changing the master key on the new machine.** After a move `vault.age` sits on two machines. If the key
+is short, say a passphrase typed during a hurried first setup, someone could guess it for the copy you left behind
+without the key file. With the daemon stopped:
 
 ```bash
 docpreview vault rekey -generate -yes
 ```
 
-Every secret is kept, so this needs none of the plaintexts. See [`vault rekey`](../reference/cli.md#vault-rekey)
-for the ordering and what the backup is for.
+Every secret is kept, so you need none of the plaintexts. See [`vault rekey`](../reference/cli.md#vault-rekey) for
+the order of operations and what the backup is for.
 
-If you left it able to start, make sure it cannot: an old daemon coming back up on the same zrok account will not
-reap the new one's shares — the two enrolments are different identities — but both will try to hold the same
-**names**, and the second one to publish takes them. Uninstall the service, or give the new installation a
-different [hostname prefix](../reference/cli.md).
+Make sure the old machine can't start again. It holds the same zrok environment, so an old daemon that comes back
+adopts the shares its database still claims and deletes the rest, including previews the new instance created.
+Uninstall or disable the service, and delete its copy of the zrok environment, or the whole old `data_dir`.
 
 ## Moving into a container
 
-The same list, plus one constraint of its own: **the data directory must be mounted at the same path inside and
-outside the container.** The daemon asks the host's docker daemon to bind-mount each workspace into a build
-container, so that path is resolved on the host. Mount the data elsewhere internally and every build gets an empty
-workspace — which fails as a missing `package.json` and looks nothing like a mount problem.
+The same list applies, plus one rule of its own: **mount the data directory at the same path inside and outside the
+container.** The daemon asks the host's docker daemon to bind-mount each workspace into a build container, so the
+host resolves that path. Mount the data elsewhere internally and every build gets an empty workspace. It fails as a
+missing `package.json`, which looks nothing like a mount problem.
 
 See [Run in a container](./container.md).

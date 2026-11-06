@@ -29,68 +29,52 @@ concerned it worked.
 
 The reviewer sees a broken page and reports "the preview is broken". Nobody thinks to look at asset URLs.
 
-## The hosted answer, and where it runs out
+## The hosted answer, and why we wanted another way
 
-Vercel and Netlify solved this years ago. Every pull request gets built, and a bot drops a link on it. It
-works, and for a public repository publishing a public site it is hard to argue with.
+Vercel and Netlify solved this years ago, and solved it well. Every pull request gets built, a bot drops a link on
+it, and the link stays current as the branch moves. If that works for you, keep using it. It's the model we copied.
 
-Three things push against it.
+Our reason for wanting another way came down to one thing: who gets a preview at all.
 
-Your source goes to somebody else's build machine, which runs the scripts in your `package.json`. For an
-open source project that is nothing. For internal documentation it is a procurement conversation, and
-sometimes the answer is no.
+### Every contributor needed to be on the team
 
-The second is that the further you get from GitHub, the thinner the support. On Bitbucket the preview
-story is worse, and if the repository is private it gets worse again. That is a real gap and it is the
-subject of the next post in this series.
+Most of our documentation repositories are private. In our setup, Vercel would only build a pull request on a
+private repository if its author was a member of our Vercel team. Somebody outside it would push a change, and the
+build was blocked until somebody added them. That's a sensible rule from Vercel's side. A build runs the author's
+code, and on a private repository they want to know whose code that is.
 
-The third is the one that decided it for us.
+For a product team that's no trouble. The people opening pull requests are the people who ship the application,
+and that's a short, stable list.
 
-### You pay per person who edits documentation
+Documentation contributors are a different crowd. They are the widest and most occasional group in the company:
+engineers on every team, product managers, support, whoever wrote the feature, and the person who noticed a broken
+sentence on their way past. Most of them open a documentation pull request a handful of times a year.
 
-The hosted platforms bill per member. That model fits a product team, where the people who need an account
-are the people who ship the application, and the number is stable.
+So the preview, the thing meant to save the reviewer ten minutes, often started with a request instead. A developer
+pushes a fix, the build doesn't run, and they ask to be added. Somebody adds them. A week later a different
+contributor asks again. Nothing was broken and nobody was wrong. It was just friction in exactly the step that was
+supposed to have none, and friction is what turns "click and look" back into "read the diff and approve".
 
-Documentation has the opposite shape. The people who edit it are the widest and most occasional group in
-the company. Engineers on every team, product managers, support, whoever wrote the feature, and the person
-who noticed a broken sentence on their way past. Most of them contribute a handful of times a year.
+### We already had a way to publish a page
 
-Charge per seat for that population and the arithmetic turns hostile fast. Thirty occasional contributors
-at a typical per-member rate runs to hundreds of dollars a month, several thousand a year, to review
-documentation that is going to be published publicly anyway. Worse, the pressure it creates is exactly
-backwards. The obvious way to control the bill is to reduce the number of people who can open a
-documentation pull request, and the person you price out is the one who spotted the mistake.
+NetFoundry builds [zrok](https://zrok.io), which publishes a service at a URL without opening a port. A preview is
+a directory of static files, and putting a directory of static files at a URL is precisely what zrok is for. So we
+asked ourselves why anybody should have to join anything for a pull request to get built and shown.
 
-Then there is what it does to the pull request itself.
+With docpreview, the build runs on our own VM for whoever opens the pull request, and each preview is its own zrok
+share. Pull requests from forks are the one deliberate exception: they're refused, because building one runs a
+stranger's scripts on our build host. The reviewer clicks the link and reads the page. When a preview shouldn't be
+open to anyone holding the link, zrok can put Google or GitHub sign-in in front of it, limited to your own email
+domain, which uses an identity the reviewer already has. There are stricter options as well, covered below.
 
-A contributor without a seat opens a documentation change, and the deployment check goes red. Not skipped,
-not neutral. Failed, in the same list and the same colour as a broken build and a failing test, and
-everyone watching the repository gets the mail about it.
+What we pay for is one VM, and that doesn't change whether five people or five hundred are contributing.
 
-Usually it stops there, and that is the complaint. The change is fine, the merge goes through, and a red
-mark sits on the record meaning nothing. On a repository configured to require every check before merging,
-it stops being noise and holds the pull request shut.
+The private source mattered too. Our published documentation is public, but the source isn't always. Running the
+build ourselves means the clone and the build happen on a machine we already trust, and the only thing that goes
+out is the built site, which was going to be public anyway.
 
-Either way the contributor cannot clear it. There is nothing to fix on the branch, no command to run, no
-amount of care that turns it green, because what the check reports is that they do not hold a license.
-
-For a first-time contributor that is their whole experience of your project. They fixed a sentence, and
-the system told them in the strongest signal it has that they got it wrong.
-
-The slower damage is what it teaches everyone else. Once a red check routinely means nothing, people stop
-reading the checks, and the one that was about to tell them something real gets waved through with the
-rest.
-
-We wanted the opposite property: anybody can open a pull request, every pull request gets a preview, and
-the cost of the next contributor is zero. What we pay for is one VM. That number does not move whether
-five people or five hundred are editing.
-
-A docpreview build reports what the build did. There is no licensing state it can fail on, because there
-are no licenses.
-
-We had a third reason, and it is the one that made the tradeoff obvious. Our published documentation is
-public. The source is not always. The thing we needed to show a reviewer was already destined to be a
-public web page, so publishing a preview of it costs us nothing in exposure. The source never has to leave.
+Bitbucket was the other half. Some of our private documentation lives there, and that's the subject of the next
+post in this series.
 
 ## What we built
 
@@ -128,7 +112,7 @@ looks like a bug in the preview system, and the person who reports it is never t
 
 ## Who gets to open the link
 
-This is the part we did not expect to care about as much as we do.
+This is where it started for us.
 
 A preview URL is a decision about who can read unreleased documentation, and the right answer differs per
 team. So the way a preview is published is one setting with four values.
@@ -163,4 +147,4 @@ docpreview is at [github.com/openziti-test-kitchen/docpreview](https://github.co
 and it previews its own documentation, which is the only test that has caught anything embarrassing before
 a reader did.
 
-The whole thing costs one VM, and every contributor after the first is free.
+The whole thing costs one VM, and every contributor gets a preview.

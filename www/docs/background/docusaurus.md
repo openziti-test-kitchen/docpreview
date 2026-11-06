@@ -6,12 +6,11 @@ sidebar_position: 3
 
 # Docusaurus, in the parts that matter here
 
-[Docusaurus](https://docusaurus.io/) is a static site generator built by Meta and aimed squarely at
-documentation. You write Markdown or MDX. It produces a React-powered site with a sidebar, versioning,
-search, dark mode, and i18n. This site is one.
+[Docusaurus](https://docusaurus.io/) is a static site generator from Meta, built for documentation. You write Markdown
+or MDX. It produces a React site with a sidebar, versioning, search, dark mode, and i18n. This site is one.
 
-docpreview is not Docusaurus-specific — anything that turns a repository into a directory of static files
-works — but Docusaurus is the default assumption, so these are the parts worth knowing.
+NetFoundry Preview works with anything that builds a repository into a directory of static files. Its defaults
+(`npm run build`, output in `build/`) match Docusaurus, so these are the parts you need to know.
 
 ## The build
 
@@ -21,30 +20,27 @@ npm run build   # emits static files into build/
 npm run serve   # serves build/ locally, for a sanity check
 ```
 
-`npm run build` produces `build/`: HTML, a hashed CSS bundle, hashed JS chunks, and copied static assets.
-Nothing in that directory needs Node to serve it. docpreview runs the first two commands and then serves the
-third's output itself.
+`npm run build` produces `build/`: HTML, a hashed CSS bundle, hashed JS chunks, and copied static assets. Nothing in
+that directory needs Node to serve it. NetFoundry Preview runs the install (npm, yarn or pnpm, picked from the
+lockfile) and the build, then serves `build/` itself.
 
 ## `url` and `baseUrl`
 
-Two required fields in `docusaurus.config.ts`, and the source of essentially every self-hosted preview
-problem.
+These two required fields in `docusaurus.config.ts` cause almost every self-hosted preview problem.
 
 ```ts
 url: 'https://example.com',   // the origin
 baseUrl: '/my-project/',      // the path prefix, with both slashes
 ```
 
-For a site at `https://example.com/my-project/`, that is the split. For a site at the root of its own
-hostname, `baseUrl` is `/`.
+A site at `https://example.com/my-project/` splits that way. A site at the root of its own hostname has `baseUrl: '/'`.
 
-**`baseUrl` is compiled in.** Every `<link href>`, every `<script src>`, every internal link in the output is
-written with that prefix already applied. It is not read at runtime. It cannot be overridden by a header, a
-reverse proxy, or a `<base>` tag.
+**`baseUrl` is compiled in.** Every `<link href>`, every `<script src>`, every internal link in the output is written
+with that prefix already applied. It is not read at runtime. No header, reverse proxy or `<base>` tag can override it.
 
-This collides with previews immediately. The commonest reason a repository has a non-root `baseUrl` is GitHub
-Pages, which serves projects at `https://org.github.io/repo/`. A preview served at the root of a zrok hostname
-needs `/`. Same source tree, two different builds.
+That collides with previews right away. The commonest reason for a non-root `baseUrl` is GitHub Pages, which serves
+projects at `https://org.github.io/repo/`. A preview served at the root of a zrok hostname needs `/`. Same source tree,
+two different builds.
 
 ## Making it configurable
 
@@ -57,15 +53,16 @@ const config: Config = {
 };
 ```
 
-Existing deployments keep the hardcoded default. docpreview overrides it per build. This site does exactly
-that — see [`www/docusaurus.config.ts`](https://github.com/openziti-test-kitchen/docpreview/blob/main/www/docusaurus.config.ts).
+Existing deployments keep the hardcoded default. NetFoundry Preview sets `DOCUSAURUS_BASE_URL` on every build. This
+site does the same in
+[`www/docusaurus.config.ts`](https://github.com/openziti-test-kitchen/docpreview/blob/main/www/docusaurus.config.ts).
 
-If you cannot change the config — someone else's repository, a vendored theme — set `build.base_url` in
-[`.docpreview.yml`](../reference/repo-config.md) to whatever the config hardcodes. docpreview will serve the
-preview under that prefix instead of the root, and redirect the bare origin to it so the link still works.
+Sometimes you cannot change the config, because the repository or the theme belongs to someone else. Then set
+`build.base_url` in [`.docpreview.yml`](../reference/repo-config.md) to whatever the config hardcodes. The preview is
+served under that prefix instead of the root, and the bare origin redirects to it so the link still works.
 
-Either way, docpreview checks the built `index.html` before publishing and refuses to serve a site whose asset
-URLs disagree with where it is about to be mounted. The reasoning is in
+Either way, NetFoundry Preview checks the built `index.html` before publishing. If its asset URLs disagree with where
+the site is about to be mounted, the build fails instead of serving a broken page. The reasoning is in
 [Troubleshooting](../troubleshooting.md).
 
 ## `onBrokenLinks`
@@ -74,9 +71,8 @@ URLs disagree with where it is about to be mounted. The reasoning is in
 onBrokenLinks: 'throw',
 ```
 
-Docusaurus can fail the build on internal links that go nowhere. Leave this on. Catching a broken cross-
-reference in a preview build is the single highest-value thing this whole system does — it is a class of
-error that reviewers reliably miss and readers reliably hit.
+Docusaurus can fail the build on internal links that go nowhere. Leave this on. A broken cross-reference is easy for a
+reviewer to miss and certain to annoy a reader, and a preview build is the cheapest place to catch it.
 
 ## Sources
 

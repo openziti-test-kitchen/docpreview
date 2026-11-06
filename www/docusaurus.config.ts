@@ -33,12 +33,11 @@ const repoUrl = 'https://github.com/openziti-test-kitchen/docpreview';
 const sitePath = (p: string) => `${baseUrl}${p}`;
 
 const config: Config = {
-  title: 'docpreview',
-  tagline: 'Documentation previews for pull requests, running anywhere',
-  // SVG rather than the .ico it replaced: one file, sharp at every size, and it can
-  // be edited. Every browser this documentation targets has supported an SVG favicon
-  // for years. img/favicon.ico is deliberately left in place for anything that asks
-  // for /favicon.ico by convention rather than by reading the markup.
+  title: 'NetFoundry Preview',
+  tagline: 'Pull request previews for any static site, running anywhere',
+  // The App's logo (img/netfoundry-preview-logo.svg), copied as-is. img/favicon.ico is
+  // still the older page icon: .gitattributes marks every file text with eol=lf, which
+  // rewrites bytes in a binary .ico, so a regenerated one waits on a `*.ico binary` rule.
   favicon: 'img/favicon.svg',
 
   future: {
@@ -107,11 +106,11 @@ const config: Config = {
       // Path-aware: one entry with no pathPrefix means the banner shows on
       // every page, which is what we want on a single-product site.
       starBanners: [
-        {repoUrl, label: 'Star docpreview on GitHub'},
+        {repoUrl, label: 'Star NetFoundry Preview on GitHub'},
       ],
       footer: {
         description:
-          'Documentation previews for pull requests. One Go binary, running on your hardware, ' +
+          'Pull request previews for any static site. One Go binary, running on your hardware, ' +
           'publishing over an OpenZiti overlay.',
         socialProps: {
           githubUrl: repoUrl,
@@ -144,10 +143,10 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'docpreview',
+      title: 'NetFoundry Preview',
       logo: {
-        alt: 'docpreview',
-        src: 'img/logo.svg',
+        alt: 'NetFoundry Preview',
+        src: 'img/netfoundry-preview-logo.svg',
       },
       items: [
         {

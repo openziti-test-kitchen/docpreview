@@ -27,20 +27,21 @@ function Hero(): ReactNode {
       <div className={styles.heroInner}>
         <div>
           <Heading as="h1" className={styles.heroTitle}>
-            docpreview
+            NetFoundry Preview
           </Heading>
           <p className={styles.heroTagline}>
-            Documentation previews for pull requests, running anywhere
+            Pull request previews for any static site, running anywhere
           </p>
           <p className={styles.heroBody}>
-            Push a commit. A comment appears on the pull request with a link, you click it, and there is
-            your documentation site — built from that branch, at its own URL. Push again and the same
-            comment updates in place. Close the pull request and the preview disappears.
+            Push a commit and a comment shows up on the pull request with a link. Click it and you get the
+            site built from that branch, at its own URL. That site can be a documentation site, the Ziti
+            admin console, or anything else that builds to a directory of static files. Push again and the
+            same comment updates. Close the pull request and the preview goes away.
           </p>
           <p className={styles.heroBody}>
-            That is what Vercel does for documentation repositories. The difference is where it runs: one
-            Go binary you can start on a laptop, publishing over an OpenZiti overlay rather than through
-            somebody else&apos;s cloud.
+            If you like how Vercel does this, keep using it. If you want the build on your own hardware,
+            here&apos;s another way: one Go binary you can start on a laptop, publishing over an OpenZiti
+            overlay.
           </p>
           <div className={styles.heroButtons}>
             <Link className="button button--primary button--lg" to="/docs/quickstart">
@@ -76,25 +77,25 @@ const STEPS = [
   {
     title: 'A push arrives',
     body:
-      'The webhook lands, docpreview checks whether the pull request actually touched documentation, ' +
-      'and says so on the pull request when it did not.',
+      'The webhook lands and NetFoundry Preview checks whether the pull request changed anything in ' +
+      'the build directory. If it did not, nothing is built and the comment says why.',
   },
   {
     title: 'The branch is built',
     body:
-      'A clone at the exact commit, then npm run build — locally or inside a container. Output is ' +
-      'streamed to a redacted, stored build log.',
+      'It clones the exact commit and runs npm run build, on the host or inside a container. The ' +
+      'output goes to a stored build log with secrets redacted.',
   },
   {
     title: 'A URL is published',
     body:
-      'The built directory is served through whichever exposer you configured. The site is verified ' +
-      'against its mount point before anyone sees it.',
+      'The built directory is served through the exposer you configured. Before anyone sees it, the ' +
+      'site is checked against the path it is served at.',
   },
   {
     title: 'One comment, edited',
     body:
-      'The bot upserts a single comment. Push again and the commit and timestamp change while the ' +
+      'The bot keeps a single comment. Push again and the commit and timestamp change while the ' +
       'link stays put, so a bookmark keeps working.',
   },
 ];
@@ -107,8 +108,8 @@ function HowItWorks(): ReactNode {
           Four steps, one process
         </Heading>
         <p className={styles.sectionLead}>
-          One binary, one sqlite file. No Kubernetes, no control plane. Docker is optional and only used
-          to sandbox the build.
+          One binary, one SQLite file. No Kubernetes, no control plane. Docker is optional and only
+          sandboxes the build.
         </p>
         <ol className={styles.steps}>
           {STEPS.map((step) => (
@@ -123,15 +124,17 @@ function HowItWorks(): ReactNode {
   );
 }
 
-// Adapted from the sample comment in the repository README, which is in turn a
-// copy of what the daemon actually posts.
-const COMMENT_ROWS: [string, ReactNode][] = [
-  ['Status', '✅ Ready'],
-  ['Preview', <code key="url">https://docs-quickstart-test.share.zrok.io/</code>],
-  ['Name', <code key="name">docs-quickstart-test</code>],
-  ['Commit', <code key="commit">a1b2c3d</code>],
-  ['Built in', '41s'],
-  ['Updated', '2026-07-27 14:22:07 UTC'],
+// The shape internal/scm/comment.go RenderComment posts: a bold title, then
+// one row under five headings. Keep the two in step.
+const COMMENT_HEADINGS = ['Project', 'Status', 'Preview', 'Commit', 'Updated (UTC)'];
+const COMMENT_ROW: ReactNode[] = [
+  <a key="project">acme/docs</a>,
+  <span key="status">
+    ✅ <a>Ready</a> · 41s
+  </span>,
+  <a key="preview">Preview</a>,
+  <code key="commit">a1b2c3d</code>,
+  'Jul 27, 2026 2:22pm',
 ];
 
 function TheComment(): ReactNode {
@@ -144,29 +147,37 @@ function TheComment(): ReactNode {
               What a reviewer sees
             </Heading>
             <p className={styles.sectionLead}>
-              One comment per pull request, edited in place for the life of the branch. The status line
-              carries a failed build too — with a link to the log rather than a shrug — and the comment is
-              retracted when the pull request closes.
+              One comment per pull request, edited in place for the life of the branch. A failed build
+              shows up in the same status cell, linked to its build log. When the pull request closes,
+              the comment is retracted.
             </p>
             <Link to="/docs/quickstart">Walk through it →</Link>
           </div>
 
           <div className={styles.comment}>
             <div className={styles.commentHeader}>
-              <span className={styles.commentAuthor}>docpreview</span>
+              <span className={styles.commentAuthor}>netfoundry-preview</span>
               <span className={styles.commentBot}>bot</span>
               <span>commented just now</span>
             </div>
-            <div className={styles.commentBodyTitle}>Documentation preview</div>
+            <div className={styles.commentBodyTitle}>NetFoundry Preview</div>
             <div className={styles.commentTableWrap}>
               <table className={styles.commentTable}>
+                <thead>
+                  <tr>
+                    {COMMENT_HEADINGS.map((heading) => (
+                      <th key={heading} scope="col">
+                        {heading}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
                 <tbody>
-                  {COMMENT_ROWS.map(([label, value]) => (
-                    <tr key={label}>
-                      <th scope="row">{label}</th>
-                      <td>{value}</td>
-                    </tr>
-                  ))}
+                  <tr>
+                    {COMMENT_ROW.map((cell, i) => (
+                      <td key={COMMENT_HEADINGS[i]}>{cell}</td>
+                    ))}
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -179,7 +190,7 @@ function TheComment(): ReactNode {
 
 const DIFFERENCES = [
   {
-    title: 'Docs that cannot go to a SaaS',
+    title: 'Sites that cannot go to a SaaS',
     body:
       'Unreleased, internal, embargoed. A hosted preview service means handing that content, and a ' +
       'repository token, to a third party. Here the build runs on your hardware.',
@@ -187,7 +198,7 @@ const DIFFERENCES = [
   {
     title: 'One binary, runs on a laptop',
     body:
-      'go build, then one process. A documentation site is a directory of static files; serving one ' +
+      'go build, then one process. A built site is a directory of static files, and putting one ' +
       'behind a URL is not a distributed systems problem.',
   },
   {
@@ -203,11 +214,11 @@ function WhyDifferent(): ReactNode {
     <NetFoundryHorizontalSection className={styles.sectionTinted}>
       <div className={styles.section}>
         <Heading as="h2" className={styles.sectionTitle}>
-          Not somebody else&apos;s cloud
+          Your hardware, your address
         </Heading>
         <p className={styles.sectionLead}>
-          The behaviour is the familiar one. What changes is who runs the build and who owns the address
-          it appears at.
+          The workflow is the familiar one. What changes is who runs the build and who owns the address
+          it shows up at.
         </p>
         <div className={styles.cards}>
           {DIFFERENCES.map((item) => (
@@ -231,7 +242,7 @@ const EXPOSERS: {name: string; surface: string; surfaceClass: string; body: stri
     surfaceClass: styles.surfacePublic,
     body:
       'The default. A public URL over an OpenZiti overlay, served straight into the mesh through the ' +
-      'zrok Go SDK — no local port bound, no reverse proxy.',
+      'zrok Go SDK. No local port is bound and there is no reverse proxy.',
   },
   {
     name: 'frontdoor',
@@ -267,9 +278,9 @@ function Exposers(): ReactNode {
           Four ways to reach a preview
         </Heading>
         <p className={styles.sectionLead}>
-          An exposer turns a built preview into a URL somebody can open, and it is the only part of
-          docpreview that knows how traffic reaches you. Switching between them is one line of config —
-          but the tradeoff is real, and it is about who can read your unreleased documentation.
+          An exposer turns a built preview into a URL somebody can open. It is the only part of
+          NetFoundry Preview that knows how traffic reaches you. Switching between them is one line of
+          config, but the choice matters: it decides who can read your unreleased site.
         </p>
         <div className={styles.exposers}>
           {EXPOSERS.map((exposer) => (
@@ -301,9 +312,9 @@ function Credentials(): ReactNode {
               Credentials in one file
             </Heading>
             <p className={styles.sectionLead}>
-              Every credential docpreview needs lives in <code>~/.docpreview/vault.age</code>, encrypted
-              with age. Not a service, nothing to install — the library is linked into the binary. Where
-              the master key comes from is a choice you make, not a default you inherit.
+              Every credential NetFoundry Preview needs lives in <code>~/.docpreview/vault.age</code>,
+              encrypted with age. There is no service to run and nothing to install, because the library
+              is linked into the binary. You choose where the master key comes from.
             </p>
             <p className={styles.sectionLead}>
               A secret injected into a build is redacted from every log line and every pull request
@@ -336,9 +347,9 @@ function Closing(): ReactNode {
           Try it on one repository
         </Heading>
         <p className={styles.sectionLead} style={{margin: '0 auto'}}>
-          Ten minutes to a preview URL on a pull request, and nothing to undo if you stop there: one
-          binary, one config file, and a source-control app you can uninstall. Run it on a laptop first
-          — the quickstart needs no account and no inbound port.
+          Ten minutes to a preview URL on a pull request, and nothing to undo if you stop there. It is
+          one binary, one config file, and a source-control app you can uninstall. Run it on a laptop
+          first. The quickstart needs no account and no inbound port.
         </p>
         <div className={styles.closingButtons}>
           <Link className="button button--primary button--lg" to="/docs/quickstart">
@@ -359,10 +370,11 @@ function Closing(): ReactNode {
 export default function Home(): ReactNode {
   return (
     <Layout
-      title="Documentation previews for pull requests"
+      title="Pull request previews for any static site"
       description={
-        'A single Go binary that builds a documentation preview for every pull request and posts the ' +
-        'URL back, using zrok or NetFoundry Frontdoor for public access.'
+        'NetFoundry Preview builds a preview of any static site, such as a documentation site or the ' +
+        'Ziti admin console, for every pull request and posts the URL back. One Go binary, with public ' +
+        'access through zrok or NetFoundry Frontdoor.'
       }>
       <Hero />
       <main>

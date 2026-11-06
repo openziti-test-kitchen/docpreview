@@ -93,6 +93,21 @@ type Report struct {
 
 	// UpdatedAt is when this report was generated.
 	UpdatedAt time.Time
+
+	// Title heads the pull request comment and names the Bitbucket build status. Empty means
+	// DefaultTitle, so a report built anywhere other than the daemon still renders a heading.
+	Title string
+}
+
+// DefaultTitle is the heading used when preview.title is not set.
+const DefaultTitle = "NetFoundry Preview"
+
+// TitleOf returns the report's heading, falling back to DefaultTitle.
+func TitleOf(r Report) string {
+	if t := strings.TrimSpace(r.Title); t != "" {
+		return t
+	}
+	return DefaultTitle
 }
 
 // ErrBadSignature means a webhook delivery did not come from the platform it

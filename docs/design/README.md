@@ -41,6 +41,17 @@ that now describes it, and deleted.
 | [18-exposer-ziti.md](18-exposer-ziti.md) | Plain OpenZiti, and the per-preview authorization question that gates it |
 | [19-zrok-namespacing.md](19-zrok-namespacing.md) | Deleting a leaked zrok name, what the account limits count, and why an owned subdomain is admin-only |
 | [21-multi-exposer.md](21-multi-exposer.md) | Several exposers at once and one per project: the publications table, and the per-exposer reap that must not delete the others' shares |
+| [22-identity-aware-previews.md](22-identity-aware-previews.md) | Using the overlay's dialing identity: "seen by" in the comment, previews only the pull request's people can open, a real domain |
+
+## Research
+
+Not plans and not features. They record ideas weighed and the evidence behind each verdict, and other documents cite
+them by line number, so edit them with care.
+
+| Document | Covers |
+|---|---|
+| [ziti-native-previews.md](ziti-native-previews.md) | Tunneler-only previews: the evidence behind the ziti exposer, per-preview authorization, effort |
+| [vercel-features.md](vercel-features.md) | Vercel preview features docpreview lacks, and a verdict on each |
 
 ## CLAUDE.md files
 

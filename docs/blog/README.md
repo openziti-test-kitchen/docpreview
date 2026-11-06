@@ -6,6 +6,13 @@ they are published somewhere.
 `www/` is the product's documentation and answers "how do I use this". These answer "why would I want it",
 which is a different job and a different voice. Nothing here is linked from the docs site.
 
+## The overview
+
+`00-netfoundry-preview.md` comes before the series. It credits Vercel for the preview loop and offers another way
+for anyone who wants one. The reason given is contributor access on private repositories, with the build on our
+own VM and zrok publishing the preview. Its reader is outside NetFoundry. It summarises 01, 02, 03 and 05 and
+links to them rather than repeating them, and it links public NetFoundry and OpenZiti projects wherever they fit.
+
 ## The series
 
 Three posts, because they have three different readers and one post that tries to serve all three ends up
@@ -14,7 +21,7 @@ serving none of them.
 | | Post | Reader | Argument |
 |---|---|---|---|
 | 1 | `01-nobody-clones-the-repo.md` | anyone who reviews a documentation pull request | Reviewing docs properly means building them, so nobody does it, so the diff is what gets reviewed — and a diff hides the failures that matter |
-| 2 | `02-bitbucket-private-repos.md` | teams on Bitbucket Cloud with private source | The hosted preview services are thin here, and repository-scoped access tokens make a self-hosted answer practical |
+| 2 | `02-bitbucket-private-repos.md` | teams on Bitbucket Cloud with private source | Vercel works on Bitbucket too and was our reference; repository-scoped access tokens make a self-hosted answer practical |
 | 3 | `03-preview-url-is-a-security-decision.md` | someone who has decided they want previews | Who can open the link is a spectrum, from a public URL to no public surface at all |
 
 Post 1 has to argue that previews are worth having. Post 3 assumes that argument is won and asks who
@@ -39,34 +46,22 @@ Publish 1, 2, 3 in order. 4 and 5 go whenever, and 4 works as a standalone that 
 Post 1 and post 3 both carry the four-exposer table. Keep it in both — most readers arrive at one post from a
 search and never see the other — but keep them in step when the table changes.
 
-## The seat-pricing argument
+## Tone toward Vercel
 
-Post 1 carries it and it may deserve its own post. The shape: documentation contributors are the widest
-and most occasional group in a company, per-member billing is built for the opposite shape, and the cheapest
-way to control that bill is to reduce who may open a documentation pull request. That prices out the person
-who spotted the mistake.
-
-The strongest part is not the money. A contributor without a seat gets a **red check** on the pull request,
-in the same list and the same colour as a broken build, plus the mail that goes with it, and cannot clear
-it from the branch. A signal that means "this change is wrong" is being spent on "this person is
-unlicensed", and once red routinely means nothing, people stop reading the checks that do mean something.
-
-Be accurate about the blast radius: it does **not** block the merge on its own. It is noise and an email.
-It only holds a pull request shut where the repository is configured to require every check. The post says
-this. Overstating it invites a correction that costs the whole argument.
-
-That observation is about incentives rather than about docpreview, which makes it the most linkable thing
-in the series and the best candidate for standing alone.
-
-Against all of it: one VM serves any number of contributors, and the marginal contributor costs nothing.
+Every mention of Vercel is complimentary. The framing is "if you like Vercel, keep using it; if not, here is
+another way". Vercel defined the loop docpreview copies, and the posts say so. The problem the posts name is not
+price. In our setup, a pull request on a private repository was only built if its author was on our Vercel
+team, so contributors outside it were blocked until somebody added them. That is reasonable on Vercel's side and
+was friction on ours. docpreview builds on our own VM and zrok publishes the preview, so nobody has to join
+anything. Posts 00, 01 and 02 carry this argument. The earlier per-seat and red-check argument has been removed.
 
 ## Accuracy
 
 Two claims need checking before anything is published.
 
-**Per-seat pricing.** Post 1 describes the model and gives arithmetic rather than quoting a figure, because
-published rates change. Confirm the current number and whether reviewers need a paid seat or only editors,
-since that changes the total by a lot.
+**Contributor access.** Posts 00, 01 and 02 say that, on our private repositories, a pull request was only built
+if its author was on our Vercel team. That is our experience, and the posts present it as ours, not as a general
+statement about Vercel's product. It was the pull request author, not the viewer, who needed adding.
 
 **Frontdoor.** It is implemented and its wire format has not been exercised against a live tenant, which
 `www/docs/exposers.md` states plainly. A post that implies otherwise is a support conversation later.

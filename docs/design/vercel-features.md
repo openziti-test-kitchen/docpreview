@@ -12,7 +12,7 @@ Nothing on this page is built. It is a survey of Vercel's preview surface as doc
 against the system docpreview actually is, so that the next thing built is chosen rather than stumbled into.
 Where an idea is already tracked, this page says so and links to it instead of proposing it again.
 
-[How Vercel previews work](../background/vercel.md) covers the mechanism docpreview already copies — the Git
+[How Vercel previews work](../../www/docs/background/vercel.md) covers the mechanism docpreview already copies — the Git
 integration, the single edited comment, the lifecycle. This page is everything else.
 
 :::
@@ -56,7 +56,7 @@ can put an OAuth gate in front of a share, and the ziti exposer knows the dialin
 `docpreview-reader` attribute — neither yields a person to attribute a comment to. Vercel's requirement that
 commenters hold a Vercel account is not incidental. It is the cheapest way out of exactly this problem, and
 docpreview has no equivalent account to require. Building this means building authentication first, and the
-dashboard [does not have any either](../reference/security.md).
+dashboard [does not have any either](../../www/docs/reference/security.md).
 
 **Verdict: skip it.** The pull request already has a comment thread, anchored to the diff, with the reviewers
 already authenticated by the platform. Vercel needs its own because it is not the code host. docpreview is not the
@@ -77,7 +77,7 @@ preview URL is public by default until one of those is turned on
 documentation is behind it. One instance serving a public project and an embargoed one has to pick a single
 posture for both. Moving those four fields onto `expose.Spec`, sourced from the project row, is the whole feature:
 the projects page already holds per-project build settings and per-project secrets
-([Projects](../reference/projects.md)), and the plumbing from a project row into a build already exists.
+([Projects](../../www/docs/reference/projects.md)), and the plumbing from a project row into a build already exists.
 
 **What it costs.** Little, and the cost is honesty rather than code. The other three exposers answer differently
 and the page has to say so: `ziti` is already the strongest form of this and needs no setting, `frontdoor` puts an
@@ -87,7 +87,7 @@ four exposers is worse than no field, so this needs `Exposer` to report which ga
 capability interface next to the existing optional `Adopter` and `NameReleaser`.
 
 **Verdict: build it now.** The reason docpreview exists is documentation that cannot go to a SaaS
-([What this is](../intro.md)), and "the whole daemon is either public or not" is the wrong granularity for that
+([What this is](../../www/docs/intro.md)), and "the whole daemon is either public or not" is the wrong granularity for that
 claim. This is the smallest change that makes the stated purpose true.
 
 ## 3. Bypass tokens and sharable links
@@ -103,7 +103,7 @@ bypass, for a reviewer with no account
 
 **What it would mean here.** A signed token checked in `internal/preview/`'s handler rather than at the exposer,
 because that is the only layer all four exposers share — the exposer hands over an `http.Handler` and knows
-nothing about what it serves ([Architecture](../architecture.md#exposer)). The daemon would mint per-project
+nothing about what it serves ([Architecture](../../www/docs/architecture.md#exposer)). The daemon would mint per-project
 secrets into the existing vault under the `project/<platform>/<owner>/<repo>/` prefix that already holds
 per-project credentials.
 
@@ -159,7 +159,7 @@ truncated, and Pro and Enterprise can replace `vercel.app` with a custom domain 
 **What it would mean here.** It is shipped. A preview has a branch share following its newest successful build
 plus one share per commit built, keyed by `expose.Spec.Key()`, and the dashboard carries the two links separately
 — the row's Open for the branch, `Open build ↗` in the log pane for whichever build is selected. Written up in
-[Exposers](../exposers.md) and tracked in
+[Exposers](../../www/docs/exposers.md) and tracked in
 [`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md).
 
 **What it costs — and what Vercel does differently.** For Vercel a generated URL is a free consequence of having
@@ -231,7 +231,7 @@ built-in skip does not — the stated reason to prefer the built-in
 
 **What it would mean here.** This is already filed as a gap in
 [`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md) and in
-[Architecture](../architecture.md) as a deliberate limit: one `.docpreview.yml` builds one site. The shape Vercel
+[Architecture](../../www/docs/architecture.md) as a deliberate limit: one `.docpreview.yml` builds one site. The shape Vercel
 uses is the right one — a project per site rather than a list inside one config — and the projects page is already
 where a project's build settings live.
 
@@ -416,9 +416,9 @@ mechanically — keep older deployments individually addressable — docpreview 
 different reason.
 
 ISR, edge functions and middleware are refused by design and the refusal is
-[documented as a feature](../background/jamstack.md): docpreview builds static output and serves a directory
+[documented as a feature](../../www/docs/background/jamstack.md): docpreview builds static output and serves a directory
 through `http.FileServer`. Anything needing a server at request time is the wrong tool, and the
-[intro](../intro.md) says so before anyone installs it. The one request-time behaviour a static site does need —
+[intro](../../www/docs/intro.md) says so before anyone installs it. The one request-time behaviour a static site does need —
 serving the site's own `404.html` instead of Go's plain-text one — is already in `internal/preview/`.
 
 **Verdict: skip, and keep skipping.** This entry exists so the question is answered once rather than reopened.
@@ -497,8 +497,8 @@ time-to-live. Do not design against either.
 
 ## Related
 
-- [How Vercel previews work](../background/vercel.md) — the mechanism docpreview already copies
+- [How Vercel previews work](../../www/docs/background/vercel.md) — the mechanism docpreview already copies
 - [Tunneler-only previews](./ziti-native-previews.md) — the other research page, and the strongest existing
   answer to idea 2
-- [Exposers](../exposers.md) — why a name is a quota-bearing object, which idea 5 answers to
-- [Jamstack](../background/jamstack.md) — why idea 12 is refused rather than deferred
+- [Exposers](../../www/docs/exposers.md) — why a name is a quota-bearing object, which idea 5 answers to
+- [Jamstack](../../www/docs/background/jamstack.md) — why idea 12 is refused rather than deferred

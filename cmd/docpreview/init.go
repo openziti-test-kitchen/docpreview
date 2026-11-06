@@ -41,7 +41,7 @@ func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	configPath := fs.String("config", defaultConfigPath(), "where to write the config file")
 	force := fs.Bool("force", false, "overwrite an existing config file")
-	advanced := fs.Bool("advanced", false, "ask about every setting, not just the two that matter")
+	advanced := fs.Bool("advanced", false, "ask about every setting, not only the exposer")
 	acceptAll := fs.Bool("yes", false, "ask nothing; take every default")
 	exposerFlag := fs.String("exposer", "", "zrok2, frontdoor, or local (skips that question)")
 	appIDFlag := fs.Int64("app-id", -1, "GitHub App ID (skips that question)")
@@ -166,7 +166,8 @@ func cmdInit(args []string) error {
 			p.note("feature, which shares the name and issues none of these values.")
 			p.note("")
 			cfg.Exposer.Frontdoor.APIBase = p.text("API base", cfg.Exposer.Frontdoor.APIBase)
-			cfg.Exposer.Frontdoor.Frontend = p.text("Frontend name", cfg.Exposer.Frontdoor.Frontend)
+			cfg.Exposer.Frontdoor.Frontend = p.text("Frontend ID (like bMTHPrtQ, not a name)",
+				cfg.Exposer.Frontdoor.Frontend)
 
 			p.note("")
 			p.note("Frontdoor's agent dials OUT to each preview, so unlike zrok this binds a real")

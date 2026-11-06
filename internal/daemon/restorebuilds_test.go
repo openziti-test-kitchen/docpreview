@@ -18,6 +18,7 @@ import (
 // restart while `builds.url` kept advertising it, and the URL would 404.
 func TestRestoreBuildSharesSurvivesARestart(t *testing.T) {
 	_, d, st := testIngress(t, &fakeClient{})
+	d.cfg.Exposer.BuildShares = true
 	ctx := context.Background()
 
 	pr := model.PullRequest{
@@ -94,5 +95,46 @@ func TestRestoreBuildSharesSurvivesARestart(t *testing.T) {
 				t.Errorf("clearing the share also changed the state to %q", b.State)
 			}
 		}
+	}
+}
+
+// With per-build shares off, a restart republishes none of them and forgets their URLs, so nothing
+// offers a link to a share the reap has just deleted.
+func TestRestoreBuildSharesOffForgetsTheirURLs(t *testing.T) {
+	_, d, st := testIngress(t, &fakeClient{})
+	ctx := context.Background()
+
+	pr := model.PullRequest{
+		Repo:   model.Repo{Platform: model.PlatformGitHub, Owner: "acme", Name: "docs"},
+		Number: 4, Branch: "round-4", HeadSHA: "7cf20bcabcdef",
+	}
+	id := pr.PreviewID()
+	build := "20260729-210224-a3aa98e"
+	dir := filepath.Join(d.cfg.ArtifactsDir(), id, build)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := store.Preview{PreviewID: id, PR: pr, Name: "round-4", URL: "https://round-4.example/",
+		BaseURL: "/", ArtifactDir: dir, State: scm.StateReady}
+	if err := st.SavePreview(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveBuild(ctx, store.Build{PreviewID: id, BuildID: build, PR: pr, State: "ready",
+		Name: "round-4-a3aa98e", URL: "https://round-4-a3aa98e.example/"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := d.buildSharesToRestore(ctx, p); len(got) != 0 {
+		t.Errorf("%d build shares kept from the reap, want none", len(got))
+	}
+	if n := d.restoreBuildShares(ctx, p); n != 0 {
+		t.Errorf("restored %d build shares with them off", n)
+	}
+	rows, err := st.BuildsFor(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].URL != "" {
+		t.Errorf("builds after restore = %+v, want the one row with no URL", rows)
 	}
 }

@@ -13,7 +13,7 @@ whole path has been exercised against a real OpenZiti controller, a real edge ro
 Edge install: enrol an identity, browse to `my-branch.docpreview.ziti`, read the docs. Turn the tunneler off
 and the hostname stops resolving.
 
-The **provisioning half is built too**, as [`docpreview configure ziti`](../reference/cli.md#configure-ziti)
+The **provisioning half is built too**, as [`docpreview configure ziti`](../../www/docs/reference/cli.md#configure-ziti)
 rather than the `docpreview identity` verbs sketched in [CLI surface](#cli-surface) — one idempotent command
 instead of four, because bootstrap was the only one anybody needed first. It creates every object below
 through the edge management API and writes the docpreview config, so the whole path from nothing is
@@ -21,7 +21,7 @@ through the edge management API and writes the docpreview config, so the whole p
 
 The ingress went the same way. `listeners` can bind an OpenZiti service instead of a TCP port, so the
 dashboard and the webhook endpoint — which between them enumerate every open documentation pull request — can
-live on the overlay alongside the previews. See [Configuration](../reference/configuration.md#listeners).
+live on the overlay alongside the previews. See [Configuration](../../www/docs/reference/configuration.md#listeners).
 
 The rest of this page is the design and the research behind it, kept because the reasoning is durable —
 particularly the negative result in [Why not zrok](#why-not-zrok), which closes off the approach most people
@@ -204,7 +204,7 @@ func (z *Ziti) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 
 `Validate` loads the identity, confirms the service is visible and bindable, opens the listener and starts the
 server — which satisfies the "Validate must reach the remote" contract in
-[Exposers](../exposers.md#contract-for-implementations) for free.
+[Exposers](../../www/docs/exposers.md#contract-for-implementations) for free.
 
 `Reap` deletes map entries not in `keep`. No remote objects exist per preview, so there is nothing on the
 controller to collect.
@@ -223,7 +223,7 @@ exposer:
     reader_role: docpreview-reader
 ```
 
-Management credentials go in the [vault](../reference/security.md#credentials-at-rest), the same treatment as
+Management credentials go in the [vault](../../www/docs/reference/security.md#credentials-at-rest), the same treatment as
 `frontdoor.api_token`, never in the YAML.
 
 ### Provisioning identities

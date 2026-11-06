@@ -1,4 +1,4 @@
-// Command docpreview builds documentation previews for pull requests and posts
+// Command docpreview (NetFoundry Preview) builds a preview site for every pull request and posts
 // the resulting URL back to the pull request.
 //
 // It is a single binary with no runtime dependencies beyond git, a Node
@@ -95,7 +95,7 @@ func run(args []string) error {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `docpreview — documentation previews for pull requests
+	fmt.Fprint(os.Stderr, `docpreview (NetFoundry Preview): a preview site for every pull request
 
 Usage:
   docpreview init      [-advanced] [-yes] One question, then write a config
@@ -179,8 +179,9 @@ browser on it — and "zrok use", which the daemon reads at startup:
 
 There are two possible zrok environments and they are usually different accounts: the
 machine's ~/.zrok2, which the zrok CLI uses, and this installation's own beside the
-vault. Startup deletes every share it recognises as its own, so a daemon on the wrong
-one deletes whatever else is using that account. "zrok status" says which is which.
+vault. Startup adopts the shares it still needs and deletes every other share it
+recognises as its own, so a daemon on the wrong one deletes whatever else is using that
+account. "zrok status" says which is which.
 
 Vault subcommands:
   docpreview vault keygen [-out FILE]     Mint a new master key
@@ -395,6 +396,7 @@ func setup(configPath, logLevel string) (*wiring, error) {
 		w.Close()
 		return nil, err
 	}
+	installShareGate("daemon", log)
 
 	w.exposer, err = buildExposer(w, cfg, log)
 	if err != nil {

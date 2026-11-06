@@ -2,7 +2,7 @@
 
 Live list of what is outstanding. Ordered roughly by what would be picked up next.
 
-Related: `www/docs/future/ziti-native-previews.md` holds the design research that is not yet a feature.
+Related: `docs/design/ziti-native-previews.md` holds the design research that is not yet a feature.
 
 **Wanted next, out of order:** [the log pane not tailing a build that starts while you are
 watching](#the-log-pane-still-does-not-start-tailing-a-build-that-begins-while-you-are-watching). It is under
@@ -118,7 +118,11 @@ activity feed. That is a line in a list that scrolls.
 - [ ] **Report the count in `doctor` and on the settings page.** Names held against names allowed is the
       number that turns "publishing stopped working" into "the account is full", and nothing shows it.
 
-**Exercise Frontdoor against a live tenant, then delete the hedging.** Priority. The name quota above is the
+**Back burner since 2026-11-06.** Frontdoor does not allow the inverted control zrok does. zrok's SDK binds the
+share from inside docpreview, with no listening port. Frontdoor needs an agent to reach a port docpreview opens. Do
+not schedule the live trial below until that changes.
+
+**Exercise Frontdoor against a live tenant, then delete the hedging.** The name quota above is the
 argument for it: zrok's reserved-name limit is a per-account ceiling that a per-build URL reaches quickly,
 and Frontdoor does not have one. Frontdoor is the answer for a
 team whose previews should be governed by the identity provider they already run, and every document currently

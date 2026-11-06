@@ -47,7 +47,7 @@ to.
 Consequences that follow, and that should be in the user documentation rather than discovered:
 
 - The pull request comment contains a link that is dead for anyone not enrolled, including whatever renders
-  link previews in chat. `www/docs/future/ziti-native-previews.md:405` records the alternative: intercept a real
+  link previews in chat. `docs/design/ziti-native-previews.md:405` records the alternative: intercept a real
   subdomain the organization owns, so a reviewer without the tunneler gets NXDOMAIN on a name that at least
   looks legitimate rather than an invalid TLD.
 - Onboarding a reviewer is a one-time-token ceremony. `configure ziti` mints exactly one sample reviewer
@@ -96,7 +96,7 @@ decision. `TODO.md:43-50` records the question as **undecided**:
 
 ### Option A — a service per preview
 
-Publishing creates the four objects `www/docs/future/ziti-native-previews.md:156-166` enumerates: an
+Publishing creates the four objects `docs/design/ziti-native-previews.md:156-166` enumerates: an
 `intercept.v1` config, a service, a Bind policy, a Dial policy naming only the identities allowed on *that*
 preview. Authorization moves onto the controller, which is where a zero-trust purist wants it, and a reviewer
 without the grant cannot even resolve the name.
@@ -400,12 +400,12 @@ What can be tested without a controller, and is not yet:
   delete-Dial-policy-first ordering is a property worth a test rather than a comment.
 
 The end-to-end path stays manual and stays documented: `scripts/ziti-trial/`, then a real ZDEW install
-(`www/docs/future/ziti-native-previews.md:366-393`).
+(`docs/design/ziti-native-previews.md:366-393`).
 
 ## Where plain ziti beats zrok, specifically
 
 zrok is built on OpenZiti, so "use zrok" is the obvious first answer, and it is wrong for this — not marginally,
-and not for reasons of taste. `www/docs/future/ziti-native-previews.md:48-89` closes it off with evidence:
+and not for reasons of taste. `docs/design/ziti-native-previews.md:48-89` closes it off with evidence:
 
 - A zrok private share creates a service with exactly one config, `zrok.proxy.v1`, and **no** `intercept.v1`.
   Repository-wide greps for `intercept.v1`, `host.v1` and the tunneler config types return zero matches across
@@ -477,7 +477,7 @@ Everything above cited as `path/file.go:NN` was read. These were not:
   `edge.Listener.Accept` returns the edge connection, so the type assertion should hold — but no code in this
   repository does it yet and it has not been run.
 - **The zrok findings** in [Where plain ziti beats zrok](#where-plain-ziti-beats-zrok-specifically) are quoted
-  from `www/docs/future/ziti-native-previews.md`, which cites zrok source line numbers. Those citations were not
+  from `docs/design/ziti-native-previews.md`, which cites zrok source line numbers. Those citations were not
   re-verified against the zrok tree here.
 - **That the integration tests have never been run in this worktree.** Inferred from the skip guard and the
   hardcoded service name, not from a test log.

@@ -3,7 +3,7 @@
 Stands up a throwaway OpenZiti network, provisions everything the `ziti` exposer needs, and leaves you with an
 enrolment token to import into Ziti Desktop Edge.
 
-Background and design: [`www/docs/future/ziti-native-previews.md`](../../www/docs/future/ziti-native-previews.md).
+Background and design: [`docs/design/ziti-native-previews.md`](../../docs/design/ziti-native-previews.md).
 
 These scripts are the hand-rolled stand-in for the `docpreview identity` verbs, which are not built yet. They
 assume a Windows host with the `ziti` CLI at `~/.ziti/bin/v2.0.0/ziti.exe` — adjust `ZITI` at the top of each
