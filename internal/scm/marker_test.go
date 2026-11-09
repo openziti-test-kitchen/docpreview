@@ -14,7 +14,7 @@ import (
 // once, which is the exact failure the marker exists to prevent. So the styles are
 // enumerated here, and every one of them must be recognised forever.
 func TestHasMarkerMatchesEveryStyleEverWritten(t *testing.T) {
-	// Every style docpreview has ever written, oldest first. Append; never remove.
+	// Every style nfpreview has ever written, oldest first. Append; never remove.
 	styles := []MarkerStyle{MarkerHTMLComment, MarkerLinkRef}
 
 	for _, s := range styles {
@@ -34,7 +34,7 @@ func TestHasMarkerMatchesEveryStyleEverWritten(t *testing.T) {
 // specific renderer does with it and a plausible-looking edit breaks that silently —
 // the marker still matches, and only the rendered comment is wrong.
 func TestMarkerStyleRenderings(t *testing.T) {
-	if got, want := MarkerFor("abc123", MarkerHTMLComment), "<!-- docpreview:abc123 -->"; got != want {
+	if got, want := MarkerFor("abc123", MarkerHTMLComment), "<!-- nfpreview:abc123 -->"; got != want {
 		t.Errorf("MarkerHTMLComment = %q, want %q", got, want)
 	}
 
@@ -42,7 +42,7 @@ func TestMarkerStyleRenderings(t *testing.T) {
 	// a line. Bitbucket escapes raw HTML, so this is the form that renders to nothing
 	// there — observed on a live Vercel comment, see docs/design/15-bitbucket.md.
 	got := MarkerFor("abc123", MarkerLinkRef)
-	if want := "[docpreview]: #abc123"; got != want {
+	if want := "[nfpreview]: #abc123"; got != want {
 		t.Errorf("MarkerLinkRef = %q, want %q", got, want)
 	}
 	if strings.ContainsAny(got, "<>") {

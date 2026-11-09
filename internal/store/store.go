@@ -1,4 +1,4 @@
-// Package store persists the two pieces of state docpreview cannot afford to
+// Package store persists the two pieces of state nfpreview cannot afford to
 // keep only in memory: the queue of pending builds, and the set of previews
 // that are supposed to be live.
 //
@@ -97,15 +97,15 @@ CREATE TABLE IF NOT EXISTS builds (
 
 CREATE INDEX IF NOT EXISTS builds_started_at ON builds(started_at);
 
--- A project is a repository docpreview is willing to build, and how to build it.
+-- A project is a repository nfpreview is willing to build, and how to build it.
 --
--- It exists to move the build instructions off the pull request. .docpreview.yml
+-- It exists to move the build instructions off the pull request. .nfpreview.yml
 -- lives in the branch, so on any repository where opening a pull request is not a
 -- privilege, whoever opens one chooses the command that runs — and the local
 -- driver runs it. An operator-authored row cannot be edited by a contributor.
 --
 -- Every build field is nullable-by-emptiness: empty means "no opinion, fall back
--- to the repository's own .docpreview.yml". That keeps a project row useful as
+-- to the repository's own .nfpreview.yml". That keeps a project row useful as
 -- just an allowlist entry, which is the common case, without forcing an operator
 -- to restate settings the repository already gets right.
 --
@@ -407,10 +407,10 @@ func (s *Store) PendingJobs(ctx context.Context) ([]PendingJob, error) {
 	return out, rows.Err()
 }
 
-// Project is a repository docpreview will build, and how.
+// Project is a repository nfpreview will build, and how.
 //
 // Every build field is optional. Empty means "defer to the repository's own
-// .docpreview.yml", so a row that only names a repository is a valid project and
+// .nfpreview.yml", so a row that only names a repository is a valid project and
 // is the common case — an operator should not have to restate settings the
 // repository already gets right in order to allow it.
 type Project struct {
@@ -421,7 +421,7 @@ type Project struct {
 
 	// Framework is a preset id — "docusaurus", "mkdocs" — supplying the build command and
 	// output directory for the fields left blank below. Empty means no preset, and the
-	// repository's own .docpreview.yml decides.
+	// repository's own .nfpreview.yml decides.
 	//
 	// Stored rather than resolved at save time, so the preset's values are not frozen into
 	// the row: a corrected default in a later version applies to every project that named
@@ -1011,7 +1011,7 @@ func (s *Store) ListIgnored(ctx context.Context, repo model.Repo) ([]IgnoredPR, 
 	return out, rows.Err()
 }
 
-// Comment is a pull request comment docpreview owns.
+// Comment is a pull request comment nfpreview owns.
 type Comment struct {
 	PreviewID string
 	PR        model.PullRequest
@@ -1026,7 +1026,7 @@ type Comment struct {
 	UpdatedAt time.Time
 }
 
-// UpsertComment writes docpreview's comment for a pull request, creating it on
+// UpsertComment writes nfpreview's comment for a pull request, creating it on
 // the first call and editing it thereafter.
 //
 // The revision increments and created_at is preserved, so "one comment, updated

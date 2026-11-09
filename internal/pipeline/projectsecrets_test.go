@@ -138,7 +138,7 @@ func TestTheLogNamesTheInjectedVariables(t *testing.T) {
 
 // TestARepositoryCannotShadowAProjectSecret.
 //
-// buildEnv reserves every name in the secrets map against `.docpreview.yml`, and
+// buildEnv reserves every name in the secrets map against `.nfpreview.yml`, and
 // WithSecrets has to land the project's variables in that same map for the protection
 // to extend to them. If it did not, a pull request could set BB_REPO_TOKEN_ONPREM to a
 // string of its own — watching what the build did differently, and, worse, putting a

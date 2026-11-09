@@ -6,7 +6,7 @@ sidebar_position: 1
 
 # Server configuration
 
-NetFoundry Preview reads its config from `~/.docpreview/config.yml`, `$DOCPREVIEW_CONFIG`, or `-config <path>`.
+NetFoundry Preview reads its config from `~/.nfpreview/config.yml`, `$NFPREVIEW_CONFIG`, or `-config <path>`.
 
 A missing file is not an error. With no config at all you get a zrok-backed daemon that only needs GitHub
 credentials. The exceptions are the settings that have no sensible default, such as Frontdoor's `env_z_id`.
@@ -19,7 +19,7 @@ credentials. The exceptions are the settings that have no sensible default, such
 listen: 127.0.0.1:8471
 
 # Vault, database, workspaces and build artifacts all live under here.
-data_dir: /home/you/.docpreview
+data_dir: /home/you/.nfpreview
 
 # The daemon's own log, in addition to stderr. Appended to, never rotated.
 log_file: ""
@@ -62,9 +62,9 @@ exposer:
     name_template: "{{.Repo.Name}}-{{.Name}}"
 
   ziti:
-    identity_file: /home/you/.docpreview/ziti/docpreview-host.json
-    service: docpreview-svc
-    domain: docpreview.ziti
+    identity_file: /home/you/.nfpreview/ziti/nfpreview-host.json
+    service: nfpreview-svc
+    domain: nfpreview.ziti
     name_template: "{{.Repo.Name}}-{{.Name}}"
 
 github:
@@ -83,7 +83,7 @@ build:
   memory: 6g
   timeout: 15m
   keep_logs: 168h
-  # cache_dir: D:\docpreview-cache  # default <data_dir>/cache
+  # cache_dir: D:\nfpreview-cache  # default <data_dir>/cache
   # secrets:                        # env var -> vault key, for every build
   #   ALGOLIA_WRITE_KEY: algolia.write_key
 
@@ -100,7 +100,7 @@ preview:
 |---|---|---|
 | `listen` | `127.0.0.1:8471` | Bind loopback and reach it through a zrok share rather than binding `0.0.0.0`. |
 | `listeners` | none | The general form of `listen`. See below. |
-| `data_dir` | `~/.docpreview` | Created with `0700`. It holds the vault, so protect it like one. |
+| `data_dir` | `~/.nfpreview` | Created with `0700`. It holds the vault, so protect it like one. |
 | `log_file` | unset | The daemon's own log, written in addition to stderr. Unset means stderr only. Appended to and never rotated, so rotate it with whatever supervises the process. |
 | `workers` | `2` | Concurrent builds. Must be at least 1. |
 | `dashboard_url` | unset | Where the dashboard is reachable from. See below. |
@@ -112,7 +112,7 @@ script printed, and the comment is public on a public repository. Instead the co
 is the address it links to. A failed build links to its log, and a build in progress links the word "Building".
 
 ```yaml
-dashboard_url: https://docpreview-dash.shares.zrok.io
+dashboard_url: https://nfpreview-dash.shares.zrok.io
 ```
 
 You have to set it because the daemon can't work it out. It listens on loopback, and a loopback address is exactly
@@ -129,8 +129,8 @@ When it is unset, the comment names the dashboard without linking to it.
 listeners:
   - tcp: "127.0.0.1:8471"
   - ziti:
-      identity_file: "/home/you/.docpreview/ziti/docpreview-host.json"
-      service: "docpreview-admin"
+      identity_file: "/home/you/.nfpreview/ziti/nfpreview-host.json"
+      service: "nfpreview-admin"
 ```
 
 A bare string is shorthand for `tcp`, so `- "127.0.0.1:8471"` works too.
@@ -148,12 +148,12 @@ address on the underlay at all**. It gives the admin surface the same posture th
 
 | Field | Notes |
 |---|---|
-| `identity_file` | An enrolled identity, named by a **Bind** policy on the service. `docpreview configure ziti` makes one. |
+| `identity_file` | An enrolled identity, named by a **Bind** policy on the service. `nfpreview configure ziti` makes one. |
 | `service` | The service to bind. |
 | `admin_identities` | Identity **ids** allowed to edit projects and store credentials through this listener. Empty, the default, means the dashboard is read-only over it. |
 
 The first two are required. A `ziti` listener missing either one fails at startup instead of on the first request.
-`docpreview doctor` goes further and binds each one. That's the only way to catch an identity that won't
+`nfpreview doctor` goes further and binds each one. That's the only way to catch an identity that won't
 authenticate, or a service with no Bind policy naming it.
 
 #### Who can change things over the overlay
@@ -165,8 +165,8 @@ identity is listed in `admin_identities`.
 ```yaml
 listeners:
   - ziti:
-      identity_file: "/home/you/.docpreview/ziti/docpreview-host.json"
-      service: "docpreview-admin"
+      identity_file: "/home/you/.nfpreview/ziti/nfpreview-host.json"
+      service: "nfpreview-admin"
       admin_identities: ["abc123"]
 ```
 
@@ -262,7 +262,7 @@ strands the previous one.
 | `domain` | Must match the addresses in the service's `intercept.v1` config, or the tunneler resolves names nothing answers to. |
 | `name_template` | As above. |
 
-`docpreview configure ziti` creates all of it and writes these four fields for you.
+`nfpreview configure ziti` creates all of it and writes these four fields for you.
 
 ### `frontdoor`
 
@@ -300,7 +300,7 @@ The [local platform](../local-platform.md): bare git repositories on this machin
 | Field | Default | Notes |
 |---|---|---|
 | `enabled` | `false` | An endpoint that clones and builds whatever it is told to shouldn't be on by accident. |
-| `repos_dir` | `~/.docpreview/repos` | The bare repositories that act as remotes. |
+| `repos_dir` | `~/.nfpreview/repos` | The bare repositories that act as remotes. |
 | `default_base` | `main` | The branch changed files are compared against when an event doesn't name one. |
 | `webhook_secret` | empty | When set, the local webhook requires the same HMAC-SHA256 signature GitHub sends. Empty means unauthenticated. |
 
@@ -428,7 +428,7 @@ empty `npm/`, `yarn/` and `pnpm/` and recreate them, and neither touches `cache_
 If a running build holds a file open in the cache, the clear fails and says so:
 
 ```text
-could not clear D:\docpreview-cache\9f2a1c4b7e01\npm: ... — a build may be running and
+could not clear D:\nfpreview-cache\9f2a1c4b7e01\npm: ... — a build may be running and
 holding a file open in it; try again once the queue is idle
 ```
 
@@ -537,13 +537,13 @@ Where the master key that decrypts `<data_dir>/vault.age` comes from.
 vault:
   # A command, which is the recommended form: the key exists in the daemon
   # process and nowhere else on the machine.
-  key_source: "exec:op read op://ops/docpreview/master-key"
+  key_source: "exec:op read op://ops/nfpreview/master-key"
 
   # Or a file. It must not be inside data_dir, which would put the key next to
   # the ciphertext it decrypts, and on Unix it must not be group- or
   # world-readable. Make one with:
-  #   docpreview vault keygen -out /etc/docpreview/master.key
-  key_source: "file:/etc/docpreview/master.key"
+  #   nfpreview vault keygen -out /etc/nfpreview/master.key
+  key_source: "file:/etc/nfpreview/master.key"
 ```
 
 Unset is the only setting where the key isn't stored anywhere. The cost is that after a reboot the daemon does
@@ -553,12 +553,12 @@ nothing until somebody unlocks it. See [security](./security.md#the-master-key) 
 
 | Variable | Purpose |
 |---|---|
-| `DOCPREVIEW_MASTER_KEY` | The vault key, as an age identity or a passphrase. Only read when `vault.key_source` is unset, and **not recommended**: every process running as the same user can read an environment variable, and it ends up in service definitions, process listings and crash dumps. |
-| `DOCPREVIEW_CONFIG` | Config file path. |
+| `NFPREVIEW_MASTER_KEY` | The vault key, as an age identity or a passphrase. Only read when `vault.key_source` is unset, and **not recommended**: every process running as the same user can read an environment variable, and it ends up in service definitions, process listings and crash dumps. |
+| `NFPREVIEW_CONFIG` | Config file path. |
 
 ## Related
 
-- [Repository configuration](./repo-config.md): the `.docpreview.yml` that ships in the repository
+- [Repository configuration](./repo-config.md): the `.nfpreview.yml` that ships in the repository
 - [Projects](./projects.md): per-repository settings and environment variables, which override both of these
 - [CLI reference](./cli.md)
 - [Security model](./security.md)

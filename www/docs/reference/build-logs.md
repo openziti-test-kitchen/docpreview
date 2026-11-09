@@ -17,7 +17,7 @@ could go.
 
 ## Giving a build a secret
 
-There are two halves, and both go in the **server** config, never in `.docpreview.yml`:
+There are two halves, and both go in the **server** config, never in `.nfpreview.yml`:
 
 ```yaml
 build:
@@ -30,14 +30,14 @@ The key is the environment variable the build sees. The value is a [vault](./sec
 Store the secret itself separately:
 
 ```powershell
-docpreview vault set algolia.write_key
+nfpreview vault set algolia.write_key
 ```
 
 Every project gets these. For a credential that differs per repository, like a token for each private source a site
 pulls content from, put it on the [project](./projects.md#environment-variables-scoped-to-a-project) instead. Those
 are registered with the redactor the same way, and a project's value wins over a server-wide one of the same name.
 
-:::danger Never in `.docpreview.yml`
+:::danger Never in `.nfpreview.yml`
 
 `build.env` in a repository's own config takes literal values only. There is no vault lookup there. A pull request
 author must not be able to *name* a secret and have it handed to a script they wrote.
@@ -183,13 +183,13 @@ Logs can hold anything a build printed, so an unbounded pile of them is a liabil
 
 A failed build still writes a log, and the dashboard shows the failure with its reason.
 
-**That includes a failure before the build starts.** A clone that cannot authenticate, a `.docpreview.yml` that does
+**That includes a failure before the build starts.** A clone that cannot authenticate, a `.nfpreview.yml` that does
 not parse, a detect script at a path that does not exist: none of those reach the build, and each writes a log saying
 so:
 
 ```text
 $ this build did not start
-detect script ".docpreview/detect": lstat /var/lib/docpreview/workspaces/4f38/scripts: no such file or directory
+detect script ".nfpreview/detect": lstat /var/lib/nfpreview/workspaces/4f38/scripts: no such file or directory
 ```
 
 The wording tells the two cases apart. `did not start` means nothing was built. `did not publish` means the build

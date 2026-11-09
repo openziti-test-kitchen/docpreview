@@ -10,14 +10,14 @@ sidebar_position: 1
 
 The **exposer works**. `internal/expose/ziti.go` exists, `exposer.kind: ziti` is a valid configuration, and the
 whole path has been exercised against a real OpenZiti controller, a real edge router, and a real Ziti Desktop
-Edge install: enrol an identity, browse to `my-branch.docpreview.ziti`, read the docs. Turn the tunneler off
+Edge install: enrol an identity, browse to `my-branch.nfpreview.ziti`, read the docs. Turn the tunneler off
 and the hostname stops resolving.
 
-The **provisioning half is built too**, as [`docpreview configure ziti`](../../www/docs/reference/cli.md#configure-ziti)
-rather than the `docpreview identity` verbs sketched in [CLI surface](#cli-surface) — one idempotent command
+The **provisioning half is built too**, as [`nfpreview configure ziti`](../../www/docs/reference/cli.md#configure-ziti)
+rather than the `nfpreview identity` verbs sketched in [CLI surface](#cli-surface) — one idempotent command
 instead of four, because bootstrap was the only one anybody needed first. It creates every object below
-through the edge management API and writes the docpreview config, so the whole path from nothing is
-`ziti edge quickstart`, `docpreview configure ziti`, `docpreview serve`.
+through the edge management API and writes the nfpreview config, so the whole path from nothing is
+`ziti edge quickstart`, `nfpreview configure ziti`, `nfpreview serve`.
 
 The ingress went the same way. `listeners` can bind an OpenZiti service instead of a TCP port, so the
 dashboard and the webhook endpoint — which between them enumerate every open documentation pull request — can
@@ -31,7 +31,7 @@ would try first.
 
 ## The idea
 
-Every exposer docpreview has today produces a **public** URL. zrok can gate it behind OAuth and Frontdoor can
+Every exposer nfpreview has today produces a **public** URL. zrok can gate it behind OAuth and Frontdoor can
 put an IdP and a WAF in front, but in both cases the address exists on the internet and something has to decide
 whether to let each visitor through.
 
@@ -41,7 +41,7 @@ address that is not routable, and a service you have no right to dial.
 
 Reviewers run [Ziti Desktop Edge for Windows](https://netfoundry.io/docs/openziti/how-to-guides/tunnelers/windows/)
 (or `ziti-edge-tunnel`), which most NetFoundry-adjacent people already have. They open
-`https://my-branch.docpreview.ziti` and it works. Anyone else gets NXDOMAIN.
+`https://my-branch.nfpreview.ziti` and it works. Anyone else gets NXDOMAIN.
 
 For unreleased documentation, that is a materially different posture from "public URL, unguessable name".
 
@@ -89,7 +89,7 @@ opposite requirement.
 
 ## What does work
 
-docpreview talks directly to an OpenZiti network's **edge management API**, and hosts the preview from its own
+nfpreview talks directly to an OpenZiti network's **edge management API**, and hosts the preview from its own
 enrolled identity.
 
 ```mermaid
@@ -101,7 +101,7 @@ flowchart LR
         C[(Controller)]
         ER[Edge router]
     end
-    subgraph D["docpreview"]
+    subgraph D["nfpreview"]
         L[overlay listener] --> M[Host-header mux]
         M --> P1[my-branch]
         M --> P2[other-branch]
@@ -109,7 +109,7 @@ flowchart LR
 
     Z -. "enrolled via OTT JWT" .-> C
     Z --> ER --> L
-    C -. "intercept.v1 for *.docpreview.ziti" .-> Z
+    C -. "intercept.v1 for *.nfpreview.ziti" .-> Z
 ```
 
 One wildcard service. One intercept config. One listener. Everything per-preview happens in memory.
@@ -125,13 +125,13 @@ A single service carries an `intercept.v1` covering every preview that will ever
 ```json
 {
   "protocols":  ["tcp"],
-  "addresses":  ["docpreview.ziti", "*.docpreview.ziti"],
+  "addresses":  ["nfpreview.ziti", "*.nfpreview.ziti"],
   "portRanges": [{"low": 80, "high": 80}]
 }
 ```
 
 The apex is listed explicitly because the wildcard matcher keys on the suffix `name[1:] + "."`, so
-`*.docpreview.ziti` matches `foo.docpreview.ziti` but **not** bare `docpreview.ziti`
+`*.nfpreview.ziti` matches `foo.nfpreview.ziti` but **not** bare `nfpreview.ziti`
 (`tunnel/dns/server.go:167`). Having the apex is useful anyway — it can serve an index of live previews.
 
 Wildcards are a first-class address form. The tunneler allocates a synthetic IP lazily, the first time each
@@ -150,7 +150,7 @@ One constraint: wildcards need the DNS-server resolver, which is the normal ZDEW
 The hostfile resolver rejects them outright (`tunnel/dns/file.go:54`).
 
 **Because the tunneler is a layer-4 proxy, the HTTP `Host` header survives end to end.** The browser sends
-`Host: my-branch.docpreview.ziti`, nothing rewrites it, and docpreview's overlay listener sees it verbatim.
+`Host: my-branch.nfpreview.ziti`, nothing rewrites it, and nfpreview's overlay listener sees it verbatim.
 That is the whole trick — routing by Host is what lets one service serve every preview.
 
 Service-per-pull-request is the wrong shape, for four separate reasons:
@@ -215,12 +215,12 @@ Configuration alongside the existing exposers:
 exposer:
   kind: ziti
   ziti:
-    identity_file: /etc/docpreview/docpreview.json   # docpreview's own enrolled identity
-    service: docpreview
-    domain: docpreview.ziti
+    identity_file: /etc/nfpreview/nfpreview.json   # nfpreview's own enrolled identity
+    service: nfpreview
+    domain: nfpreview.ziti
     name_template: "{{.Repo.Name}}-{{.Name}}"
     management_api: https://ziti-controller:1280     # only for the identity verbs
-    reader_role: docpreview-reader
+    reader_role: nfpreview-reader
 ```
 
 Management credentials go in the [vault](../../www/docs/reference/security.md#credentials-at-rest), the same treatment as
@@ -251,7 +251,7 @@ Creating a reviewer identity:
     Name:           &name,
     Type:           rest_model.IdentityTypeDefault,
     IsAdmin:        &falsePtr,
-    RoleAttributes: &rest_model.Attributes{"docpreview-reader"},
+    RoleAttributes: &rest_model.Attributes{"nfpreview-reader"},
     Enrollment:     &rest_model.IdentityCreateEnrollment{Ott: true},
 }
 ```
@@ -279,17 +279,17 @@ Well-known config type IDs, verified in ziti's `controller/db/migration_initiali
 | `host.v1` | `NH5p4FpGR` |
 
 Safer than hardcoding either: `GET /config-types?filter=name="intercept.v1"` once at startup. And note
-docpreview needs only `intercept.v1` — `host.v1` is for tunneler-hosted services, and docpreview binds the
+nfpreview needs only `intercept.v1` — `host.v1` is for tunneler-hosted services, and nfpreview binds the
 service itself through the SDK.
 
 #### Bootstrap objects
 
-One-time, and `docpreview identity bootstrap` should create them idempotently:
+One-time, and `nfpreview identity bootstrap` should create them idempotently:
 
 1. `POST /configs` — the `intercept.v1` above
-2. `POST /services` — `{name: "docpreview", encryptionRequired: true, configs: [<configId>]}`
-3. `POST /service-policies` — Bind, `identityRoles: ["@<docpreviewIdentityId>"]`
-4. `POST /service-policies` — Dial, `identityRoles: ["#docpreview-reader"]` — attribute-based, so adding a
+2. `POST /services` — `{name: "nfpreview", encryptionRequired: true, configs: [<configId>]}`
+3. `POST /service-policies` — Bind, `identityRoles: ["@<nfpreviewIdentityId>"]`
+4. `POST /service-policies` — Dial, `identityRoles: ["#nfpreview-reader"]` — attribute-based, so adding a
    reviewer is one role attribute and needs no policy edit
 5. `POST /service-edge-router-policies` — `{serviceRoles: ["@<serviceId>"], edgeRouterRoles: ["#all"]}`
 6. An edge-router policy for the identities — **usually already present**. `ziti edge quickstart` creates
@@ -310,8 +310,8 @@ The NetFoundry Cloud v2 API also mints endpoints directly:
 
 ```
 POST https://gateway.production.netfoundry.io/core/v2/endpoints
-{"networkId":"…","name":"docpreview-alice","enrollmentMethod":{"ott":true},
- "attributes":["#docpreview-reader"]}
+{"networkId":"…","name":"nfpreview-alice","enrollmentMethod":{"ott":true},
+ "attributes":["#nfpreview-reader"]}
 ```
 
 It returns **202 Accepted** — creation is asynchronous — and the resource carries a top-level `jwt`. Poll
@@ -350,32 +350,32 @@ What ZDEW accepts, checked against the source:
 
 So: emit a `.jwt` for manual import as the zero-risk baseline. The pipe write is a strictly better experience
 and needs no elevation — the GUI that performs the identical call runs `asInvoker`. Keep it behind a flag,
-because the pipe is an internal contract of a component docpreview does not own.
+because the pipe is an internal contract of a component nfpreview does not own.
 
 ### CLI surface
 
-`cmd/docpreview/main.go` dispatches with a plain switch, so this is additive:
+`cmd/nfpreview/main.go` dispatches with a plain switch, so this is additive:
 
 ```text
-docpreview identity bootstrap              create the config, service and policies, idempotently
-docpreview identity add <name> [-o F.jwt]  mint a reviewer identity, write its enrollment token
-docpreview identity list
-docpreview identity remove <name>          without this there is no revocation story
+nfpreview identity bootstrap              create the config, service and policies, idempotently
+nfpreview identity add <name> [-o F.jwt]  mint a reviewer identity, write its enrollment token
+nfpreview identity list
+nfpreview identity remove <name>          without this there is no revocation story
 ```
 
 ## Reproducing the trial
 
 `scripts/ziti-trial/` stands the whole thing up: a throwaway controller and router, the six bootstrap objects,
-docpreview's hosting identity, and a reviewer enrolment token.
+nfpreview's hosting identity, and a reviewer enrolment token.
 
 ```bash
 bash scripts/ziti-trial/up.sh          # controller + router, leave running
 bash scripts/ziti-trial/bootstrap.sh   # everything else, idempotent
 ```
 
-Then `exposer.kind: ziti` pointed at the generated `docpreview-host.json`, and
-`docpreview preview -name my-branch ./www/build`. Import `reviewer-alice.jwt` into Ziti Desktop Edge and open
-`http://my-branch.docpreview.ziti/`.
+Then `exposer.kind: ziti` pointed at the generated `nfpreview-host.json`, and
+`nfpreview preview -name my-branch ./www/build`. Import `reviewer-alice.jwt` into Ziti Desktop Edge and open
+`http://my-branch.nfpreview.ziti/`.
 
 The controller runs **natively** rather than in Docker, which was the one practical surprise worth recording.
 The tunneler is on the same Windows host, so advertising `localhost` means the identity's `ztAPI` and the
@@ -388,7 +388,7 @@ juggling. Docker would have made a two-line script into an afternoon.
 |---|---|
 | An `edge.Listener` serves HTTP the same way a TCP one does | Confirmed — `Validate` binds and serves with no special handling |
 | The `Host` header survives the overlay | **Confirmed** — three previews, three hostnames, one service, correct content each time |
-| A Dial policy keyed on a role attribute grants access | Confirmed — a second identity with only `docpreview-reader` reached the service |
+| A Dial policy keyed on a role attribute grants access | Confirmed — a second identity with only `nfpreview-reader` reached the service |
 | Withdrawing removes a preview without touching the controller | Confirmed — 404 immediately after, no remote call |
 | ZDEW imports a `.jwt` and resolves the wildcard | Confirmed on a real install |
 
@@ -401,7 +401,7 @@ request and four management-API objects on every push.
 not answer it. For anything real: self-hosted, or NetFoundry-hosted? This is a decision rather than a research
 gap, and it gates the provisioning half of the feature.
 
-**`.ziti` as a TLD.** `*.docpreview.ziti` never resolving publicly is the point, but it also means the link in
+**`.ziti` as a TLD.** `*.nfpreview.ziti` never resolving publicly is the point, but it also means the link in
 the pull request comment is dead on any machine without the tunneler running — including whatever renders link
 previews. An alternative is a real subdomain the organization owns
 (`*.preview.internal.example.com`) intercepted by the tunneler, which degrades to NXDOMAIN rather than an
@@ -425,15 +425,15 @@ confirming.
 
 ## Effort
 
-Assuming a network exists and docpreview has admin credentials for it.
+Assuming a network exists and nfpreview has admin credentials for it.
 
 | Piece | Size |
 |---|---|
 | `internal/expose/ziti.go` | ~250 lines, 1–2 days. It is `local.go` plus a ziti listener. The hard part is already proven in `zrok.go`. |
 | Config additions and the `buildExposer` case | Under an hour |
 | Management client | ~200 lines, 1 day — or much less, since `zrok/v2/controller/automation` already wraps every call |
-| `docpreview identity {add,list,remove}` | ~150 lines, half a day |
-| `docpreview identity bootstrap` | ~200 lines, 1 day. Idempotency is the fiddly part. |
+| `nfpreview identity {add,list,remove}` | ~150 lines, half a day |
+| `nfpreview identity bootstrap` | ~200 lines, 1 day. Idempotency is the fiddly part. |
 | Tests | 1 day. The management client mocks the way `frontdoor_test.go` does. Host-routing is unit-testable with no network. |
 | Documentation | Half a day |
 | End-to-end against a real controller and a real ZDEW | 1–2 days, and this is where the surprises will be |

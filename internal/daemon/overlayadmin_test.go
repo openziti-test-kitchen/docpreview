@@ -182,13 +182,13 @@ func TestListenersAllowAdmin(t *testing.T) {
 			// identity dialed is then the request's business.
 			name: "ziti with admin identities",
 			listeners: []config.Listener{{Ziti: &config.ZitiListener{
-				Service: "docpreview-admin", AdminIdentities: []string{"abc123"}}}},
+				Service: "nfpreview-admin", AdminIdentities: []string{"abc123"}}}},
 			want: true,
 		},
 		{
 			name: "ziti naming nobody",
 			listeners: []config.Listener{{Ziti: &config.ZitiListener{
-				Service: "docpreview-admin"}}},
+				Service: "nfpreview-admin"}}},
 			want: false,
 		},
 		{
@@ -198,7 +198,7 @@ func TestListenersAllowAdmin(t *testing.T) {
 			name: "loopback plus a ziti listener naming nobody",
 			listeners: []config.Listener{
 				{TCP: "127.0.0.1:8471"},
-				{Ziti: &config.ZitiListener{Service: "docpreview-admin"}},
+				{Ziti: &config.ZitiListener{Service: "nfpreview-admin"}},
 			},
 			want: false,
 		},

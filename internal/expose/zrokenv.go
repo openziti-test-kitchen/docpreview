@@ -19,12 +19,12 @@ import (
 	"github.com/netfoundry/docpreview/internal/vault"
 )
 
-// Enrolling a zrok account and an environment from inside docpreview.
+// Enrolling a zrok account and an environment from inside nfpreview.
 //
 // # Why this is here rather than left to the zrok CLI
 //
 // Everything below is a thing an operator could do with `zrok2 invite`, `zrok2 enable` and a web
-// browser. It is here because the first thirty minutes of using docpreview were: install a second
+// browser. It is here because the first thirty minutes of using nfpreview were: install a second
 // binary, find the invite page, read an email, run two commands with a token pasted between them,
 // and only then discover whether the daemon agrees that any of it worked. Every one of those steps
 // can fail quietly, and the daemon's own error for all of them was the same sentence about running
@@ -36,7 +36,7 @@ import (
 // directory is decided by a **process-wide global** in the zrok library, `environment.SetRootDirName`,
 // read by every `LoadRoot`. So it is set once, before anything loads a root, and never again.
 //
-// docpreview supports two: the machine's, and one of its own beside the vault. Both existing and
+// nfpreview supports two: the machine's, and one of its own beside the vault. Both existing and
 // both being enabled is the ordinary case on a developer's machine — the operator ran
 // `zrok2 enable` months ago for something else — and there is no safe way to guess between them.
 // Publishing from the wrong account is not a cosmetic mistake: `Reap` deletes every share it
@@ -122,7 +122,7 @@ type ZrokRootInfo struct {
 	// wrong.
 	Why string `json:"why,omitempty"`
 
-	// Unsupported is set when the environment is enrolled and docpreview still cannot use it:
+	// Unsupported is set when the environment is enrolled and nfpreview still cannot use it:
 	// an on-disk format from an older zrok, or an enrolment against the v1 service.
 	//
 	// Separate from Why, which is about a root that is not set up. This one is about a root
@@ -226,7 +226,7 @@ func inspectOneZrokRoot(dir string) ZrokRootInfo {
 
 // zrokUnsupported reports why an enrolled environment still cannot be used, empty when it can.
 //
-// docpreview is built against the zrok **v2** SDK, and the two versions are not
+// nfpreview is built against the zrok **v2** SDK, and the two versions are not
 // interchangeable — a v1 controller has no namespaces and no reserved names, which is the whole
 // mechanism a preview's stable URL depends on. Enrolled against the wrong one, everything looks
 // configured and the first publish fails with a 404 from a path that does not exist.
@@ -246,8 +246,8 @@ func zrokUnsupported(root env_core.Root, apiEndpoint string) string {
 		if m := root.Metadata(); m != nil && m.V != "" {
 			v = "version " + m.V
 		}
-		return "this environment directory is " + v + ", which docpreview cannot use; " +
-			"docpreview needs a zrok v2 environment"
+		return "this environment directory is " + v + ", which nfpreview cannot use; " +
+			"nfpreview needs a zrok v2 environment"
 	}
 	if apiEndpoint == "" {
 		return ""
@@ -260,7 +260,7 @@ func zrokUnsupported(root env_core.Root, apiEndpoint string) string {
 	if host == "zrok.io" || strings.HasSuffix(host, ".zrok.io") {
 		if !strings.Contains(host, "v2") && !strings.Contains(u.Path, "v2") {
 			return "this is enrolled against the zrok v1 service (" + apiEndpoint + "). " +
-				"docpreview needs v2, which has the namespaces and reserved names a stable " +
+				"nfpreview needs v2, which has the namespaces and reserved names a stable " +
 				"preview URL depends on — v1 has neither"
 		}
 	}
@@ -465,7 +465,7 @@ func ZrokEnable(ctx context.Context, accountToken vault.Secret, description stri
 		return errors.New("no zrok account token")
 	}
 	if description == "" {
-		description = "docpreview"
+		description = "nfpreview"
 	}
 
 	apiEndpoint, _ := root.ApiEndpoint()

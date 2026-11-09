@@ -38,14 +38,14 @@ Serving it anyway would load index.html and 404 every stylesheet and script,
 which looks like a broken preview rather than a configuration mismatch.
 
 Fix it either way round:
-  - set build.base_url to "/my-project/" in .docpreview.yml, or
+  - set build.base_url to "/my-project/" in .nfpreview.yml, or
   - make docusaurus.config read the environment:
         baseUrl: process.env.DOCUSAURUS_BASE_URL ?? '/my-project/',
 ```
 
 That message is in the build log and in the daemon's own log. It is **not** in the pull request comment (see
 [the comment says only that the build failed](#the-comment-says-only-that-the-build-failed)). Send whoever reports
-"the preview is broken" to the log, or have them run `docpreview preview -build` against the same directory, which
+"the preview is broken" to the log, or have them run `nfpreview preview -build` against the same directory, which
 prints the same error locally.
 
 ### How the inference works
@@ -70,7 +70,7 @@ baseUrl: process.env.DOCUSAURUS_BASE_URL ?? '/my-project/',
 **Or tell NetFoundry Preview where to serve it**, when you cannot change the config:
 
 ```yaml
-# .docpreview.yml
+# .nfpreview.yml
 build:
   base_url: /my-project/
 ```
@@ -100,7 +100,7 @@ Every delivery has a **Redeliver** button, so you can iterate without pushing mo
 ### 2. What did the daemon do with it?
 
 ```powershell
-docpreview serve -log-level debug
+nfpreview serve -log-level debug
 ```
 
 | Log line | Meaning |
@@ -113,7 +113,7 @@ docpreview serve -log-level debug
 
 ### 3. Is the comment there but you missed it?
 
-On a busy pull request, look for the `docpreview` check in the checks list. Its link goes to the same information.
+On a busy pull request, look for the `nfpreview` check in the checks list. Its link goes to the same information.
 
 ---
 
@@ -122,7 +122,7 @@ On a busy pull request, look for the `docpreview` check in the checks list. Its 
 The fastest test is not a browser:
 
 ```powershell
-docpreview webhook-check -url https://docpreview.shares.zrok.io/webhook/github
+nfpreview webhook-check -url https://nfpreview.shares.zrok.io/webhook/github
 ```
 
 It sends a correctly signed ping using the secret from the vault, and names the cause of whatever comes back. The
@@ -132,14 +132,14 @@ secret is never printed and never reaches your shell history.
 
 Nothing is wrong. A browser sends `GET`. GitHub sends `POST`, and only `POST` is served. A `GET` on the webhook path
 answers **405** with a sentence saying so. Any other path answers **404** and says nothing. Use
-`docpreview webhook-check`.
+`nfpreview webhook-check`.
 
 ### `502` from the public URL
 
 zrok has the share, but nothing is attached behind it. Either `webhook-only` is not running, or it is still attaching
 its listener, which takes a few seconds after startup. Wait, then retry.
 
-### `401` from `docpreview webhook-check`
+### `401` from `nfpreview webhook-check`
 
 The request arrived and verification ran, so the tunnel is fine. The webhook secret in the vault you read is not the
 one the running daemon holds. Two causes:
@@ -150,7 +150,7 @@ one the running daemon holds. Two causes:
 Restart the daemon, or store the secret again:
 
 ```powershell
-docpreview vault set github.webhook_secret
+nfpreview vault set github.webhook_secret
 ```
 
 ### `501` from the webhook
@@ -159,13 +159,13 @@ The daemon has no GitHub client. Either `github.app_id` is unset, or the vault w
 nothing has unlocked it since.
 
 ```powershell
-docpreview doctor
+nfpreview doctor
 ```
 
 `doctor` prints the vault path, the key source, and whether GitHub is wired up. A locked vault shows as
 `github (app 12345, not wired up: the vault is locked)`.
 
-### `404` from `docpreview webhook-check`
+### `404` from `nfpreview webhook-check`
 
 The tunnel is up but the path is wrong. It must be exactly the path `webhook-only` was given: `/webhook/github`
 unless you passed `-path`.
@@ -195,13 +195,13 @@ Two ways to fix it. Give the daemon the key so a restart needs nobody:
 
 ```yaml
 vault:
-  key_source: "file:/etc/docpreview/master.key"   # or "exec:op read op://ops/docpreview/master-key"
+  key_source: "file:/etc/nfpreview/master.key"   # or "exec:op read op://ops/nfpreview/master-key"
 ```
 
 Or unlock it by hand from the dashboard's **Settings** page. The daemon rewires itself when the vault opens, with no
 restart.
 
-`docpreview doctor` reports which of these applies. With no key source it prints
+`nfpreview doctor` reports which of these applies. With no key source it prints
 `key: none — the daemon starts locked and is unlocked from the dashboard`.
 
 ### There are no Settings or Projects links on the dashboard
@@ -227,8 +227,8 @@ Without an admin login, writing a credential, changing a project or clearing a c
 A tunnel passes the first check and fails the second, which is the point. Otherwise
 `zrok2 share public http://127.0.0.1:8471` would put the credential API on the internet while the listener is still
 loopback. A session signed in with the admin console password may write from anywhere. Otherwise, open the page on
-the daemon's own machine, tunnel `docpreview webhook-only` instead of the daemon, or set the value on the host with
-`docpreview vault set <key>`.
+the daemon's own machine, tunnel `nfpreview webhook-only` instead of the daemon, or set the value on the host with
+`nfpreview vault set <key>`.
 
 The whole panel is replaced by **Not available on this daemon** when a TCP listener is not loopback, or when a ziti
 listener names no `admin_identities`. A ziti listener that lists them lets those dialing identities write.
@@ -277,15 +277,15 @@ What counts as a change:
 - **No `build.dir`:** the defaults match a Docusaurus layout anywhere in the repository. That covers `docs/`,
   `blog/`, `src/` and `static/` directories, any `.md` or `.mdx` file, the Docusaurus config and sidebars, and the
   package files.
-- **`build.dir` set:** only changes under that directory, plus `.docpreview.yml`. A pull request that touches a README
+- **`build.dir` set:** only changes under that directory, plus `.nfpreview.yml`. A pull request that touches a README
   elsewhere in the repository is skipped.
-- **A `docpreview-detect` script** in the build directory overrides both. See
+- **A `nfpreview-detect` script** in the build directory overrides both. See
   [detect script](./reference/repo-config.md#script).
 
 If your site lives somewhere the defaults miss, list the paths:
 
 ```yaml
-# .docpreview.yml
+# .nfpreview.yml
 detect:
   paths:
     - "content/**"
@@ -303,7 +303,7 @@ That is deliberate. The comment's row reads ❌ **Failed**. With
 where the build log is. Without it, the comment adds one line:
 
 ```text
-The build failed. See the build log on the docpreview dashboard.
+The build failed. See the build log on the nfpreview dashboard.
 ```
 
 and links nowhere, which is the commonest reason this looks unhelpful.
@@ -370,7 +370,7 @@ the docker driver needs the workspace on a lettered drive
 ```
 
 The Docker driver bind-mounts the workspace. On Windows it translates the host path to the docker daemon's own view,
-so `D:\docpreview\workspaces\...` becomes `/mnt/d/docpreview/workspaces/...`. A UNC path, a mapped network share, or
+so `D:\nfpreview\workspaces\...` becomes `/mnt/d/nfpreview/workspaces/...`. A UNC path, a mapped network share, or
 anything else without a drive letter has no such translation. Guessing one produces an empty `/workspace` and a build
 that fails on a missing `package.json`.
 
@@ -425,20 +425,20 @@ one, finishes in 14 seconds once `node_modules` is on a volume. The cache is not
 
 ---
 
-## Rebuilding docpreview fails with "used by another process"
+## Rebuilding nfpreview fails with "used by another process"
 
 ```text
-open build.claude\docpreview.exe: The process cannot access the file because
+open build.claude\nfpreview.exe: The process cannot access the file because
 it is being used by another process.
 ```
 
 A running daemon holds its own executable open, and Windows will not let the linker overwrite it. This is the most
 common self-inflicted build failure here, and it is not a toolchain problem.
 
-Stop the daemon, rebuild, start it again. If `docpreview serve` is not in a terminal you can see:
+Stop the daemon, rebuild, start it again. If `nfpreview serve` is not in a terminal you can see:
 
 ```powershell
-Get-Process docpreview -ErrorAction SilentlyContinue | Stop-Process
+Get-Process nfpreview -ErrorAction SilentlyContinue | Stop-Process
 ```
 
 `webhook-only` and `dashboard-only` run from the same executable, so both hold it open too. Stop all three.
@@ -447,12 +447,12 @@ Get-Process docpreview -ErrorAction SilentlyContinue | Stop-Process
 
 ## The preview URL does not work
 
-### `docpreview doctor` fails on zrok
+### `nfpreview doctor` fails on zrok
 
 | Error | Fix |
 |---|---|
-| `no zrok environment is enrolled here` | Enrol from `/secrets`, or `docpreview zrok invite <email>`. Run `docpreview zrok status` first. See below. |
-| `zrok controller rejected this environment` | Token revoked or environment deleted on the server. `docpreview zrok disable -yes` then `docpreview zrok enable`. |
+| `no zrok environment is enrolled here` | Enrol from `/secrets`, or `nfpreview zrok invite <email>`. Run `nfpreview zrok status` first. See below. |
+| `zrok controller rejected this environment` | Token revoked or environment deleted on the server. `nfpreview zrok disable -yes` then `nfpreview zrok enable`. |
 | `no zrok namespace configured` | Set `exposer.zrok2.namespace`, or give the environment a default. |
 
 ### `no zrok environment is enrolled here`, but `zrok2 overview` shows one
@@ -460,17 +460,17 @@ Get-Process docpreview -ErrorAction SilentlyContinue | Stop-Process
 There are two possible environment directories, and you are looking at the other one:
 
 ```powershell
-docpreview zrok status
+nfpreview zrok status
 ```
 
 `~/.zrok2` is what the `zrok2` CLI enrols into. `<data_dir>/zrok2` is the daemon's own. `zrok status` marks which one
-this installation uses, and `docpreview zrok use system` switches to the machine's. It takes effect at the next
+this installation uses, and `nfpreview zrok use system` switches to the machine's. It takes effect at the next
 restart.
 
 :::danger Do not point two daemons at one environment
 
 Startup deletes every share in its zrok environment that its own database does not claim. Two daemons on one
-environment delete each other's live previews. Give the second one `docpreview zrok use project` and its own
+environment delete each other's live previews. Give the second one `nfpreview zrok use project` and its own
 enrolment, and a [name prefix](./reference/cli.md) so their names cannot collide either.
 
 :::
@@ -541,7 +541,7 @@ Refusing is deliberate. Taking the name would point a URL somebody is already re
 ### A preview says `ready` but the link is refused
 
 Under the `local` exposer the URL is `/preview/<name>/` on the daemon's own listener. It survives a restart, but it
-only answers while `docpreview serve` is running, and only from a machine that can reach that listener. A loopback
+only answers while `nfpreview serve` is running, and only from a machine that can reach that listener. A loopback
 listener refuses everyone else.
 
 `demo\Test-PreviewUrls.ps1` fetches every advertised URL and reports which ones answer.
@@ -595,7 +595,7 @@ than no comment.
 
 :::danger One daemon per zrok environment
 
-Startup deletes every share in its zrok environment, carrying the `docpreview:` target tag, that its own database does
+Startup deletes every share in its zrok environment, carrying the `nfpreview:` target tag, that its own database does
 not claim. **Two daemons on one environment delete each other's live previews**, each restart wiping the other. Two
 installations on one account with separate environments are safe from that, but names belong to the account, so give
 the second its own `exposer.prefix`.
@@ -634,7 +634,7 @@ not recompute, not at the daemon. The build itself is unaffected: it runs, it pu
 `tools/dashboardtest/newbuild.mjs` covers five shapes of the sequence, and all five behave correctly. That includes
 the one where the server replays a finished build and then switches the same connection to the live one. So the
 cause is in none of them, and the next step is watching it happen against a live daemon instead of a stubbed
-`EventSource`. Progress is tracked in `TODO.md`.
+`EventSource`. It is not fixed yet.
 
 If you hit it, report the exact sequence: which page, which row, how it was expanded (by clicking the row or an
 activity entry), and whether the build came from a push, a **Rebuild**, or the startup scan.

@@ -51,14 +51,16 @@ type Detector struct {
 	container *DetectContainer
 }
 
-/* DetectContainer is where the detect script runs under the docker driver.
+/*
+DetectContainer is where the detect script runs under the docker driver.
 
-   The script arrives in the pull request, so on the host it is anyone-who-can-open-one running code
-   on the machine that holds the vault and the GitHub App key. The build already runs in a container
-   for that reason, and the detect script, which runs first, ran outside it.
+	The script arrives in the pull request, so on the host it is anyone-who-can-open-one running code
+	on the machine that holds the vault and the GitHub App key. The build already runs in a container
+	for that reason, and the detect script, which runs first, ran outside it.
 
-   Its container is stricter than the build's: no network, the checkout mounted read-only, and none
-   of the build's environment. A detect script reads a list of paths and answers yes or no. */
+	Its container is stricter than the build's: no network, the checkout mounted read-only, and none
+	of the build's environment. A detect script reads a list of paths and answers yes or no.
+*/
 type DetectContainer struct {
 	Image  string
 	CPUs   float64
@@ -108,9 +110,9 @@ func (d *Detector) Detect(ctx context.Context, ws *Workspace, cfg config.RepoCon
 		   twice over: nothing is wrong with the branch, and the pull request gets a red comment
 		   about a path its author has never heard of.
 
-		   Live on 2026-08-27: `netfoundry/docusaurus-shared` had `.docpreview/detect` set on the
+		   Live on 2026-08-27: `netfoundry/docusaurus-shared` had `.nfpreview/detect` set on the
 		   project before the file was committed, and every open pull request failed with
-		   `lstat .../.docpreview: no such file or directory`.
+		   `lstat .../.nfpreview: no such file or directory`.
 
 		   Falling back rather than building unconditionally, because the globs are what this
 		   repository used before the script was configured, and they are the documented default.
@@ -128,12 +130,14 @@ func (d *Detector) Detect(ctx context.Context, ws *Workspace, cfg config.RepoCon
 	return d.matchGlobs(cfg.Detect.Paths, changed), nil
 }
 
-/* errNoDetectScript means the configured script is not in the commit being built.
+/*
+errNoDetectScript means the configured script is not in the commit being built.
 
-   A sentinel rather than an os.IsNotExist test at the call site, because only one of the several
-   things runScript does can produce a missing file that is safe to ignore. A symlink that resolves
-   outside the repository, a script that is not executable and a script that exits 3 are all
-   different failures, and none of them should quietly become "match the globs". */
+	A sentinel rather than an os.IsNotExist test at the call site, because only one of the several
+	things runScript does can produce a missing file that is safe to ignore. A symlink that resolves
+	outside the repository, a script that is not executable and a script that exits 3 are all
+	different failures, and none of them should quietly become "match the globs".
+*/
 var errNoDetectScript = errors.New("the configured detect script is not in this commit")
 
 // matchGlobs tests the changed paths against the configured globs.
@@ -229,7 +233,7 @@ func (d *Detector) runScript(ctx context.Context, ws *Workspace, script string, 
 		cmd.Env = []string{
 			"PATH=" + os.Getenv("PATH"),
 			"HOME=" + ws.Dir,
-			"DOCPREVIEW=1",
+			"NFPREVIEW=1",
 		}
 	}
 	cmd.Stdin = strings.NewReader(stdin)
@@ -272,11 +276,13 @@ func (d *Detector) ensureImage(ctx context.Context) error {
 	return nil
 }
 
-/* containerCommand is `docker run` for the detect script at rel, and how to remove its container.
+/*
+containerCommand is `docker run` for the detect script at rel, and how to remove its container.
 
-   The entrypoint is the script itself, so an image's own entrypoint (node's wraps its arguments in
-   `node`) has no say in what runs, and the shebang decides as it does on the host. Named, so a
-   cancelled run that kills the docker client does not leave the container running behind it. */
+	The entrypoint is the script itself, so an image's own entrypoint (node's wraps its arguments in
+	`node`) has no say in what runs, and the shebang decides as it does on the host. Named, so a
+	cancelled run that kills the docker client does not leave the container running behind it.
+*/
 func (d *Detector) containerCommand(ctx context.Context, ws *Workspace, rel string) (*exec.Cmd, func(), error) {
 	source, err := hostMountPath(ws.Dir)
 	if err != nil {
@@ -286,7 +292,7 @@ func (d *Detector) containerCommand(ctx context.Context, ws *Workspace, rel stri
 	if _, err := rand.Read(id[:]); err != nil {
 		return nil, nil, err
 	}
-	name := "docpreview-detect-" + hex.EncodeToString(id[:])
+	name := "nfpreview-detect-" + hex.EncodeToString(id[:])
 
 	cmd := exec.CommandContext(ctx, "docker", detectRunArgs(*d.container, name, source, rel)...)
 	cleanup := func() {
@@ -306,7 +312,7 @@ func detectRunArgs(c DetectContainer, name, source, rel string) []string {
 		"--network", "none",
 		"--mount", "type=bind,source=" + source + ",target=/workspace,readonly",
 		"--workdir", "/workspace",
-		"--env", "DOCPREVIEW=1",
+		"--env", "NFPREVIEW=1",
 		"--env", "HOME=/tmp",
 		"--entrypoint", "/workspace/" + rel,
 	}

@@ -28,7 +28,7 @@ func testPR(owner, repo string, number int) model.PullRequest {
 func TestCacheMountsPointEachManagerAtItsOwnVolume(t *testing.T) {
 	b := &Builder{log: slog.New(slog.DiscardHandler)}
 
-	pr := testPR("openziti-test-kitchen", "docpreview", 2)
+	pr := testPR("openziti-test-kitchen", "nfpreview", 2)
 	args, err := b.cacheMounts(pr)
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func sourceOf(t *testing.T, args []string) string {
 // documented prefix, twelve hex characters, and a manager — whatever the webhook said.
 func TestCacheNameIsNotBuiltFromWebhookText(t *testing.T) {
 	b := &Builder{log: slog.New(slog.DiscardHandler)}
-	valid := regexp.MustCompile(`^docpreview-cache-[0-9a-f]{12}-(npm|yarn|pnpm)$`)
+	valid := regexp.MustCompile(`^nfpreview-cache-[0-9a-f]{12}-(npm|yarn|pnpm)$`)
 
 	for _, c := range []struct{ owner, repo string }{
 		{"..", "docs"},

@@ -17,12 +17,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$daemons = Get-Process -Name docpreview -ErrorAction SilentlyContinue
+$daemons = Get-Process -Name nfpreview -ErrorAction SilentlyContinue
 if ($daemons) {
     $daemons | Stop-Process -Force
-    Write-Host "stopped docpreview (PID $($daemons.Id -join ', '))"
+    Write-Host "stopped nfpreview (PID $($daemons.Id -join ', '))"
 } else {
-    Write-Host 'docpreview was not running'
+    Write-Host 'nfpreview was not running'
 }
 
 if (-not $KeepNode) {

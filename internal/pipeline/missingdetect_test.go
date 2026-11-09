@@ -16,15 +16,15 @@ import (
 // that predates the file or removed it. Failing there is wrong twice over: nothing is wrong with the
 // branch, and the pull request gets a red comment naming a path its author has never seen.
 //
-// Live on 2026-08-27: `netfoundry/docusaurus-shared` had `.docpreview/detect` set on the project
+// Live on 2026-08-27: `netfoundry/docusaurus-shared` had `.nfpreview/detect` set on the project
 // before the file was committed, and every open pull request failed with
-// `lstat .../.docpreview: no such file or directory`.
+// `lstat .../.nfpreview: no such file or directory`.
 func TestAMissingDetectScriptFallsBackToTheGlobs(t *testing.T) {
 	d := testDetector()
 	ws := &Workspace{Dir: t.TempDir()}
 
 	cfg := config.DefaultRepoConfig()
-	cfg.Detect.Script = ".docpreview/detect"
+	cfg.Detect.Script = ".nfpreview/detect"
 
 	// A documentation change, which the default globs match.
 	got, err := d.Detect(context.Background(), ws, cfg, []string{"unified-doc/docs/intro.md"})
@@ -35,7 +35,7 @@ func TestAMissingDetectScriptFallsBackToTheGlobs(t *testing.T) {
 		t.Errorf("the globs did not decide: %s", got.Reason)
 	}
 	// The reason has to say why, or the operator sees a build with no explanation of which rule ran.
-	if !strings.Contains(got.Reason, ".docpreview/detect") {
+	if !strings.Contains(got.Reason, ".nfpreview/detect") {
 		t.Errorf("the reason does not name the missing script: %q", got.Reason)
 	}
 	if !strings.Contains(got.Reason, "not in this commit") {

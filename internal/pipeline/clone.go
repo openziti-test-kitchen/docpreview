@@ -4,7 +4,7 @@
 //
 // Everything here treats the repository contents as hostile input. A pull
 // request author controls the working tree, which means they control
-// package.json, .docpreview.yml, and any script the build invokes. The
+// package.json, .nfpreview.yml, and any script the build invokes. The
 // mitigations are spelled out where they apply; the summary is that the local
 // build driver is for repositories you already trust, and the docker driver is
 // for the ones you do not.

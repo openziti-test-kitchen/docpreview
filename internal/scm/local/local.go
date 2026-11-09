@@ -3,14 +3,14 @@
 //
 // It exists so the whole flow can be felt without a GitHub App: make a change,
 // commit, push, watch a build start, watch a comment appear, push again, watch
-// the same comment update. Everything a hosted platform does that docpreview
+// the same comment update. Everything a hosted platform does that nfpreview
 // depends on is small enough to emulate — a webhook, a clone URL, a changed-file
 // list, and a comment that can be edited.
 //
 // This is not a mock. It runs the same daemon, the same queue, the same clone,
 // the same build, the same exposer and the same comment renderer as a real
 // pull request does. The only substitutions are that the "remote" is a bare
-// repository in a directory, and the comment goes to a page docpreview serves
+// repository in a directory, and the comment goes to a page nfpreview serves
 // instead of to github.com.
 package local
 
@@ -82,7 +82,7 @@ func (c *Client) Validate(ctx context.Context) error {
 	return nil
 }
 
-// Repos lists the bare repositories docpreview will accept pushes for.
+// Repos lists the bare repositories nfpreview will accept pushes for.
 func (c *Client) Repos() ([]string, error) {
 	entries, err := os.ReadDir(c.cfg.ReposDir)
 	if err != nil {
@@ -112,13 +112,13 @@ func (c *Client) repoPath(name string) (string, error) {
 	path := filepath.Join(c.cfg.ReposDir, name+".git")
 	if stat, err := os.Stat(path); err != nil || !stat.IsDir() {
 		return "", fmt.Errorf("no repository %q in %s "+
-			"(create one with: docpreview sim init %s)", name, c.cfg.ReposDir, name)
+			"(create one with: nfpreview sim init %s)", name, c.cfg.ReposDir, name)
 	}
 	return path, nil
 }
 
 // Event is the webhook payload. It is deliberately the smallest thing that
-// carries the same information docpreview reads out of a GitHub delivery.
+// carries the same information nfpreview reads out of a GitHub delivery.
 type Event struct {
 	// Action is opened, synchronize, reopened, or closed — the same vocabulary
 	// GitHub uses, so the mental model transfers.

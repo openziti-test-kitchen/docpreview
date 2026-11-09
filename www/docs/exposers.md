@@ -92,7 +92,7 @@ shr, _ := sdk.CreateShare(root, &sdk.ShareRequest{
     ShareMode:      sdk.PublicShareMode,
     BackendMode:    sdk.ProxyBackendMode,
     NameSelections: []sdk.NameSelection{{NamespaceToken: ns, Name: "docs-my-branch"}},
-    Target:         "docpreview:" + previewID,
+    Target:         "nfpreview:" + previewID,
 })
 
 listener, _ := sdk.NewListener(shr.Token, root)   // a listener on the OpenZiti overlay
@@ -111,7 +111,7 @@ from one you made by hand in another terminal. Startup uses the same listing to 
 
 A name is registered before its share, left alone by every rebuild, and deleted when the preview is torn down. The
 first keeps a reviewer's bookmark working. The second stops the account's reserved-name allowance from filling up.
-See [what docpreview does with names](./guides/zrok2.md#what-docpreview-does-with-names).
+See [what nfpreview does with names](./guides/zrok2.md#what-nfpreview-does-with-names).
 
 ### Configuration
 
@@ -196,13 +196,13 @@ and the service cannot be dialed without a right granted on the controller.
 exposer:
   kind: ziti
   ziti:
-    identity_file: /etc/docpreview/docpreview.json   # docpreview's enrolled identity
-    service: docpreview-svc
-    domain: docpreview.ziti
+    identity_file: /etc/nfpreview/nfpreview.json   # nfpreview's enrolled identity
+    service: nfpreview-svc
+    domain: nfpreview.ziti
     name_template: "{{.Repo.Name}}-{{.Name}}"
 ```
 
-A reviewer opens `http://docs-my-branch.docpreview.ziti/` and it works. Anyone else, including the same person with
+A reviewer opens `http://docs-my-branch.nfpreview.ziti/` and it works. Anyone else, including the same person with
 the tunneler switched off, gets NXDOMAIN. For unreleased content that is a different posture from "public URL,
 unguessable name".
 
@@ -218,13 +218,13 @@ four for a service-per-PR model, which would also churn DNS rules on every conne
 The interface absorbs this unchanged: `Context.Listen` returns an `edge.Listener` embedding `net.Listener`, the
 same shape the zrok implementation serves into.
 
-:::warning One docpreview per service
+:::warning One nfpreview per service
 
 Binding creates a ziti *terminator*. Two instances binding the same service create two, and the router balances
 load between them. Each holds a different routing table, so every preview works about half the time and 404s the
 rest. It looks like a flaky network, not a configuration error.
 
-Give a second instance its own service and domain. A `docpreview preview` left running in another terminal is
+Give a second instance its own service and domain. A `nfpreview preview` left running in another terminal is
 enough to make the integration tests fail now and then.
 
 :::
@@ -237,7 +237,7 @@ renamed. A collision means `name_template` is too loose for your repositories. T
 ### Status
 
 The exposer works and has been exercised end to end against a real controller, a real edge router, and a real Ziti
-Desktop Edge install. `docpreview configure ziti` creates every controller object, both identities and the config
+Desktop Edge install. `nfpreview configure ziti` creates every controller object, both identities and the config
 file. See [the CLI reference](./reference/cli.md#configure-ziti) and the [Quickstart](./quickstart.md), which walks
 it from nothing in four commands.
 

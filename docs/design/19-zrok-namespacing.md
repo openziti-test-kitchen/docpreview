@@ -79,7 +79,7 @@ distinguishable from the other without reading the log on the controller. This i
 ### The CLI equivalent
 
 `zrok2 delete name <name>` — the mirror of the `zrok2 create name <name>` that `internal/expose/CLAUDE.md` already
-records. It is not what docpreview should use: shelling out cannot report the 409 payload as a typed error, and the
+records. It is not what nfpreview should use: shelling out cannot report the 409 payload as a typed error, and the
 SDK path is already wired.
 
 ### A second way, and a better one: stop reserving
@@ -95,7 +95,7 @@ if !detail.Reserved && !detail.NameDeleted {
 }
 ```
 
-That single condition is the entire cause of docpreview's leak. `createShareName` hardcodes `Reserved: true`
+That single condition is the entire cause of nfpreview's leak. `createShareName` hardcodes `Reserved: true`
 (`controller/createShareName.go:88`) with no way to ask for otherwise, so every name `ensureName` creates is exempted
 from the cleanup that would otherwise have handled it.
 
@@ -189,11 +189,11 @@ deleting a name both frees the quota slot and frees the name for re-creation. Th
 
 Note which flag the *share* check gets. `controller/share.go:168` calls
 `CanCreateShare(..., reserved: false, uniqueName: false, ...)`, so a share created through `POST /share` — which is
-every share docpreview makes — is counted against `shares` only, never against `reservedShares`. The reserved
+every share nfpreview makes — is counted against `shares` only, never against `reservedShares`. The reserved
 accounting lives entirely on the name. This is the mechanical reason the task's framing is right: **the name is the
 quota-bearing object**, and a leaked name is a consumed slot with nothing to show for it.
 
-### The failure this created in docpreview — fixed
+### The failure this created in nfpreview — fixed
 
 `createShareName` returns **409 with the payload `"names limit reached; cannot reserve additional names"`** when
 `CanReserveName` says no (`controller/createShareName.go:52-55`). That is the same HTTP status, and therefore the
@@ -243,14 +243,14 @@ a zrok release.
 
 ## 3. Can several shares hang off one owned subdomain?
 
-**Structurally yes, but not from docpreview and not on hosted zrok.io without NetFoundry doing it for you.** The
+**Structurally yes, but not from nfpreview and not on hosted zrok.io without NetFoundry doing it for you.** The
 hostname is formed by exactly one function — `util.NameInNamespace(name, namespace) = name + "." + namespace` — so
-the shape the owner wants, `85912e2.docpreview.share.zrok.io`, is a name `85912e2` in a namespace whose **name** is
-`docpreview.share.zrok.io`. Namespace names are unconstrained multi-label strings (`varchar(255)`), so that
+the shape the owner wants, `85912e2.nfpreview.share.zrok.io`, is a name `85912e2` in a namespace whose **name** is
+`nfpreview.share.zrok.io`. Namespace names are unconstrained multi-label strings (`varchar(255)`), so that
 namespace is perfectly legal. What blocks it is who may create one: `createNamespace` refuses any principal without
 `Admin`, and so does the namespace-to-frontend mapping that makes it resolve. On top of that, a new namespace needs
 a wildcard DNS record and a wildcard TLS certificate for its zone. None of that is reachable from an account token,
-which is all docpreview has. **Nothing in `internal/expose/zrok.go` can influence the hostname beyond choosing the
+which is all nfpreview has. **Nothing in `internal/expose/zrok.go` can influence the hostname beyond choosing the
 first label.**
 
 ### What `NamespaceToken` actually selects
@@ -275,7 +275,7 @@ Two consequences of the composition being a single `+ "." +`:
 
 - A name cannot contain a dot (see the constraints below), so a client cannot smuggle extra labels into the
   hostname by naming a share `a.b`. Nesting is a namespace decision, always.
-- The namespace's `name` is the whole suffix. `docpreview.share.zrok.io` and `share.zrok.io` are unrelated
+- The namespace's `name` is the whole suffix. `nfpreview.share.zrok.io` and `share.zrok.io` are unrelated
   namespaces as far as the controller is concerned; the nesting is a fact about DNS, not about zrok.
 
 ### Many shares under one suffix already works; many names per share also works
@@ -288,19 +288,19 @@ Two things get conflated in the question and they are different:
 | many names → one share | yes, `NameSelections` is a slice the controller loops | `FindNamesForShare` returns many |
 | one name → many shares | **no** | `uk_share_name_mappings_name on share_name_mappings(name_id) where not deleted` |
 
-So "several shares hanging off one owned subdomain" is already true in the weak sense: every docpreview share today
+So "several shares hanging off one owned subdomain" is already true in the weak sense: every nfpreview share today
 lives under `share.zrok.io`. The wish is for a *deeper* suffix that the owner controls. And "multiple names for one
 share" — advertised as a v2 benefit — is real and usable: one share could answer to both a branch name and a commit
 name, which is worth knowing if per-build URLs are wanted without per-build shares.
 
-### What it would take to get `*.docpreview.share.zrok.io`
+### What it would take to get `*.nfpreview.share.zrok.io`
 
 Every step is an administrator's, on the controller and in DNS:
 
-1. `zrok2 admin create namespace --token <tok> --open docpreview.share.zrok.io` — admin-only
+1. `zrok2 admin create namespace --token <tok> --open nfpreview.share.zrok.io` — admin-only
    (`controller/createNamespace.go:18`).
 2. A dynamic frontend, and `zrok2 admin create namespace-frontend <namespaceToken> <frontendToken>` — admin-only.
-3. Wildcard DNS `*.docpreview.share.zrok.io` pointing at the frontend, and a wildcard certificate for the same. The
+3. Wildcard DNS `*.nfpreview.share.zrok.io` pointing at the frontend, and a wildcard certificate for the same. The
    dynamic-proxy guide names both explicitly under its DNS and TLS troubleshooting.
 
 On **hosted zrok.io** steps 1 and 2 are NetFoundry's to perform. The pricing page lists a "Custom Domain Frontend"
@@ -311,7 +311,7 @@ example creates exactly this shape (`myshare.zrok.example.com`).
 
 **What to do instead, today.** Keep the flat namespace and put the structure in the first label, which is the one
 thing code controls. `name_template` already exists for this. `{{.Repo.Owner}}-{{.Repo.Name}}-{{.Name}}` yields
-`netfoundry-docpreview-my-branch.share.zrok.io` — ugly next to a real subdomain, but it is a prefix the operator
+`netfoundry-nfpreview-my-branch.share.zrok.io` — ugly next to a real subdomain, but it is a prefix the operator
 chooses, it collides across repositories no more than a real subdomain would, and it needs nothing from anybody.
 Reversing this decision later costs nothing in the code: the same `name_template` output becomes the first label of
 whatever namespace is configured, and `exposer.zrok2.namespace` already selects the namespace.
@@ -338,11 +338,11 @@ limit, so the code is right and the comment is off by one.
 
 **A name must be reserved before a share can bind it.** `processNameSelections` resolves a non-empty
 `NameSelection.Name` with `FindNameByNamespaceAndName` and errors if it is absent; it never creates one. That
-confirms the existing comment in `Publish` from the other side — the 409 docpreview observed was the controller
+confirms the existing comment in `Publish` from the other side — the 409 nfpreview observed was the controller
 declining to invent the name. Leaving `Name` empty takes the other branch: the controller creates a name equal to
 the generated share token with `reserved = false`, which is the ephemeral case and gives an unpredictable hostname.
 
-Docpreview's `name_template` output is not validated against this regex anywhere. A template producing an uppercase
+Nfpreview's `name_template` output is not validated against this regex anywhere. A template producing an uppercase
 repository name, an underscore, or a two-character branch name yields a 409 whose payload says "failed profanity or
 DNS check". That payload used to be discarded by `isNameAlreadyExists`, so the operator saw the downstream
 `CreateShare` failure instead; it now propagates. Validating the rendered name locally, before the API call, would
@@ -383,7 +383,7 @@ and the release path have since landed, with the decision moved out of `close` a
 - **Whether hosted zrok.io will create a delegated namespace at all, and at what price.** The pricing page defers
   this to a sales conversation. Answering it is a question for NetFoundry, not for the source.
 - **Whether a `NameSelections` slice with more than one entry works end to end on hosted zrok.io.** The controller
-  loops the slice and the schema permits it, but docpreview has only ever sent one, and the rc8 CLI could not send
+  loops the slice and the schema permits it, but nfpreview has only ever sent one, and the rc8 CLI could not send
   even that (see `internal/expose/CLAUDE.md`).
 
 ## Order to build it in
@@ -403,11 +403,11 @@ What is left:
 5. **Validate the rendered `name_template` output** against `^[a-z0-9-]{3,63}$` before calling the API, with an
    error that names the template as the thing to change. Now that a non-empty 409 payload propagates, the operator at
    least sees "failed profanity or DNS check" — but from the API rather than from the config that caused it.
-6. **Extend `Reap` to names**, using `ListNamesForNamespace`, deleting reserved docpreview-shaped names with no live
+6. **Extend `Reap` to names**, using `ListNamesForNamespace`, deleting reserved nfpreview-shaped names with no live
    share. This is the only way to recover what earlier versions already leaked, and teardown cannot reach those: they
    belong to previews whose rows are long gone. It needs an ownership marker in the name itself, because unlike a
    share a name has no `Target` field to stamp — which is the same instance-identity problem
-   `internal/expose/CLAUDE.md` already records for shares. Filed as `docpreview names prune` in
+   `internal/expose/CLAUDE.md` already records for shares. Filed as `nfpreview names prune` in
    [16-exposer-zrok.md](16-exposer-zrok.md)'s build order.
 7. **Probe the actual name ceiling** on a throwaway account, per section 2. Steady state is now the number of *live*
    previews rather than the number of builds ever run, which is what makes the unknown ceiling tolerable rather than

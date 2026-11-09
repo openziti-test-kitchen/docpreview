@@ -20,7 +20,7 @@ import {fileURLToPath} from "node:url";
 import {JSDOM, VirtualConsole} from "jsdom";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
+const dashboard = process.env.NFPREVIEW_DASHBOARD ||
   join(here, "..", "..", "internal", "daemon", "dashboard.html");
 
 let failures = 0;
@@ -30,7 +30,7 @@ const ok = msg => console.log(`   ok: ${msg}`);
 function payload(canWrite) {
   return {
     can_write: canWrite,
-    read_only_why: canWrite ? "" : "this request did not come from the machine running docpreview",
+    read_only_why: canWrite ? "" : "this request did not come from the machine running nfpreview",
     defaults: {
       driver: "docker", image: "node:24-bookworm", images: ["node:24-bookworm"],
       framework: "docusaurus",

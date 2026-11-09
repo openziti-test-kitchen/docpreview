@@ -5,7 +5,7 @@ enrolment token to import into Ziti Desktop Edge.
 
 Background and design: [`docs/design/ziti-native-previews.md`](../../docs/design/ziti-native-previews.md).
 
-These scripts are the hand-rolled stand-in for the `docpreview identity` verbs, which are not built yet. They
+These scripts are the hand-rolled stand-in for the `nfpreview identity` verbs, which are not built yet. They
 assume a Windows host with the `ziti` CLI at `~/.ziti/bin/v2.0.0/ziti.exe` — adjust `ZITI` at the top of each
 if yours lives elsewhere.
 
@@ -19,7 +19,7 @@ if yours lives elsewhere.
 #    host.docker.internal, and advertised-address problems entirely.
 bash demo/ziti-trial/up.sh          # leave running
 
-# 2. The six bootstrap objects, docpreview's hosting identity, and a
+# 2. The six bootstrap objects, nfpreview's hosting identity, and a
 #    reviewer identity. Idempotent — safe to re-run.
 bash demo/ziti-trial/bootstrap.sh
 
@@ -29,32 +29,32 @@ bash demo/ziti-trial/bootstrap.sh
 bash demo/ziti-trial/test-client-identity.sh
 ```
 
-Then point docpreview at it:
+Then point nfpreview at it:
 
 ```yaml
 exposer:
   kind: ziti
   ziti:
-    identity_file: "C:\\temp\\tangent\\replace-vercel\\ziti-trial\\docpreview-host.json"
-    service: docpreview-svc
-    domain: docpreview.ziti
+    identity_file: "C:\\temp\\tangent\\replace-vercel\\ziti-trial\\nfpreview-host.json"
+    service: nfpreview-svc
+    domain: nfpreview.ziti
 ```
 
 ```powershell
-docpreview doctor -config <that file>
-docpreview preview -config <that file> -name my-branch .\www\build
+nfpreview doctor -config <that file>
+nfpreview preview -config <that file> -name my-branch .\www\build
 ```
 
 Import `reviewer-alice.jwt` into Ziti Desktop Edge (**+** → Add Identity from JWT), enable the identity, and
-open `http://my-branch.docpreview.ziti/`.
+open `http://my-branch.nfpreview.ziti/`.
 
 Turn the tunneler off and the hostname stops resolving. That is the whole point.
 
 ## Integration tests
 
 ```bash
-export DOCPREVIEW_ZITI_HOST_IDENTITY='…\docpreview-host.json'
-export DOCPREVIEW_ZITI_READER_IDENTITY='…\test-reader.json'
+export NFPREVIEW_ZITI_HOST_IDENTITY='…\nfpreview-host.json'
+export NFPREVIEW_ZITI_READER_IDENTITY='…\test-reader.json'
 go test ./internal/expose/ -run Ziti -v
 ```
 

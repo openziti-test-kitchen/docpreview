@@ -6,6 +6,6 @@
 set -e
 
 if command -v systemctl >/dev/null 2>&1; then
-    systemctl stop docpreview docpreview-webhook docpreview-dashboard 2>/dev/null || true
-    systemctl disable docpreview docpreview-webhook docpreview-dashboard 2>/dev/null || true
+    systemctl stop nfpreview nfpreview-webhook nfpreview-dashboard 2>/dev/null || true
+    systemctl disable nfpreview nfpreview-webhook nfpreview-dashboard 2>/dev/null || true
 fi

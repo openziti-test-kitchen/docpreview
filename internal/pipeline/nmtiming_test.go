@@ -27,11 +27,11 @@ import (
 // npm write node_modules onto the bind mount.
 //
 // Off by default: it pulls a node image and installs a real dependency tree twice.
-// Set DOCPREVIEW_NM_TIMING=1 to run it. It logs and does not assert — the numbers are
+// Set NFPREVIEW_NM_TIMING=1 to run it. It logs and does not assert — the numbers are
 // host-specific and the point is to decide a design, not to gate a commit.
 func TestWhereNodeModulesShouldLive(t *testing.T) {
-	if os.Getenv("DOCPREVIEW_NM_TIMING") == "" {
-		t.Skip("set DOCPREVIEW_NM_TIMING=1 to measure where node_modules should live")
+	if os.Getenv("NFPREVIEW_NM_TIMING") == "" {
+		t.Skip("set NFPREVIEW_NM_TIMING=1 to measure where node_modules should live")
 	}
 	dockerAvailable(t)
 

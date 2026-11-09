@@ -21,14 +21,14 @@ import {fileURLToPath} from "node:url";
 import {JSDOM, VirtualConsole} from "jsdom";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
+const dashboard = process.env.NFPREVIEW_DASHBOARD ||
   join(here, "..", "..", "internal", "daemon", "dashboard.html");
 
 let failures = 0;
 const fail = msg => { failures++; console.log(`   FAIL: ${msg}`); };
 const ok = msg => console.log(`   ok: ${msg}`);
 
-const PROJECT_DIR = "D:\\docpreview\\.docpreview\\zrok2";
+const PROJECT_DIR = "D:\\nfpreview\\.nfpreview\\zrok2";
 const SYSTEM_DIR = "C:\\Users\\someone\\.zrok2";
 
 // zrokState builds the payload /api/zrok returns, with the parts each case varies.
@@ -485,12 +485,12 @@ console.log("\nwith an account already enrolled, the wizard skips the signup");
 
 console.log("\nthe machine's directory is described as a user account, not a host");
 {
-  const {body} = await load(zrokState({run_as: "svc-docpreview"}));
+  const {body} = await load(zrokState({run_as: "svc-nfpreview"}));
   const t = text(body);
   // `~/.zrok2` is per-user. A daemon under a service account reports nothing enrolled while
   // `zrok2 overview` in the operator's own shell shows a working environment, and a row
   // labelled "This machine" makes that difference impossible to see.
-  if (!t.includes("svc-docpreview")) {
+  if (!t.includes("svc-nfpreview")) {
     fail("the row does not name the account the daemon runs as");
   } else ok("it names the account");
 }
@@ -529,7 +529,7 @@ console.log("\nan enrolment against the wrong zrok version is called out, not sh
     system: {path: SYSTEM_DIR, exists: true, enabled: true,
       api_endpoint: "https://api.zrok.io", enabled_at: null,
       unsupported: "this is enrolled against the zrok v1 service (https://api.zrok.io). " +
-        "docpreview needs v2, which has the namespaces and reserved names a stable preview " +
+        "nfpreview needs v2, which has the namespaces and reserved names a stable preview " +
         "URL depends on — v1 has neither"},
   }));
 
@@ -771,7 +771,7 @@ console.log("\nziti enrols from a pasted JWT");
   // The last thing on this panel that needed a second binary. The SDK does the same exchange
   // `ziti edge enroll` does, so the whole step is a textarea.
   const {doc, posted} = await load(zrokState({
-    ziti: {service: "docpreview-previews", domain: "preview.ziti"},
+    ziti: {service: "nfpreview-previews", domain: "preview.ziti"},
     others: [
       {kind: "frontdoor", label: "NetFoundry Frontdoor", in_use: false, ready: false,
        needs: "the API token", what: "…", setup: "frontdoor"},
@@ -785,7 +785,7 @@ console.log("\nziti enrols from a pasted JWT");
   if (!jwt) {
     fail("no field for the enrolment token");
   } else ok("there is a field for the JWT");
-  if (doc.getElementById("ziti-service")?.value !== "docpreview-previews") {
+  if (doc.getElementById("ziti-service")?.value !== "nfpreview-previews") {
     fail("the service is not pre-filled");
   } else ok("service and domain are pre-filled");
 
@@ -803,7 +803,7 @@ console.log("\nziti enrols from a pasted JWT");
   const call = posted.find(p => p.url === "/api/zrok/ziti/enroll");
   if (!call?.body?.jwt) {
     fail(`enrolling posted ${JSON.stringify(call?.body)}`);
-  } else if (call.body.service !== "docpreview-previews") {
+  } else if (call.body.service !== "nfpreview-previews") {
     fail("the service was not sent with the enrolment");
   } else ok("it posts the token, the service and the domain together");
 }
@@ -814,7 +814,7 @@ console.log("\nthe ziti section offers the CLI commands, generated from the fiel
   // form — they may have naming conventions, an existing service, or no permission to create one
   // and a colleague who does.
   const {doc} = await load(zrokState({
-    ziti: {service: "docpreview-previews", domain: "preview.ziti"},
+    ziti: {service: "nfpreview-previews", domain: "preview.ziti"},
     others: [
       {kind: "frontdoor", label: "NetFoundry Frontdoor", in_use: false, ready: false,
        needs: "the API token", what: "…", setup: "frontdoor"},
@@ -832,13 +832,13 @@ console.log("\nthe ziti section offers the CLI commands, generated from the fiel
 
     // Generated from the fields, not a fixed block. Commands naming a different service than the
     // one on screen create the wrong objects — successfully, which is the problem.
-    if (!cli.textContent.includes("docpreview-previews")) {
+    if (!cli.textContent.includes("nfpreview-previews")) {
       fail("the commands do not name the service from the form");
     } else ok("they name the service on screen");
 
-    // The attribute is the part people get wrong by hand: the Bind policy grants to `#docpreview`,
-    // so an identity created without `-a docpreview` enrols fine and then binds nothing.
-    if (!/create identity docpreview -a docpreview/.test(cli.textContent)) {
+    // The attribute is the part people get wrong by hand: the Bind policy grants to `#nfpreview`,
+    // so an identity created without `-a nfpreview` enrols fine and then binds nothing.
+    if (!/create identity nfpreview -a nfpreview/.test(cli.textContent)) {
       fail("the identity command omits the role attribute the Bind policy needs");
     } else ok("the identity carries the attribute the policy grants to");
 

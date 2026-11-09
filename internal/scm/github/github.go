@@ -26,10 +26,10 @@ import (
 // they roll a new default.
 const apiVersion = "2022-11-28"
 
-// checkName is the name docpreview's check run appears under in the pull
+// checkName is the name nfpreview's check run appears under in the pull
 // request's checks list. It doubles as the lookup key when updating a run,
 // which is why it must not vary.
-const checkName = "docpreview"
+const checkName = "nfpreview"
 
 // Client talks to GitHub as an App installation.
 type Client struct {
@@ -459,7 +459,7 @@ func (c *Client) Publish(ctx context.Context, r scm.Report) error {
 	return nil
 }
 
-// upsertComment posts docpreview's comment, or edits the one already there.
+// upsertComment posts nfpreview's comment, or edits the one already there.
 //
 // The comment ID is remembered per preview for the life of the process, and the
 // marker search is the fallback. Both halves are needed.
@@ -529,7 +529,7 @@ func (c *Client) createComment(ctx context.Context, r scm.Report, body string) e
 	return nil
 }
 
-// findComment locates docpreview's comment by its hidden marker, returning 0 if
+// findComment locates nfpreview's comment by its hidden marker, returning 0 if
 // there is none.
 //
 // This walks every page of comments, which on a long-running pull request is
@@ -668,7 +668,7 @@ func checkTitle(r scm.Report) string {
 	}
 }
 
-// Retract deletes docpreview's comment. The check run is left alone: it records
+// Retract deletes nfpreview's comment. The check run is left alone: it records
 // what happened to a specific commit, and erasing that history when a pull
 // request closes would be revisionist.
 func (c *Client) Retract(ctx context.Context, pr model.PullRequest) error {

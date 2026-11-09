@@ -11,7 +11,7 @@
 max_findings: 8
 
 review_context: |
-  docpreview: a single Go binary that builds documentation previews for pull
+  nfpreview: a single Go binary that builds documentation previews for pull
   requests and posts the URL back. An imitation of Vercel's preview
   deployments, self-hosted, using zrok v2 or NetFoundry Frontdoor for public
   ingress instead of a CDN.
@@ -145,7 +145,7 @@ review_focus: |
   paths that still write past a supersede, and for the commit map leaking on
   any route other than teardown.
 
-  New and unreviewed: docpreview init writes a config from prompts; docpreview
+  New and unreviewed: nfpreview init writes a config from prompts; nfpreview
   preview publishes one directory with no source-control integration; the
   vault is now opened lazily and GitHub is optional throughout, so a
   configuration with app_id 0 must be coherent everywhere rather than merely

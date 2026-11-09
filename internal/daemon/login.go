@@ -201,7 +201,7 @@ func (i *Ingress) login(w http.ResponseWriter, r *http.Request) {
 	// Nothing to log into. Saying so beats a form that refuses every password with no explanation.
 	if !i.console.anyPasswordSet(ctx) {
 		i.serveLogin(w, "", "No password is set on this daemon, so there is nothing to log in to. "+
-			"Set one with: docpreview console password -role viewer", http.StatusOK)
+			"Set one with: nfpreview console password -role viewer", http.StatusOK)
 		return
 	}
 
@@ -327,7 +327,7 @@ func (i *Ingress) serveLogin(w http.ResponseWriter, next, message string, code i
 	fmt.Fprintf(w, `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>docpreview</title>
+<title>nfpreview</title>
 <style>
 :root { color-scheme: light dark }
 body {
@@ -380,7 +380,7 @@ p.hint { margin: 0.35rem 0 0; font-size: 0.72rem; opacity: 0.6; text-align: cent
 }
 </style></head><body>
 <form method="post" action="/login">
-  <h1>docpreview</h1>
+  <h1>nfpreview</h1>
   <p class="sub">Documentation previews for pull requests</p>
   %s%s
   <label for="username">Username</label>

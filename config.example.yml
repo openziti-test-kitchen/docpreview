@@ -1,6 +1,6 @@
-# docpreview server configuration.
+# nfpreview server configuration.
 #
-# Copy to ~/.docpreview/config.yml and edit. Every field has a default, so a
+# Copy to ~/.nfpreview/config.yml and edit. Every field has a default, so a
 # missing file is not an error — this file exists to show you what is available,
 # not because you need all of it.
 #
@@ -15,7 +15,7 @@ listen: 127.0.0.1:8471
 # Or bind several at once, TCP and OpenZiti together. A ziti listener gives the
 # dashboard and the webhook endpoint no address on the underlay at all, which
 # matters because between them they enumerate every open documentation pull
-# request. `docpreview configure ziti` sets this up.
+# request. `nfpreview configure ziti` sets this up.
 #
 # Set `listen` or `listeners`, never both — a config with both is refused,
 # because guessing which one wins means an address someone believes is live.
@@ -23,11 +23,11 @@ listen: 127.0.0.1:8471
 # listeners:
 #   - tcp: "127.0.0.1:8471"
 #   - ziti:
-#       identity_file: ~/.docpreview/ziti/docpreview-host.json
-#       service: docpreview-admin
+#       identity_file: ~/.nfpreview/ziti/nfpreview-host.json
+#       service: nfpreview-admin
 
 # Vault, sqlite database, workspaces, and build artifacts. Created 0700.
-data_dir: ~/.docpreview
+data_dir: ~/.nfpreview
 
 # Concurrent builds. Each one is an npm install, so this is bounded by disk and
 # RAM long before CPU.
@@ -42,7 +42,7 @@ exposer:
     namespace: ""
 
     # The public hostname label. {{.Name}} is the branch, sanitized into a DNS
-    # label. If you point docpreview at more than one repository, use
+    # label. If you point nfpreview at more than one repository, use
     # "{{.Repo.Name}}-{{.Name}}" — zrok names are unique per namespace, and two
     # repos with a `main` branch will otherwise fight over it.
     name_template: "{{.Repo.Name}}-{{.Name}}"
@@ -58,17 +58,17 @@ exposer:
   # Previews reachable only from a machine running an OpenZiti tunneler with an
   # enrolled identity. No public surface at all: the hostname does not resolve
   # and the service cannot be dialed without a right granted on the controller.
-  # `docpreview configure ziti` creates all of it and fills these in.
+  # `nfpreview configure ziti` creates all of it and fills these in.
   ziti:
-    identity_file: ~/.docpreview/ziti/docpreview-host.json
-    service: docpreview-svc
+    identity_file: ~/.nfpreview/ziti/nfpreview-host.json
+    service: nfpreview-svc
     # Must match the addresses in the service's intercept.v1 config.
-    domain: docpreview.ziti
+    domain: nfpreview.ziti
     name_template: "{{.Repo.Name}}-{{.Name}}"
 
   frontdoor:
     # All three come from your tenant's Frontdoor console and have no working default.
-    # With frontdoor selected, docpreview refuses to start until api_base and frontend
+    # With frontdoor selected, nfpreview refuses to start until api_base and frontend
     # are set, and every publish fails until env_z_id is set.
     api_base: https://gateway.production.netfoundry.io/frontdoor/<your-frontdoor-id>
     # The frontend's id, like bMTHPrtQ. A frontend name does not work.
@@ -86,8 +86,8 @@ exposer:
 github:
   # From the App settings page. The private key and webhook secret are NOT
   # here — they live in the encrypted vault:
-  #   docpreview vault set github.private_key -file key.pem
-  #   docpreview vault set github.webhook_secret
+  #   nfpreview vault set github.private_key -file key.pem
+  #   nfpreview vault set github.webhook_secret
   app_id: 0
 
   # https://your-ghe-host/api/v3 for GitHub Enterprise.

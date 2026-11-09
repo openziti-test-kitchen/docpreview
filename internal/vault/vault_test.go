@@ -208,7 +208,7 @@ func TestMustGetNamesTheFix(t *testing.T) {
 	if err == nil {
 		t.Fatal("MustGet succeeded on an empty vault")
 	}
-	if !strings.Contains(err.Error(), "docpreview vault set") {
+	if !strings.Contains(err.Error(), "nfpreview vault set") {
 		t.Errorf("error does not name the fix: %v", err)
 	}
 }

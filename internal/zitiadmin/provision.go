@@ -1,18 +1,18 @@
-// Package zitiadmin provisions the OpenZiti objects docpreview needs from a
+// Package zitiadmin provisions the OpenZiti objects nfpreview needs from a
 // controller's edge management API.
 //
 // It is the Go translation of scripts/ziti-trial/bootstrap.sh, with one
 // difference that matters: the script deletes and recreates, this checks and
 // creates. A script that starts by tearing down its own objects is fine for a
 // throwaway trial and wrong for anything else — deleting the hosting identity
-// invalidates the identity file docpreview is running from, and deleting a
+// invalidates the identity file nfpreview is running from, and deleting a
 // reviewer identity revokes a tunneler that was working a moment ago.
 //
 // Everything here goes through github.com/openziti/zrok/v2/controller/automation,
 // which already wraps the edge-api calls and is a dependency either way. What
 // it does not wrap is reading an enrollment JWT: its Enroll performs the
 // enrollment itself and hands back a ziti.Config, which is what we want for
-// docpreview's own identity and not what we want for a reviewer, who needs the
+// nfpreview's own identity and not what we want for a reviewer, who needs the
 // token. See readEnrollmentJWT.
 package zitiadmin
 
@@ -32,7 +32,7 @@ import (
 	"github.com/openziti/zrok/v2/controller/automation"
 )
 
-// Options is everything `docpreview configure ziti` can be told.
+// Options is everything `nfpreview configure ziti` can be told.
 type Options struct {
 	// Controller is the edge management API root, e.g. "https://localhost:1280".
 	Controller string
@@ -43,8 +43,8 @@ type Options struct {
 	Password string
 
 	// Domain is the DNS suffix previews appear under. It ends up in the
-	// intercept.v1 config and in the docpreview config file, and the two must
-	// agree or the tunneler resolves names docpreview does not answer to.
+	// intercept.v1 config and in the nfpreview config file, and the two must
+	// agree or the tunneler resolves names nfpreview does not answer to.
 	Domain string
 
 	// Service is the wildcard service that carries every preview.
@@ -54,7 +54,7 @@ type Options struct {
 	// webhook ingress. Empty means the ingress stays on TCP.
 	AdminService string
 
-	// HostIdentity is the name of docpreview's own hosting identity.
+	// HostIdentity is the name of nfpreview's own hosting identity.
 	HostIdentity string
 
 	// Reviewer is the name of the sample reviewer identity whose enrollment
@@ -90,7 +90,7 @@ type Result struct {
 	Reused  []string
 }
 
-// Provision creates every object docpreview needs, skipping what is there.
+// Provision creates every object nfpreview needs, skipping what is there.
 func Provision(ctx context.Context, o Options, log *slog.Logger) (*Result, error) {
 	if err := o.check(); err != nil {
 		return nil, err
@@ -118,7 +118,7 @@ func Provision(ctx context.Context, o Options, log *slog.Logger) (*Result, error
 //
 // It logs every create at info level through a global logger of its own, and
 // that logger defaults to JSON on stdout when there is no terminal. The result
-// is that `docpreview configure ziti` emits two records for every object — one
+// is that `nfpreview configure ziti` emits two records for every object — one
 // zrok's, one ours — and that a script capturing stdout gets JSON it did not
 // ask for. Warnings and errors still come through, because those are things
 // the operator needs to see whoever wrote them.
@@ -176,7 +176,7 @@ func (p *provisioner) run(ctx context.Context) error {
 	}
 
 	// The admin service carries no intercept config. Nothing resolves a
-	// hostname for it: docpreview's own SDK listener binds it and the
+	// hostname for it: nfpreview's own SDK listener binds it and the
 	// integration test dials it by name. A reviewer's tunneler has no reason
 	// to reach the dashboard at all, so giving it a DNS entry would only widen
 	// the surface.
@@ -204,7 +204,7 @@ func (p *provisioner) run(ctx context.Context) error {
 // names.
 //
 // The apex is listed alongside the wildcard because the tunneler's matcher
-// keys on the suffix — *.docpreview.ziti matches foo.docpreview.ziti but not
+// keys on the suffix — *.nfpreview.ziti matches foo.nfpreview.ziti but not
 // the bare name.
 func (p *provisioner) ensureIntercept(name string, addresses []string) (string, error) {
 	data := map[string]any{
@@ -338,15 +338,15 @@ func (p *provisioner) ensureServicePolicy(opts *automation.ServicePolicyOptions)
 	return nil
 }
 
-// ensureHostIdentity creates and enrolls docpreview's own identity.
+// ensureHostIdentity creates and enrolls nfpreview's own identity.
 //
 // The identity and its file are one unit, and idempotence has to treat them
 // that way. An enrollment token is one-time: once consumed, the only proof of
 // that identity is the file this function wrote. So an identity on the
 // controller that this file cannot authenticate as is not a state to preserve
-// — docpreview could never host anything with it — and the honest repair is to
+// — nfpreview could never host anything with it — and the honest repair is to
 // replace it. That is the one destructive act in this package, and it is
-// confined to docpreview's own identity.
+// confined to nfpreview's own identity.
 //
 // Two ways to end up there, and both are ordinary: the file was lost, or a
 // previous run wrote a *different* file (a different -out-dir) and revoked
@@ -393,7 +393,7 @@ func (p *provisioner) ensureHostIdentity() error {
 	if err != nil {
 		return fmt.Errorf("encoding the enrolled identity: %w", err)
 	}
-	// 0600: this file is the private key that lets anything host docpreview's
+	// 0600: this file is the private key that lets anything host nfpreview's
 	// services.
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)

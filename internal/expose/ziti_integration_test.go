@@ -24,8 +24,8 @@ import (
 // They skip unless pointed at identity files, so `go test ./...` on a machine
 // with no network stays green. To run them, stand up a controller and set:
 //
-//	DOCPREVIEW_ZITI_HOST_IDENTITY=…/docpreview-host.json
-//	DOCPREVIEW_ZITI_READER_IDENTITY=…/test-reader.json
+//	NFPREVIEW_ZITI_HOST_IDENTITY=…/nfpreview-host.json
+//	NFPREVIEW_ZITI_READER_IDENTITY=…/test-reader.json
 //
 // The scripts that produce those files are in the trial notes.
 //
@@ -37,10 +37,10 @@ import (
 func zitiIdentities(t *testing.T) (host, reader string) {
 	t.Helper()
 
-	host = os.Getenv("DOCPREVIEW_ZITI_HOST_IDENTITY")
-	reader = os.Getenv("DOCPREVIEW_ZITI_READER_IDENTITY")
+	host = os.Getenv("NFPREVIEW_ZITI_HOST_IDENTITY")
+	reader = os.Getenv("NFPREVIEW_ZITI_READER_IDENTITY")
 	if host == "" || reader == "" {
-		t.Skip("set DOCPREVIEW_ZITI_HOST_IDENTITY and DOCPREVIEW_ZITI_READER_IDENTITY to run")
+		t.Skip("set NFPREVIEW_ZITI_HOST_IDENTITY and NFPREVIEW_ZITI_READER_IDENTITY to run")
 	}
 	for _, p := range []string{host, reader} {
 		if _, err := os.Stat(p); err != nil {
@@ -87,7 +87,7 @@ func overlayClient(t *testing.T, readerIdentity, service string) *http.Client {
 // exposer would find roughly half its requests answered by the previous test's
 // still-closing instance, which presents as previews mysteriously 404ing.
 //
-// The same is true in production: exactly one docpreview may bind a given
+// The same is true in production: exactly one nfpreview may bind a given
 // service. Two instances sharing one would split traffic between two disjoint
 // routing tables, and every preview would work about half the time.
 var (
@@ -102,8 +102,8 @@ func newZitiForTest(t *testing.T, hostIdentity string) *Ziti {
 	sharedZitiOnce.Do(func() {
 		z, err := NewZiti(config.ZitiConfig{
 			IdentityFile: hostIdentity,
-			Service:      "docpreview-svc",
-			Domain:       "docpreview.ziti",
+			Service:      "nfpreview-svc",
+			Domain:       "nfpreview.ziti",
 			NameTemplate: "{{.Name}}",
 		}, discardLogger())
 		if err != nil {
@@ -145,13 +145,13 @@ func TestZitiEndToEndOverTheOverlay(t *testing.T) {
 		t.Fatalf("Publish: %v", err)
 	}
 
-	if pub.URL != "http://my-branch.docpreview.ziti/" {
+	if pub.URL != "http://my-branch.nfpreview.ziti/" {
 		t.Errorf("URL = %q", pub.URL)
 	}
 
-	client := overlayClient(t, readerIdentity, "docpreview-svc")
+	client := overlayClient(t, readerIdentity, "nfpreview-svc")
 
-	req, _ := http.NewRequest(http.MethodGet, "http://my-branch.docpreview.ziti/", nil)
+	req, _ := http.NewRequest(http.MethodGet, "http://my-branch.nfpreview.ziti/", nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("dialing the preview over the overlay: %v", err)
@@ -187,10 +187,10 @@ func TestZitiRoutesByHostHeader(t *testing.T) {
 		}
 	}
 
-	client := overlayClient(t, readerIdentity, "docpreview-svc")
+	client := overlayClient(t, readerIdentity, "nfpreview-svc")
 
 	for _, name := range []string{"alpha", "beta", "gamma"} {
-		req, _ := http.NewRequest(http.MethodGet, "http://"+name+".docpreview.ziti/", nil)
+		req, _ := http.NewRequest(http.MethodGet, "http://"+name+".nfpreview.ziti/", nil)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("GET %s: %v", name, err)
@@ -199,7 +199,7 @@ func TestZitiRoutesByHostHeader(t *testing.T) {
 		resp.Body.Close()
 
 		if want := "this is " + name; string(body) != want {
-			t.Errorf("Host %s.docpreview.ziti served %q, want %q — "+
+			t.Errorf("Host %s.nfpreview.ziti served %q, want %q — "+
 				"one connection reached the wrong preview", name, body, want)
 		}
 	}
@@ -216,9 +216,9 @@ func TestZitiUnknownHostListsWhatIsLive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := overlayClient(t, readerIdentity, "docpreview-svc")
+	client := overlayClient(t, readerIdentity, "nfpreview-svc")
 
-	req, _ := http.NewRequest(http.MethodGet, "http://no-such-branch.docpreview.ziti/", nil)
+	req, _ := http.NewRequest(http.MethodGet, "http://no-such-branch.nfpreview.ziti/", nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET an unpublished host: %v", err)
@@ -248,9 +248,9 @@ func TestZitiWithdrawStopsServing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := overlayClient(t, readerIdentity, "docpreview-svc")
+	client := overlayClient(t, readerIdentity, "nfpreview-svc")
 	get := func() (int, string) {
-		req, _ := http.NewRequest(http.MethodGet, "http://temporary.docpreview.ziti/", nil)
+		req, _ := http.NewRequest(http.MethodGet, "http://temporary.nfpreview.ziti/", nil)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("GET: %v", err)

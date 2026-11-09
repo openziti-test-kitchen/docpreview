@@ -29,13 +29,13 @@ Resolution order, strongest first:
 
 | Source | Spelling | What it costs |
 |---|---|---|
-| A command | `key_source: "exec:op read op://ops/docpreview"` | the key exists in this process and nowhere else on the machine |
-| A file | `key_source: "file:/etc/docpreview/master.key"` | anyone who can read that path can read every secret |
-| The environment | `$DOCPREVIEW_MASTER_KEY` | readable by every process under the same user; lands in service definitions, process listings and crash dumps |
+| A command | `key_source: "exec:op read op://ops/nfpreview"` | the key exists in this process and nowhere else on the machine |
+| A file | `key_source: "file:/etc/nfpreview/master.key"` | anyone who can read that path can read every secret |
+| The environment | `$NFPREVIEW_MASTER_KEY` | readable by every process under the same user; lands in service definitions, process listings and crash dumps |
 | A person | nothing configured | a human unlocks after every restart |
 
 Whatever the source, the material is either an age X25519 secret key or, failing that, a passphrase (scrypt).
-`docpreview vault keygen -out <path>` mints one straight into a file at 0600, so it never reaches a clipboard
+`nfpreview vault keygen -out <path>` mints one straight into a file at 0600, so it never reaches a clipboard
 or a shell history.
 
 **Nothing configured is the default**, and it is a state rather than a failure: the daemon boots with a locked
@@ -64,7 +64,7 @@ five seconds would make the recommended configuration the one that does not work
 
 ### Changing it
 
-`docpreview vault rekey` re-encrypts the vault under a new key and keeps every secret.
+`nfpreview vault rekey` re-encrypts the vault under a new key and keeps every secret.
 
 Before it existed, the master key was the one credential in the system that could not be changed. Rotating it
 meant re-storing each secret by hand, which requires still holding every plaintext — and not holding them is what
@@ -102,7 +102,7 @@ back to. That window is the reason this is one command rather than a documented 
 memory, and its next write re-encrypts under the old key — silently undoing the rekey, and worse if it lands after
 step 4, since the old key file is gone by then. `-yes` is an assertion by the operator, not a detection. A real
 signal would be an advisory lock the daemon holds for its lifetime, which `vault rekey` could try to acquire; that
-also serializes two concurrent rekeys, which today nothing does. See `TODO.md`.
+also serializes two concurrent rekeys, which today nothing does. Neither exists yet.
 
 **This changes the lock, not the credentials.** Anybody who read a secret under the old key still knows it.
 Rekeying answers "the key is too weak"; a leaked credential has to be rotated at the platform that issued it.
@@ -130,7 +130,7 @@ build:
     ALGOLIA_WRITE_KEY: "demo.algolia_key"     # env var name → vault key
 ```
 
-`buildSecrets` in `cmd/docpreview/main.go` resolves the map at startup and passes it to
+`buildSecrets` in `cmd/nfpreview/main.go` resolves the map at startup and passes it to
 `Daemon.WithBuildSecrets`, which constructs the builder with `pipeline.NewBuilderWithSecrets`.
 
 **A missing vault key fails startup**, naming the variable and the command that fixes it. The alternative is a
@@ -139,7 +139,7 @@ success — and, worse, a redactor built from one fewer value than the operator 
 
 ### This was dead config for a while
 
-`WithBuildSecrets` had no caller anywhere in the tree. The config key parsed, `docpreview init` wrote it out,
+`WithBuildSecrets` had no caller anywhere in the tree. The config key parsed, `nfpreview init` wrote it out,
 the documentation described it, and nothing read it. Builds ran with the variable unset and every log was
 unredacted.
 
@@ -147,7 +147,7 @@ It was invisible because **an unredacted log looks exactly like a log with no se
 error, no warning, and no visible difference — the only way to notice is to configure a secret, print it
 deliberately, and look.
 
-Guarded now by `cmd/docpreview/secrets_test.go`, and by the demo, which prints the secret on every build.
+Guarded now by `cmd/nfpreview/secrets_test.go`, and by the demo, which prints the secret on every build.
 
 ### Scoped to a project
 
@@ -194,7 +194,7 @@ projects build concurrently from one base builder — mutation would hand whiche
 which is the failure the scoping exists to prevent. Both are tested in
 `internal/pipeline/projectsecrets_test.go`.
 
-Because the merged map is what `buildEnv` reserves against `.docpreview.yml`, a project's variables inherit
+Because the merged map is what `buildEnv` reserves against `.nfpreview.yml`, a project's variables inherit
 invariant 6 for free: a pull request cannot shadow one.
 
 ## Redaction
@@ -241,7 +241,7 @@ scrubber looking at each call in isolation. So the writer buffers by line. See
 
 ### A second scrubber, for a credential the redactor never sees
 
-`internal/redact` is built from the values docpreview was *given*. A GitHub installation token is not one of
+`internal/redact` is built from the values nfpreview was *given*. A GitHub installation token is not one of
 those: it is minted per clone, lives for an hour, and never appears in config or in the vault. Git echoes the
 remote URL — token and all — into several of its error messages, so `pipeline.scrub` redacts URL userinfo in git
 output before it becomes an error string (`internal/pipeline/clone.go:138`). Build output is attached to the pull
@@ -289,7 +289,7 @@ That exists because working redaction and absent redaction are indistinguishable
 ## Deliberate limits
 
 - **A transformed secret survives.** Six encodings are matched and nothing else. A build that hashes, encrypts,
-  or prints a credential in fragments defeats it. This is a last line of defence over output docpreview does not
+  or prints a credential in fragments defeats it. This is a last line of defence over output nfpreview does not
   control, not a guarantee.
 - **A secret straddling the 64 KiB flush boundary survives.** Lines longer than the cap are flushed in exact
   chunks rather than buffered without limit, and each chunk is scrubbed — but a secret spanning exactly that
@@ -297,7 +297,7 @@ That exists because working redaction and absent redaction are indistinguishable
 - **`build.secrets` is still global.** One map from the server config, applied to every build. A project's *own*
   variables are scoped — see "Scoped to a project" above — but anything in `build.secrets` reaches every build on
   the daemon, so a credential that belongs to one repository belongs in that project's variables instead. A
-  per-provider scope is still wanted; see `TODO.md`.
+  per-provider scope is still wanted and not designed.
 
 ## The admin surface
 
@@ -308,7 +308,7 @@ then cannot open its own vault.
 
 **A credential-write endpoint on an unauthenticated surface is worse than no UI**, and the dashboard has no
 authentication. That has not changed; it is why the surface is gated rather than simply added. On a loopback-only
-daemon the boundary is the one that already protects `docpreview vault set` — anyone who can reach `127.0.0.1` can
+daemon the boundary is the one that already protects `nfpreview vault set` — anyone who can reach `127.0.0.1` can
 run the binary — so this adds no reachability a shell did not have. The moment a listener is not loopback, it
 would, and it refuses to serve.
 
@@ -342,7 +342,7 @@ listener is still loopback, so `Available` says yes and the credential API is on
 `isLocalRequest` closes that with two conditions. `RemoteAddr` must be loopback — under a tunnel it is, since the
 daemon sees the connection from the local tunnel process, so this alone proves nothing. And the request must carry
 no forwarding header: anything proxying to the daemon sets `X-Forwarded-For` or `Forwarded`, including
-docpreview's own `webhook-only` proxy. A caller can add one itself, but that only makes the check stricter, which
+nfpreview's own `webhook-only` proxy. A caller can add one itself, but that only makes the check stricter, which
 is the right direction to be wrong in.
 
 A tunnel that strips forwarding headers defeats this, which is why the recommended arrangement is to tunnel the

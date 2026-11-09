@@ -33,11 +33,11 @@ func dockerAvailable(t *testing.T) {
 
 func TestHostMountPath(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		got, err := hostMountPath("/srv/docpreview/ws")
+		got, err := hostMountPath("/srv/nfpreview/ws")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != "/srv/docpreview/ws" {
+		if got != "/srv/nfpreview/ws" {
 			t.Errorf("hostMountPath = %q, want the path unchanged", got)
 		}
 		return

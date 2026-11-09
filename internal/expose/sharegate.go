@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// The zrok account's budget for creating shares, as docpreview spends it.
+// The zrok account's budget for creating shares, as nfpreview spends it.
 //
 // zrok answers 429 when an account creates shares too quickly, and the controller does not say what
 // its limit is. These numbers are the operator's, chosen to stay under it: no more than fifteen
@@ -44,8 +44,8 @@ const (
 // because the budget belongs to the account the environment is enrolled in, and the two tunnel
 // processes know that directory and nothing else.
 const (
-	shareGateStateFile   = "docpreview-share-gate.json"
-	shareGateHistoryFile = "docpreview-shares.jsonl"
+	shareGateStateFile   = "nfpreview-share-gate.json"
+	shareGateHistoryFile = "nfpreview-shares.jsonl"
 )
 
 // ShareGate queues every zrok share creation this machine makes and lets them through at no more

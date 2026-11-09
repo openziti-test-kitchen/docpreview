@@ -5,13 +5,13 @@
 // secret — a search-index write key, a private registry token — and build tools
 // are careless with them: npm echoes its config, a failing HTTP call prints the
 // request it made, a shell script runs with `set -x`. Any of those puts the
-// value into output that docpreview then writes into a pull request comment,
+// value into output that nfpreview then writes into a pull request comment,
 // which is about the most public place it could land.
 //
 // The guarantee here is narrow and worth stating exactly. Every value the
 // Redactor is told about is replaced with a fixed five asterisks wherever it
 // appears in the text, including in several encodings a build tool might apply
-// on the way. It is a last line of defence over output docpreview does not
+// on the way. It is a last line of defence over output nfpreview does not
 // control, not a substitute for not logging secrets.
 package redact
 

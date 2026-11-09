@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Build www/ the way docpreview builds it, and report broken links.
+    Build www/ the way nfpreview builds it, and report broken links.
 
 .DESCRIPTION
-    docpreview previews its own documentation, so a broken link in www/ fails a real build on a real
+    nfpreview previews its own documentation, so a broken link in www/ fails a real build on a real
     pull request — which is a slow and public way to find a typo in a relative path. This is the
     same `docusaurus build`, run before pushing.
 

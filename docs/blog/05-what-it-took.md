@@ -70,7 +70,7 @@ Docusaurus bakes its base URL into every generated `href` and `src` at build tim
 serve at `/`, and `index.html` returns 200 while every stylesheet and script 404s. You get unstyled text and an
 empty build log, because as far as the build was concerned it worked.
 
-So before publishing, docpreview reads the built `index.html` and works out which base URL the site was actually
+So before publishing, nfpreview reads the built `index.html` and works out which base URL the site was actually
 built for.
 
 The obvious way to do that is wrong in both directions. Take the longest common prefix of the absolute

@@ -4,7 +4,7 @@
 //
 // GitHub and Bitbucket differ in almost every detail — App-installation JWTs
 // versus basic auth with an API token, check runs versus build statuses,
-// PATCH versus PUT to edit a comment — but they agree on the shape docpreview
+// PATCH versus PUT to edit a comment — but they agree on the shape nfpreview
 // needs, which is what this package captures.
 package scm
 
@@ -37,7 +37,7 @@ const (
 	StateFailed State = "failed"
 )
 
-// Report is everything docpreview knows about a preview at one moment. It is
+// Report is everything nfpreview knows about a preview at one moment. It is
 // rendered into the pull request comment and, where the platform supports it,
 // into a commit status.
 type Report struct {
@@ -152,7 +152,7 @@ func VerifyHMACSHA256(secret, body []byte, header string) bool {
 	return hmac.Equal(mac.Sum(nil), want)
 }
 
-// Client is everything docpreview needs from one source-control platform.
+// Client is everything nfpreview needs from one source-control platform.
 type Client interface {
 	// Platform names the host this client talks to.
 	Platform() model.Platform
@@ -179,15 +179,15 @@ type Client interface {
 	ChangedFiles(ctx context.Context, pr model.PullRequest) ([]string, error)
 
 	// Publish writes the report to the pull request, editing the existing
-	// docpreview comment rather than adding another one.
+	// nfpreview comment rather than adding another one.
 	Publish(ctx context.Context, r Report) error
 
-	// Retract removes docpreview's comment and any status it owns. Called when
+	// Retract removes nfpreview's comment and any status it owns. Called when
 	// a pull request is closed and its preview torn down.
 	Retract(ctx context.Context, pr model.PullRequest) error
 }
 
-// EventKind classifies what a webhook delivery is asking docpreview to do.
+// EventKind classifies what a webhook delivery is asking nfpreview to do.
 type EventKind string
 
 const (
@@ -336,11 +336,11 @@ type BranchResolver interface {
 type MarkerStyle int
 
 const (
-	// MarkerHTMLComment is `<!-- docpreview:<id> -->`, and is what GitHub gets.
+	// MarkerHTMLComment is `<!-- nfpreview:<id> -->`, and is what GitHub gets.
 	// Invisible there, because GitHub's renderer honours raw HTML.
 	MarkerHTMLComment MarkerStyle = iota
 
-	// MarkerLinkRef is `[docpreview]: #<id>`, a CommonMark link reference
+	// MarkerLinkRef is `[nfpreview]: #<id>`, a CommonMark link reference
 	// definition: every conforming renderer consumes it as a definition and emits
 	// nothing for it, whether or not raw HTML is allowed.
 	//
@@ -354,14 +354,14 @@ const (
 	MarkerLinkRef
 )
 
-// Marker returns the marker that identifies docpreview's own comment on a pull
+// Marker returns the marker that identifies nfpreview's own comment on a pull
 // request, in the style GitHub wants.
 //
 // This is how the comment gets edited instead of duplicated. There is no platform
 // API for "the comment I made earlier", and storing comment IDs in our database
 // means a restored backup or a fresh install starts spamming. A marker in the body
 // makes the comment self-identifying: list the comments, find ours, edit it. The
-// preview ID is included so that two docpreview instances watching the same
+// preview ID is included so that two nfpreview instances watching the same
 // repository — staging and production, say — do not fight over one comment.
 //
 // Kept as the one-argument form because every caller that writes a comment today
@@ -376,12 +376,12 @@ func MarkerFor(previewID string, s MarkerStyle) string {
 	if s == MarkerLinkRef {
 		// A `#`-prefixed destination, so that a renderer which does resolve the
 		// label produces a same-page anchor rather than a request to somewhere.
-		return fmt.Sprintf("[docpreview]: #%s", previewID)
+		return fmt.Sprintf("[nfpreview]: #%s", previewID)
 	}
-	return fmt.Sprintf("<!-- docpreview:%s -->", previewID)
+	return fmt.Sprintf("<!-- nfpreview:%s -->", previewID)
 }
 
-// HasMarker reports whether a comment body is docpreview's, in any style.
+// HasMarker reports whether a comment body is nfpreview's, in any style.
 //
 // **Both styles, forever.** This is the load-bearing part of having two, and the
 // reason introducing MarkerLinkRef is not just "change the constant": a daemon

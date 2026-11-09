@@ -35,7 +35,7 @@ import (
 // Publishing therefore costs nothing remote. It is a map insert.
 //
 // One operational constraint follows from the single shared service, and it is
-// not obvious: exactly one docpreview may bind it. Binding creates a ziti
+// not obvious: exactly one nfpreview may bind it. Binding creates a ziti
 // *terminator*, two bindings create two, and the router load-balances between
 // them under the default smartrouting strategy. Two instances sharing a service
 // would each hold a disjoint routing table, so every preview would work about
@@ -65,7 +65,7 @@ type Ziti struct {
 // zitiPreview is one published preview.
 //
 // It carries the preview ID alongside the handler because this exposer routes
-// by hostname label while the rest of docpreview identifies previews by ID, and
+// by hostname label while the rest of nfpreview identifies previews by ID, and
 // those two namespaces can disagree. Two pull requests in different
 // repositories both on a branch called `main` render to the same label under
 // the default name template.
@@ -161,7 +161,7 @@ func zitiDialerFrom(ctx context.Context) zitiDialer {
 func NewZiti(cfg config.ZitiConfig, log *slog.Logger) (*Ziti, error) {
 	if cfg.IdentityFile == "" {
 		return nil, errors.New("exposer.ziti.identity_file must be set " +
-			"(the enrolled identity docpreview hosts the service with)")
+			"(the enrolled identity nfpreview hosts the service with)")
 	}
 	if cfg.Service == "" {
 		return nil, errors.New("exposer.ziti.service must be set")
@@ -286,7 +286,7 @@ func (z *Ziti) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A 404 here means the reviewer reached docpreview but asked for a preview
+	// A 404 here means the reviewer reached nfpreview but asked for a preview
 	// that is not published — a closed pull request, a typo, a stale bookmark.
 	// Listing what is live turns that into a usable page rather than a dead
 	// end, and it is the only thing the apex hostname would ever serve.

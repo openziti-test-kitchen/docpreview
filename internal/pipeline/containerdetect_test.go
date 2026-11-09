@@ -45,10 +45,10 @@ func TestAnAbsentImplicitDetectScriptLeavesItToTheGlobs(t *testing.T) {
 
 func TestTheDefaultDetectScriptIsInTheBuildDirectory(t *testing.T) {
 	for dir, want := range map[string]string{
-		"docusaurus":    "docusaurus/docpreview-detect",
-		"./docusaurus/": "docusaurus/docpreview-detect",
-		".":             "docpreview-detect",
-		"":              "docpreview-detect",
+		"docusaurus":    "docusaurus/nfpreview-detect",
+		"./docusaurus/": "docusaurus/nfpreview-detect",
+		".":             "nfpreview-detect",
+		"":              "nfpreview-detect",
 	} {
 		if got := config.DefaultDetectScript(dir); got != want {
 			t.Errorf("DefaultDetectScript(%q) = %q, want %q", dir, got, want)
@@ -59,12 +59,12 @@ func TestTheDefaultDetectScriptIsInTheBuildDirectory(t *testing.T) {
 // The detect container is the narrow part of the docker driver: what it must not have is the point.
 func TestTheDetectContainerHasNoNetworkAndAReadOnlyCheckout(t *testing.T) {
 	args := detectRunArgs(DetectContainer{Image: "node:24-bookworm", CPUs: 2, Memory: "1g"},
-		"docpreview-detect-x", "/var/lib/ws", "docusaurus/docpreview-detect")
+		"nfpreview-detect-x", "/var/lib/ws", "docusaurus/nfpreview-detect")
 
 	for _, want := range [][]string{
 		{"--network", "none"},
 		{"--mount", "type=bind,source=/var/lib/ws,target=/workspace,readonly"},
-		{"--entrypoint", "/workspace/docusaurus/docpreview-detect"},
+		{"--entrypoint", "/workspace/docusaurus/nfpreview-detect"},
 		{"--pull", "never"},
 		{"--cpus", "2"},
 		{"--memory", "1g"},
@@ -107,7 +107,7 @@ wget -q -T 3 -O /dev/null http://example.com 2>/dev/null && echo "the network is
 grep -q '^docusaurus/' && { echo "docs changed"; exit 0; }
 echo "nothing under docusaurus"; exit 78
 `
-	if err := os.WriteFile(filepath.Join(dir, "docusaurus", "docpreview-detect"), []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "docusaurus", "nfpreview-detect"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

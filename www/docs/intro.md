@@ -12,7 +12,7 @@ in place. Close the pull request and the preview goes away.
 
 The site can be anything that builds to static files: a docs site, the Ziti admin console, a marketing page. If
 Vercel already does this for you and you like it, keep using it. If you want the same loop on hardware you run,
-here is another way. NetFoundry Preview is a single Go binary, `docpreview`, that you can start on a laptop.
+here is another way. NetFoundry Preview is a single Go binary, `nfpreview`, that you can start on a laptop.
 The public URL comes from [zrok](https://docs.zrok.io/) or
 [NetFoundry Frontdoor](https://netfoundry.io/docs/frontdoor/intro/), or the preview stays private on an OpenZiti
 overlay.
@@ -60,7 +60,7 @@ straight on the host is an opt-in.
 
 ## This site is one of the repositories it builds
 
-`www/` lives in the docpreview repository, and NetFoundry Preview previews it on its own pull requests like any
+`www/` lives in the nfpreview repository, and NetFoundry Preview previews it on its own pull requests like any
 other project. So the `baseUrl` check in [Troubleshooting](./troubleshooting.md) got strict for a reason, and a
 broken link fails a real build instead of waiting months for someone to notice.
 

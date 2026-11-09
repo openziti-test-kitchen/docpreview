@@ -6,7 +6,7 @@
 // fifteen, so this records the evidence instead of guessing at it — run it, push, and
 // read what came back.
 //
-//   $env:DOCPREVIEW_PASSWORD = "<the admin password>"
+//   $env:NFPREVIEW_PASSWORD = "<the admin password>"
 //   node tools/dashboardtest/watchqueued.mjs
 //
 // It prints one line per change in (state set, event count) and shouts if the event
@@ -17,7 +17,7 @@
 // worse than one that does not start.
 import {statusFetcher} from "./live.mjs";
 
-const daemon = process.env.DOCPREVIEW_URL || "http://127.0.0.1:8471";
+const daemon = process.env.NFPREVIEW_URL || "http://127.0.0.1:8471";
 const status = statusFetcher(daemon);
 const every = Number(process.env.INTERVAL_MS || 1500);
 

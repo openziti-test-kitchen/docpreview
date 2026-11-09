@@ -27,7 +27,7 @@ func gatePR() model.PullRequest {
 // The webhook secret is one value for the whole App and GitHub signs every installation's
 // deliveries with it, so a valid signature says the delivery came from GitHub and nothing
 // about whether the operator wanted this repository. Without this check, installing the App
-// is enough to get a branch of your choosing cloned and its own `.docpreview.yml` honoured on
+// is enough to get a branch of your choosing cloned and its own `.nfpreview.yml` honoured on
 // the host holding the App private key.
 //
 // Three assertions, and the second and third matter as much as the first. Nothing is queued.
@@ -59,7 +59,7 @@ func TestAVerifiedDeliveryWithNoProjectBuildsNothing(t *testing.T) {
 		t.Errorf("pending = %d, want 0: a repository with no project row was built", n)
 	}
 	if states := client.reportStates(); len(states) != 0 {
-		t.Errorf("reports = %v, want none: docpreview wrote to a pull request "+
+		t.Errorf("reports = %v, want none: nfpreview wrote to a pull request "+
 			"on a repository the operator never added", states)
 	}
 }

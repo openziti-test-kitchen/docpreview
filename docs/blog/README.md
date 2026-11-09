@@ -1,6 +1,6 @@
 # Blog drafts
 
-Posts about docpreview, aimed outward rather than at somebody working on the code. Drafts live here until
+Posts about nfpreview, aimed outward rather than at somebody working on the code. Drafts live here until
 they are published somewhere.
 
 `www/` is the product's documentation and answers "how do I use this". These answer "why would I want it",
@@ -36,7 +36,7 @@ Neither needs the series, and both reach an audience the first three do not.
 | 4 | `04-loopback-is-not-local.md` | anyone who has written a loopback check | A tunnel publishes every route while the listener is still bound to `127.0.0.1` and `RemoteAddr` still says so, so the usual check returns true with the endpoint on the internet |
 | 5 | `05-what-it-took.md` | engineers | The problems between a working demo and something safe to leave running, nearly all of them from treating a network resource as though it were local |
 
-Post 4 barely mentions docpreview and is the better one to lead with anywhere that dislikes a product post.
+Post 4 barely mentions nfpreview and is the better one to lead with anywhere that dislikes a product post.
 Post 5 is the one to submit somewhere that rewards specifics.
 
 ## Order and reuse
@@ -49,10 +49,10 @@ search and never see the other — but keep them in step when the table changes.
 ## Tone toward Vercel
 
 Every mention of Vercel is complimentary. The framing is "if you like Vercel, keep using it; if not, here is
-another way". Vercel defined the loop docpreview copies, and the posts say so. The problem the posts name is not
+another way". Vercel defined the loop nfpreview copies, and the posts say so. The problem the posts name is not
 price. In our setup, a pull request on a private repository was only built if its author was on our Vercel
 team, so contributors outside it were blocked until somebody added them. That is reasonable on Vercel's side and
-was friction on ours. docpreview builds on our own VM and zrok publishes the preview, so nobody has to join
+was friction on ours. nfpreview builds on our own VM and zrok publishes the preview, so nobody has to join
 anything. Posts 00, 01 and 02 carry this argument. The earlier per-seat and red-check argument has been removed.
 
 ## Accuracy

@@ -9,10 +9,10 @@ sidebar_position: 2
 :::info Research, not a feature
 
 Nothing on this page is built. It is a survey of Vercel's preview surface as documented in July 2026, judged
-against the system docpreview actually is, so that the next thing built is chosen rather than stumbled into.
+against the system nfpreview actually is, so that the next thing built is chosen rather than stumbled into.
 Where an idea is already tracked, this page says so and links to it instead of proposing it again.
 
-[How Vercel previews work](../../www/docs/background/vercel.md) covers the mechanism docpreview already copies — the Git
+[How Vercel previews work](../../www/docs/background/vercel.md) covers the mechanism nfpreview already copies — the Git
 integration, the single edited comment, the lifecycle. This page is everything else.
 
 :::
@@ -51,15 +51,15 @@ daemon that accepts input from the public internet — every exposer except `zit
 `internal/scm/`'s comment upsert either grows a second comment kind or these threads never reach the pull request
 at all.
 
-**What it costs.** An identity model for reviewers, which docpreview does not have in any form. The zrok exposer
+**What it costs.** An identity model for reviewers, which nfpreview does not have in any form. The zrok exposer
 can put an OAuth gate in front of a share, and the ziti exposer knows the dialing identity is *some* holder of the
-`docpreview-reader` attribute — neither yields a person to attribute a comment to. Vercel's requirement that
+`nfpreview-reader` attribute — neither yields a person to attribute a comment to. Vercel's requirement that
 commenters hold a Vercel account is not incidental. It is the cheapest way out of exactly this problem, and
-docpreview has no equivalent account to require. Building this means building authentication first, and the
+nfpreview has no equivalent account to require. Building this means building authentication first, and the
 dashboard [does not have any either](../../www/docs/reference/security.md).
 
 **Verdict: skip it.** The pull request already has a comment thread, anchored to the diff, with the reviewers
-already authenticated by the platform. Vercel needs its own because it is not the code host. docpreview is not the
+already authenticated by the platform. Vercel needs its own because it is not the code host. nfpreview is not the
 code host either, and that is an argument for sending people to the one that is.
 
 ## 2. Deployment protection, decided per project
@@ -86,7 +86,7 @@ is unreachable from anywhere else by construction. A per-project field that sile
 four exposers is worse than no field, so this needs `Exposer` to report which gates it can apply — a small
 capability interface next to the existing optional `Adopter` and `NameReleaser`.
 
-**Verdict: build it now.** The reason docpreview exists is documentation that cannot go to a SaaS
+**Verdict: build it now.** The reason nfpreview exists is documentation that cannot go to a SaaS
 ([What this is](../../www/docs/intro.md)), and "the whole daemon is either public or not" is the wrong granularity for that
 claim. This is the smallest change that makes the stated purpose true.
 
@@ -108,10 +108,10 @@ secrets into the existing vault under the `project/<platform>/<owner>/<repo>/` p
 per-project credentials.
 
 **What it costs.** Not much to build, and it buys nothing yet. Vercel needs a bypass because its automation lives
-outside the platform and can only reach a deployment over HTTP. Everything docpreview would point at a preview is
+outside the platform and can only reach a deployment over HTTP. Everything nfpreview would point at a preview is
 *inside the same process*: a link checker reads the artifact directory off disk, the machine-readable preview
-status is a route on the daemon, and both are already designed that way in
-[`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md). A bypass header solves a problem created
+status is a route on the daemon, and both are already designed that way as
+open work. A bypass header solves a problem created
 by being a hosted service.
 
 **Verdict: skip it, and revisit only alongside idea 2.** The half that would matter is the human half — a
@@ -131,7 +131,7 @@ operation: it triggers a complete rebuild with production environment variables 
 on disk: artifacts live at `artifacts/<preview>/<build>`, `builds.name` and `builds.url` record each build's own
 share, and the dashboard's log pane already lets an operator select an older build and open it. The missing verb
 is "make **this** build the one the branch URL serves" — which under the
-[switchable placeholder handler](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md) is one atomic pointer
+proposed switchable placeholder handler is one atomic pointer
 swap in the branch publication, with no exposer call at all. Without the switchable handler it is a republish of
 the branch share against a different artifact directory, which is more expensive and hits the destructive-publish
 rule in `internal/expose/`.
@@ -159,8 +159,7 @@ truncated, and Pro and Enterprise can replace `vercel.app` with a custom domain 
 **What it would mean here.** It is shipped. A preview has a branch share following its newest successful build
 plus one share per commit built, keyed by `expose.Spec.Key()`, and the dashboard carries the two links separately
 — the row's Open for the branch, `Open build ↗` in the log pane for whichever build is selected. Written up in
-[Exposers](../../www/docs/exposers.md) and tracked in
-[`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md).
+[Exposers](../../www/docs/exposers.md) and still open.
 
 **What it costs — and what Vercel does differently.** For Vercel a generated URL is a free consequence of having
 uploaded the deployment. Here **each name is a quota-bearing object on the zrok account**, counted per account
@@ -174,7 +173,7 @@ name and the commit name, halving the share count for the same two URLs. It has 
 one entry from here, which is the thing to verify before relying on it.
 
 Vercel's Preview Deployment Suffix is the same wish this project already has and cannot buy: the
-`<sha7>.docpreview.shares.zrok.io` shape needs a delegated namespace, which on hosted zrok.io is admin-only and a
+`<sha7>.nfpreview.shares.zrok.io` shape needs a delegated namespace, which on hosted zrok.io is admin-only and a
 commercial conversation rather than an API call. Vercel gates it behind a plan — zrok gates it behind a sales call.
 Both are the same answer, which is worth knowing before anyone spends time on it.
 
@@ -190,7 +189,7 @@ key, retained one month, and a failed build does not modify it
 ([Troubleshooting Build Errors](https://vercel.com/docs/deployments/troubleshoot-a-build)).
 
 **What it would mean here.** `internal/pipeline/` already does the hard half. `cacheMounts` gives each preview a
-named docker volume per package manager, keyed `docpreview-cache-<previewID>-<manager>`, and that survives between
+named docker volume per package manager, keyed `nfpreview-cache-<previewID>-<manager>`, and that survives between
 pushes to the same branch — the same lifetime Vercel's branch-scoped key gives. What is not cached is the
 framework's own work: `node_modules` is mounted as an **anonymous** volume removed with the container, so
 Docusaurus's `.docusaurus` directory and the webpack persistent cache under `node_modules/.cache` are thrown away
@@ -199,17 +198,17 @@ on every build. Keeping them is another named mount alongside the three that exi
 There is a chance to be better than the thing being imitated here rather than merely equal to it. Vercel's cached
 paths are chosen by framework preset, and Docusaurus is reported not to be among the presets whose cache
 directories are preserved — so on the one framework this project exists to build, Vercel discards the same cache
-docpreview discards. Treat that as unverified: it comes from a Docusaurus issue thread rather than from Vercel's
+nfpreview discards. Treat that as unverified: it comes from a Docusaurus issue thread rather than from Vercel's
 documentation, whose per-framework table is rendered client-side and could not be read.
 
 **What it costs.** Correctness, in the one direction that is expensive to debug. A stale package cache produces a
 slow build. A stale framework cache can produce a *wrong site* — the failure mode is a preview that renders the
 previous commit's content and looks entirely healthy, which is precisely the class of bug the base-URL check
-exists to catch loudly rather than quietly. So this needs what Vercel has and docpreview does not: a key that
+exists to catch loudly rather than quietly. So this needs what Vercel has and nfpreview does not: a key that
 includes everything a build's output depends on, and a documented way to bypass it. Vercel offers three
 (`VERCEL_FORCE_NO_BUILD_CACHE=1`, `vercel --force`, and an unchecked box on redeploy). Here it would be a checkbox
 on the Rebuild button. It also needs the byte cap this project has
-[not written yet](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md), because a persistent volume per
+not written yet, because a persistent volume per
 preview with no ceiling is the disk problem again.
 
 **Verdict: build it now, with the bypass in the same commit.** The measurable win is real — prerendering is
@@ -229,9 +228,8 @@ built-in skip does not — the stated reason to prefer the built-in
 ([Using Monorepos](https://vercel.com/docs/monorepos),
 [Project settings](https://vercel.com/docs/project-configuration/project-settings)).
 
-**What it would mean here.** This is already filed as a gap in
-[`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md) and in
-[Architecture](../../www/docs/architecture.md) as a deliberate limit: one `.docpreview.yml` builds one site. The shape Vercel
+**What it would mean here.** This is a known gap, recorded in
+[Architecture](../../www/docs/architecture.md) as a deliberate limit: one `.nfpreview.yml` builds one site. The shape Vercel
 uses is the right one — a project per site rather than a list inside one config — and the projects page is already
 where a project's build settings live.
 
@@ -266,7 +264,7 @@ rather than built-in, and only an OAuth2 integration may register one.
 
 **Where the gate actually sits is the detail worth stealing.** A blocking check does not hold the build. It holds
 **domain assignment**. While checks run, the per-commit deployment URL resolves and the branch URL and custom
-domains do not — so the artifact is always inspectable, and only the shared address waits. docpreview already has
+domains do not — so the artifact is always inspectable, and only the shared address waits. nfpreview already has
 that exact split: a build share pinned to the commit, and a branch share the pull request comment advertises. The
 mechanism to publish the first and withhold the second until a check concludes is already in the shape of the
 code, which is the opposite of what "gate the publish" sounds like it would cost.
@@ -279,8 +277,8 @@ sequence under a per-preview lock.
 
 **What it costs.** Split it by what needs a browser.
 
-The deterministic checks need nothing docpreview lacks. A post-build link checker walking the artifact tree is
-already filed in [`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md), modelled on
+The deterministic checks need nothing nfpreview lacks. A post-build link checker walking the artifact tree is
+already proposed as open work, modelled on
 `pipeline.Detector` — bounded by a timeout and unable to fail the build — and it covers Vercel's Core and
 End-to-end flows for a static site, including the one failure docs actually ship: an internal link or heading
 anchor that no longer resolves. Output size and file count for the Optimization flow is a directory walk.
@@ -312,7 +310,7 @@ above plus the marketplace's testing category, so visual regression is Percy, Ch
 check — and the closest first-party thing is a Chrome extension for attaching screenshots to a
 [comment](https://vercel.com/docs/comments) by hand.
 
-**What it would mean here.** [`TODO.md`](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md) records
+**What it would mean here.** The open list says
 "Preview diffing. Vercel shows what changed visually between deployments. Not attempted." The premise is worth
 correcting on two counts: Vercel does not ship it, and *visual* is the expensive answer to the question a
 documentation reviewer is actually asking, which is **which pages changed, and how**.
@@ -355,13 +353,13 @@ through an `io.MultiWriter` to a file.
 **What it costs.** Little, and it answers a question nobody here is asking. Vercel needs drains because the logs
 are on their infrastructure and the operator cannot reach the disk — and because they expire fast: runtime logs are
 retained one hour on Hobby, one day on Pro and three days on Enterprise
-([Runtime Logs](https://vercel.com/docs/logs/runtime)), so a drain is how anything is kept at all. docpreview's
+([Runtime Logs](https://vercel.com/docs/logs/runtime)), so a drain is how anything is kept at all. nfpreview's
 operator **is** on the machine, with `log_file` and the build logs in a directory under a retention window they
 chose. The genuinely useful part of this family is already filed and
-is not a drain: [log search](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md), because the viewer tails
+is not a drain: log search, still open, because the viewer tails
 and downloads, so finding a line in a 5000-line build means downloading the whole thing.
 
-**Verdict: skip it.** Build log search instead. Revisit only if docpreview ever runs somewhere its operator does
+**Verdict: skip it.** Build log search instead. Revisit only if nfpreview ever runs somewhere its operator does
 not have a shell.
 
 ## 11. Retention, and what must never be deleted
@@ -396,7 +394,7 @@ Two things here are worth not copying. The 410-plus-recovery-window is a hosted 
 deletion, and a self-hosted tool with the artifacts on a local disk and a backup story has no use for a tombstone.
 And Vercel's unlimited-retention default is only affordable to somebody billing for storage. This project's
 problem is the opposite, and its
-[open item](https://github.com/openziti-test-kitchen/docpreview/blob/main/TODO.md) is a ceiling, not a floor.
+open item is a ceiling, not a floor.
 
 **Verdict: build the exception list now, alongside the byte caps it belongs with.** Do not build the recovery
 window.
@@ -412,11 +410,11 @@ routing middleware are the rest of the platform: request-time behaviour, in Verc
 **What it would mean here.** Nothing, and the reason is structural rather than a matter of effort. Skew
 protection exists because a client holds JavaScript that talks to a server contract. A documentation site is HTML,
 CSS and assets whose only "API" is more files, so the failure it prevents cannot occur. And what it does
-mechanically — keep older deployments individually addressable — docpreview already has as per-build shares, for a
+mechanically — keep older deployments individually addressable — nfpreview already has as per-build shares, for a
 different reason.
 
 ISR, edge functions and middleware are refused by design and the refusal is
-[documented as a feature](../../www/docs/background/jamstack.md): docpreview builds static output and serves a directory
+[documented as a feature](../../www/docs/background/jamstack.md): nfpreview builds static output and serves a directory
 through `http.FileServer`. Anything needing a server at request time is the wrong tool, and the
 [intro](../../www/docs/intro.md) says so before anyone installs it. The one request-time behaviour a static site does need —
 serving the site's own `404.html` instead of Go's plain-text one — is already in `internal/preview/`.
@@ -428,7 +426,7 @@ serving the site's own `404.html` instead of Go's plain-text one — is already 
 **9, then 4, then 2.**
 
 **[What changed on the site](#9-what-changed-on-the-site)**, because it is the only idea here that makes a
-reviewer's job faster rather than an operator's, it needs no dependency docpreview does not already have, and its
+reviewer's job faster rather than an operator's, it needs no dependency nfpreview does not already have, and its
 one prerequisite — a default-branch preview to diff against — is already the top item in flight. It also converts
 a vague backlog entry into something buildable, and corrects the premise underneath it.
 
@@ -497,7 +495,7 @@ time-to-live. Do not design against either.
 
 ## Related
 
-- [How Vercel previews work](../../www/docs/background/vercel.md) — the mechanism docpreview already copies
+- [How Vercel previews work](../../www/docs/background/vercel.md) — the mechanism nfpreview already copies
 - [Tunneler-only previews](./ziti-native-previews.md) — the other research page, and the strongest existing
   answer to idea 2
 - [Exposers](../../www/docs/exposers.md) — why a name is a quota-bearing object, which idea 5 answers to

@@ -1,6 +1,6 @@
 # Tunneler-only documentation previews
 
-Research spike: can docpreview publish a preview that is reachable **only** from a machine running a plain
+Research spike: can nfpreview publish a preview that is reachable **only** from a machine running a plain
 OpenZiti tunneler (Ziti Desktop Edge for Windows, `ziti-edge-tunnel`) with an enrolled identity, and with no
 public surface at all?
 
@@ -12,14 +12,14 @@ Feasible, but **not** by reusing zrok. A zrok private share is invisible to a pl
 zrok attaches exactly one config to the OpenZiti service it creates — `zrok.proxy.v1` — and never an
 `intercept.v1` or `host.v1`, because both ends of a zrok share are SDK code (`ListenWithOptions` on the
 backend, `DialWithOptions` in `zrok access private`). A tunneler that could see the service would have no
-client config to build a DNS name or an intercept from. The route that does work is docpreview talking
+client config to build a DNS name or an intercept from. The route that does work is nfpreview talking
 directly to an OpenZiti network's **edge management API**: create one wildcard service with an `intercept.v1`
-for `*.docpreview.ziti`, bind it from docpreview's own identity via `sdk-golang`'s `Context.Listen` (the exact
+for `*.nfpreview.ziti`, bind it from nfpreview's own identity via `sdk-golang`'s `Context.Listen` (the exact
 same shape as today's zrok listener, so `Exposer` survives unchanged), and mint per-reviewer identities with
 one-time enrollment JWTs. On the client side ZDEW turns out to be automatable: its GUI is a thin client over
 the named pipe `\\.\pipe\ziti-edge-tunnel.sock`, and a single line of JSON — `{"Command":"AddIdentity",
-"Data":{"JwtContent":"…"}}` — is the whole enrollment path, so docpreview can either emit a `.jwt` for manual
-import or drive the pipe directly. The prerequisite docpreview does not have today is an OpenZiti network it
+"Data":{"JwtContent":"…"}}` — is the whole enrollment path, so nfpreview can either emit a `.jwt` for manual
+import or drive the pipe directly. The prerequisite nfpreview does not have today is an OpenZiti network it
 holds admin credentials for; zrok cannot supply one.
 
 ## Findings
@@ -87,7 +87,7 @@ as indirect dependencies (via zrok). Promoting them to direct requires no new mo
 ships public wrappers for exactly this workflow at
 `zrok/v2@v2.0.4/controller/automation/{api,identity,config,service,servicePolicy,edgeRouterPolicy,serviceEdgeRouterPolicy}.go`.
 `import "github.com/openziti/zrok/v2/controller/automation"` costs zero new modules. Worth reading before
-writing anything, even if docpreview ends up calling `edge-api` directly for control over error handling.
+writing anything, even if nfpreview ends up calling `edge-api` directly for control over error handling.
 
 **Management client, the simple way** — `edge-api@v0.26.48/rest_util/clients.go`:
 
@@ -118,7 +118,7 @@ only one that speaks OIDC and multi-controller HA. For a single self-hosted cont
     Name:           &name,                       // required
     Type:           rest_model.IdentityTypeDefault,
     IsAdmin:        &falsePtr,                   // required
-    RoleAttributes: &rest_model.Attributes{"docpreview-reader"},
+    RoleAttributes: &rest_model.Attributes{"nfpreview-reader"},
     Enrollment:     &rest_model.IdentityCreateEnrollment{Ott: true},
 }
 ```
@@ -156,7 +156,7 @@ pair appears at `ziti/v2@v2.0.0/controller/db/migration_initialize.go:483,528`.)
 `NH5p4Fp**GR**`, not `NH5p4FpjQ` — a grep for `NH5p4Fpj` across the whole openziti module cache returns
 nothing. Safer than hardcoding either: `GET /config-types?filter=name="intercept.v1"` once at startup.
 
-Because docpreview binds the service itself through the Go SDK rather than through a hosting tunneler, it needs
+Because nfpreview binds the service itself through the Go SDK rather than through a hosting tunneler, it needs
 **only** the `intercept.v1` config. `host.v1` exists for tunneler-hosted services and is not required here.
 
 **`intercept.v1` schema**, verbatim from `ziti@v1.6.0/tunnel/entities/intercept.v1.json`. Required:
@@ -166,29 +166,29 @@ Because docpreview binds the service itself through the Go SDK rather than throu
 ```json
 {
   "protocols":  ["tcp"],
-  "addresses":  ["docpreview.ziti", "*.docpreview.ziti"],
+  "addresses":  ["nfpreview.ziti", "*.nfpreview.ziti"],
   "portRanges": [{"low": 80, "high": 80}]
 }
 ```
 
-List the apex explicitly: the wildcard matcher keys on the suffix `name[1:] + "."`, so `*.docpreview.ziti`
-matches `foo.docpreview.ziti` but **not** bare `docpreview.ziti` (`tunnel/dns/server.go:167`). Useful if you
+List the apex explicitly: the wildcard matcher keys on the suffix `name[1:] + "."`, so `*.nfpreview.ziti`
+matches `foo.nfpreview.ziti` but **not** bare `nfpreview.ziti` (`tunnel/dns/server.go:167`). Useful if you
 want an index page listing live previews.
 
 The `listenAddress` definition (line 18 of that file) documents the address forms explicitly: idn-hostname
 format, and "client applications will need to look for _valid_ ips, cidrs, and wildcards when parsing intercept
 addresses and treat them accordingly." Wildcards are a first-class address form.
 
-**Objects docpreview would create**, in order:
+**Objects nfpreview would create**, in order:
 
-1. `POST /configs` — `{name: "docpreview-intercept", configTypeId: "g7cIWbcGg", data: {…above…}}`
-2. `POST /services` — `{name: "docpreview", encryptionRequired: true, configs: [<configId>],
-   roleAttributes: ["docpreview"]}`
-3. `POST /service-policies` — Bind: `{type: "Bind", identityRoles: ["@<docpreviewIdentityId>"],
+1. `POST /configs` — `{name: "nfpreview-intercept", configTypeId: "g7cIWbcGg", data: {…above…}}`
+2. `POST /services` — `{name: "nfpreview", encryptionRequired: true, configs: [<configId>],
+   roleAttributes: ["nfpreview"]}`
+3. `POST /service-policies` — Bind: `{type: "Bind", identityRoles: ["@<nfpreviewIdentityId>"],
    serviceRoles: ["@<serviceId>"], semantic: "AllOf"}`
-4. `POST /service-policies` — Dial: `{type: "Dial", identityRoles: ["#docpreview-reader"],
+4. `POST /service-policies` — Dial: `{type: "Dial", identityRoles: ["#nfpreview-reader"],
    serviceRoles: ["@<serviceId>"], semantic: "AllOf"}` — attribute-based, so granting a new reviewer is just
-   the `docpreview-reader` role attribute on their identity and needs no policy edit.
+   the `nfpreview-reader` role attribute on their identity and needs no policy edit.
 5. `POST /service-edge-router-policies` — `{serviceRoles: ["@<serviceId>"], edgeRouterRoles: ["#all"]}`
 6. Edge-router policy for the identities — **usually already there.** `ziti edge quickstart` creates
    `all-endpoints-public-routers` (`--edge-router-roles "#public" --identity-roles "#all"`) and
@@ -203,24 +203,24 @@ Role syntax is validated strictly — `ziti/v2@v2.0.0/controller/db/util.go:29-4
 Steps 1-3, 5 are one-time bootstrap. Steps 4 and 6 are one-time too under the attribute model. Per-preview,
 nothing is created at all — see §4.
 
-**CLI fallback**, if docpreview would rather shell out than link the API:
+**CLI fallback**, if nfpreview would rather shell out than link the API:
 
 ```
 ziti edge login <controller>:1280 -u admin -p <pw>
 
 # identity + JWT in one shot; the CLI re-GETs the identity and pulls enrollment.ott.jwt
 ziti edge create identity reviewer-alice \
-  --role-attributes docpreview-reader --jwt-output-file ./alice.jwt
+  --role-attributes nfpreview-reader --jwt-output-file ./alice.jwt
 
-ziti edge create config docpreview-intercept intercept.v1 \
-  '{"protocols":["tcp"],"addresses":["docpreview.ziti","*.docpreview.ziti"],"portRanges":[{"low":80,"high":80}]}'
+ziti edge create config nfpreview-intercept intercept.v1 \
+  '{"protocols":["tcp"],"addresses":["nfpreview.ziti","*.nfpreview.ziti"],"portRanges":[{"low":80,"high":80}]}'
 
-ziti edge create service docpreview-svc --configs docpreview-intercept -e ON
+ziti edge create service nfpreview-svc --configs nfpreview-intercept -e ON
 
-ziti edge create service-policy docpreview-bind Bind \
-  --identity-roles '@docpreview-host' --service-roles '@docpreview-svc'
-ziti edge create service-policy docpreview-dial Dial \
-  --identity-roles '#docpreview-reader' --service-roles '@docpreview-svc'
+ziti edge create service-policy nfpreview-bind Bind \
+  --identity-roles '@nfpreview-host' --service-roles '@nfpreview-svc'
+ziti edge create service-policy nfpreview-dial Dial \
+  --identity-roles '#nfpreview-reader' --service-roles '@nfpreview-svc'
 
 # only if the quickstart defaults are absent
 ziti edge create edge-router-policy all-endpoints-public-routers \
@@ -229,9 +229,9 @@ ziti edge create service-edge-router-policy all-routers-all-services \
   --edge-router-roles '#all' --service-roles '#all'
 ```
 
-**Self-enrolling docpreview's own hosting identity** is also in-tree:
+**Self-enrolling nfpreview's own hosting identity** is also in-tree:
 `sdk-golang@v1.2.8/ziti/enroll/enroll.go:161` — `Enroll(enFlags EnrollmentFlags) (*ziti.Config, error)`, with
-`ParseToken` at `:86`. So `docpreview` can be handed one JWT at setup and produce its own identity JSON, which
+`ParseToken` at `:86`. So `nfpreview` can be handed one JWT at setup and produce its own identity JSON, which
 `ziti.NewContextFromFile` (`ziti/contexts.go:54`) then loads.
 
 #### 2b. NetFoundry
@@ -250,8 +250,8 @@ dummy `/ignore-scope` are both required by Cognito), then `Authorization: Bearer
 
 ```
 POST https://gateway.production.netfoundry.io/core/v2/endpoints
-{"networkId":"…","name":"docpreview-alice","enrollmentMethod":{"ott":true},
- "attributes":["#docpreview-reader"]}
+{"networkId":"…","name":"nfpreview-alice","enrollmentMethod":{"ott":true},
+ "attributes":["#nfpreview-reader"]}
 ```
 
 Returns **202 Accepted** — creation is asynchronous. The resource carries top-level `jwt` and `jwtExpiresAt`;
@@ -270,10 +270,10 @@ unauthenticated probes 401.
 "Provision a network and service" guide drives `POST /identities`, `POST /services`, `POST /service-policies`
 under `https://{NF_CONTROLLER}/edge/management/v1/`, authenticating with a `zt-session` header, and documents
 the JWT at `.data.enrollment.ott.jwt` on `GET /identities/{id}` — byte-for-byte the shapes in §2a. So the code
-docpreview writes for a self-hosted controller works unchanged against a NetFoundry-hosted network; only
+nfpreview writes for a self-hosted controller works unchanged against a NetFoundry-hosted network; only
 authentication differs.
 
-**Frontdoor: no.** The Frontdoor API docpreview already talks to (`internal/expose/frontdoor.go`, `/shares`
+**Frontdoor: no.** The Frontdoor API nfpreview already talks to (`internal/expose/frontdoor.go`, `/shares`
 under `https://gateway.production.netfoundry.io/frontdoor`) is a public-ingress product; its published
 OpenAPI reference covers shares, frontends, custom-frontends, agents and executions, with no
 endpoint-enrollment resource at all. Treat the NetFoundry Cloud v2 API, not Frontdoor, as the NetFoundry
@@ -346,7 +346,7 @@ Answering the sub-questions directly:
   `CreateNewInstance | ReadWrite` (`:76-79`, `:114-117`). Its ops (`processMessageAsync`, `:205-289`) are
   `stop`/`start`/`status`/`capturelogs`/update-related only — no identity op.
 
-**Bottom line for Q3:** docpreview can automate this. Emitting a `.jwt` for the user to import through the GUI
+**Bottom line for Q3:** nfpreview can automate this. Emitting a `.jwt` for the user to import through the GUI
 is the zero-risk baseline and works today; the pipe write is a strictly better UX and needs no elevation, since
 the GUI that performs the identical call runs `asInvoker` (`DesktopEdge/app.manifest:20`).
 
@@ -357,7 +357,7 @@ identity is authorized to dial. On Windows, ZDEW runs a nameserver at TUN\_IP+1 
 installs NRPT rules per intercept domain via `Add-DnsClientNrptRule`; teardown is visible in
 `ZitiDesktopEdge.Client/Server/ServiceActions.cs:96-101`
 (`Get-DnsClientNrptRule | Where { $_.Comment.StartsWith('Added by ziti-edge-tunnel') } | Remove-DnsClientNrptRule`).
-A query for `my-branch.docpreview.ziti` gets an answer from that nameserver pointing at a synthetic IP inside
+A query for `my-branch.nfpreview.ziti` gets an answer from that nameserver pointing at a synthetic IP inside
 the tunneler's DNS CIDR; the browser connects there; the tunneler dials the ziti service and proxies bytes.
 
 **Wildcards work, and the IP is allocated lazily per hostname.** In the Go tunneler,
@@ -383,10 +383,10 @@ documented limitation: for wildcard domains, non-A/AAAA queries proxied to the h
 MX, SRV and TXT — irrelevant here.
 
 **Because the tunneler is a layer-4 proxy, the HTTP `Host` header survives end to end.** The browser sends
-`Host: my-branch.docpreview.ziti`; nothing rewrites it; docpreview's overlay listener sees it verbatim. That is
+`Host: my-branch.nfpreview.ziti`; nothing rewrites it; nfpreview's overlay listener sees it verbatim. That is
 what makes the wildcard model work.
 
-**Recommendation: one wildcard service, docpreview routes by Host.** Service-per-PR is the wrong shape:
+**Recommendation: one wildcard service, nfpreview routes by Host.** Service-per-PR is the wrong shape:
 
 - Every new service triggers a service-list update and a DNS/NRPT rule churn on **every** connected tunneler.
   A busy repo would have ZDEW rewriting NRPT rules continuously.
@@ -398,14 +398,14 @@ what makes the wildcard model work.
 
 The wildcard model creates **zero** management-API objects per preview. Publishing a preview becomes "register
 `my-branch` in an in-process map"; reaping becomes "delete the map entry". The single `intercept.v1` for
-`*.docpreview.ziti` port 80 covers every preview that will ever exist, and the tunneler allocates a synthetic
+`*.nfpreview.ziti` port 80 covers every preview that will ever exist, and the tunneler allocates a synthetic
 IP the first time each name is queried.
 
-The one thing you give up is per-preview authorization: everyone with the `docpreview-reader` attribute can
+The one thing you give up is per-preview authorization: everyone with the `nfpreview-reader` attribute can
 reach every preview. If per-PR access control is ever needed, do it in the HTTP handler (the ziti listener can
 report the dialing identity — `edge.Conn`/`Identifiable` carries it) rather than by multiplying services.
 
-### 5. Where this lives in docpreview
+### 5. Where this lives in nfpreview
 
 **It fits behind `Exposer` cleanly on the hosting side, and needs one new thing beside it on the identity
 side.**
@@ -459,32 +459,32 @@ Config, alongside `zrok2`/`frontdoor` in `internal/config/config.go:42-48`:
 exposer:
   kind: ziti
   ziti:
-    identity_file: /etc/docpreview/docpreview.json   # docpreview's own enrolled identity
-    service: docpreview
-    domain: docpreview.ziti
+    identity_file: /etc/nfpreview/nfpreview.json   # nfpreview's own enrolled identity
+    service: nfpreview
+    domain: nfpreview.ziti
     name_template: "{{.Name}}"
     # management API, only needed for the identity verb and bootstrap
     management_api: https://ziti-controller:1280
-    reader_role: docpreview-reader
+    reader_role: nfpreview-reader
 ```
 
-**Yes, it wants a new CLI verb.** `cmd/docpreview/main.go` dispatches with a plain switch (`:44-66`), so this
+**Yes, it wants a new CLI verb.** `cmd/nfpreview/main.go` dispatches with a plain switch (`:44-66`), so this
 is additive:
 
-- `docpreview identity add <name> [-o file.jwt]` — create the identity with `enrollment.ott = true` and the
-  `docpreview-reader` role attribute, read back `detail.Enrollment.Ott.JWT`, write it to a file or stdout.
-- `docpreview identity list` / `docpreview identity remove <name>` — the obvious companions; without `remove`
+- `nfpreview identity add <name> [-o file.jwt]` — create the identity with `enrollment.ott = true` and the
+  `nfpreview-reader` role attribute, read back `detail.Enrollment.Ott.JWT`, write it to a file or stdout.
+- `nfpreview identity list` / `nfpreview identity remove <name>` — the obvious companions; without `remove`
   there is no revocation story.
-- `docpreview identity bootstrap` — one-shot creation of the config, service, Bind/Dial policies and SERP
+- `nfpreview identity bootstrap` — one-shot creation of the config, service, Bind/Dial policies and SERP
   described in §2a, so an operator does not hand-build six objects.
 
 Management-API credentials belong in the existing vault (`internal/vault`, same treatment as
-`vault.KeyFrontdoorToken` at `cmd/docpreview/main.go:229`), not in the YAML.
+`vault.KeyFrontdoorToken` at `cmd/nfpreview/main.go:229`), not in the YAML.
 
-A nicety worth considering: `docpreview identity add` could, on Windows, offer to write the JWT straight to
+A nicety worth considering: `nfpreview identity add` could, on Windows, offer to write the JWT straight to
 `\\.\pipe\ziti-edge-tunnel.sock` as described in §3, turning enrollment into one command with no file
 handling. Keep the file output as the default and the pipe write behind a flag — the pipe is an internal
-contract of a component docpreview does not own.
+contract of a component nfpreview does not own.
 
 ## Open questions
 
@@ -499,10 +499,10 @@ contract of a component docpreview does not own.
   — the GUI that does exactly that runs `asInvoker`, and `TunnelInstanceDiscovery.EnumerateAsync`
   (`:98`) connect-probes pipes from the same context — but this is inferred. Settled by one line on a real
   install: `(Get-Acl \\.\pipe\ziti-edge-tunnel.sock).Access`.
-- **Which OpenZiti network.** docpreview has no controller today and zrok cannot lend one (§1). Is the
+- **Which OpenZiti network.** nfpreview has no controller today and zrok cannot lend one (§1). Is the
   intention to stand up a self-hosted controller + router, or to use a NetFoundry-hosted network? This is the
   real gate on the whole feature, and it is a decision, not a research finding.
-- **`.ziti` as a TLD.** `*.docpreview.ziti` never resolves publicly, which is the point, but it also means the
+- **`.ziti` as a TLD.** `*.nfpreview.ziti` never resolves publicly, which is the point, but it also means the
   name is dead on any machine without the tunneler running — including the machine that renders the PR
   comment's link preview. Worth confirming nobody's tooling chokes on an unresolvable link. An alternative is
   a real subdomain the org owns (`*.preview.internal.example.com`) intercepted by the tunneler, which
@@ -516,15 +516,15 @@ contract of a component docpreview does not own.
 
 ## Effort
 
-Rough sizing, assuming an OpenZiti network already exists and docpreview has admin credentials for it.
+Rough sizing, assuming an OpenZiti network already exists and nfpreview has admin credentials for it.
 
 | Piece | Size |
 |---|---|
 | `internal/expose/ziti.go` — context, single listener, Host-header mux, `Exposer` methods | ~250 lines, 1-2 days. It is `local.go` plus a ziti listener; the hard part (serving into an overlay listener) is already proven in `zrok.go`. |
 | `internal/config` additions + `buildExposer` case | trivial, under an hour |
 | `internal/ziti` management client — auth, create/list/delete identity, read OTT JWT | ~200 lines, 1 day — or much less: `zrok/v2/controller/automation` already wraps every one of these calls and is a dependency today. |
-| `docpreview identity {add,list,remove}` | ~150 lines, half a day |
-| `docpreview identity bootstrap` — six management objects, idempotent | ~200 lines, 1 day. Idempotency is the fiddly bit: check-then-create on each object. |
+| `nfpreview identity {add,list,remove}` | ~150 lines, half a day |
+| `nfpreview identity bootstrap` — six management objects, idempotent | ~200 lines, 1 day. Idempotency is the fiddly bit: check-then-create on each object. |
 | Tests | 1 day. The management client mocks like `frontdoor_test.go` does; the exposer's Host-routing is unit-testable without a network. |
 | Docs — `www/docs/exposers.md` section + a runbook alongside `runbooks/zrok2.md` | half a day |
 | End-to-end validation against a real controller and a real ZDEW install | 1-2 days, and this is where the surprises will be |

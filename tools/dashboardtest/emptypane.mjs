@@ -22,7 +22,7 @@ import {fileURLToPath} from "node:url";
 import {JSDOM, VirtualConsole} from "jsdom";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
+const dashboard = process.env.NFPREVIEW_DASHBOARD ||
   join(here, "..", "..", "internal", "daemon", "dashboard.html");
 
 let failures = 0;

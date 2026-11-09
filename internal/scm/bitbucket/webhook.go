@@ -11,7 +11,7 @@ import (
 	"github.com/netfoundry/docpreview/internal/scm"
 )
 
-// pullRequestObject is the subset of a Bitbucket pull request docpreview reads.
+// pullRequestObject is the subset of a Bitbucket pull request nfpreview reads.
 //
 // The same object appears in a webhook body under `pullrequest` and in the REST
 // response for a pull request, which is why it is one type used by both paths.
@@ -92,7 +92,7 @@ func (c *Client) VerifyWebhook(ctx context.Context, headers map[string][]string,
 		// field to fill in.
 		return nil, fmt.Errorf("%w: no X-Hub-Signature header — the webhook has no secret set "+
 			"(add one in Repository settings → Webhooks and store the same value with "+
-			"'docpreview vault set bitbucket.webhook_secret')", scm.ErrBadSignature)
+			"'nfpreview vault set bitbucket.webhook_secret')", scm.ErrBadSignature)
 	}
 	if !scm.VerifyHMACSHA256(c.webhookSecret.Reveal(), body, sig) {
 		return nil, scm.ErrBadSignature

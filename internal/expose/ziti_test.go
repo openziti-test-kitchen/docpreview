@@ -18,7 +18,7 @@ import (
 	"github.com/netfoundry/docpreview/internal/config"
 )
 
-// The ziti exposer routes by hostname label while the rest of docpreview
+// The ziti exposer routes by hostname label while the rest of nfpreview
 // identifies previews by ID. These cover the places those two namespaces can
 // disagree — which is the whole hazard of a single shared service.
 //
@@ -31,8 +31,8 @@ func testZiti(t *testing.T) *Ziti {
 
 	z, err := NewZiti(config.ZitiConfig{
 		IdentityFile: "unused-in-these-tests.json",
-		Service:      "docpreview-svc",
-		Domain:       "docpreview.ziti",
+		Service:      "nfpreview-svc",
+		Domain:       "nfpreview.ziti",
 		NameTemplate: "{{.Name}}",
 	}, discardLogger())
 	if err != nil {
@@ -74,7 +74,7 @@ func TestZitiRoutesEachLabelToItsOwnPreview(t *testing.T) {
 	}
 
 	for _, name := range []string{"alpha", "beta"} {
-		code, body := serve(t, z, name+".docpreview.ziti")
+		code, body := serve(t, z, name+".nfpreview.ziti")
 		if code != http.StatusOK || body != "this is "+name {
 			t.Errorf("%s served %d %q", name, code, body)
 		}
@@ -95,7 +95,7 @@ func TestZitiRebuildReplacesItsOwnEntry(t *testing.T) {
 		t.Fatalf("republishing the same preview was refused: %v", err)
 	}
 
-	if _, body := serve(t, z, "my-branch.docpreview.ziti"); body != "second build" {
+	if _, body := serve(t, z, "my-branch.nfpreview.ziti"); body != "second build" {
 		t.Errorf("serving %q, want the rebuild", body)
 	}
 }
@@ -125,7 +125,7 @@ func TestZitiRefusesACollisionBetweenDifferentPreviews(t *testing.T) {
 		t.Errorf("the error does not suggest a name template: %v", err)
 	}
 
-	if _, body := serve(t, z, "main.docpreview.ziti"); body != "repo A" {
+	if _, body := serve(t, z, "main.nfpreview.ziti"); body != "repo A" {
 		t.Errorf("the incumbent was displaced: serving %q", body)
 	}
 }
@@ -163,7 +163,7 @@ func TestZitiStalePublicationCannotWithdrawItsSuccessor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, body := serve(t, z, "shared.docpreview.ziti")
+	code, body := serve(t, z, "shared.nfpreview.ziti")
 	if code != http.StatusOK || body != "second preview" {
 		t.Fatalf("a stale publication tore down the live route: %d %q", code, body)
 	}
@@ -177,7 +177,7 @@ func TestZitiUnknownLabelListsWhatIsLive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, body := serve(t, z, "missing.docpreview.ziti")
+	code, body := serve(t, z, "missing.nfpreview.ziti")
 	if code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", code)
 	}
@@ -190,7 +190,7 @@ func TestZiti404EscapesTheHostHeader(t *testing.T) {
 	// The 404 interpolates Host, which anyone on the overlay controls.
 	z := testZiti(t)
 
-	_, body := serve(t, z, "<script>alert(1)</script>.docpreview.ziti")
+	_, body := serve(t, z, "<script>alert(1)</script>.nfpreview.ziti")
 	if strings.Contains(body, "<script>") {
 		t.Errorf("the Host header was not escaped: %q", body)
 	}
@@ -284,7 +284,7 @@ func serveOverConn(t *testing.T, server net.Conn, client net.Conn, h http.Handle
 		<-served
 	})
 
-	if _, err := io.WriteString(client, "GET / HTTP/1.1\r\nHost: alpha.docpreview.ziti\r\n\r\n"); err != nil {
+	if _, err := io.WriteString(client, "GET / HTTP/1.1\r\nHost: alpha.nfpreview.ziti\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}
 	// Reading the response is what guarantees the handler ran before the test
@@ -334,7 +334,7 @@ func TestZitiConnContextMustNotPanicOnAConnWithoutAnIdentity(t *testing.T) {
 
 func TestZitiDialerFromAContextWithoutOneIsEmpty(t *testing.T) {
 	// The direct form of the same guarantee, including a context carrying a
-	// *different* type under nothing docpreview owns.
+	// *different* type under nothing nfpreview owns.
 	if got := zitiDialerFrom(context.Background()); got != (zitiDialer{}) {
 		t.Errorf("an empty context produced %+v", got)
 	}
@@ -382,11 +382,11 @@ func TestZitiLogsANewIdentityOncePerPreview(t *testing.T) {
 
 func TestHostLabel(t *testing.T) {
 	tests := map[string]string{
-		"my-branch.docpreview.ziti":      "my-branch",
-		"my-branch.docpreview.ziti:8080": "my-branch",
-		"MY-BRANCH.docpreview.ziti":      "my-branch",
-		"docpreview.ziti":                "docpreview",
-		"bare":                           "bare",
+		"my-branch.nfpreview.ziti":      "my-branch",
+		"my-branch.nfpreview.ziti:8080": "my-branch",
+		"MY-BRANCH.nfpreview.ziti":      "my-branch",
+		"nfpreview.ziti":                "nfpreview",
+		"bare":                          "bare",
 
 		// An IP literal has no DNS label. Whatever comes back cannot name a
 		// preview, so the request 404s — which is the right answer for a

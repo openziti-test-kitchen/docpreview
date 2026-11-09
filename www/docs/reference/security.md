@@ -71,15 +71,15 @@ in a secondary secrets management solution."
 
 | Source | Spelling | The trade |
 |---|---|---|
-| A command | `exec:op read op://ops/docpreview` | Recommended. The key exists in the daemon process and nowhere else on the machine. Survives a reboot if the helper can run unattended. |
-| A file | `file:/etc/docpreview/master.key` | Survives a reboot. Anyone who can read that path can read every secret in the vault. |
-| The environment | `$DOCPREVIEW_MASTER_KEY` | Works, but not recommended. Every process running as the same user can read it, and it ends up in service definitions, process listings and crash dumps. |
+| A command | `exec:op read op://ops/nfpreview` | Recommended. The key exists in the daemon process and nowhere else on the machine. Survives a reboot if the helper can run unattended. |
+| A file | `file:/etc/nfpreview/master.key` | Survives a reboot. Anyone who can read that path can read every secret in the vault. |
+| The environment | `$NFPREVIEW_MASTER_KEY` | Works, but not recommended. Every process running as the same user can read it, and it ends up in service definitions, process listings and crash dumps. |
 | A person | nothing configured | **Default.** The only option with no key stored anywhere. The daemon starts locked and serves the dashboard until somebody unlocks it, so after a reboot it does nothing until then. |
 
 Write a key straight into a file, without it passing through a clipboard or a shell history:
 
 ```bash
-docpreview vault keygen -out /etc/docpreview/master.key
+nfpreview vault keygen -out /etc/nfpreview/master.key
 ```
 
 Two rules are enforced at startup:
@@ -94,14 +94,14 @@ The `exec:` form runs argv directly, never through a shell, so a config value ca
 The encrypted file leaks nothing, not even which secrets exist:
 
 ```bash
-$ grep -c "github" ~/.docpreview/vault.age
+$ grep -c "github" ~/.nfpreview/vault.age
 0
 ```
 
 #### Changing it
 
 ```bash
-docpreview vault rekey -generate -yes    # with the daemon stopped
+nfpreview vault rekey -generate -yes    # with the daemon stopped
 ```
 
 Every secret is kept, so you don't need the plaintexts. That matters, because the vault exists so nobody keeps a copy
@@ -149,7 +149,7 @@ roles, and they're different things rather than two levels of one:
 | `admin` | Everything, from anywhere the daemon is reachable |
 | `viewer` | Read everything and rebuild a preview. Nothing else |
 
-Set them with [`docpreview console password`](./cli.md). Until a **viewer** password exists nothing is gated, so an
+Set them with [`nfpreview console password`](./cli.md). Until a **viewer** password exists nothing is gated, so an
 upgrade can't lock an installation with no password out of its own dashboard.
 
 These are never gated:
@@ -178,7 +178,7 @@ restart signs everybody out**. Otherwise a session lasts twelve hours.
 
 Google sign-in is optional. An address at a domain on the allow-list gets **viewer**. Admin is password-only, because
 "somebody at this company" is not the same claim as "the person who runs this installation". Configure it with
-`docpreview console oauth-domains acme.com`. The check is an exact match on the part after the last `@`, not a suffix
+`nfpreview console oauth-domains acme.com`. The check is an exact match on the part after the last `@`, not a suffix
 test, so a list naming `acme.com` doesn't let in `evil-acme.com`.
 
 The client id and secret live in the vault. When the vault is locked, the login page shows only the password field,
@@ -238,7 +238,7 @@ forwarding headers.
 
 So it's one of three routes, not the only one. **Set an admin password and the surface has authentication.** The
 locality route is there so a fresh installation with no password can be set up from its own machine. The boundary
-there is the same one that already protects `docpreview vault set`: anyone who can reach `127.0.0.1` can run the
+there is the same one that already protects `nfpreview vault set`: anyone who can reach `127.0.0.1` can run the
 binary, and the API gives them nothing a shell doesn't.
 
 To manage credentials from another machine, set the admin password.
@@ -276,7 +276,7 @@ identity, so the "no id at all" row is tested offline only. Point the test at yo
 
 ### Point the tunnel at `webhook-only`, not the daemon
 
-This matters more than the header check. `docpreview webhook-only` forwards only `POST` to its webhook paths:
+This matters more than the header check. `nfpreview webhook-only` forwards only `POST` to its webhook paths:
 `/webhook/github` by default, or the paths you give it with `-path`, which you can repeat (`-path /webhook/bitbucket`).
 A `GET` on one of those paths gets a `405`, and everything else gets a `404`. The credential API isn't reachable
 through the tunnel at all, so the locality gate is a second line of defence instead of the only one. With `-zrok-name`
@@ -366,7 +366,7 @@ token that can write to yours. There's no setting to allow it, and there shouldn
 
 ## Repository config
 
-On any repository where anyone can open a pull request, an attacker can write `.docpreview.yml`. So:
+On any repository where anyone can open a pull request, an attacker can write `.nfpreview.yml`. So:
 
 - Paths are refused if absolute, drive-qualified or reaching outside the root.
 - `build.command` is honored under **both** drivers, so under `local` it's a shell command on the build host. That
@@ -378,14 +378,14 @@ On any repository where anyone can open a pull request, an attacker can write `.
 - `detect.script` is resolved through symlinks and checked again against the workspace root, because a symlink in an
   attacker's tree can point anywhere.
 - The detect script gets a minimal environment. Under `docker` it runs in a container with no network, the checkout
-  mounted read-only, and only `DOCPREVIEW=1` and `HOME=/tmp` set. Under `local` it gets `PATH`, `HOME` pointed at the
-  workspace and `DOCPREVIEW=1`, and only a script the project names runs. A build server's environment holds things a
+  mounted read-only, and only `NFPREVIEW=1` and `HOME=/tmp` set. Under `local` it gets `PATH`, `HOME` pointed at the
+  workspace and `NFPREVIEW=1`, and only a script the project names runs. A build server's environment holds things a
   pull request author shouldn't have.
 - **A build whose output contains a symlink is refused, not published**, under either driver. The preview file server
   blocks path traversal but follows symlinks out of its root, so `build/leak -> /etc/passwd` would be served to anyone
   with the preview URL.
 
-A [project](./projects.md) overrides every build field above. That's what projects are for: `.docpreview.yml` comes
+A [project](./projects.md) overrides every build field above. That's what projects are for: `.nfpreview.yml` comes
 in with the pull request, and the project is yours. A project doesn't relax any of these rules. Its `command` still
 runs, but you wrote it.
 
@@ -425,10 +425,10 @@ running a minute fast fails every API call with a 401 that says nothing about cl
 
 ## Operational advice
 
-**Set both passwords first.** Run `docpreview console password -role admin` and `-role viewer`. Until the viewer
-password exists nothing is gated. `docpreview console status` shows what is set and what this daemon listens on.
+**Set both passwords first.** Run `nfpreview console password -role admin` and `-role viewer`. Until the viewer
+password exists nothing is gated. `nfpreview console status` shows what is set and what this daemon listens on.
 
-**Bind loopback, and don't share the daemon.** The default `listen` is `127.0.0.1:8471`. Run `docpreview
+**Bind loopback, and don't share the daemon.** The default `listen` is `127.0.0.1:8471`. Run `nfpreview
 webhook-only` and point the tunnel at that. A share of the daemon itself publishes the dashboard, every preview and
 `/api/secrets` along with the webhook. See the [webhook tunnel guide](../guides/webhook-tunnel.md). The login is a
 second line here, not a replacement. `dashboard-only` publishes an allowlist of read paths, plus login, logout and

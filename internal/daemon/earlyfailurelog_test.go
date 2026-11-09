@@ -16,7 +16,7 @@ import (
 //
 // The build log is opened once the workspace, the repository config and the detect decision are
 // all in hand — so everything before that point (a clone that cannot authenticate, an unparsable
-// `.docpreview.yml`, a detect script at a path that does not exist) failed with no log at all. The
+// `.nfpreview.yml`, a detect script at a path that does not exist) failed with no log at all. The
 // pane then said "No build log was kept for <commit>", which is the sentence a log *pruned by
 // retention* produces. Somebody who clicks Rebuild and reads that concludes nothing ran, and goes
 // looking for a broken button instead of the misconfiguration they just saved.

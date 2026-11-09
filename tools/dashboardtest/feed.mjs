@@ -15,7 +15,7 @@ import {JSDOM, VirtualConsole} from "jsdom";
 import {liveStatus} from "./live.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const daemon = process.env.DOCPREVIEW_URL || "http://127.0.0.1:8471";
+const daemon = process.env.NFPREVIEW_URL || "http://127.0.0.1:8471";
 
 // Through live.mjs because /status is behind the login. A 401 body is valid JSON, so
 // fetching it directly would hand the page an object with no previews, and the error
@@ -28,7 +28,7 @@ vc.on("jsdomError", e => console.log("PAGE ERROR:", e.message));
 
 // Overridable, as in the other harnesses: an assertion that can only be run against the
 // current file cannot show that it would have failed before the change.
-const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
+const dashboard = process.env.NFPREVIEW_DASHBOARD ||
   join(here, "..", "..", "internal", "daemon", "dashboard.html");
 
 const dom = new JSDOM(readFileSync(dashboard, "utf8"), {

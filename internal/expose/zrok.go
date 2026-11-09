@@ -24,15 +24,15 @@ import (
 	"github.com/netfoundry/docpreview/internal/config"
 )
 
-// targetPrefix tags every share docpreview creates.
+// targetPrefix tags every share nfpreview creates.
 //
 // zrok's Target field is free-form for our purposes — with an SDK listener we
 // serve the traffic ourselves, so nothing dials the target — which makes it a
 // convenient place to stamp ownership. ListShares supports a substring filter
-// on Target, so this prefix is how Reap tells "a share docpreview made" from
+// on Target, so this prefix is how Reap tells "a share nfpreview made" from
 // "a share the operator made by hand in another terminal". Deleting the latter
 // would be rude.
-const targetPrefix = "docpreview:"
+const targetPrefix = "nfpreview:"
 
 // Zrok publishes previews over an OpenZiti overlay using zrok v2.
 //
@@ -126,8 +126,8 @@ func (z *Zrok) Validate(ctx context.Context) error {
 		// environment directory, and a revoked token — Validate cannot tell those apart
 		// from IsEnabled alone.
 		return errors.New("no zrok environment is enrolled here; sign up and enrol from the " +
-			"dashboard at /secrets, or run 'docpreview zrok invite <email>'. If you already " +
-			"have an environment, 'docpreview zrok status' says which directory this " +
+			"dashboard at /secrets, or run 'nfpreview zrok invite <email>'. If you already " +
+			"have an environment, 'nfpreview zrok status' says which directory this " +
 			"installation is looking in")
 	}
 
@@ -136,8 +136,8 @@ func (z *Zrok) Validate(ctx context.Context) error {
 	// environment, which sends the operator to re-enrol against the same wrong service.
 	apiEndpointForCheck, _ := z.root.ApiEndpoint()
 	if why := zrokUnsupported(z.root, apiEndpointForCheck); why != "" {
-		return errors.New(why + "; 'docpreview zrok status' says which directory this " +
-			"installation reads, and 'docpreview zrok disable -yes' then a fresh enrolment " +
+		return errors.New(why + "; 'nfpreview zrok status' says which directory this " +
+			"installation reads, and 'nfpreview zrok disable -yes' then a fresh enrolment " +
 			"moves it")
 	}
 
@@ -243,7 +243,7 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	//
 	// The deadline is the SDK client's, so a timed-out create may well have succeeded on
 	// the controller — in which case the retry creates a second share and the first is an
-	// orphan holding nothing. That is recoverable: it carries the `docpreview:` target
+	// orphan holding nothing. That is recoverable: it carries the `nfpreview:` target
 	// prefix, so the next startup's Reap collects it, and the newer share is the one
 	// bound to the name. The alternative is what this replaced — a preview that built
 	// successfully, has its artifacts on disk, and is not served because one HTTP request
@@ -1138,7 +1138,7 @@ func (z *Zrok) ReleaseName(ctx context.Context, name string) error {
 	return nil
 }
 
-// reapName deletes any docpreview-owned share currently bound to name. It
+// reapName deletes any nfpreview-owned share currently bound to name. It
 // reports whether it deleted anything, so Publish knows a retry is worthwhile.
 func (z *Zrok) reapName(ctx context.Context, name string) bool {
 	client, err := z.root.Client()

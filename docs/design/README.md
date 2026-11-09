@@ -1,6 +1,6 @@
-# docpreview design documents
+# nfpreview design documents
 
-These describe how docpreview works and **why it works that way**. They are for someone changing the code.
+These describe how nfpreview works and **why it works that way**. They are for someone changing the code.
 
 They are not the user documentation. That lives in `www/` and answers "how do I run this"; these answer "what will
 break if I change this". Where the two overlap, `www/` is the contract and this is the reasoning behind it.
@@ -51,11 +51,11 @@ them by line number, so edit them with care.
 | Document | Covers |
 |---|---|
 | [ziti-native-previews.md](ziti-native-previews.md) | Tunneler-only previews: the evidence behind the ziti exposer, per-preview authorization, effort |
-| [vercel-features.md](vercel-features.md) | Vercel preview features docpreview lacks, and a verdict on each |
+| [vercel-features.md](vercel-features.md) | Vercel preview features nfpreview lacks, and a verdict on each |
 
 ## CLAUDE.md files
 
-Each substantial directory carries one: the root, `cmd/docpreview/`, `internal/daemon/`, `internal/vault/`,
+Each substantial directory carries one: the root, `cmd/nfpreview/`, `internal/daemon/`, `internal/vault/`,
 `internal/expose/`, `internal/scm/`, `demo/` and `www/`. They are the short version — the rules that must not be
 relaxed and the traps that have already caught somebody — and they point here for the reasoning. Keep them
 consistent with these documents; a CLAUDE.md that contradicts a design doc is worse than one that is missing.
@@ -71,4 +71,4 @@ A claim of the form "X must not Y" is normally guarded by a test. Where it is no
 
 - **Invariant** — must hold after any change. Breaking one is a correctness bug, not a regression in polish.
 - **Deliberate limit** — a known gap that is not worth closing, with the reason.
-- **Open** — undecided, and the decision is recorded in `TODO.md` rather than here.
+- **Open** — undecided. The doc says what is open and what the options are.

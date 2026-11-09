@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// Google sign-in for the dashboard, done by docpreview rather than by whatever publishes it.
+// Google sign-in for the dashboard, done by nfpreview rather than by whatever publishes it.
 //
 // # Why not delegate to the tunnel
 //
@@ -24,12 +24,12 @@ import (
 // email domain at its frontend, which is less code and stronger — an unauthenticated request never
 // reaches this process. It fails for two reasons that only show up once somebody uses it.
 //
-// It is not docpreview's page, so it cannot offer a *choice*. The operator wants one login
+// It is not nfpreview's page, so it cannot offer a *choice*. The operator wants one login
 // screen with a password field and a Google button beside it; what the frontend gives is zrok's
-// own sign-in for zrok.io, before docpreview is reached, with no way to type a password instead.
+// own sign-in for zrok.io, before nfpreview is reached, with no way to type a password instead.
 //
 // And two independent redirectors on one URL fight. zrok's interstitial redirects to authorize,
-// docpreview redirects to its own form, and the browser bounces between them whenever the two disagree
+// nfpreview redirects to its own form, and the browser bounces between them whenever the two disagree
 // about who owns the request — from the outside, indistinguishable from a redirect loop.
 //
 // So the share stays open and this process does the gating.
@@ -108,7 +108,7 @@ func (i *Ingress) googleEnabled(ctx context.Context) (bool, string) {
 	}
 	if len(i.oauthDomains(ctx)) == 0 {
 		return false, "no email domains are allowed: set them on the dashboard, or with " +
-			"docpreview console oauth-domains"
+			"nfpreview console oauth-domains"
 	}
 	if i.daemon == nil || strings.TrimSpace(i.daemon.cfg.DashboardURL) == "" {
 		return false, "dashboard_url is not set, so Google has nowhere to send anybody back to"
@@ -325,7 +325,7 @@ func (i *Ingress) exchangeGoogleCode(ctx context.Context, clientID, clientSecret
 
 	// A timeout on both calls. Without one, a hung Google leaves a browser waiting on a
 	// request that never returns, and the reader's only recourse is to start again — into
-		// another hung request.
+	// another hung request.
 	client := &http.Client{Timeout: 20 * time.Second}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, googleTokenURL,

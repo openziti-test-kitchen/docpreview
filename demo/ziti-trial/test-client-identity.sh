@@ -16,7 +16,7 @@ if "$ZITI" edge list identities 'name="test-reader"' | grep -q test-reader; then
 fi
 
 "$ZITI" edge create identity test-reader \
-  --role-attributes docpreview-reader \
+  --role-attributes nfpreview-reader \
   --jwt-output-file "$OUT/test-reader.jwt"
 
 rm -f "$OUT/test-reader.json"

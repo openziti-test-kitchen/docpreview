@@ -583,8 +583,8 @@ func TestFrontdoorReapDeletesOnlyTaggedOrphans(t *testing.T) {
 	// by hand in another terminal, and deleting those would be rude.
 	fake := &fakeFrontdoor{
 		listPages: []string{`{"content":[
-			{"id":"keep-me",  "tag":"docpreview:p1"},
-			{"id":"orphan",   "tag":"docpreview:p2"},
+			{"id":"keep-me",  "tag":"nfpreview:p1"},
+			{"id":"orphan",   "tag":"nfpreview:p2"},
 			{"id":"not-ours", "tag":"someone-elses-thing"},
 			{"id":"untagged"}
 		]}`},
@@ -600,15 +600,15 @@ func TestFrontdoorReapDeletesOnlyTaggedOrphans(t *testing.T) {
 }
 
 func TestFrontdoorReapKeepsABuildShareOfAKeptPreview(t *testing.T) {
-	// A build share's tag is "docpreview:<preview>/<build>", and keep carries that
+	// A build share's tag is "nfpreview:<preview>/<build>", and keep carries that
 	// same key. Trimming the prefix and matching the whole remainder is what makes
 	// a kept build survive; matching the preview id alone would keep every build
 	// ever made, and matching only the part before the slash would delete them all.
 	fake := &fakeFrontdoor{
 		listPages: []string{`{"content":[
-			{"id":"branch", "tag":"docpreview:p1"},
-			{"id":"b-kept", "tag":"docpreview:p1/build-7"},
-			{"id":"b-gone", "tag":"docpreview:p1/build-3"}
+			{"id":"branch", "tag":"nfpreview:p1"},
+			{"id":"b-kept", "tag":"nfpreview:p1/build-7"},
+			{"id":"b-gone", "tag":"nfpreview:p1/build-3"}
 		]}`},
 	}
 	fd, _ := newTestFrontdoor(t, fake)
@@ -638,7 +638,7 @@ func TestFrontdoorReapDoesNotDeleteAShareThisProcessIsServing(t *testing.T) {
 
 	// The listing reports it, tagged, and keep does not mention it.
 	fake.mu.Lock()
-	fake.listPages = []string{`{"content":[{"id":"share-1","tag":"docpreview:p1"}]}`}
+	fake.listPages = []string{`{"content":[{"id":"share-1","tag":"nfpreview:p1"}]}`}
 	fake.mu.Unlock()
 
 	if err := fd.Reap(context.Background(), nil); err != nil {
@@ -656,8 +656,8 @@ func TestFrontdoorReapPagesThroughTheListing(t *testing.T) {
 	// the second pull request, because a preview holds one share per kept build.
 	fake := &fakeFrontdoor{
 		listPages: []string{
-			`{"content":[{"id":"page0","tag":"docpreview:p1"}]}`,
-			`{"content":[{"id":"page1","tag":"docpreview:p2"}]}`,
+			`{"content":[{"id":"page0","tag":"nfpreview:p1"}]}`,
+			`{"content":[{"id":"page1","tag":"nfpreview:p2"}]}`,
 		},
 	}
 	fd, _ := newTestFrontdoor(t, fake)
@@ -776,7 +776,7 @@ func TestFrontdoorDeleteTreatsA404OnARetryAsSuccess(t *testing.T) {
 
 func TestFrontdoorDeleteReportsA404OnTheFirstAttempt(t *testing.T) {
 	// The other half: a 404 straight away means the share was already gone when
-	// the listing named it, which means something else is deleting docpreview's
+	// the listing named it, which means something else is deleting nfpreview's
 	// shares. That is worth knowing rather than swallowing.
 	fake := &fakeFrontdoor{deleteStatus: []int{http.StatusNotFound}}
 	fd, _ := newTestFrontdoor(t, fake)

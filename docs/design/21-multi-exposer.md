@@ -175,7 +175,7 @@ Every existing comment gets rewritten once, on the first status change after the
 
 The easy half. `projects` already carries per-project build settings, so this is one more column: a list of exposer
 kinds, empty meaning "the installation's default set". The projects page has the fields next to the driver and
-image, and `.docpreview.yml` must **not** be allowed to set it — the same rule as every other project field, for
+image, and `.nfpreview.yml` must **not** be allowed to set it — the same rule as every other project field, for
 the same reason: the file arrives in the pull request, so on any repository where opening one is not a privilege
 its author would otherwise choose where their branch gets published.
 

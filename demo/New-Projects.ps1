@@ -20,7 +20,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$dp = & (Join-Path $PSScriptRoot 'Resolve-Docpreview.ps1') -Root $Root
+$dp = & (Join-Path $PSScriptRoot 'Resolve-Nfpreview.ps1') -Root $Root
 $cfg      = Join-Path $Root 'config.yml'
 $template = Join-Path $Root 'template'
 
@@ -29,14 +29,14 @@ if (-not (Test-Path (Join-Path $template 'node_modules'))) {
 }
 
 # See Start-Demo.ps1 for why a fixed passphrase is acceptable here.
-if (-not $env:DOCPREVIEW_MASTER_KEY) { $env:DOCPREVIEW_MASTER_KEY = 'flow-demo-passphrase' }
+if (-not $env:NFPREVIEW_MASTER_KEY) { $env:NFPREVIEW_MASTER_KEY = 'flow-demo-passphrase' }
 
 # config.yml maps ALGOLIA_WRITE_KEY to this vault entry. Storing it here rather than in the config file is
 # the whole point: the value never appears in anything tracked, and the redactor is built from the value.
 'dpfake_9f2a1c4b7e01d3f5a8c6b2e4' | & $dp vault set demo.algolia_key -config $cfg
 if ($LASTEXITCODE -ne 0) { throw "storing the demo secret failed with exit code $LASTEXITCODE" }
 
-# baseUrl has to come from the environment, because docpreview mounts each preview under a path it chooses and
+# baseUrl has to come from the environment, because nfpreview mounts each preview under a path it chooses and
 # Docusaurus bakes the value in at build time. DOCUSAURUS_BASE_URL is set by the builder for exactly this.
 #
 # Only the first `title:` is rewritten: the same key appears on the navbar and on every footer column, and
@@ -67,7 +67,7 @@ foreach ($proj in $Projects) {
     Write-Host "== creating remote $proj"
     if (Test-Path $repo) { Remove-Item -Recurse -Force $repo }
     & $dp sim init $proj -config $cfg | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "docpreview sim init $proj failed with exit code $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { throw "nfpreview sim init $proj failed with exit code $LASTEXITCODE" }
 
     Write-Host "== seeding $proj"
     if (Test-Path $work) { Remove-Item -Recurse -Force $work }
@@ -103,7 +103,7 @@ console.log('preflight: ok');
     $pkg.scripts | Add-Member -NotePropertyName 'prebuild' -NotePropertyValue 'node preflight.js' -Force
     $pkg | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $pkgPath -Encoding utf8
 
-    Set-Content -LiteralPath (Join-Path $work '.docpreview.yml') -Encoding utf8 -Value @"
+    Set-Content -LiteralPath (Join-Path $work '.nfpreview.yml') -Encoding utf8 -Value @"
 build:
   dir: .
   command: yarn build
@@ -139,7 +139,7 @@ sidebar_position: 1
 
 The introduction page for **$proj**.
 
-This site is a real Docusaurus build, produced by ``yarn build`` inside a docpreview workspace. Editing
+This site is a real Docusaurus build, produced by ``yarn build`` inside a nfpreview workspace. Editing
 anything under ``docs/`` and pushing rebuilds it.
 "@
 

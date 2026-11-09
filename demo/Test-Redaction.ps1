@@ -15,12 +15,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$dp = & (Join-Path $PSScriptRoot 'Resolve-Docpreview.ps1') -Root $Root
+$dp = & (Join-Path $PSScriptRoot 'Resolve-Nfpreview.ps1') -Root $Root
 $cfg  = Join-Path $Root 'secret-config.yml'
 $data = Join-Path $Root 'secret-data'
 $work = Join-Path $Root 'work-secrets'
 
-$env:DOCPREVIEW_MASTER_KEY = 'flow-demo-passphrase'
+$env:NFPREVIEW_MASTER_KEY = 'flow-demo-passphrase'
 
 foreach ($d in @($data, (Join-Path $Root 'secret-repos'), $work)) {
     if (Test-Path $d) { Remove-Item -Recurse -Force $d }
@@ -77,7 +77,7 @@ fs.mkdirSync('build');
 fs.writeFileSync('build/index.html', '<!doctype html><meta charset=utf-8><h1>secrets</h1>');
 '@
 
-Set-Content -LiteralPath (Join-Path $work '.docpreview.yml') -Encoding utf8 -Value @'
+Set-Content -LiteralPath (Join-Path $work '.nfpreview.yml') -Encoding utf8 -Value @'
 build:
   dir: .
   command: node build.js

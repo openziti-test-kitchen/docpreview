@@ -6,7 +6,7 @@ sidebar_position: 3
 
 # Add a private Bitbucket repository
 
-This takes one more private Bitbucket Cloud repository to a working preview on a docpreview that is already
+This takes one more private Bitbucket Cloud repository to a working preview on a nfpreview that is already
 running. If this is the first Bitbucket repository the daemon has ever seen, do the once-per-daemon part of
 [Connect Bitbucket Cloud](./bitbucket.md) first, then come back here.
 
@@ -27,8 +27,8 @@ start.
 | You need | Where it comes from |
 |---|---|
 | Admin credentials on the Bitbucket repository | A Bitbucket login with the repository's **Admin** permission. See above |
-| The dashboard admin login | Whoever runs docpreview. See "Reaching the Projects page" below |
-| The webhook URL | The daemon's webhook tunnel, e.g. `https://docpreview.shares.zrok.io/webhook/bitbucket` |
+| The dashboard admin login | Whoever runs nfpreview. See "Reaching the Projects page" below |
+| The webhook URL | The daemon's webhook tunnel, e.g. `https://nfpreview.shares.zrok.io/webhook/bitbucket` |
 | The Bitbucket webhook secret | Already in the vault as `bitbucket.webhook_secret`. See Step 4 |
 | The directory holding the site | The repository. The directory with the site's `package.json`, e.g. `docusaurus/` |
 
@@ -41,15 +41,15 @@ is allowed only from the daemon's own machine, so reach it through an SSH tunnel
 ssh -N -L 18471:127.0.0.1:8471 <build-host>
 ```
 
-and open `http://127.0.0.1:18471/projects`. The local port is 18471 so it cannot collide with a docpreview running
+and open `http://127.0.0.1:18471/projects`. The local port is 18471 so it cannot collide with a nfpreview running
 on your own machine.
 
 If a viewer password is set, the tunnel still asks you to sign in. The console passwords are stored only as argon2
-hashes, so docpreview cannot tell you one you have lost. Keep them in a password manager, and reset a lost one on
+hashes, so nfpreview cannot tell you one you have lost. Keep them in a password manager, and reset a lost one on
 the build host (it reads the new password from the terminal, never from the command line):
 
 ```sh
-ssh -t <build-host> "sudo -u docpreview /usr/local/bin/docpreview console password -role admin -config /etc/docpreview/config.yml"
+ssh -t <build-host> "sudo -u nfpreview /usr/local/bin/nfpreview console password -role admin -config /etc/nfpreview/config.yml"
 ```
 
 Use `-role viewer` for the viewer password. Twelve characters minimum.
@@ -88,11 +88,11 @@ somewhere your team will find it (the team's runbook, a ticket, a calendar remin
 expiry):
 
 - the token's name, the repository, and the expiry date
-- that it is stored as the credential of the docpreview project for `<workspace>/<repo>`, plus the name of any
+- that it is stored as the credential of the nfpreview project for `<workspace>/<repo>`, plus the name of any
   project environment variable that holds the same token (see Step 3)
 - these rotation steps:
   1. Create a new token on the same page, with the same name and scope and a new expiry.
-  2. In docpreview, open the project, paste the new token into its credential box, **Save**, then press
+  2. In nfpreview, open the project, paste the new token into its credential box, **Save**, then press
      **Test credential**. A rotation does not rebuild the open pull requests.
   3. Update any project environment variable that held the old token.
   4. Revoke the old token in Bitbucket.
@@ -108,7 +108,7 @@ Through the tunnel, open **Projects → New project**.
 | Directory | The directory holding the site's `package.json`, relative to the repository root, e.g. `docusaurus` |
 
 Leave the other fields blank unless you know they are needed: a blank field defers to the framework preset, then
-to the repository's own `.docpreview.yml`. Press **Create project**.
+to the repository's own `.nfpreview.yml`. Press **Create project**.
 
 The new card then shows a red `Nothing queued: … no Bitbucket credential for <workspace>/<repo>`. That is
 expected: creating a project tries to build its default branch straight away, and there is no token yet. Step 3
@@ -120,7 +120,7 @@ and not always `main` (`develop`, for example). A directory with no `package.jso
 
 :::note The directory decides which pull requests build
 
-A pull request is built only when it changes something under the project's **Directory** (or `.docpreview.yml`).
+A pull request is built only when it changes something under the project's **Directory** (or `.nfpreview.yml`).
 One that touches only files elsewhere in the repository is skipped. Set the directory before the first pull request
 arrives, not after.
 
@@ -147,7 +147,7 @@ In the repository, open **Repository settings → Webhooks → Add webhook**. As
 
 | Field | Value |
 |---|---|
-| Title | `docpreview` |
+| Title | `nfpreview` |
 | URL | The webhook URL, ending `/webhook/bitbucket` |
 | Secret | The existing `bitbucket.webhook_secret` (see the warning below) |
 | Status | Active |
@@ -161,7 +161,7 @@ The daemon has **one** Bitbucket webhook secret, and every repository's webhook 
 **Generate** button on the Settings page replaces it, and every webhook that was already set up with the old value
 starts failing with `401` until each one is edited.
 
-docpreview never shows a stored secret again. If nobody kept the current value, you can either:
+nfpreview never shows a stored secret again. If nobody kept the current value, you can either:
 
 - set up the webhook once at the **workspace** level (**Workspace settings → Webhooks**), which covers every
   repository in the workspace, or
@@ -189,5 +189,5 @@ docpreview never shows a stored secret again. If nobody kept the current value, 
 On the build host, the daemon's log names each decision:
 
 ```sh
-journalctl -u docpreview -u docpreview-webhook -f
+journalctl -u nfpreview -u nfpreview-webhook -f
 ```

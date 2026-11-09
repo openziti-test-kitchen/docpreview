@@ -58,9 +58,9 @@ import (
 	"github.com/netfoundry/docpreview/internal/vault"
 )
 
-// statusKey identifies docpreview's commit build status. Like GitHub's check name
+// statusKey identifies nfpreview's commit build status. Like GitHub's check name
 // it doubles as the update key, so it must not vary.
-const statusKey = "docpreview"
+const statusKey = "nfpreview"
 
 // Client talks to Bitbucket Cloud with a stored credential.
 //
@@ -205,7 +205,7 @@ func (c *Client) credentialFor(owner, repo string) (credential, error) {
 		return credential{}, fmt.Errorf(
 			"no Bitbucket credential for %s/%s: add an access token to that project on "+
 				"/projects, or store a workspace-wide one with "+
-				"'docpreview vault set %s'", owner, repo, vault.KeyBitbucketAccessToken)
+				"'nfpreview vault set %s'", owner, repo, vault.KeyBitbucketAccessToken)
 	}
 	return c.creds, nil
 }
@@ -357,7 +357,7 @@ func (c *Client) Validate(ctx context.Context) error {
 		return nil
 	}
 	return fmt.Errorf("bitbucket rejected the stored credential "+
-		"(check 'docpreview vault set %s' and that the token has repository and pullrequest scopes): %w",
+		"(check 'nfpreview vault set %s' and that the token has repository and pullrequest scopes): %w",
 		c.tokenKey(), err)
 }
 
@@ -693,13 +693,13 @@ func (c *Client) upsertComment(ctx context.Context, r scm.Report) error {
 	return nil
 }
 
-// findComment locates docpreview's comment by its marker.
+// findComment locates nfpreview's comment by its marker.
 //
 // Two Bitbucket-specific filters, and the first one is a "must not" with a test.
 // The list endpoint returns soft-deleted comments *with their bodies intact*, so a
 // marker match against one produces an update to a comment nobody can see — the
 // preview would report success while showing nothing. `pending` comments are
-// unpublished review drafts; docpreview never creates one, and skipping them costs
+// unpublished review drafts; nfpreview never creates one, and skipping them costs
 // nothing and removes one more way to match something invisible.
 func (c *Client) findComment(ctx context.Context, pr model.PullRequest, previewID string) (int64, error) {
 	path := fmt.Sprintf("/2.0/repositories/%s/%s/pullrequests/%d/comments?pagelen=100",
@@ -785,7 +785,7 @@ func buildStatus(r scm.Report) (state, description string) {
 	case scm.StateReady:
 		return "SUCCESSFUL", "The preview is published."
 	case scm.StateFailed:
-		return "FAILED", "The build failed. See the docpreview comment."
+		return "FAILED", "The build failed. See the nfpreview comment."
 	case scm.StateSkipped:
 		// Bitbucket has no neutral state; see postBuildStatus.
 		return "STOPPED", "No documentation changed, so nothing was built."
@@ -794,7 +794,7 @@ func buildStatus(r scm.Report) (state, description string) {
 	}
 }
 
-// Retract removes docpreview's comment.
+// Retract removes nfpreview's comment.
 //
 // The build status is deliberately left alone, for the same reason the GitHub client
 // leaves the check run: erasing what happened to a specific commit is revisionist.

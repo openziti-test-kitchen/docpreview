@@ -9,7 +9,7 @@
  * netfoundry.io — worse than no search at all.
  *
  * A site-local override wins over one from a theme plugin, so this puts the
- * stub back. Delete this file the day docpreview's docs get their own crawler
+ * stub back. Delete this file the day nfpreview's docs get their own crawler
  * and a `themeConfig.algolia` block to point at it.
  */
 export default function SearchBar(): null {

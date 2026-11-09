@@ -26,14 +26,14 @@ the result carries over.
 
 Every feature below needs one mapping: overlay identity to SCM user. An identity id like `TeiDKUIAN` means nothing to
 a pull request. A GitHub login like `alice` means nothing to the overlay. 18-exposer-ziti.md rejects a server-side
-allowlist ("Option B") because docpreview would be inventing that mapping. That objection stands. The question is
-where a mapping can come from that docpreview does not invent.
+allowlist ("Option B") because nfpreview would be inventing that mapping. That objection stands. The question is
+where a mapping can come from that nfpreview does not invent.
 
 | Source | How | Verdict |
 |---|---|---|
-| The identity's name | Enroll reviewers as `gh-alice`, and docpreview strips the prefix | Cheapest. Anyone who can rename identities on the controller can impersonate. Fine for a network the operator owns outright |
+| The identity's name | Enroll reviewers as `gh-alice`, and nfpreview strips the prefix | Cheapest. Anyone who can rename identities on the controller can impersonate. Fine for a network the operator owns outright |
 | A role attribute | `#gh-alice` on the identity | Same trust as the name, and survives a rename. Several attributes per identity cover several SCMs |
-| The identity's `externalId` | Set when the identity is created | Meant for this. **Not verified:** whether `GetDialerIdentityName` has a sibling that returns it, or docpreview needs a management-API lookup per new dialer |
+| The identity's `externalId` | Set when the identity is created | Meant for this. **Not verified:** whether `GetDialerIdentityName` has a sibling that returns it, or nfpreview needs a management-API lookup per new dialer |
 | An external JWT signer | The reviewer signs in through an IdP the controller trusts, and the IdP subject is the identity | Strongest, and no enrollment ceremony. GitHub is not an OIDC provider for users, so the IdP subject still has to be joined to a GitHub login somewhere |
 
 **Recommended: role attributes, `#<scm>-<login>`.** They are set by whoever administers the network, which is
@@ -41,15 +41,15 @@ the same person who already decides who may dial the service at all. They need n
 credentials, which `configure ziti` uses and `serve` does not hold today. An identity name can be changed by the same people,
 but nobody expects a rename to change a grant, so the attribute is the less surprising place to keep it.
 
-`docpreview identity add` ([18-exposer-ziti.md](18-exposer-ziti.md), step 9) is the natural place to set it:
-`docpreview identity add alice -github alice` creates the identity, adds `#docpreview-reader` and `#github-alice`,
+`nfpreview identity add` ([18-exposer-ziti.md](18-exposer-ziti.md), step 9) is the natural place to set it:
+`nfpreview identity add alice -github alice` creates the identity, adds `#nfpreview-reader` and `#github-alice`,
 and prints the enrollment token.
 
 ## Three features, in the order to build them
 
 ### 1. "Seen by" in the pull request comment
 
-docpreview edits one comment per pull request in place. Add a line under the preview link:
+nfpreview edits one comment per pull request in place. Add a line under the preview link:
 
 > Seen by alice, bob
 
@@ -67,24 +67,24 @@ named on the pull request. Make it a project setting, off by default.
 ### 2. A preview only the pull request's people can open
 
 This is 18-exposer-ziti.md's Option C, step 7. The rule it asks for, and could not name, is: the pull request's
-author, its requested reviewers, and anyone carrying an operator attribute such as `#docpreview-operator`.
+author, its requested reviewers, and anyone carrying an operator attribute such as `#nfpreview-operator`.
 
 With the mapping above, `route` checks the dialer's `#github-<login>` attribute against that set before
 serving. A dialer outside it gets a 403 that names the pull request and the identity, the same shape as the
 `admin_identities` refusal.
 
-Cost: docpreview must fetch the reviewer list, which it does not do today, and refresh it when a reviewer is
+Cost: nfpreview must fetch the reviewer list, which it does not do today, and refresh it when a reviewer is
 added. GitHub sends `pull_request.review_requested` and Bitbucket sends `pullrequest:updated` on a reviewer change, so
 this can ride webhooks rather than a poll. The attributes have to be read from the controller,
 and cached, because the dialer's attributes are not on the connection. **Not verified:** whether the SDK exposes
 the dialer's attributes on the hosting side, or only its id and name.
 
-The boundary lives in docpreview's process, not on the controller. That is the trade 18-exposer-ziti.md already
+The boundary lives in nfpreview's process, not on the controller. That is the trade 18-exposer-ziti.md already
 accepts for Option C, and `docs/design/10-security.md` must say so the day this ships.
 
 ### 3. A real domain instead of `.ziti`
 
-Intercept `*.preview.example.com`, a zone the organization owns, instead of `*.docpreview.ziti`. On a machine
+Intercept `*.preview.example.com`, a zone the organization owns, instead of `*.nfpreview.ziti`. On a machine
 without the tunneler the link then fails as NXDOMAIN on a real domain, rather than as an invalid TLD that chat
 clients and link checkers flag. [ziti-native-previews.md](ziti-native-previews.md) lists this as an open question.
 
@@ -103,5 +103,5 @@ the comment carries two links, and "Seen by" counts only the overlay one, since 
 
 - Whether the hosting side can read a dialer's `externalId` or role attributes without a management-API call.
 - How Ziti Desktop Edge's NRPT rule for a real zone interacts with a public resolver.
-- The webhook events named under feature 2 are the expected ones, not checked against what docpreview subscribes
+- The webhook events named under feature 2 are the expected ones, not checked against what nfpreview subscribes
   to today.

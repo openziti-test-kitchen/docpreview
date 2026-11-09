@@ -23,7 +23,7 @@ A move is stop, copy, start. Never an overlap.
 
 | What | Where it is | |
 |---|---|---|
-| The database | `<data_dir>/docpreview.db` | **and its `-wal` file**, see Step 2 |
+| The database | `<data_dir>/nfpreview.db` | **and its `-wal` file**, see Step 2 |
 | The credential store | `<data_dir>/vault.age` | encrypted, useless without the key |
 | The master key | wherever `vault.key_source` points | deliberately outside `data_dir` |
 | The zrok environment | `~/.zrok2` **or** `<data_dir>/zrok2` | the identity that owns every reserved name, see Step 4 |
@@ -45,11 +45,11 @@ it. `logs/` is build history that nothing needs to run. `artifacts/` is the buil
 Stop all three processes: the daemon and both shares.
 
 ```powershell
-Get-Process docpreview | Stop-Process
+Get-Process nfpreview | Stop-Process
 ```
 
 ```bash
-pkill docpreview
+pkill nfpreview
 ```
 
 Make sure nothing answers before you continue. A daemon still running is the one mistake in this guide that
@@ -63,10 +63,10 @@ You want `000` or a connection error. `200` means something is still up.
 
 ## Step 2: Take the database as one consistent file
 
-The daemon opens sqlite in WAL mode. A write is appended to `docpreview.db-wal` and folded into `docpreview.db`
+The daemon opens sqlite in WAL mode. A write is appended to `nfpreview.db-wal` and folded into `nfpreview.db`
 later, at a checkpoint. That keeps the reaper's reads from blocking a worker's writes.
 
-:::warning `docpreview.db` on its own is not the current state
+:::warning `nfpreview.db` on its own is not the current state
 
 It holds the state as of the last checkpoint. Everything since then is in the `-wal` file, which is often larger
 than the database. On a live instance, a 77 KB database beside a 519 KB WAL is normal. Copy the `.db` alone and the
@@ -78,13 +78,13 @@ copied is a valid older database.
 `VACUUM INTO` writes a single file with the WAL already folded in:
 
 ```powershell
-sqlite3 "$data\docpreview.db" "VACUUM INTO '$out\docpreview.db'"
+sqlite3 "$data\nfpreview.db" "VACUUM INTO '$out\nfpreview.db'"
 ```
 
 Copying all three files together also works, as long as the daemon is stopped:
 
 ```powershell
-Copy-Item "$data\docpreview.db*" -Destination $out
+Copy-Item "$data\nfpreview.db*" -Destination $out
 ```
 
 Prefer `VACUUM INTO` when the destination is a container volume or another host. A single file can't arrive with a
@@ -117,7 +117,7 @@ to rebuild, and set the ziti identity path again.
 
 ```powershell
 Copy-Item "$data\vault.age" $out
-Copy-Item "$env:LOCALAPPDATA\docpreview\master.key" $out
+Copy-Item "$env:LOCALAPPDATA\nfpreview\master.key" $out
 ```
 
 The key is not inside the encrypted vault. Bring one without the other and the daemon starts, serves its setup page,
@@ -128,7 +128,7 @@ and can't decrypt anything it holds.
 There are two possible ones, and which is in use decides how much work this step is:
 
 ```powershell
-docpreview zrok status -config .docpreview\config.yml
+nfpreview zrok status -config .nfpreview\config.yml
 ```
 
 | In use | Copy | |
@@ -143,7 +143,7 @@ telling the truth.
 
 :::tip Move to the project directory while you are here
 
-Run `docpreview zrok use project` on the new machine and move the contents of `~/.zrok2` into `<data_dir>/zrok2`.
+Run `nfpreview zrok use project` on the new machine and move the contents of `~/.zrok2` into `<data_dir>/zrok2`.
 The next move is then a straight copy of one directory. A container needs this anyway, because a home directory in
 a container does not last.
 
@@ -162,10 +162,10 @@ or delete them. See [Publish previews with zrok v2](./zrok2.md).
 On the new machine, put the files where they belong, then check the absolute paths in `config.yml`:
 
 ```yaml
-data_dir: "/srv/docpreview/data"
+data_dir: "/srv/nfpreview/data"
 
 vault:
-  key_source: "file:/etc/docpreview/master.key"
+  key_source: "file:/etc/nfpreview/master.key"
 ```
 
 `data_dir` and `key_source` are the usual two. Also check any other absolute path you set, such as `log_file` or
@@ -174,7 +174,7 @@ vault:
 ## Step 6: Check before starting
 
 ```powershell
-docpreview doctor -config /srv/docpreview/config.yml
+nfpreview doctor -config /srv/nfpreview/config.yml
 ```
 
 `doctor` reads the config, the vault and the exposer's settings and reports what it can't reach. It takes a second
@@ -182,7 +182,7 @@ and answers the question a failed build would answer ten minutes later. Read the
 
 ```text
 exposer: zrok2 (selected on the dashboard, not from the config file)
-key:     file /etc/docpreview/master.key
+key:     file /etc/nfpreview/master.key
 login:   required — either password reaches the dashboard
 scm:     github (app 4420399), bitbucket (access_token)
 ```
@@ -197,8 +197,8 @@ can't work it out. Without the flag they look in `~/.zrok2`, which is a differen
 they fail unless that account happens to hold a name of the same spelling:
 
 ```powershell
-docpreview webhook-only   -zrok-name docpreview      -zrok-home /srv/docpreview/data/zrok2
-docpreview dashboard-only -zrok-name docpreview-dash -zrok-home /srv/docpreview/data/zrok2
+nfpreview webhook-only   -zrok-name nfpreview      -zrok-home /srv/nfpreview/data/zrok2
+nfpreview dashboard-only -zrok-name nfpreview-dash -zrok-home /srv/nfpreview/data/zrok2
 ```
 
 ## Step 7: Confirm the previews came back
@@ -207,14 +207,14 @@ At startup the daemon lists the shares the environment already has, adopts each 
 the rest, and creates shares only for previews it could not adopt. Watch it finish:
 
 ```powershell
-.\demo\Wait-Docpreview.ps1
+.\demo\Wait-Nfpreview.ps1
 ```
 
 Then open the dashboard. Every restored preview should be `ready` with a URL that answers. A preview you expected
 and don't see is one whose artifacts did not come across. Push to its pull request or rebuild it.
 
 The console passwords move with the database, so you log in on the new machine as before. If you did not bring the
-database, set them again with `docpreview console password -role admin` and `-role viewer`.
+database, set them again with `nfpreview console password -role admin` and `-role viewer`.
 
 Preview URLs come back **unchanged**. Under zrok the name is reserved on the account and the URL comes from it, so
 the adopted share is the one the comments already point at. Nothing is rewritten and no link breaks.
@@ -229,7 +229,7 @@ is short, say a passphrase typed during a hurried first setup, someone could gue
 without the key file. With the daemon stopped:
 
 ```bash
-docpreview vault rekey -generate -yes
+nfpreview vault rekey -generate -yes
 ```
 
 Every secret is kept, so you need none of the plaintexts. See [`vault rekey`](../reference/cli.md#vault-rekey) for

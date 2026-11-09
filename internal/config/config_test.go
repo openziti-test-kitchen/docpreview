@@ -151,8 +151,8 @@ func TestListenersMixTCPAndZiti(t *testing.T) {
 listeners:
   - tcp: "127.0.0.1:8471"
   - ziti:
-      identity_file: "C:\\path\\docpreview-host.json"
-      service: "docpreview-admin"
+      identity_file: "C:\\path\\nfpreview-host.json"
+      service: "nfpreview-admin"
   - "0.0.0.0:9000"
 `)
 	if err != nil {
@@ -165,7 +165,7 @@ listeners:
 		t.Errorf("listeners[0] = %+v", cfg.Listeners[0])
 	}
 	z := cfg.Listeners[1].Ziti
-	if z == nil || z.Service != "docpreview-admin" || z.IdentityFile != `C:\path\docpreview-host.json` {
+	if z == nil || z.Service != "nfpreview-admin" || z.IdentityFile != `C:\path\nfpreview-host.json` {
 		t.Errorf("listeners[1].ziti = %+v", z)
 	}
 	// The bare-string form is shorthand for tcp. Without it a list of plain
@@ -204,8 +204,8 @@ func TestListenerDescribeNamesTheService(t *testing.T) {
 	// doctor and the startup log line are the only places an operator sees
 	// which listeners exist, and a ziti listener has no address worth printing
 	// — Addr() is an overlay detail that says nothing about the service bound.
-	l := Listener{Ziti: &ZitiListener{IdentityFile: "id.json", Service: "docpreview-admin"}}
-	if got := l.Describe(); got != "ziti service docpreview-admin (identity id.json)" {
+	l := Listener{Ziti: &ZitiListener{IdentityFile: "id.json", Service: "nfpreview-admin"}}
+	if got := l.Describe(); got != "ziti service nfpreview-admin (identity id.json)" {
 		t.Errorf("Describe = %q", got)
 	}
 	if got := (Listener{TCP: "127.0.0.1:8471"}).Describe(); got != "tcp 127.0.0.1:8471" {

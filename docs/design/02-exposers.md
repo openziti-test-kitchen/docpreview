@@ -1,6 +1,6 @@
 # Exposers
 
-An exposer turns an `http.Handler` into a URL a reviewer can open. It is the seam that makes docpreview
+An exposer turns an `http.Handler` into a URL a reviewer can open. It is the seam that makes nfpreview
 portable across "on my laptop", "through zrok", "through a NetFoundry Frontdoor", and "on an OpenZiti overlay".
 
 ## The interface
@@ -87,8 +87,8 @@ zrok v2 decouples names from shares: a name lives in a namespace independently o
 can be attached to the same name on every rebuild and a reviewer's bookmark keeps working. That property is why
 the pull request comment can be written once and edited thereafter.
 
-Shares are tagged `Target: "docpreview:<key>"`, where the key is `Spec.Key()` (`internal/expose/zrok.go:159`).
-That prefix is how `Reap` tells a share docpreview made from one an operator made by hand — deleting the latter
+Shares are tagged `Target: "nfpreview:<key>"`, where the key is `Spec.Key()` (`internal/expose/zrok.go:159`).
+That prefix is how `Reap` tells a share nfpreview made from one an operator made by hand — deleting the latter
 would be rude.
 
 A name has to be registered in the namespace *before* a share can bind it: zrok v2 does not create one implicitly,
@@ -121,8 +121,8 @@ remote share. `Publish` therefore rejects a response with an empty `ID` or `URL`
 
 One wildcard service, with previews separated by the HTTP `Host` header. `hostLabel` takes the first DNS label.
 
-**Open:** this is not zero trust. The header is client-supplied, so anyone holding the `docpreview-reader`
-attribute can reach every preview by sending any hostname. Alternatives are recorded in `TODO.md`; the one worth
+**Open:** this is not zero trust. The header is client-supplied, so anyone holding the `nfpreview-reader`
+attribute can reach every preview by sending any hostname. Which alternative to take is an open question; the one worth
 noting is that `edge.Conn` carries the dialing identity, so authorization could move into the handler without
 multiplying management-API objects per pull request.
 
@@ -144,7 +144,7 @@ The template is re-sanitized after rendering, because a repository name can cont
 and illegal in a hostname.
 
 Deliberately **not** the commit SHA by default. Vercel gives every deployment an immutable URL plus a branch
-alias; docpreview has one comment per pull request edited in place, so the link a reviewer already opened has to
+alias; nfpreview has one comment per pull request edited in place, so the link a reviewer already opened has to
 survive the next push. `{{.HeadSHA}}` is available for anyone who wants per-commit URLs.
 
 ## The two bugs that keying got wrong
@@ -180,7 +180,7 @@ branch share it was meant to sit beside. One live share per *publication*, by co
 implementations — which is the invariant "one live share per preview" turned into, not one it replaced.
 
 A preview's own share keeps the **bare preview id** as its key, which is not cosmetic: the key is the remote tag
-(`docpreview:<key>`) and the vocabulary of `Reap`'s keep-set. Change the branch share's spelling and the first
+(`nfpreview:<key>`) and the vocabulary of `Reap`'s keep-set. Change the branch share's spelling and the first
 sweep after an upgrade finds an unfamiliar tag on every share it just restored and deletes all of them.
 
 `TestTwoPublicationsPerPreview` pins the property: three publications of one preview live at three URLs, and
@@ -268,7 +268,7 @@ quota, worth a warning and not worth stranding the artifacts, the workspace, the
 (`TestTeardownSurvivesAReleaseFailure`).
 
 Names leaked before this existed are still out there, one per branch from every teardown so far. Recovering them
-is the `docpreview names prune` in [16-exposer-zrok.md](16-exposer-zrok.md)'s build order; see also
+is the `nfpreview names prune` in [16-exposer-zrok.md](16-exposer-zrok.md)'s build order; see also
 [19-zrok-namespacing.md](19-zrok-namespacing.md) for what an account's limits actually count.
 
 ## Reaping
@@ -295,7 +295,7 @@ survive — a startup that forgot the build keys would reap every build share on
 `local.Reap` was a no-op, on the reasoning that a loopback listener cannot outlive its process. True of a port;
 false of a map entry. A mount left behind after its preview is deleted keeps serving a URL nothing records.
 
-**Open:** there is no `docpreview shares list` to audit a namespace against the database. The gap that matters
+**Open:** there is no `nfpreview shares list` to audit a namespace against the database. The gap that matters
 is a share created by a daemon whose database was then deleted — nothing claims it, and nothing looks.
 
 ## Adoption

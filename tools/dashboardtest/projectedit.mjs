@@ -24,7 +24,7 @@ import {fileURLToPath} from "node:url";
 import {JSDOM, VirtualConsole} from "jsdom";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
+const dashboard = process.env.NFPREVIEW_DASHBOARD ||
   join(here, "..", "..", "internal", "daemon", "dashboard.html");
 
 let failures = 0;
@@ -35,7 +35,7 @@ const ok = msg => console.log(`   ok: ${msg}`);
 // variables, and one that defers entirely and is disabled, private, with a stored access token.
 const state = canWrite => ({
   can_write: canWrite,
-  read_only_why: canWrite ? "" : "this request did not come from the machine running docpreview",
+  read_only_why: canWrite ? "" : "this request did not come from the machine running nfpreview",
   secrets_available: true,
   vault_locked: false,
   global_secrets: ["SHARED_TOKEN"],

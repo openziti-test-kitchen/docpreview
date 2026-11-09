@@ -284,7 +284,7 @@ func CacheScope(pr model.PullRequest) string {
 // The name is the scope and the manager, both already safe for docker's
 // `[a-zA-Z0-9][a-zA-Z0-9_.-]` rule: a scope is hex and a manager name is a word.
 func CacheVolume(scope, manager string) string {
-	return "docpreview-cache-" + scope + "-" + manager
+	return "nfpreview-cache-" + scope + "-" + manager
 }
 
 // CacheVolumesFor lists every cache volume belonging to one scope, for a caller that has

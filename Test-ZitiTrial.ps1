@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Check that the ziti identity docpreview enrolled actually works.
+    Check that the ziti identity nfpreview enrolled actually works.
 
 .DESCRIPTION
     Enrolment can "succeed" three ways and only one of them is real: a file on disk, an identity the
@@ -17,8 +17,8 @@
 [CmdletBinding()]
 param(
     [string] $Root = $PSScriptRoot,
-    [string] $Identity = 'docpreview',
-    [string] $Service = 'docpreview-previews',
+    [string] $Identity = 'nfpreview',
+    [string] $Service = 'nfpreview-previews',
     [int]    $CtrlPort = 1280
 )
 
@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location $Root
 
 $ziti   = Join-Path $Root 'build.claude\ziti.exe'
-$idFile = Join-Path $Root ".docpreview\data\ziti\$Identity.json"
+$idFile = Join-Path $Root ".nfpreview\data\ziti\$Identity.json"
 $ctrl   = "127.0.0.1:$CtrlPort"
 
 $failures = 0
@@ -78,14 +78,14 @@ if ($LASTEXITCODE -ne 0) {
         Fail "no service called $Service"
     } else {
         # Matched on the service **id**, not its name. Roles are stored as `@<id>`, so
-        # `@docpreview-previews` matches nothing and every policy looks absent — which reads as a
+        # `@nfpreview-previews` matches nothing and every policy looks absent — which reads as a
         # missing policy rather than as a query asking the wrong question.
         $policies = (& $ziti edge list service-policies --output-json | ConvertFrom-Json).data |
             Where-Object { $_.type -eq 'Bind' -and $_.serviceRoles -contains "@$($svc.id)" }
         if (-not $policies) {
             Fail "no Bind policy for $Service (id $($svc.id))"
         } else {
-            # Bind, not Dial. docpreview hosts the service; a Dial policy would let it connect to
+            # Bind, not Dial. nfpreview hosts the service; a Dial policy would let it connect to
             # something it is supposed to be serving.
             #
             # And exactly one binder: two means two terminators and roughly half of all previews
@@ -122,7 +122,7 @@ Write-Host '4. the daemon is actually hosting it'
         Write-Host "   (no terminator: nothing is hosting $Service, so ziti is not the live exposer)"
     } else {
         Pass "$($terms.Count) terminator on $Service via router $($terms[0].router.name)"
-        # Exactly one. Two docpreviews binding one service means two terminators and roughly half
+        # Exactly one. Two nfpreviews binding one service means two terminators and roughly half
         # of all previews answering 404 while every log looks healthy — the failure this whole
         # exposer's design notes keep circling.
         if ($terms.Count -gt 1) {

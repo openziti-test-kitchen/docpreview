@@ -15,7 +15,7 @@ The third is the one that shapes most of the code.
 ## The central decision: contributors are trusted, strangers are not
 
 Under the `local` driver a build runs `package.json` scripts on the host with the daemon's privileges. That is
-**fine** for a repository whose contributors you already trust — the case docpreview is built for — and
+**fine** for a repository whose contributors you already trust — the case nfpreview is built for — and
 unacceptable for a public one.
 
 Two things follow, and they hold each other up:
@@ -30,7 +30,7 @@ Two things follow, and they hold each other up:
 Removing the fork refusal without switching to docker turns "anyone on the internet can open a pull request"
 into "anyone on the internet can run code on this host". They are one decision, not two.
 
-## What `.docpreview.yml` can and cannot do
+## What `.nfpreview.yml` can and cannot do
 
 It arrives from the pull request. Every field is validated.
 
@@ -42,8 +42,8 @@ It arrives from the pull request. Every field is validated.
 | `base_url` | Normalized; used for both build and serve so they cannot drift |
 | `detect.script` | 60-second cap, five environment variables, path resolved through symlinks and re-checked |
 
-The reserved variables are `DOCUSAURUS_BASE_URL`, `DOCPREVIEW_BASE_URL`, `DOCPREVIEW`, `DOCPREVIEW_COMMIT`,
-`DOCPREVIEW_BRANCH`, `DOCPREVIEW_PR`, `DOCPREVIEW_REPO`, and **every operator secret's name**.
+The reserved variables are `DOCUSAURUS_BASE_URL`, `NFPREVIEW_BASE_URL`, `NFPREVIEW`, `NFPREVIEW_COMMIT`,
+`NFPREVIEW_BRANCH`, `NFPREVIEW_PR`, `NFPREVIEW_REPO`, and **every operator secret's name**.
 
 Each has a distinct reason:
 
@@ -78,7 +78,7 @@ matches an expected string.
 ## The webhook endpoint
 
 The only route that has to be reachable from outside — and the process that publishes it is
-`docpreview webhook-only` (`cmd/docpreview/webhookonly.go`), not the daemon. See
+`nfpreview webhook-only` (`cmd/nfpreview/webhookonly.go`), not the daemon. See
 [the credential surface](#the-credential-surface) for why that split exists; it is a security decision, not a
 deployment convenience. Three defences at the endpoint itself:
 
@@ -115,7 +115,7 @@ loopback — so the gate answered yes with `/api/secrets` on the internet, and w
 **No check inside the daemon can distinguish that case.** In zrok's proxy mode the daemon sees the connection
 from the local tunnel process, so `RemoteAddr` is loopback; `Host` is client-supplied and therefore worthless.
 The distinction does not exist at that layer, which is why the answer is not a smarter predicate but a second
-process: `docpreview webhook-only` (`cmd/docpreview/webhookonly.go`) forwards only `POST /webhook/github` and the
+process: `nfpreview webhook-only` (`cmd/nfpreview/webhookonly.go`) forwards only `POST /webhook/github` and the
 tunnel points at that, so the credential API is not reachable through it at all.
 
 Treat that as the primary defence. Anything that reintroduces "the daemon's own origin is what gets shared"
@@ -127,17 +127,17 @@ reopens the hole regardless of what the request-level check does.
    uses. Note that over a zrok SDK listener `RemoteAddr` is `ziti-edge-router connId=…, logical=…`, not a
    `host:port` at all, so `SplitHostPort` fails, `ParseIP` fails, and the address test refuses it.
 2. No `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-Ip` or `Forwarded` header. This is the one that closes the
-   tunnel gap: anything proxying to the daemon sets one, including docpreview's own webhook-only proxy
-   (`r.SetXForwarded()`, `cmd/docpreview/webhookonly.go:92`). A caller can add a header itself, which only makes
+   tunnel gap: anything proxying to the daemon sets one, including nfpreview's own webhook-only proxy
+   (`r.SetXForwarded()`, `cmd/nfpreview/webhookonly.go:92`). A caller can add a header itself, which only makes
    the check stricter — the wrong answers are all in the refusing direction.
 
 **Deliberate limit: this is a boundary, not authentication.** It asks where a request came from and answers from
 evidence the network arrangement supplies, not from anything the caller proves. It assumes nothing proxies to the
 daemon while stripping forwarding headers. On a loopback-only daemon that boundary is exactly the one already
-protecting `docpreview vault set` — anyone who can reach `127.0.0.1` can run the binary — so the API adds no
+protecting `nfpreview vault set` — anyone who can reach `127.0.0.1` can run the binary — so the API adds no
 reach a shell did not have. It is not a substitute for a credential, and it must not be described as one.
 
-**Open: a password on the secrets surface.** Recorded in `TODO.md`. Managing credentials from anywhere but the
+**Open: a password on the secrets surface.** Undecided. Managing credentials from anywhere but the
 host needs a real credential of its own. Under a ziti listener the dialing identity is the natural hook —
 `edge.ServiceConn.GetDialerIdentityId` reached through `http.Server.ConnContext` — and until that exists
 `Available` refuses ziti listeners outright, because "enrolled at all" would otherwise be the whole
@@ -174,24 +174,24 @@ The ziti exposer publishes previews onto an overlay reachable only from an enrol
 boundary than a public URL with an unguessable name, and it is the differentiated part of this project.
 
 **Open, and honest about it:** the current implementation uses one wildcard service with previews separated by
-the HTTP `Host` header. The header is client-supplied, so anyone holding the `docpreview-reader` attribute can
+the HTTP `Host` header. The header is client-supplied, so anyone holding the `nfpreview-reader` attribute can
 reach every preview by sending any hostname. It is authorization at the network edge — you must be enrolled —
-but not per preview. Options are recorded in `TODO.md`.
+but not per preview. Which of the options to take is undecided.
 
 The admin listener names its own identity rather than reusing the exposer's. Hosting previews and hosting the
 admin surface are different grants, and the admin surface is the more sensitive of the two since it enumerates
 every open documentation pull request. Wiring them to one identity by default would make separating them later
 a migration rather than an edit.
 
-**No revocation story.** `configure ziti` bootstraps a network but there is no `docpreview identity remove`.
+**No revocation story.** `configure ziti` bootstraps a network but there is no `nfpreview identity remove`.
 This is the largest known gap.
 
 ## What is deliberately not defended
 
 - **A malicious operator.** Config and vault are trusted completely.
 - **A proxy that strips forwarding headers.** `isLocalRequest` would read its requests as local. Nothing
-  docpreview ships does this; something an operator puts in front of the daemon might.
-- **A contributor with push access.** They can already run code in your CI; docpreview does not widen that.
+  nfpreview ships does this; something an operator puts in front of the daemon might.
+- **A contributor with push access.** They can already run code in your CI; nfpreview does not widen that.
 - **Resource exhaustion by a trusted contributor.** A build that allocates 4 GB under the local driver will.
   Use docker.
 - **A transformed secret.** Six encodings are matched. A build that hashes or fragments a credential defeats

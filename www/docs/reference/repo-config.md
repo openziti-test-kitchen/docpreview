@@ -6,7 +6,7 @@ sidebar_position: 2
 
 # Repository configuration
 
-`.docpreview.yml` goes in the root of the repository being previewed. It's optional. The defaults handle a stock
+`.nfpreview.yml` goes in the root of the repository being previewed. It's optional. The defaults handle a stock
 Docusaurus site.
 
 ```yaml
@@ -140,13 +140,13 @@ Variables NetFoundry Preview always sets:
 
 | Variable | Value |
 |---|---|
-| `DOCPREVIEW` | `1` |
-| `DOCPREVIEW_BASE_URL` | the resolved `base_url` |
+| `NFPREVIEW` | `1` |
+| `NFPREVIEW_BASE_URL` | the resolved `base_url` |
 | `DOCUSAURUS_BASE_URL` | the resolved `base_url` |
-| `DOCPREVIEW_COMMIT` | the commit being built |
-| `DOCPREVIEW_BRANCH` | the branch being built |
-| `DOCPREVIEW_REPO` | the platform and repository, such as `github:acme/docs` |
-| `DOCPREVIEW_PR` | the pull request number, `0` for the default branch |
+| `NFPREVIEW_COMMIT` | the commit being built |
+| `NFPREVIEW_BRANCH` | the branch being built |
+| `NFPREVIEW_REPO` | the platform and repository, such as `github:acme/docs` |
+| `NFPREVIEW_PR` | the pull request number, `0` for the default branch |
 | `CI` | `true` |
 
 ## `detect`
@@ -174,7 +174,7 @@ detect:
     - "**/sidebars.*"
     - "**/package.json"
     - "**/package-lock.json"
-    - ".docpreview.yml"
+    - ".nfpreview.yml"
 ```
 
 **Every default starts with `**/`, so the site doesn't have to be at the repository root.** A monorepo, or a
@@ -182,7 +182,7 @@ repository that assembles several sources into one `unified-doc/`, matches them 
 more segments, so a root-level `docs/intro.md` still matches `**/docs/**`.
 
 **A build directory other than `.` replaces these defaults.** When `build.dir` (or the project's **Directory**) is
-`docusaurus`, the list becomes `docusaurus/**` and `.docpreview.yml`. The site lives in that directory, so a change
+`docusaurus`, the list becomes `docusaurus/**` and `.nfpreview.yml`. The site lives in that directory, so a change
 outside it can't change the preview. A `paths` list you write here is used as written and never narrowed.
 
 An **empty** list is treated as a mistake and builds everything. A misconfigured repository should be noisy rather
@@ -208,7 +208,7 @@ Whatever the script prints, on stdout or stderr, becomes the reason line in the 
 
 ```bash
 #!/usr/bin/env bash
-# .docpreview/detect: build only when published pages change.
+# .nfpreview/detect: build only when published pages change.
 set -euo pipefail
 
 changed=$(cat)
@@ -229,23 +229,23 @@ Make it executable and point at it:
 
 ```yaml
 detect:
-  script: .docpreview/detect
+  script: .nfpreview/detect
 ```
 
 The script has a 60-second timeout and a minimal environment. It doesn't get the host's environment or the build's
 injected variables, because both hold things a pull request author shouldn't have.
 
 **Under the `docker` driver the script runs in a container** from the project's build image, with only
-`DOCPREVIEW=1` and `HOME=/tmp` set. The checkout is mounted read-only at `/workspace`, which is the working directory,
+`NFPREVIEW=1` and `HOME=/tmp` set. The checkout is mounted read-only at `/workspace`, which is the working directory,
 and the container has no network. A script that needs `git` needs an image with git in it.
 
-Under `local` the script runs on the host with `PATH`, `DOCPREVIEW=1` and `HOME` set to the workspace. Only a script
+Under `local` the script runs on the host with `PATH`, `NFPREVIEW=1` and `HOME` set to the workspace. Only a script
 the project names runs there. A script named in this file is ignored.
 
-### The default script: `docpreview-detect`
+### The default script: `nfpreview-detect`
 
 Under `docker`, when neither the project nor this file names a script, NetFoundry Preview looks for
-`docpreview-detect` in the build directory, for example `docusaurus/docpreview-detect`. If it's there, it decides,
+`nfpreview-detect` in the build directory, for example `docusaurus/nfpreview-detect`. If it's there, it decides,
 with the rules above. If not, the daemon logs that and the globs decide. There's no extension: the shebang picks the
 interpreter. The default isn't used under `local`, because any pull request could add the file.
 

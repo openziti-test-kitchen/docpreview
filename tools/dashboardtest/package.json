@@ -1,5 +1,5 @@
 {
-  "name": "docpreview-dashboardtest",
+  "name": "nfpreview-dashboardtest",
   "private": true,
   "version": "0.0.0",
   "description": "Clicks the embedded dashboard in a DOM and asserts each click does something visible. Not part of go test.",

@@ -1,7 +1,7 @@
 // Prints the rendered text of the first few activity rows, to see what a reader sees
 // rather than what the markup intends.
 //
-// Needs DOCPREVIEW_PASSWORD, since /status is behind the login and this file is only
+// Needs NFPREVIEW_PASSWORD, since /status is behind the login and this file is only
 // useful against real state.
 import {readFileSync} from "node:fs";
 import {dirname, join} from "node:path";
@@ -11,7 +11,7 @@ import {JSDOM, VirtualConsole} from "jsdom";
 import {statusFetcher} from "./live.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const daemon = process.env.DOCPREVIEW_URL || "http://127.0.0.1:8471";
+const daemon = process.env.NFPREVIEW_URL || "http://127.0.0.1:8471";
 const status = await statusFetcher(daemon)();
 
 const vc = new VirtualConsole();

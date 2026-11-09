@@ -9,7 +9,7 @@ import (
 	"github.com/netfoundry/docpreview/internal/store"
 )
 
-// repoConfigWith is a repository's own .docpreview.yml, as the detector would have read it.
+// repoConfigWith is a repository's own .nfpreview.yml, as the detector would have read it.
 func repoConfigWith(command, output string) config.RepoConfig {
 	cfg := config.DefaultRepoConfig()
 	cfg.Build.Command = command
@@ -27,7 +27,7 @@ func bitbucketPR() model.PullRequest {
 // TestFrameworkPresetPrecedence is the whole contract of a preset, in one table.
 //
 // Precedence runs top down: the project's explicit field, then its preset, then the repository's own
-// .docpreview.yml. A preset outranks the repository's file because an operator who chose "Docusaurus" in
+// .nfpreview.yml. A preset outranks the repository's file because an operator who chose "Docusaurus" in
 // the dashboard has said something more recent and more specific. The blank preset defers to the
 // repository, and it is the default.
 func TestFrameworkPresetPrecedence(t *testing.T) {

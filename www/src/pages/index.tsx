@@ -18,8 +18,8 @@ const REPO_URL = 'https://github.com/openziti-test-kitchen/docpreview';
 
 // Both commands are copied from docs/quickstart.md. They are the shortest path
 // that ends in a real URL, and neither needs a GitHub App or an account.
-const QUICKSTART = `docpreview init                    # one question: which exposer
-docpreview preview -build ./www    # publishes a real URL, holds it until Ctrl-C`;
+const QUICKSTART = `nfpreview init                    # one question: which exposer
+nfpreview preview -build ./www    # publishes a real URL, holds it until Ctrl-C`;
 
 function Hero(): ReactNode {
   return (
@@ -299,8 +299,8 @@ function Exposers(): ReactNode {
   );
 }
 
-const VAULT = `docpreview vault set github.private_key -file .\\app-key.pem
-"webhook-secret" | docpreview vault set github.webhook_secret`;
+const VAULT = `nfpreview vault set github.private_key -file .\\app-key.pem
+"webhook-secret" | nfpreview vault set github.webhook_secret`;
 
 function Credentials(): ReactNode {
   return (
@@ -312,7 +312,7 @@ function Credentials(): ReactNode {
               Credentials in one file
             </Heading>
             <p className={styles.sectionLead}>
-              Every credential NetFoundry Preview needs lives in <code>~/.docpreview/vault.age</code>,
+              Every credential NetFoundry Preview needs lives in <code>~/.nfpreview/vault.age</code>,
               encrypted with age. There is no service to run and nothing to install, because the library
               is linked into the binary. You choose where the master key comes from.
             </p>

@@ -52,7 +52,7 @@ the bot off.
 | A new immutable URL per deployment, plus a branch URL | One **stable URL per branch**, reused across rebuilds |
 | Bot comment edited in place | Same, found by a hidden marker in the body |
 | GitHub Deployments API | GitHub Check Runs, Bitbucket build statuses |
-| Preview environment variables | `build.env` in `.docpreview.yml`, plus secrets from the operator's vault |
+| Preview environment variables | `build.env` in `.nfpreview.yml`, plus secrets from the operator's vault |
 | Merge promotes to production | The default branch keeps a preview of its own. Production is your pipeline's job. |
 
 Two of those need an explanation.

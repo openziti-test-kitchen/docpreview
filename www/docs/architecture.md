@@ -108,7 +108,7 @@ branch alone is not unique across repositories and every exposer keys a live pub
 with `name_template`. See [the reference](reference/configuration.md#name_template) for the common variants.
 
 Each preview gets its own share, name and listener, and each is withdrawn by preview ID, not by name.
-`Exposer.Reap` deletes anything carrying the `docpreview:` target tag that the database no longer claims. It runs
+`Exposer.Reap` deletes anything carrying the `nfpreview:` target tag that the database no longer claims. It runs
 at startup and on every sweep tick after that.
 
 By default a preview has exactly one share, and a rebuild serves the new build on it. With
@@ -143,8 +143,8 @@ The marker renders to nothing. Two forms exist:
 
 | Style | Text | Status |
 |---|---|---|
-| Link reference | `[docpreview]: #9f2a1c4b7e01` | Written today, on every platform. Needs no raw-HTML support. |
-| HTML comment | `<!-- docpreview:9f2a1c4b7e01 -->` | Written by older versions. Bitbucket shows it as text. |
+| Link reference | `[nfpreview]: #9f2a1c4b7e01` | Written today, on every platform. Needs no raw-HTML support. |
+| HTML comment | `<!-- nfpreview:9f2a1c4b7e01 -->` | Written by older versions. Bitbucket shows it as text. |
 
 Matching accepts **both forms, always**. A daemon upgraded across the switch still finds the comments it wrote in
 the old one. A matcher that knew only the new form would post a second comment on every open pull request at once,
@@ -170,7 +170,7 @@ publishing under that name would have to fight it. See
 [troubleshooting](./troubleshooting.md#every-preview-404s-for-the-first-minute-after-a-restart) for what the
 window looks like from outside.
 
-Reaping is scoped to the zrok environment on this host plus the `docpreview:` target tag. Two installations on one
+Reaping is scoped to the zrok environment on this host plus the `nfpreview:` target tag. Two installations on one
 zrok account, each with its own environment, do not reap each other's shares. Names, though, belong to the account,
 so give the second installation its own `exposer.prefix`.
 

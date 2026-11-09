@@ -61,7 +61,7 @@ NetFoundry builds [zrok](https://zrok.io), which publishes a service at a URL wi
 a directory of static files, and putting a directory of static files at a URL is precisely what zrok is for. So we
 asked ourselves why anybody should have to join anything for a pull request to get built and shown.
 
-With docpreview, the build runs on our own VM for whoever opens the pull request, and each preview is its own zrok
+With nfpreview, the build runs on our own VM for whoever opens the pull request, and each preview is its own zrok
 share. Pull requests from forks are the one deliberate exception: they're refused, because building one runs a
 stranger's scripts on our build host. The reviewer clicks the link and reads the page. When a preview shouldn't be
 open to anyone holding the link, zrok can put Google or GitHub sign-in in front of it, limited to your own email
@@ -78,7 +78,7 @@ post in this series.
 
 ## What we built
 
-docpreview is one Go binary. A pull request arrives as a webhook, and it clones the branch, detects the
+nfpreview is one Go binary. A pull request arrives as a webhook, and it clones the branch, detects the
 framework, runs the build, publishes the output at a URL, and posts a comment with the link.
 
 Push again and the same comment updates rather than adding a new one. Close the pull request and the
@@ -102,7 +102,7 @@ The subtle half is that a superseded build must not report. Without that rule, a
 finishes late, fails, and overwrites a comment that already said "ready" with a failure — for a preview
 that is sitting there working.
 
-**Refusing to publish a broken preview.** Before publishing, docpreview reads the built `index.html`,
+**Refusing to publish a broken preview.** Before publishing, nfpreview reads the built `index.html`,
 works out which base URL the site was actually built for, and compares it to where the preview is about to
 be served. When they disagree it refuses, and the error names both values and the two ways to fix it.
 
@@ -137,13 +137,13 @@ Creating a GitHub App is a ten-minute detour through a web form, and nobody shou
 strength of a README. So the binary will publish a directory without one:
 
 ```
-docpreview preview -build ./www
+nfpreview preview -build ./www
 ```
 
 That exercises the build, the base URL check, the exposer and the static server. Everything except the
 webhook and the comment.
 
-docpreview is at [github.com/openziti-test-kitchen/docpreview](https://github.com/openziti-test-kitchen/docpreview),
+nfpreview is at [github.com/openziti-test-kitchen/docpreview](https://github.com/openziti-test-kitchen/docpreview),
 and it previews its own documentation, which is the only test that has caught anything embarrassing before
 a reader did.
 

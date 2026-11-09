@@ -289,7 +289,7 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 	// Checked here rather than inside buildDocker, since the hazard applies to both
 	// drivers and has nothing to do with containers: this directory is served by an
 	// http.FileServer, and http.Dir follows a symlink straight out of its own root. A
-	// build that writes `dist/secrets -> /home/daemon/.docpreview` publishes the vault
+	// build that writes `dist/secrets -> /home/daemon/.nfpreview` publishes the vault
 	// at a preview URL.
 	if err := rejectSymlinks(outputDir); err != nil {
 		refuse(err.Error())
@@ -319,7 +319,7 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 // buildEnv is the environment handed to a site build.
 //
 // DOCUSAURUS_BASE_URL and DOCUSAURUS_URL are the conventional names a
-// Docusaurus config reads to make baseUrl configurable; DOCPREVIEW_BASE_URL is
+// Docusaurus config reads to make baseUrl configurable; NFPREVIEW_BASE_URL is
 // ours, for configs that would rather not pretend to be generic. All three are
 // set because we cannot know which one a given repository honors, and setting
 // an unread variable costs nothing.
@@ -330,12 +330,12 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 func (b *Builder) buildEnv(pr model.PullRequest, cfg config.RepoConfig, base []string) []string {
 	reserved := map[string]bool{
 		"DOCUSAURUS_BASE_URL": true,
-		"DOCPREVIEW_BASE_URL": true,
-		"DOCPREVIEW":          true,
-		"DOCPREVIEW_COMMIT":   true,
-		"DOCPREVIEW_BRANCH":   true,
-		"DOCPREVIEW_PR":       true,
-		"DOCPREVIEW_REPO":     true,
+		"NFPREVIEW_BASE_URL":  true,
+		"NFPREVIEW":           true,
+		"NFPREVIEW_COMMIT":    true,
+		"NFPREVIEW_BRANCH":    true,
+		"NFPREVIEW_PR":        true,
+		"NFPREVIEW_REPO":      true,
 	}
 
 	// Operator-supplied secrets are reserved too. A repository must not be able
@@ -370,8 +370,8 @@ func (b *Builder) buildEnv(pr model.PullRequest, cfg config.RepoConfig, base []s
 	}
 
 	return append(env,
-		"DOCPREVIEW=1",
-		"DOCPREVIEW_BASE_URL="+cfg.Build.BaseURL,
+		"NFPREVIEW=1",
+		"NFPREVIEW_BASE_URL="+cfg.Build.BaseURL,
 		"DOCUSAURUS_BASE_URL="+cfg.Build.BaseURL,
 
 		// What is being built. A generated site otherwise has no way to know
@@ -379,10 +379,10 @@ func (b *Builder) buildEnv(pr model.PullRequest, cfg config.RepoConfig, base []s
 		// "is this the old one or the new one?" is the question a reviewer
 		// staring at a preview during a rebuild actually has. Vercel exposes
 		// the same three under VERCEL_GIT_*.
-		"DOCPREVIEW_COMMIT="+pr.HeadSHA,
-		"DOCPREVIEW_BRANCH="+pr.Branch,
-		"DOCPREVIEW_REPO="+pr.Repo.String(),
-		"DOCPREVIEW_PR="+strconv.Itoa(pr.Number),
+		"NFPREVIEW_COMMIT="+pr.HeadSHA,
+		"NFPREVIEW_BRANCH="+pr.Branch,
+		"NFPREVIEW_REPO="+pr.Repo.String(),
+		"NFPREVIEW_PR="+strconv.Itoa(pr.Number),
 
 		// CI makes npm and Docusaurus quieter and non-interactive.
 		"CI=true",
@@ -393,7 +393,7 @@ func (b *Builder) buildEnv(pr model.PullRequest, cfg config.RepoConfig, base []s
 //
 // This executes package.json scripts written by whoever opened the pull
 // request, with this process's privileges. That is fine for a repository whose
-// contributors you already trust — the case docpreview is built for — and
+// contributors you already trust — the case nfpreview is built for — and
 // unacceptable for a public one. For public repositories use the docker driver,
 // which is why fork pull requests are refused outright at the webhook layer.
 func (b *Builder) buildLocal(ctx context.Context, ws *Workspace, buildDir string, cfg config.RepoConfig, sink io.Writer) (string, error) {
@@ -776,7 +776,7 @@ func (b *Builder) writeEnvFile(pr model.PullRequest, cfg config.RepoConfig) (
 		return "", args, cleanup, nil
 	}
 
-	f, err := os.CreateTemp("", "docpreview-env-*")
+	f, err := os.CreateTemp("", "nfpreview-env-*")
 	if err != nil {
 		return "", nil, cleanup, fmt.Errorf("creating the build environment file: %w", err)
 	}
@@ -818,7 +818,7 @@ func (b *Builder) writeEnvFile(pr model.PullRequest, cfg config.RepoConfig) (
 // the cause: the script falls back to SSH, the container has no key, and the log says "Host
 // key verification failed" — naming neither the missing variable nor the fallback.
 //
-// A build cannot tell anyone which variables it *expected*, but docpreview knows exactly
+// A build cannot tell anyone which variables it *expected*, but nfpreview knows exactly
 // which ones it supplied, and printing them turns that hunt into a glance.
 //
 // Names only. The values are what the redactor exists for, and a name is not a secret —

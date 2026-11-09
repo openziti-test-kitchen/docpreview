@@ -32,9 +32,9 @@ func RenderComment(r Report) string {
 	// it at the top means a truncated body still identifies itself.
 	//
 	// A link reference definition rather than an HTML comment, on every platform.
-	// `<!-- docpreview:… -->` is invisible in *rendered* markdown but visible in the raw
+	// `<!-- nfpreview:… -->` is invisible in *rendered* markdown but visible in the raw
 	// body, which anybody sees when they quote the comment, edit it, or read it through
-	// an API. `[docpreview]: #<id>` is consumed by every CommonMark renderer, emits
+	// an API. `[nfpreview]: #<id>` is consumed by every CommonMark renderer, emits
 	// nothing, and needs no raw-HTML support, which is also why Bitbucket cannot render
 	// it as a stray paragraph.
 	//
@@ -124,7 +124,7 @@ func RenderComment(r Report) string {
 	// second time and said in twelve words what "Failed" already links to.
 	if r.State == StateFailed {
 		if r.DetailURL == "" {
-			b.WriteString("\nThe build failed. See the build log on the docpreview dashboard.\n")
+			b.WriteString("\nThe build failed. See the build log on the nfpreview dashboard.\n")
 		}
 		return b.String()
 	}

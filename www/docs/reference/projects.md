@@ -15,7 +15,7 @@ anybody can install. The App has one webhook secret, so GitHub signs every insta
 valid signature only proves GitHub sent the delivery. The project is where you say the repository is yours.
 
 Every build field on a project can be blank. Blank means "use the repository's own
-[`.docpreview.yml`](./repo-config.md)". A project that names only a repository is valid and is the usual case. It
+[`.nfpreview.yml`](./repo-config.md)". A project that names only a repository is valid and is the usual case. It
 allows the repository without restating its config.
 
 So installing the App on a repository takes two steps: install it, then add the project. The order doesn't matter. A
@@ -23,7 +23,7 @@ delivery that arrives before the project exists is dropped, and the next push bu
 
 ## Why a project wins over the repository
 
-`.docpreview.yml` comes in with the pull request. On a repository where anyone can open one, the author of the pull
+`.nfpreview.yml` comes in with the pull request. On a repository where anyone can open one, the author of the pull
 request decides what the file says. The project is yours, so when both set a field, the project wins.
 
 ## The page
@@ -153,7 +153,7 @@ For any one build:
 
 1. The **project** decides driver, image, build directory, command, output, base URL and the ignore-build script, for
    every field it sets.
-2. **`.docpreview.yml`** in the pull request decides the rest.
+2. **`.nfpreview.yml`** in the pull request decides the rest.
 3. For the environment, the repository's `build.env` goes first. It **can't set** a variable NetFoundry Preview
    reserves, a variable from `build.secrets`, or one of the project's own. Then the server-wide variables go on top,
    then the project's, which win on a shared name.

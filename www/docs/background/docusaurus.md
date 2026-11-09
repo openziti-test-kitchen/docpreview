@@ -58,7 +58,7 @@ site does the same in
 [`www/docusaurus.config.ts`](https://github.com/openziti-test-kitchen/docpreview/blob/main/www/docusaurus.config.ts).
 
 Sometimes you cannot change the config, because the repository or the theme belongs to someone else. Then set
-`build.base_url` in [`.docpreview.yml`](../reference/repo-config.md) to whatever the config hardcodes. The preview is
+`build.base_url` in [`.nfpreview.yml`](../reference/repo-config.md) to whatever the config hardcodes. The preview is
 served under that prefix instead of the root, and the bare origin redirects to it so the link still works.
 
 Either way, NetFoundry Preview checks the built `index.html` before publishing. If its asset URLs disagree with where

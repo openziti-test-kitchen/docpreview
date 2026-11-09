@@ -15,7 +15,7 @@ Do part 1 before deciding whether you want part 2.
 
 | | |
 |---|---|
-| **Go 1.26+** | To build `docpreview`. |
+| **Go 1.26+** | To build `nfpreview`. |
 | **git** | To clone it. |
 | **Docker** | To run the site build. Builds run in a throwaway container by default. Node 20+ on the host replaces it if you choose the `local` build driver. |
 | **A zrok v2 account** | For a public URL. See the [zrok guide](./guides/zrok2.md). |
@@ -37,17 +37,17 @@ On Bitbucket instead, follow the [Bitbucket guide](./guides/bitbucket.md) for pa
 
 ```powershell
 git clone https://github.com/openziti-test-kitchen/docpreview
-cd docpreview
-go build -o bin/ ./cmd/docpreview
+cd nfpreview
+go build -o bin/ ./cmd/nfpreview
 ```
 
-The binary lands in `bin/`. Put that directory on your `PATH`, or call `./bin/docpreview` wherever this page says
-`docpreview`.
+The binary lands in `bin/`. Put that directory on your `PATH`, or call `./bin/nfpreview` wherever this page says
+`nfpreview`.
 
 ### 2. Write a config
 
 ```powershell
-docpreview init
+nfpreview init
 ```
 
 One question: which exposer. Take `zrok2`.
@@ -66,7 +66,7 @@ so switching later is an edit and not research.
 
 ```yaml
 listen: "127.0.0.1:8471"
-data_dir: "/home/you/.docpreview"
+data_dir: "/home/you/.nfpreview"
 workers: 2
 
 exposer:
@@ -100,17 +100,17 @@ write `preview.keep_builds`, `build.cache_dir` or `dashboard_url`. Add them by h
 ### 3. Check it
 
 ```powershell
-docpreview doctor
+nfpreview doctor
 ```
 
 ```text
-config:  C:\Users\you\.docpreview\config.yml
-data:    C:\Users\you\.docpreview
+config:  C:\Users\you\.nfpreview\config.yml
+data:    C:\Users\you\.nfpreview
 exposer: zrok2
 driver:  docker
 listen:  tcp 127.0.0.1:8471
 key:     none — the daemon starts locked and is unlocked from the dashboard
-login:   none — anyone who can reach this daemon can read it (docpreview console password -role viewer)
+login:   none — anyone who can reach this daemon can read it (nfpreview console password -role viewer)
 scm:     none — set local.enabled or github.app_id to receive webhooks
 
 all checks passed
@@ -128,7 +128,7 @@ No master key was asked for. The vault opens lazily, and nothing here has a secr
 You are still in the clone from step 1, which holds this documentation site in `www/`. Publish it:
 
 ```powershell
-docpreview preview -build -name my-first-preview ./www
+nfpreview preview -build -name my-first-preview ./www
 ```
 
 ```text
@@ -151,7 +151,7 @@ daemon uses for a real pull request. Only the webhook and the comment are missin
 Now point it at your own site:
 
 ```powershell
-docpreview preview -build -name my-site C:\path\to\your\site
+nfpreview preview -build -name my-site C:\path\to\your\site
 ```
 
 Ctrl-C withdraws the URL.
@@ -162,9 +162,9 @@ below, or pass `-base-url /whatever/` to see it work now.
 
 :::note No zrok account?
 
-Set `exposer.kind: local` and `docpreview preview` serves the site at `http://127.0.0.1:<port>/preview/<name>/`, on a
+Set `exposer.kind: local` and `nfpreview preview` serves the site at `http://127.0.0.1:<port>/preview/<name>/`, on a
 port it picks for itself. Only this machine can open that URL. To see the whole pipeline with no account anywhere,
-use the [local platform](./local-platform.md) with `docpreview serve`.
+use the [local platform](./local-platform.md) with `nfpreview serve`.
 
 :::
 
@@ -185,9 +185,9 @@ Four commands, from nothing:
 ```bash
 # get the ziti CLI first: https://openziti.io/docs/downloads
 ziti edge quickstart          # a whole OpenZiti network; leave it running
-docpreview configure ziti
-docpreview preview -build -name my-first-preview ./www
-docpreview serve              # after stopping the preview
+nfpreview configure ziti
+nfpreview preview -build -name my-first-preview ./www
+nfpreview serve              # after stopping the preview
 ```
 
 `configure ziti` creates every controller object the daemon needs: the intercept config, the services, the Bind and
@@ -200,8 +200,8 @@ It leaves two files. One is the daemon's identity, already in the config. The ot
 ```text
 Files
 -----
-  hosting identity  /home/you/.docpreview/ziti/docpreview-host.json
-  reviewer token    /home/you/.docpreview/ziti/reviewer-alice.jwt
+  hosting identity  /home/you/.nfpreview/ziti/nfpreview-host.json
+  reviewer token    /home/you/.nfpreview/ziti/reviewer-alice.jwt
 ```
 
 Import that `.jwt` into a tunneler. In
@@ -209,13 +209,13 @@ Import that `.jwt` into a tunneler. In
 press `+`, choose "Ziti JWT", pick the file, and switch the identity on. On Linux or macOS:
 
 ```bash
-ziti-edge-tunnel add --jwt "$(cat ~/.docpreview/ziti/reviewer-alice.jwt)" --identity reviewer
+ziti-edge-tunnel add --jwt "$(cat ~/.nfpreview/ziti/reviewer-alice.jwt)" --identity reviewer
 ```
 
 Then the preview opens at:
 
 ```text
-  http://my-first-preview.docpreview.ziti/
+  http://my-first-preview.nfpreview.ziti/
 ```
 
 Turn the tunneler off and the hostname stops resolving. That is the whole point.
@@ -236,17 +236,17 @@ Only now. Everything above already worked without it. These steps are for GitHub
 
 ### 5. Make a vault key
 
-The **vault** is one file, `~/.docpreview/vault.age`, holding every credential the daemon needs, encrypted with
+The **vault** is one file, `~/.nfpreview/vault.age`, holding every credential the daemon needs, encrypted with
 [age](./background/age.md). It is not a service and there is nothing to install.
 
 Mint a key and set it in one step. `-shell` emits an assignment in your shell's own syntax, and the pipe evaluates it:
 
 ```powershell
-docpreview vault keygen -shell | Invoke-Expression
+nfpreview vault keygen -shell | Invoke-Expression
 ```
 
 ```bash
-eval "$(docpreview vault keygen -shell)"
+eval "$(nfpreview vault keygen -shell)"
 ```
 
 The shell is detected from the process tree, so `-shell` on its own is almost always right. Force it with
@@ -261,7 +261,7 @@ step, on the first `vault set`.
 To see the key so you can save it, run it bare:
 
 ```powershell
-docpreview vault keygen
+nfpreview vault keygen
 ```
 
 Either way, put the key in a password manager before you close the terminal. The `-shell` form sets it for **this
@@ -280,25 +280,25 @@ long-running: a passphrase a human can remember is one a wordlist can too.
 
 Follow the [GitHub App guide](./guides/github-app.md) end to end. You will come back with:
 
-- `github.app_id`: set it in `~/.docpreview/config.yml`, replacing the `0`
+- `github.app_id`: set it in `~/.nfpreview/config.yml`, replacing the `0`
 - `github.private_key` in the vault
 - `github.webhook_secret` in the vault
 
 ### 7. Check everything again
 
 ```powershell
-docpreview doctor
+nfpreview doctor
 ```
 
 ```text
-config:  C:\Users\you\.docpreview\config.yml
-data:    C:\Users\you\.docpreview
+config:  C:\Users\you\.nfpreview\config.yml
+data:    C:\Users\you\.nfpreview
 exposer: zrok2
 driver:  docker
 listen:  tcp 127.0.0.1:8471
-vault:   C:\Users\you\.docpreview\vault.age (2 secrets)
+vault:   C:\Users\you\.nfpreview\vault.age (2 secrets)
 key:     none — the daemon starts locked and is unlocked from the dashboard
-login:   none — anyone who can reach this daemon can read it (docpreview console password -role viewer)
+login:   none — anyone who can reach this daemon can read it (nfpreview console password -role viewer)
 scm:     github (app 1234567)
 
 all checks passed
@@ -310,7 +310,7 @@ the App is, so a pass means the credentials work, not merely that they are prese
 ### 8. Run it
 
 ```powershell
-docpreview serve
+nfpreview serve
 ```
 
 If this reports that no source control is configured, `app_id` is still `0` in the config file.
@@ -378,7 +378,7 @@ Fix it in whichever direction suits you. Make the config read the environment:
 baseUrl: process.env.DOCUSAURUS_BASE_URL ?? '/my-project/',
 ```
 
-Or tell the daemon to serve it where the site expects, with `.docpreview.yml` in the repository root:
+Or tell the daemon to serve it where the site expects, with `.nfpreview.yml` in the repository root:
 
 ```yaml
 build:

@@ -168,7 +168,7 @@ const openSecrets = async d => {
    the environment variables has to open the row first — the same click a reader makes.
 
    Takes the card's data-card key. A no-op when that row has nothing to disclose, which is a
-   project deferring entirely to its own .docpreview.yml. */
+   project deferring entirely to its own .nfpreview.yml. */
 // Idempotent, because the state lives outside the DOM and survives every re-render: a second
 // caller that clicked unconditionally would close what the first one opened.
 const openDetails = async key => {
@@ -221,7 +221,7 @@ console.log("\nno class collides with the operations dashboard");
   const probe = win.document.createElement("div");
   probe.className = "list";
   probe.innerHTML = `<div class="item"><div class="row"><button class="head">
-    <span class="who"><span class="proj">docpreview</span>
+    <span class="who"><span class="proj">nfpreview</span>
     <span class="branch">round-4</span></span></button></div></div>`;
   win.document.body.append(probe);
 

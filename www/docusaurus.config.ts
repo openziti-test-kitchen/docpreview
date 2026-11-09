@@ -13,12 +13,12 @@ import type * as Preset from '@docusaurus/preset-classic';
 // nothing in the build log says why.
 //
 // Reading it from the environment makes the same source tree buildable for any
-// mount point. docpreview sets DOCUSAURUS_BASE_URL from build.base_url and then
+// mount point. nfpreview sets DOCUSAURUS_BASE_URL from build.base_url and then
 // serves the output at exactly that prefix, so the two cannot drift apart. It
 // also verifies the built output agrees before publishing, and refuses to
 // publish a preview it knows is broken.
 const baseUrl = process.env.DOCUSAURUS_BASE_URL ?? '/';
-const siteUrl = process.env.DOCUSAURUS_URL ?? 'https://docpreview.example.com';
+const siteUrl = process.env.DOCUSAURUS_URL ?? 'https://nfpreview.example.com';
 
 // The repository this site documents. Named once because it appears in the star
 // banner, the footer, the navbar and the docs edit link, and a wrong one is the
@@ -27,7 +27,7 @@ const repoUrl = 'https://github.com/openziti-test-kitchen/docpreview';
 
 // The NetFoundry footer renders its link columns as plain <a href>, not as
 // Docusaurus <Link>, so nothing applies baseUrl for us. Deriving the href from
-// the same `baseUrl` constant above keeps footer links working when docpreview
+// the same `baseUrl` constant above keeps footer links working when nfpreview
 // mounts this site under a preview prefix instead of at '/'. baseUrl always
 // ends in a slash, hence no separator here.
 const sitePath = (p: string) => `${baseUrl}${p}`;
@@ -138,7 +138,7 @@ const config: Config = {
     // No social card. The one here was Docusaurus's own artwork, so every link
     // preview of this site advertised a dragon that has nothing to do with it —
     // worse than no image. A replacement has to be a raster: Open Graph and every
-    // consumer of it ignore SVG. See TODO.md.
+    // consumer of it ignore SVG. None is made yet.
     colorMode: {
       respectPrefersColorScheme: true,
     },
