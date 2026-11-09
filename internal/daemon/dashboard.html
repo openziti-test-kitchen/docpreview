@@ -3005,6 +3005,9 @@ function updateBody(item, g) {
   // once and gave up — and one lost race then meant a build that ran to completion with a pane
   // that never moved.
   const working = p.state === "building" || p.state === "queued";
+  // A preview that stopped working ends the record, so its next build is a change again rather
+  // than a repeat of the last one that waits for the timer.
+  if (!working && ui.logFor === p.preview_id) ui.reconnectSig = null;
   if (working && ui.logFor === p.preview_id && !ui.build[p.preview_id] &&
       ui.banner?.kind !== "live" && !ui.logSource) {
     // Immediately on a state change, and on a timer after that.
@@ -3374,6 +3377,10 @@ function closeLog() {
   // Dropped with the rest of the pane's state. A record naming a preview nobody is looking at
   // would suppress the first recheck after it is opened again.
   ui.empty = null;
+  // Same for the reconnect record: left naming the state the last pane reconnected for, the next
+  // pane's first transition into that state does not count as a change, and waits for the timer.
+  ui.reconnectSig = null;
+  ui.reconnectAt = 0;
 }
 
 // liveBuild reports whether a build id names the build that is running right now.

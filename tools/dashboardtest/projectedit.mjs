@@ -147,7 +147,7 @@ console.log("/projects/new is a page, not a dialog over the list");
 }
 
 console.log("");
-console.log("the fields are grouped, and the groups say what they decide");
+console.log("the fields are grouped, and every group is named");
 {
   const {doc} = await open("/projects/new");
 
@@ -157,15 +157,11 @@ console.log("the fields are grouped, and the groups say what they decide");
   } else {
     ok(`${groups.length} groups`);
   }
-  // Each one has a heading and a sentence. A caption alone is what the previous arrangement had,
-  // and it was the "no logical groupings, mushy screen" complaint.
-  for (const g of groups) {
-    const h = g.querySelector(".fgroup-head h4");
-    const why = g.querySelector(".fgroup-head p");
-    if (!h?.textContent.trim()) fail("a group has no heading");
-    else if (!why?.textContent.trim()) fail(`the "${h.textContent.trim()}" group says nothing about itself`);
-  }
-  ok("every group has a heading and a purpose");
+  // Each one has a heading and nothing more: b23fee3 dropped the sentence under each heading,
+  // because it restated the labels below it.
+  const headless = groups.filter(g => !g.querySelector(".fgroup-head h4")?.textContent.trim());
+  if (headless.length) fail(`${headless.length} group(s) with no heading`);
+  else ok("every group has a heading");
 
   // Every field must be inside a group. A field left outside one is the mush coming back.
   const loose = [...doc.querySelectorAll(".grid-form > .field")];
