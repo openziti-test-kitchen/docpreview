@@ -1,6 +1,6 @@
 # Building out GitHub
 
-docpreview is a GitHub App that has never spoken to GitHub. Everything proven so far went through the local
+nfpreview is a GitHub App that has never spoken to GitHub. Everything proven so far went through the local
 simulator ([09-scm.md](09-scm.md)), which is an honest `scm.Client` but which cannot produce a 403, a paginated
 comment list, a revoked installation token, or a second organization. This document is about the parts of the
 GitHub integration that only a real installation will exercise, and the order to fix them in.
@@ -34,7 +34,7 @@ protection rule can act on.
 
 Two things about the current implementation want changing. `findCheckRun` filters by `check_name` and takes the
 first result (`internal/scm/github/github.go:319-335`) — the reference endpoint returns runs from every app that
-wrote one, so a second app whose check happens to be called `docpreview` would be picked up and then PATCHed,
+wrote one, so a second app whose check happens to be called `nfpreview` would be picked up and then PATCHed,
 which fails with a permission error rather than creating our own run. Filtering by our own app id, if that filter
 is available on the endpoint, or comparing the returned run's `app` field, closes it. And `output.summary` is set
 to `RenderComment(r)` (`internal/scm/github/github.go:292`), so the marker HTML comment and the whole build-log
@@ -64,8 +64,8 @@ The clone is safer than it looks. `CloneURL` is called once at the top of `runPi
 runs for forty minutes is not holding a token it will need later. A build longer than the token's remaining life
 would fail at clone, before anything expensive.
 
-`rewireGitHub` installs a client without validating it (`cmd/docpreview/main.go:476`). `validate` calls
-`gh.Validate` only on the startup path (`cmd/docpreview/main.go:505`), so a private key pasted into the setup page
+`rewireGitHub` installs a client without validating it (`cmd/nfpreview/main.go:476`). `validate` calls
+`gh.Validate` only on the startup path (`cmd/nfpreview/main.go:505`), so a private key pasted into the setup page
 is never checked against `GET /app`; the first evidence of a wrong key is a build that fails at clone with an
 authentication error. `rewireGitHub` should validate and surface the result on the setup page, which is where the
 person who just pasted the key is still looking.
@@ -156,7 +156,7 @@ delays another organization's single one. That is acceptable for a self-hosted t
 worth writing down before somebody discovers it as a bug.
 
 Nothing handles the App being uninstalled. The App subscribes only to pull-request events
-(11-github-setup-state.md) and `VerifyWebhook` handles nothing else, so removing docpreview from a repository —
+(11-github-setup-state.md) and `VerifyWebhook` handles nothing else, so removing nfpreview from a repository —
 or from an organization entirely — leaves every preview published, every share alive, and every comment in place.
 Teardown happens only on `pull_request.closed`, and only when `preview.teardown_on_close` is set
 (`internal/daemon/daemon.go:495`). Subscribing to `installation` and `installation_repositories` and mapping
@@ -166,8 +166,8 @@ resources running with no way for the affected user to stop them.
 ## Installing the App opts every pull request in
 
 There is no allowlist. `config.GitHubConfig` is an app id and an api base (`internal/config/config.go:357`), and a
-missing `.docpreview.yml` yields defaults rather than a refusal (`internal/config/config.go:704`). So installing
-on a repository means every pull request is cloned, `.docpreview.yml` loaded, `ChangedFiles` fetched, and detection
+missing `.nfpreview.yml` yields defaults rather than a refusal (`internal/config/config.go:704`). So installing
+on a repository means every pull request is cloned, `.nfpreview.yml` loaded, `ChangedFiles` fetched, and detection
 run — and, worse, a "queued" comment and check run are written *before* any of that
 (`internal/daemon/daemon.go:485`), so a pull request that turns out to touch no documentation still gets a comment
 that says "Queued" and is then edited to say "Skipped".
@@ -177,13 +177,13 @@ Three mechanisms are possible and they answer different questions:
 - **An allowlist in the server config** answers "which repositories may this daemon spend CPU on". It is the
   operator's decision, it needs no cooperation from the repository, and it is the only one of the three that can
   refuse before cloning.
-- **Presence of `.docpreview.yml`** answers "does this repository want previews". It is self-service, it lives with
+- **Presence of `.nfpreview.yml`** answers "does this repository want previews". It is self-service, it lives with
   the code, and it cannot be evaluated until after the clone — which is most of the cost.
 - **A label** answers "does this *pull request* want a preview". It is per-PR and it needs the `labeled` action,
   which is currently ignored (`internal/scm/github/webhook.go:156`).
 
 Both of the first two, and not the third. The allowlist because an operator running a build host must be able to
-say what runs on it, and it is the only gate that works before the clone. The `.docpreview.yml` requirement
+say what runs on it, and it is the only gate that works before the clone. The `.nfpreview.yml` requirement
 because a repository with no config file has expressed no interest, and defaulting a repository into being built
 is how a documentation tool becomes noise on every backend pull request. A label is the wrong default — it makes
 the common case require a manual step — but it is the right mechanism for the fork case above, where a human
@@ -224,8 +224,8 @@ build event; `edited` for a title or body change should not.
 
 ## Interface obligations GitHub meets weakly
 
-`Validate` is not part of `scm.Client` (`internal/scm/scm.go:69-101`), so `cmd/docpreview` type-asserts to the
-concrete client to call it (`cmd/docpreview/main.go:505`). With three implementations and a startup check that
+`Validate` is not part of `scm.Client` (`internal/scm/scm.go:69-101`), so `cmd/nfpreview` type-asserts to the
+concrete client to call it (`cmd/nfpreview/main.go:505`). With three implementations and a startup check that
 wants to run against all of them, it belongs on the interface.
 
 `EventIgnore` is documented in 09-scm.md and does not exist in the code; both the fork refusal and every ignored
@@ -277,7 +277,7 @@ someone has a GHE instance to test against, and until then the honest statement 
    checks it.
 5. **Handle `installation` and `installation_repositories` deletions.** This is the only gap that leaves
    previews serving with no way for the affected repository to stop them.
-6. **Add the repository allowlist and require `.docpreview.yml`, and stop reporting `queued` before the build
+6. **Add the repository allowlist and require `.nfpreview.yml`, and stop reporting `queued` before the build
    decision.** These three together are what makes the App installable on an organization without becoming noise
    on every pull request.
 7. **Put the owner in the default name template.** A one-line change whose cost is that every existing preview

@@ -22,7 +22,7 @@ package config
 // # Precedence
 //
 // A project's own explicit field wins over its preset, and the preset wins over the
-// repository's `.docpreview.yml`. The second half is worth stating because it is the
+// repository's `.nfpreview.yml`. The second half is worth stating because it is the
 // surprising one: the repository's file is what it says it is, and an operator who chose a
 // preset in the dashboard has said something more recent and more specific. Choosing the
 // blank preset — "the repository decides" — is how to defer to the file, and it is the

@@ -1,4 +1,4 @@
-# 20 — Running docpreview in a container
+# 20 — Running nfpreview in a container
 
 Status: **describes code that exists** — `Dockerfile`, `docker-compose.yml`, `.dockerignore`.
 
@@ -7,7 +7,7 @@ operator-facing version of the two rules below.
 
 ## The problem containerising this has that most services do not
 
-docpreview *runs docker builds*. Every other decision here follows from that one sentence: the daemon
+nfpreview *runs docker builds*. Every other decision here follows from that one sentence: the daemon
 shells out to `docker create`, `docker start`, `docker logs`, `docker wait` and `docker volume rm`, and it
 asks for a bind mount of the workspace it just cloned. So the container needs a docker daemon, and it
 needs to agree with that daemon about paths.
@@ -27,7 +27,7 @@ With security equal, the difference is operational, and it goes one way:
 |---|---|---|
 | image cache | shared with the host, warm across restarts | its own, empty after every restart |
 | first build after a restart | unchanged | plus a `node:24-bookworm` pull |
-| the cache volumes (`docpreview-cache-*`) | already work; they are daemon-side names | die with the DinD container unless `/var/lib/docker` is itself a volume |
+| the cache volumes (`nfpreview-cache-*`) | already work; they are daemon-side names | die with the DinD container unless `/var/lib/docker` is itself a volume |
 | storage driver | the host's | overlay on overlay |
 | visibility | `docker ps` on the host shows build containers | invisible without exec'ing in |
 | the workspace bind mount | **needs the path rule below** | works, all paths internal |
@@ -43,7 +43,7 @@ That is correct on a host and wrong in a container whose data directory is mount
 because `/data/workspaces/…` does not exist out where the daemon looks.
 
 **So the data directory is bind-mounted at the same path inside and outside the container.**
-`/srv/docpreview:/srv/docpreview`. It is not tidiness; it is what makes the sibling mount resolve.
+`/srv/nfpreview:/srv/nfpreview`. It is not tidiness; it is what makes the sibling mount resolve.
 
 The failure when it is wrong is bad in a specific way: the build container gets an *empty* `/workspace`,
 so the build fails with a missing `package.json` and everybody debugging it looks at the repository. It
@@ -66,12 +66,12 @@ the host. Worth doing; deliberately not bundled with getting the image to exist.
 ## Three containers, one image, one network namespace
 
 The workstation runs three processes — `serve`, `webhook-only`, `dashboard-only` — for reasons in
-`docs/design/14-production-deployment.md` and `cmd/docpreview/CLAUDE.md`: sharing the daemon directly
+`docs/design/14-production-deployment.md` and `cmd/nfpreview/CLAUDE.md`: sharing the daemon directly
 would publish every route it serves, including `/api/secrets`, whose write gate only checks that the
 daemon's listeners are loopback. They are.
 
 The compose file reproduces that exactly, and the two share containers use
-`network_mode: "service:docpreview"`. This is load-bearing twice over:
+`network_mode: "service:nfpreview"`. This is load-bearing twice over:
 
 - `webhook-only` **refuses** a non-loopback `-upstream` — forwarding elsewhere would make it a relay —
   so it cannot be pointed at a bridge-network hostname.
@@ -118,5 +118,5 @@ nothing an attacker could not immediately take back. Run this on a host dedicate
 the ignore file used `node_modules/`, which matches at the root only, and shipped an 851 MB context to
 build 3 MB of Go. Patterns for nested directories need `**/`.
 
-It also keeps `.docpreview/` out, which is the vault, the database and every credential this instance
+It also keeps `.nfpreview/` out, which is the vault, the database and every credential this instance
 holds.

@@ -33,7 +33,7 @@ func (c *Client) VerifyWebhook(_ context.Context, headers map[string][]string, b
 	sig := h.Get("X-Hub-Signature-256")
 	if sig == "" {
 		return nil, fmt.Errorf("%w: no X-Hub-Signature-256 header "+
-			"(configure a webhook secret on the App and store it with 'docpreview vault set github.webhook_secret')",
+			"(configure a webhook secret on the App and store it with 'nfpreview vault set github.webhook_secret')",
 			ErrBadSignature)
 	}
 	if !verifySignature(c.webhookSecret.Reveal(), body, sig) {

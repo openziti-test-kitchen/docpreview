@@ -14,14 +14,14 @@
 //
 // # The password
 //
-// From DOCPREVIEW_PASSWORD, and nowhere else. Not a default, not a prompt: a harness
+// From NFPREVIEW_PASSWORD, and nowhere else. Not a default, not a prompt: a harness
 // that guessed would be a password guesser pointed at the operator's own daemon, and one
 // that prompted could not run in a script. Without it, live state is simply unavailable
 // and the fixture is used — which is the same behaviour as no daemon at all, and is
 // stated on stdout either way.
 //
-//   $env:DOCPREVIEW_PASSWORD = "..."   # PowerShell
-//   DOCPREVIEW_PASSWORD=...            # bash
+//   $env:NFPREVIEW_PASSWORD = "..."   # PowerShell
+//   NFPREVIEW_PASSWORD=...            # bash
 import {readFileSync} from "node:fs";
 import {dirname, join} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -46,7 +46,7 @@ async function loginCookie(daemon, password) {
   });
   const raw = res.headers.getSetCookie?.() || [];
   for (const c of raw) {
-    if (c.startsWith("docpreview_session=")) return c.split(";")[0];
+    if (c.startsWith("nfpreview_session=")) return c.split(";")[0];
   }
   return "";
 }
@@ -68,12 +68,12 @@ export function statusFetcher(daemon) {
   return async function status() {
     let res = await get();
     if (res.status === 401) {
-      const password = process.env.DOCPREVIEW_PASSWORD;
+      const password = process.env.NFPREVIEW_PASSWORD;
       if (!password) {
-        throw new Error("the daemon wants a login; set DOCPREVIEW_PASSWORD to the admin password");
+        throw new Error("the daemon wants a login; set NFPREVIEW_PASSWORD to the admin password");
       }
       cookie = await loginCookie(daemon, password);
-      if (!cookie) throw new Error("DOCPREVIEW_PASSWORD was refused");
+      if (!cookie) throw new Error("NFPREVIEW_PASSWORD was refused");
       res = await get();
     }
     if (!res.ok) throw new Error(`the daemon answered ${res.status}`);
@@ -95,13 +95,13 @@ export async function liveStatus(daemon) {
   }
 
   if (res.status === 401) {
-    const password = process.env.DOCPREVIEW_PASSWORD;
+    const password = process.env.NFPREVIEW_PASSWORD;
     if (!password) {
-      return {status: fixture(), source: "fixture (login required; set DOCPREVIEW_PASSWORD)"};
+      return {status: fixture(), source: "fixture (login required; set NFPREVIEW_PASSWORD)"};
     }
     const cookie = await loginCookie(daemon, password);
     if (!cookie) {
-      return {status: fixture(), source: "fixture (DOCPREVIEW_PASSWORD was refused)"};
+      return {status: fixture(), source: "fixture (NFPREVIEW_PASSWORD was refused)"};
     }
     res = await fetch(`${daemon}/status`, {headers: {"Accept": "application/json", cookie}});
   }

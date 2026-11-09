@@ -167,7 +167,7 @@ losing the reader's text selection, twice a second while nothing was happening.
 
 ```
 ┌─ sticky top bar ───────────────────────────────────────────────────────────┐
-│ docpreview [All|Ready|Building|…] [proj ▾] [search] Projects Secrets       │
+│ nfpreview [All|Ready|Building|…] [proj ▾] [search] Projects Secrets       │
 ├──────────────────────────────────┬─────────────────────────────────────────┤
 │ Projects (4)                     │ Activity · all projects                 │
 │                                  │ [All|Ready|Building|…]                  │
@@ -250,7 +250,7 @@ with nothing would be a filter that lies. The filter counts come from the uncoll
 
 ### An entry names its commit, and lends it out
 
-Without the commit a branch built eight times produced eight rows reading `docpreview#3 / next-fixes-3 — ready`,
+Without the commit a branch built eight times produced eight rows reading `nfpreview#3 / next-fixes-3 — ready`,
 identical apart from the clock: the one thing a reader wants — *which push was this* — was the one thing the feed
 had and did not show. The message is dropped when it only repeats the label, because the daemon sends "ready" for a
 ready event and the row said Ready twice; a message carrying more than that ("ready in 24s", a skip reason, a

@@ -15,17 +15,17 @@ import (
 // They skip unless pointed at one, so `go test ./...` on a machine with no
 // controller stays green:
 //
-//	DOCPREVIEW_ZITI_CONTROLLER=https://localhost:1280
-//	DOCPREVIEW_ZITI_USER=admin        (optional, defaults to admin)
-//	DOCPREVIEW_ZITI_PASSWORD=admin    (optional, defaults to admin)
+//	NFPREVIEW_ZITI_CONTROLLER=https://localhost:1280
+//	NFPREVIEW_ZITI_USER=admin        (optional, defaults to admin)
+//	NFPREVIEW_ZITI_PASSWORD=admin    (optional, defaults to admin)
 func testOptions(t *testing.T, outDir string) Options {
 	t.Helper()
 
-	controller := os.Getenv("DOCPREVIEW_ZITI_CONTROLLER")
+	controller := os.Getenv("NFPREVIEW_ZITI_CONTROLLER")
 	if controller == "" {
-		t.Skip("set DOCPREVIEW_ZITI_CONTROLLER to run")
+		t.Skip("set NFPREVIEW_ZITI_CONTROLLER to run")
 	}
-	user, password := os.Getenv("DOCPREVIEW_ZITI_USER"), os.Getenv("DOCPREVIEW_ZITI_PASSWORD")
+	user, password := os.Getenv("NFPREVIEW_ZITI_USER"), os.Getenv("NFPREVIEW_ZITI_PASSWORD")
 	if user == "" {
 		user = "admin"
 	}
@@ -51,7 +51,7 @@ func testOptions(t *testing.T, outDir string) Options {
 func discard() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 func TestProvisionIsIdempotent(t *testing.T) {
-	// The stated flow is `ziti edge quickstart` then `docpreview configure
+	// The stated flow is `ziti edge quickstart` then `nfpreview configure
 	// ziti`, and people run a setup command more than once — after reading the
 	// output, after changing a flag, after a failure halfway through. A second
 	// run that errors on "a service with that name already exists" teaches
@@ -94,7 +94,7 @@ func TestProvisionWritesUsableFiles(t *testing.T) {
 		t.Fatalf("Provision: %v", err)
 	}
 
-	// The identity file is what `docpreview serve` loads. An empty or absent
+	// The identity file is what `nfpreview serve` loads. An empty or absent
 	// one is the difference between the daemon starting and it failing on the
 	// line after "configure ziti succeeded".
 	info, err := os.Stat(result.HostIdentityFile)

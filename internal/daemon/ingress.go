@@ -29,7 +29,7 @@ import (
 // pull_request payload and small enough to be harmless in bulk.
 const maxWebhookBody = 2 << 20
 
-// CommentReader exposes the comments docpreview owns on the local platform.
+// CommentReader exposes the comments nfpreview owns on the local platform.
 type CommentReader interface {
 	ListComments(ctx context.Context) ([]store.Comment, error)
 }
@@ -343,7 +343,7 @@ func (i *Ingress) webhook(platform model.Platform) http.HandlerFunc {
 		// answer rather than a shortcut. A delivery for a repository the operator
 		// never added is refused below, and telling the sender so would report the
 		// operator's project list one probe at a time. GitHub is being told the
-		// delivery arrived, which is true; what docpreview did with it is the
+		// delivery arrived, which is true; what nfpreview did with it is the
 		// operator's business and is in the log.
 		w.WriteHeader(http.StatusAccepted)
 		io.WriteString(w, "accepted\n")
@@ -370,7 +370,7 @@ func (i *Ingress) webhook(platform model.Platform) http.HandlerFunc {
 	}
 }
 
-// prIndex renders every comment docpreview currently owns.
+// prIndex renders every comment nfpreview currently owns.
 //
 // This is deliberately plain and deliberately auto-refreshing. What it is for
 // is watching a single comment change state — queued, building, ready — and
@@ -390,7 +390,7 @@ func (i *Ingress) prIndex(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprint(w, `<!doctype html><meta charset=utf-8>
 <meta http-equiv=refresh content=2>
-<title>docpreview — pull requests</title>
+<title>nfpreview — pull requests</title>
 <style>
  body{font:15px/1.5 ui-monospace,Consolas,monospace;max-width:52rem;margin:2rem auto;padding:0 1rem}
  .c{border:1px solid #8884;border-radius:6px;padding:1rem;margin:1rem 0}
@@ -456,7 +456,7 @@ type readyReport struct {
 // readyz reports whether recovery has finished and whether the queue is quiet.
 //
 // `/status` sits behind the login, but the thing that waits for a restart is a script, not a person:
-// `Restart-Docpreview.ps1` and the demo harness both poll until the daemon says it has recovered. Gating
+// `Restart-Nfpreview.ps1` and the demo harness both poll until the daemon says it has recovered. Gating
 // `/status` alone would lock them out, turning a restart into a wait loop that never returns.
 //
 // Handing the scripts a password puts one in a shell history and in every runbook. Leaving `/status` open

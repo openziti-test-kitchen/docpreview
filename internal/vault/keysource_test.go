@@ -22,14 +22,14 @@ func TestParseKeySourceForms(t *testing.T) {
 	}{
 		{"", ""},
 		{"   ", ""},
-		{"file:/etc/docpreview/master.key", SourceKindFile},
-		{"FILE:/etc/docpreview/master.key", SourceKindFile},
-		{"/etc/docpreview/master.key", SourceKindFile},
-		{"exec:op read op://ops/docpreview", SourceKindExec},
+		{"file:/etc/nfpreview/master.key", SourceKindFile},
+		{"FILE:/etc/nfpreview/master.key", SourceKindFile},
+		{"/etc/nfpreview/master.key", SourceKindFile},
+		{"exec:op read op://ops/nfpreview", SourceKindExec},
 		// A Windows drive letter is not a scheme. Getting this wrong turns every
 		// absolute Windows path into an unrecognised source.
-		{`D:\keys\docpreview.key`, SourceKindFile},
-		{`file:D:\keys\docpreview.key`, SourceKindFile},
+		{`D:\keys\nfpreview.key`, SourceKindFile},
+		{`file:D:\keys\nfpreview.key`, SourceKindFile},
 		// An unrecognised prefix is far more likely a path than an invented
 		// scheme, so it is treated as one.
 		{"relative/path.key", SourceKindFile},
@@ -204,7 +204,7 @@ func TestExecSourceReadsStdout(t *testing.T) {
 }
 
 func TestExecSourceFailureIsReported(t *testing.T) {
-	src, err := ParseKeySource("exec:docpreview-no-such-credential-helper")
+	src, err := ParseKeySource("exec:nfpreview-no-such-credential-helper")
 	if err != nil {
 		t.Fatal(err)
 	}

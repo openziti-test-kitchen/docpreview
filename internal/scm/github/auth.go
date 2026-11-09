@@ -70,7 +70,7 @@ func newAuthenticator(appID int64, apiBase string, pem vault.Secret, hc *http.Cl
 	key, err := jwt.ParseRSAPrivateKeyFromPEM(pem.Reveal())
 	if err != nil {
 		return nil, fmt.Errorf("parsing GitHub App private key "+
-			"(it must be the PEM file GitHub generated, stored with: docpreview vault set %s --file key.pem): %w",
+			"(it must be the PEM file GitHub generated, stored with: nfpreview vault set %s --file key.pem): %w",
 			vault.KeyGitHubPrivateKey, err)
 	}
 	return &authenticator{

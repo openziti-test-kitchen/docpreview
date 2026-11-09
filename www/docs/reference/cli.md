@@ -6,23 +6,23 @@ sidebar_position: 3
 
 # CLI reference
 
-NetFoundry Preview ships as one binary, `docpreview`.
+NetFoundry Preview ships as one binary, `nfpreview`.
 
 ```text
-docpreview init      [-config FILE] [-force] [-advanced] [-yes]
-docpreview configure ziti [-controller URL] [-username U] [-password P] …
-docpreview preview   [-build] [-base-url PATH] [-name LABEL] <dir>
-docpreview serve     [-config FILE] [-log-level LEVEL]
-docpreview doctor    [-config FILE]
-docpreview shares    list [-config FILE] [-json] [-log-level LEVEL]
-docpreview console   <subcommand>
-docpreview settings  <subcommand>
-docpreview zrok      <subcommand>
-docpreview sim       <subcommand>
-docpreview webhook-only    [-zrok-name NAME] [-listen ADDR] [-upstream URL] [-path PATH]
-docpreview dashboard-only  [-zrok-name NAME] [-listen ADDR] [-upstream URL]
-docpreview webhook-check -url URL [-config FILE] [-timeout D]
-docpreview vault     <subcommand>
+nfpreview init      [-config FILE] [-force] [-advanced] [-yes]
+nfpreview configure ziti [-controller URL] [-username U] [-password P] …
+nfpreview preview   [-build] [-base-url PATH] [-name LABEL] <dir>
+nfpreview serve     [-config FILE] [-log-level LEVEL]
+nfpreview doctor    [-config FILE]
+nfpreview shares    list [-config FILE] [-json] [-log-level LEVEL]
+nfpreview console   <subcommand>
+nfpreview settings  <subcommand>
+nfpreview zrok      <subcommand>
+nfpreview sim       <subcommand>
+nfpreview webhook-only    [-zrok-name NAME] [-listen ADDR] [-upstream URL] [-path PATH]
+nfpreview dashboard-only  [-zrok-name NAME] [-listen ADDR] [-upstream URL]
+nfpreview webhook-check -url URL [-config FILE] [-timeout D]
+nfpreview vault     <subcommand>
 ```
 
 :::note `-config` is not universal
@@ -44,7 +44,7 @@ are the one thing that needs source control.
 Publishes one directory through the configured exposer and holds it open until you interrupt it.
 
 ```powershell
-docpreview preview -build ./www
+nfpreview preview -build ./www
 ```
 
 ```text
@@ -67,7 +67,7 @@ request needed.
 | Flag | |
 |---|---|
 | `-build` | Run the site build first. Without it, the directory is served as-is. |
-| `-base-url PATH` | Serve under a prefix. Default: from `.docpreview.yml`, else `/`. |
+| `-base-url PATH` | Serve under a prefix. Default: from `.nfpreview.yml`, else `/`. |
 | `-name LABEL` | Public hostname label. Default: the directory name, sanitized. |
 | `-config FILE` | |
 | `-log-level LEVEL` | |
@@ -80,14 +80,14 @@ instead of piling up orphans.
 Writes a config file. **One question.**
 
 ```text
-docpreview init [-config FILE] [-force] [-advanced] [-yes]
+nfpreview init [-config FILE] [-force] [-advanced] [-yes]
                 [-exposer KIND] [-app-id N]
 ```
 
 ```text
-$ docpreview init
+$ nfpreview init
 
-Writing to /home/you/.docpreview/config.yml
+Writing to /home/you/.nfpreview/config.yml
 One question. Everything else takes a default (run with -advanced to see them all).
 
 How should previews become reachable?
@@ -114,7 +114,7 @@ Settings
   visibility   anyone with the link
   github app   not set yet
   listen       127.0.0.1:8471
-  data dir     /home/you/.docpreview
+  data dir     /home/you/.nfpreview
   builds       docker driver, 15m0s timeout, 2 at a time
   preview ttl  72h0m0s
 ```
@@ -125,12 +125,12 @@ Then two checklists, one to try it now and one for pull requests later:
 Try it now
 ----------
  1. Enable a zrok environment if you have not:  zrok2 enable <account-token>
- 2. Check it:                docpreview doctor
- 3. Publish something:       docpreview preview -build ./www
+ 2. Check it:                nfpreview doctor
+ 3. Publish something:       nfpreview preview -build ./www
 
 When you want previews on pull requests
 ---------------------------------------
- 1. Create a GitHub App and set app_id in /home/you/.docpreview/config.yml
+ 1. Create a GitHub App and set app_id in /home/you/.nfpreview/config.yml
  ...
 ```
 
@@ -140,7 +140,7 @@ Both follow from your answers. Choose the `local` exposer and it does not tell y
 
 | Flag | |
 |---|---|
-| `-config FILE` | Where to write. Default `~/.docpreview/config.yml`. |
+| `-config FILE` | Where to write. Default `~/.nfpreview/config.yml`. |
 | `-force` | Overwrite without asking. |
 | `-advanced` | Ask about every setting, not only the exposer. |
 | `-yes` | Ask nothing. Take every default. |
@@ -150,7 +150,7 @@ Both follow from your answers. Choose the `local` exposer and it does not tell y
 Fully unattended, for a provisioning script:
 
 ```bash
-docpreview init -yes -exposer zrok2 -app-id 1234567
+nfpreview init -yes -exposer zrok2 -app-id 1234567
 ```
 
 ### With `-advanced`
@@ -185,23 +185,23 @@ four commands:
 ```bash
 # 1. get the ziti CLI: https://openziti.io/docs/downloads
 ziti edge quickstart          # leave it running
-docpreview configure ziti
-docpreview serve
+nfpreview configure ziti
+nfpreview serve
 ```
 
 It creates, on the controller:
 
-1. an `intercept.v1` config covering `docpreview.ziti` and `*.docpreview.ziti`
-2. `docpreview-svc`, the one wildcard service carrying every preview
-3. `docpreview-admin`, a second service for the dashboard and webhook endpoint
+1. an `intercept.v1` config covering `nfpreview.ziti` and `*.nfpreview.ziti`
+2. `nfpreview-svc`, the one wildcard service carrying every preview
+3. `nfpreview-admin`, a second service for the dashboard and webhook endpoint
 4. a **Bind** policy per service, so the daemon may host them
-5. a **Dial** policy per service, keyed on the `docpreview-reader` role attribute, so adding a reviewer later means
+5. a **Dial** policy per service, keyed on the `nfpreview-reader` role attribute, so adding a reviewer later means
    one attribute on a new identity, not an edit to a live policy
 6. a service-edge-router policy per service
-7. `docpreview-host`, the daemon's own identity, **enrolled** into `<data_dir>/ziti/docpreview-host.json`
+7. `nfpreview-host`, the daemon's own identity, **enrolled** into `<data_dir>/ziti/nfpreview-host.json`
 8. `reviewer-alice`, a sample reviewer identity, with a `.jwt` left beside it
 
-Then it writes the config file, so `docpreview serve` works right away.
+Then it writes the config file, so `nfpreview serve` works right away.
 
 **Running it again is safe.** It checks for every object before creating it, and a second run reports everything as
 already present and changes nothing.
@@ -209,29 +209,29 @@ already present and changes nothing.
 ```text
 On the controller
 -----------------
-  created  config docpreview-intercept
-  created  service docpreview-svc
-  created  service-policy docpreview-bind
+  created  config nfpreview-intercept
+  created  service nfpreview-svc
+  created  service-policy nfpreview-bind
   ...
 
-Wrote /home/you/.docpreview/config.yml
+Wrote /home/you/.nfpreview/config.yml
 
 Files
 -----
-  hosting identity  /home/you/.docpreview/ziti/docpreview-host.json
-  reviewer token    /home/you/.docpreview/ziti/reviewer-alice.jwt
+  hosting identity  /home/you/.nfpreview/ziti/nfpreview-host.json
+  reviewer token    /home/you/.nfpreview/ziti/reviewer-alice.jwt
 
 Next
 ----
  1. Import reviewer-alice.jwt into Ziti Desktop Edge:
       the + button on the identity list, "Ziti JWT", pick that file,
       then switch the new identity on. …
- 2. Check it:         docpreview doctor …
+ 2. Check it:         nfpreview doctor …
 ```
 
 The reviewer token is not a URL and not a password. You import the file into a tunneler:
 [Ziti Desktop Edge](https://netfoundry.io/docs/openziti/how-to-guides/tunnelers/windows/) on Windows, or
-`ziti-edge-tunnel add --jwt "$(cat reviewer-alice.jwt)"` elsewhere. After that `http://<branch>.docpreview.ziti/`
+`ziti-edge-tunnel add --jwt "$(cat reviewer-alice.jwt)"` elsewhere. After that `http://<branch>.nfpreview.ziti/`
 resolves, and it resolves nowhere else.
 
 ### Flags
@@ -241,16 +241,16 @@ resolves, and it resolves nowhere else.
 | `-controller` | `https://localhost:1280` | Edge management API. What `ziti edge quickstart` advertises. |
 | `-username` | `admin` | |
 | `-password` | `admin` | |
-| `-domain` | `docpreview.ziti` | DNS suffix previews appear under. Written into the intercept config *and* the docpreview config, so the two cannot disagree. |
-| `-service` | `docpreview-svc` | The wildcard preview service. |
-| `-admin-service` | `docpreview-admin` | Service for the dashboard and webhook endpoint. Empty leaves the ingress on TCP only. |
-| `-host-identity` | `docpreview-host` | The daemon's own identity. |
+| `-domain` | `nfpreview.ziti` | DNS suffix previews appear under. Written into the intercept config *and* the nfpreview config, so the two cannot disagree. |
+| `-service` | `nfpreview-svc` | The wildcard preview service. |
+| `-admin-service` | `nfpreview-admin` | Service for the dashboard and webhook endpoint. Empty leaves the ingress on TCP only. |
+| `-host-identity` | `nfpreview-host` | The daemon's own identity. |
 | `-reviewer` | `reviewer-alice` | Sample reviewer identity. Empty creates none. |
-| `-reader-role` | `docpreview-reader` | Role attribute the Dial policies are keyed on. |
-| `-prefix` | `docpreview-` | Name prefix for the config and the policies. |
+| `-reader-role` | `nfpreview-reader` | Role attribute the Dial policies are keyed on. |
+| `-prefix` | `nfpreview-` | Name prefix for the config and the policies. |
 | `-out-dir` | `<data_dir>/ziti` | Where the identity file and the token land. |
 | `-no-config` | | Provision the network, leave the config file alone, print the YAML instead. |
-| `-config FILE` | `~/.docpreview/config.yml` | |
+| `-config FILE` | `~/.nfpreview/config.yml` | |
 
 The loopback listener is **kept** when an admin service is configured, so the written config has both:
 
@@ -258,8 +258,8 @@ The loopback listener is **kept** when an admin service is configured, so the wr
 listeners:
   - tcp: "127.0.0.1:8471"
   - ziti:
-      identity_file: "…/docpreview-host.json"
-      service: "docpreview-admin"
+      identity_file: "…/nfpreview-host.json"
+      service: "nfpreview-admin"
 ```
 
 Without the TCP address you could not reach the dashboard until your own tunneler is enrolled and running. Delete the
@@ -287,7 +287,7 @@ up that nothing can arrive yet:
 
 ```text
 level=WARN msg="no source control is configured, so no webhooks can arrive"
-  fix="add github.app_id, or set local.enabled for the git simulator" config=/home/you/.docpreview/config.yml
+  fix="add github.app_id, or set local.enabled for the git simulator" config=/home/you/.nfpreview/config.yml
 ```
 
 A locked vault works the same way. With `github.app_id` set and no master key, there is no GitHub client, because
@@ -296,13 +296,13 @@ answers `501`, and the client is built when the vault is unlocked from the dashb
 rebuilds the client and drops the cached installation token, since the old key minted it.
 
 ```powershell
-docpreview serve
-docpreview serve -config ./dev.yml -log-level debug
+nfpreview serve
+nfpreview serve -config ./dev.yml -log-level debug
 ```
 
 | Flag | Default | |
 |---|---|---|
-| `-config` | `~/.docpreview/config.yml` | Also `$DOCPREVIEW_CONFIG`. |
+| `-config` | `~/.nfpreview/config.yml` | Also `$NFPREVIEW_CONFIG`. |
 | `-log-level` | `info` | `debug`, `info`, `warn`, `error`. |
 
 Startup checks every component **before binding the port**. If the zrok environment is not enabled, you find out now,
@@ -312,7 +312,7 @@ Every configured [listener](./configuration.md#listeners) is bound, or none is. 
 a failure on any one is fatal. Otherwise the process would look healthy while the address people use is gone.
 
 ```text
-level=INFO msg=listening listeners="tcp 127.0.0.1:8471, ziti service docpreview-admin (identity …)" exposer=ziti
+level=INFO msg=listening listeners="tcp 127.0.0.1:8471, ziti service nfpreview-admin (identity …)" exposer=ziti
 ```
 
 Then it reconciles with the exposer. Shares survive a restart, so under zrok it lists what the environment already
@@ -467,9 +467,9 @@ the webhooks and the health endpoints asks for a login, including from loopback.
 [The login](./security.md#the-login).
 
 ```text
-docpreview console password [-role admin|viewer] [-clear] [-config FILE]
-docpreview console oauth-domains [D] [-clear] [-config FILE]
-docpreview console status [-config FILE]
+nfpreview console password [-role admin|viewer] [-clear] [-config FILE]
+nfpreview console oauth-domains [D] [-clear] [-config FILE]
+nfpreview console status [-config FILE]
 ```
 
 | Subcommand | |
@@ -488,9 +488,9 @@ Settings the daemon keeps in its database. Each has a dashboard field too. The c
 whose dashboard is not reachable yet.
 
 ```text
-docpreview settings prefix          print the installation's hostname prefix
-docpreview settings prefix P        publish previews as P-<name>
-docpreview settings prefix -clear   back to bare preview names
+nfpreview settings prefix          print the installation's hostname prefix
+nfpreview settings prefix P        publish previews as P-<name>
+nfpreview settings prefix -clear   back to bare preview names
 ```
 
 A running daemon reads the prefix once at startup, so set it and then start the daemon.
@@ -501,17 +501,17 @@ A reverse proxy that publishes `POST` on one or more paths, forwards those to th
 everything else.
 
 ```text
-docpreview webhook-only [-zrok-name NAME] [-zrok-namespace NS] [-listen ADDR]
+nfpreview webhook-only [-zrok-name NAME] [-zrok-namespace NS] [-listen ADDR]
                         [-upstream URL] [-path PATH] [-log-level LEVEL]
 ```
 
 ```powershell
-docpreview webhook-only -zrok-name docpreview
+nfpreview webhook-only -zrok-name nfpreview
 ```
 
 ```text
-level=INFO msg="webhook-only serving over zrok" url=https://docpreview.shares.zrok.io forwards="POST /webhook/github" to=http://127.0.0.1:8471
-level=INFO msg="this is the webhook URL to configure" platform=github webhook=https://docpreview.shares.zrok.io/webhook/github
+level=INFO msg="webhook-only serving over zrok" url=https://nfpreview.shares.zrok.io forwards="POST /webhook/github" to=http://127.0.0.1:8471
+level=INFO msg="this is the webhook URL to configure" platform=github webhook=https://nfpreview.shares.zrok.io/webhook/github
 ```
 
 **Never tunnel the daemon itself.** zrok's proxy backend shares an *origin*, not a path, so
@@ -552,7 +552,7 @@ run yourself.
 **No local TCP port is bound at all**, so there is nothing on this machine for anything else to find. The URL is
 stable, because the name is reserved.
 
-The name must already exist: `zrok2 create name docpreview`. A reserved name counts against an account quota, so the
+The name must already exist: `zrok2 create name nfpreview`. A reserved name counts against an account quota, so the
 command never creates one for you.
 
 A share from a previous run that still holds the name is **adopted**, so a restart creates no share. Shutdown leaves
@@ -586,12 +586,12 @@ The same idea as `webhook-only`, for the other direction: it publishes the **rea
 nothing else.
 
 ```text
-docpreview dashboard-only [-zrok-name NAME] [-zrok-namespace NS] [-listen ADDR]
+nfpreview dashboard-only [-zrok-name NAME] [-zrok-namespace NS] [-listen ADDR]
                           [-upstream URL] [-oauth google|github -oauth-domain D] [-log-level LEVEL]
 ```
 
 ```powershell
-docpreview dashboard-only -zrok-name docpreview-dash
+nfpreview dashboard-only -zrok-name nfpreview-dash
 ```
 
 It is a separate command so the two can use different names and stop independently. You can stop showing someone
@@ -643,7 +643,7 @@ frontend asks for a sign-in before anything reaches the daemon.
 | `-upstream` | `http://127.0.0.1:8471` | The daemon to forward to. Non-loopback is refused, for the same reason as `webhook-only`. |
 | `-log-level` | `info` | |
 
-There is no `-config`. The name must already exist (`zrok2 create name docpreview-dash`), and a share from a previous
+There is no `-config`. The name must already exist (`zrok2 create name nfpreview-dash`), and a share from a previous
 run that holds it is adopted, as in [`webhook-only`](#webhook-only).
 
 ## `webhook-check`
@@ -651,15 +651,15 @@ run that holds it is adopted, as in [`webhook-only`](#webhook-only).
 Sends a correctly signed `ping` to a webhook URL and reports whether it was accepted.
 
 ```text
-docpreview webhook-check -url URL [-config FILE] [-timeout D]
+nfpreview webhook-check -url URL [-config FILE] [-timeout D]
 ```
 
 ```powershell
-docpreview webhook-check -url https://docpreview.shares.zrok.io/webhook/github
+nfpreview webhook-check -url https://nfpreview.shares.zrok.io/webhook/github
 ```
 
 ```text
-POST https://docpreview.shares.zrok.io/webhook/github
+POST https://nfpreview.shares.zrok.io/webhook/github
   event     ping
   delivery  check-1f0c9a4b2e77d310
   status    202 Accepted in 412ms
@@ -682,7 +682,7 @@ from the dashboard, this command needs its own route to the [master key](./secur
 | Flag | Default | |
 |---|---|---|
 | `-url` | required | The webhook URL to test, exactly as GitHub would be given it. |
-| `-config` | `~/.docpreview/config.yml` | Which vault the secret is read from. |
+| `-config` | `~/.nfpreview/config.yml` | Which vault the secret is read from. |
 | `-timeout` | `30s` | |
 
 Each failure gets a diagnosis, because each has a different fix:
@@ -700,17 +700,17 @@ Each failure gets a diagnosis, because each has a different fix:
 Checks configuration and credentials, then exits.
 
 ```powershell
-docpreview doctor
+nfpreview doctor
 ```
 
 ```text
-config:  C:\Users\you\.docpreview\config.yml
-data:    C:\Users\you\.docpreview
+config:  C:\Users\you\.nfpreview\config.yml
+data:    C:\Users\you\.nfpreview
 exposer: zrok2
 driver:  local
 listen:  tcp 127.0.0.1:8471
-vault:   C:\Users\you\.docpreview\vault.age (2 secrets)
-key:     file:C:\ProgramData\docpreview\master.key
+vault:   C:\Users\you\.nfpreview\vault.age (2 secrets)
+key:     file:C:\ProgramData\nfpreview\master.key
 scm:     github (app 1234567)
 
 all checks passed
@@ -724,8 +724,8 @@ Every listener is listed, and each `ziti` one is **bound and released** to prove
 
 ```text
 listen:  tcp 127.0.0.1:8471
-         ziti service docpreview-admin (identity …\docpreview-host.json)
-bind:    ziti service docpreview-admin (identity …\docpreview-host.json) ok
+         ziti service nfpreview-admin (identity …\nfpreview-host.json)
+bind:    ziti service nfpreview-admin (identity …\nfpreview-host.json) ok
 ```
 
 That catches an identity that will not authenticate and a service with no Bind policy naming it. Neither shows in the
@@ -755,13 +755,13 @@ What the exposer's account holds, compared with what the database claims. It ans
 fixes: is the account paying for something nothing uses, and is something advertising a URL that no longer resolves.
 
 ```powershell
-docpreview shares list -config .docpreview\config.yml
+nfpreview shares list -config .nfpreview\config.yml
 ```
 
 ```text
 STATE    PUBLICATION                           PULL REQUEST                                     SHARE         URL
 missing  81379294374a/20260730-184200-cf9f37d  bitbucket:netfoundry/customer-connect-docs#19    -             https://…-cf9f37d.shares.zrok.io/
-ok       10e1d73c7eea                          github:openziti-test-kitchen/docpreview@main     g83f5pgt410k  https://docpreview-main.shares.zrok.io/
+ok       10e1d73c7eea                          github:openziti-test-kitchen/docpreview@main     g83f5pgt410k  https://nfpreview-main.shares.zrok.io/
 never    58a4a5f461f7                          github:openziti-test-kitchen/docpreview#6        -             -
 
 23 shares held: 23 matched the database, 0 orphaned. 1 recorded publication is no longer on the account;
@@ -793,12 +793,12 @@ Signs up for zrok, enrols this host, and picks which of the two zrok environment
 operations as the panel on `/secrets`, for a host with no browser.
 
 ```powershell
-docpreview zrok status
-docpreview zrok use system|project
-docpreview zrok invite <email> [-api-endpoint URL] [-invite-token T]
-docpreview zrok register <link-or-token> [-api-endpoint URL] [-description D] [-no-enable]
-docpreview zrok enable [-token-stdin] [-description D]
-docpreview zrok disable -yes
+nfpreview zrok status
+nfpreview zrok use system|project
+nfpreview zrok invite <email> [-api-endpoint URL] [-invite-token T]
+nfpreview zrok register <link-or-token> [-api-endpoint URL] [-description D] [-no-enable]
+nfpreview zrok enable [-token-stdin] [-description D]
+nfpreview zrok disable -yes
 ```
 
 ### `zrok status`
@@ -807,7 +807,7 @@ Both environment directories, what is enrolled in each, and which one this insta
 
 ```text
 in use: system
-  this installation  D:\docpreview\.docpreview\zrok2
+  this installation  D:\nfpreview\.nfpreview\zrok2
     nothing here yet
 * this machine       C:\Users\you\.zrok2
     enabled against https://api-v2.zrok.io/, default namespace public
@@ -864,8 +864,8 @@ Bare git repositories that behave like pull requests, so the whole loop runs wit
 no tunnel. See [Local platform](../local-platform.md) for how it works.
 
 ```bash
-docpreview sim init <name> [-base main] [-seed ./path/to/a/repo]
-docpreview sim list
+nfpreview sim init <name> [-base main] [-seed ./path/to/a/repo]
+nfpreview sim list
 ```
 
 ### `sim init <name>`
@@ -894,16 +894,16 @@ Credentials, encrypted at rest in a single file with [age](https://age-encryptio
 [age, and why the vault uses it](../background/age.md) if that name is new.
 
 The master key comes from `vault.key_source` in the config (a file, or a command that prints it), then
-`$DOCPREVIEW_MASTER_KEY`, then a prompt on a terminal. With none of the three, the daemon starts locked and you unlock
+`$NFPREVIEW_MASTER_KEY`, then a prompt on a terminal. With none of the three, the daemon starts locked and you unlock
 it from the dashboard. See [security](./security.md#the-master-key) for which to pick.
 
-The vault is `<data_dir>/vault.age`, by default `~/.docpreview/vault.age`. It holds a JSON map of names to values,
+The vault is `<data_dir>/vault.age`, by default `~/.nfpreview/vault.age`. It holds a JSON map of names to values,
 encrypted as one blob, so the file reveals neither the values nor which secrets exist.
 
 ### `vault keygen`
 
 ```text
-docpreview vault keygen [-out FILE] [-shell SHELL] [-quiet]
+nfpreview vault keygen [-out FILE] [-shell SHELL] [-quiet]
 ```
 
 Generates a new [age X25519 identity](../background/age.md#how-it-works). There are three output shapes, and all three
@@ -912,11 +912,11 @@ keep the key out of your shell history. `-out` and `-shell` together are refused
 #### Write it to a file
 
 ```powershell
-docpreview vault keygen -out C:\ProgramData\docpreview\master.key
+nfpreview vault keygen -out C:\ProgramData\nfpreview\master.key
 ```
 
 ```bash
-docpreview vault keygen -out /etc/docpreview/master.key
+nfpreview vault keygen -out /etc/nfpreview/master.key
 ```
 
 The key is written at mode 0600 and never printed. This pairs with `vault.key_source`, and it is the shape that lets
@@ -924,7 +924,7 @@ the daemon come back from a reboot with nobody there:
 
 ```yaml
 vault:
-  key_source: "file:/etc/docpreview/master.key"
+  key_source: "file:/etc/nfpreview/master.key"
 ```
 
 An existing file is **not** overwritten. It may be the only key to a vault full of credentials. Move it aside first if
@@ -938,27 +938,27 @@ machine:
 
 ```yaml
 vault:
-  key_source: "exec:op read op://ops/docpreview/master-key"
+  key_source: "exec:op read op://ops/nfpreview/master-key"
 ```
 
 #### Set it directly
 
 ```powershell
-docpreview vault keygen -shell | Invoke-Expression
+nfpreview vault keygen -shell | Invoke-Expression
 ```
 
 ```bash
-eval "$(docpreview vault keygen -shell)"
+eval "$(nfpreview vault keygen -shell)"
 ```
 
 ```fish
-docpreview vault keygen -shell | source
+nfpreview vault keygen -shell | source
 ```
 
 With `-shell`, stdout is one line, an assignment in that shell's syntax, so you can evaluate it straight into the
 session. Everything else goes to stderr, where you can read it and the pipe does not pick it up.
 
-This keeps the key out of your shell history. Pasting `$env:DOCPREVIEW_MASTER_KEY = 'AGE-SECRET-KEY-1...'` records
+This keeps the key out of your shell history. Pasting `$env:NFPREVIEW_MASTER_KEY = 'AGE-SECRET-KEY-1...'` records
 the key. Piping records only the pipeline.
 
 It still sets an environment variable, the least preferred of the three sources. Every process under the same user
@@ -982,7 +982,7 @@ PowerShell prompt. Pass `-shell` yourself if a wrapper confuses the walk.
 #### See the key
 
 ```powershell
-docpreview vault keygen
+nfpreview vault keygen
 ```
 
 Bare, the key goes to stdout and the guidance to stderr, so it pipes cleanly into a password manager. Save it there
@@ -990,20 +990,20 @@ as well. The `-shell` form sets the variable for one session only, and losing th
 
 #### Passphrases
 
-A passphrase works in place of a generated key. Any `$DOCPREVIEW_MASTER_KEY` that does not start with
+A passphrase works in place of a generated key. Any `$NFPREVIEW_MASTER_KEY` that does not start with
 `AGE-SECRET-KEY-1` is treated as a passphrase and stretched with scrypt.
 
 ### `vault rekey`
 
 ```powershell
-docpreview vault rekey -generate -yes
+nfpreview vault rekey -generate -yes
 ```
 
 Re-encrypts the vault under a new master key and keeps every secret. Use it when the key is weaker than it should be,
 such as a short passphrase typed during setup, or when someone may have seen the key.
 
 ```text
-docpreview vault rekey [-config FILE] [-generate] -yes
+nfpreview vault rekey [-config FILE] [-generate] -yes
 ```
 
 | Flag | |
@@ -1030,9 +1030,9 @@ The order of steps keeps it recoverable:
 ```text
 Re-encrypted 12 secrets under a new master key.
 
-  key    /etc/docpreview/master.key
-  vault  /var/lib/docpreview/vault.age
-  backup /var/lib/docpreview/vault.age.bak-20260814-124819 (opens with the previous key)
+  key    /etc/nfpreview/master.key
+  vault  /var/lib/nfpreview/vault.age
+  backup /var/lib/nfpreview/vault.age.bak-20260814-124819 (opens with the previous key)
 ```
 
 Start the daemon and confirm it unlocks before you delete the backup.
@@ -1052,17 +1052,17 @@ rotated at the platform that issued it.
 From a file:
 
 ```powershell
-docpreview vault set github.private_key -file .\downloaded-key.pem
+nfpreview vault set github.private_key -file .\downloaded-key.pem
 ```
 
 From stdin:
 
 ```powershell
-"my-webhook-secret" | docpreview vault set github.webhook_secret
+"my-webhook-secret" | nfpreview vault set github.webhook_secret
 ```
 
 ```bash
-echo -n "my-webhook-secret" | docpreview vault set github.webhook_secret
+echo -n "my-webhook-secret" | nfpreview vault set github.webhook_secret
 ```
 
 Trailing newlines are stripped, since a shell adds them. A PEM key keeps its internal newlines. Empty values are
@@ -1071,7 +1071,7 @@ refused.
 ### `vault list`
 
 ```powershell
-docpreview vault list
+nfpreview vault list
 ```
 
 ```text
@@ -1084,7 +1084,7 @@ Names only, sorted. No command prints a value.
 ### `vault delete <key>`
 
 ```powershell
-docpreview vault delete frontdoor.api_token
+nfpreview vault delete frontdoor.api_token
 ```
 
 ### Known keys

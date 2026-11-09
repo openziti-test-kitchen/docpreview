@@ -25,7 +25,7 @@ type Listeners struct {
 	// Net is what http.Server.Serve is called with, one goroutine each.
 	Net []net.Listener
 
-	// Descriptions parallels Net, for logging and `docpreview doctor`. Held
+	// Descriptions parallels Net, for logging and `nfpreview doctor`. Held
 	// separately because a ziti listener's Addr() is an overlay address that
 	// says nothing about which service was bound.
 	Descriptions []string
@@ -35,7 +35,7 @@ type Listeners struct {
 
 // Open binds every configured listener, or none of them.
 //
-// All-or-nothing on purpose. A partial bind would leave docpreview serving the
+// All-or-nothing on purpose. A partial bind would leave nfpreview serving the
 // dashboard on loopback while the overlay listener — the one the reviewers
 // use — silently does not exist, and the daemon would look healthy. Any
 // failure closes what was already opened and reports which entry failed.
@@ -72,7 +72,7 @@ func Open(listeners []config.Listener, log *slog.Logger) (*Listeners, error) {
 // Same shape as the ziti exposer's Validate, and the same operational
 // constraint applies: exactly one process may bind a given service. A second
 // binding creates a second terminator and the router load-balances between
-// them, so half the dashboard requests would reach a docpreview that knows
+// them, so half the dashboard requests would reach a nfpreview that knows
 // nothing about them. The error text names the Bind policy because a missing
 // one is the overwhelmingly common cause and the SDK's own message does not
 // mention policies at all.

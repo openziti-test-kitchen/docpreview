@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>docpreview</title>
+<title>nfpreview</title>
 <style>
 /* Surfaces, ink and the status palette come from a validated set. Dark mode is
    stepped deliberately rather than inverted, because an inverted palette puts
@@ -1865,7 +1865,7 @@ footer {
 <div class="topbar">
   <div class="row">
     <div class="brand">
-      <h1>docpreview</h1>
+      <h1>nfpreview</h1>
       <span class="sub" id="exposer">&nbsp;</span>
     </div>
     <div class="seg" id="counters"></div>
@@ -2063,7 +2063,7 @@ footer {
 <!-- The running binary's build stamp. Filled from /status, and empty until the first poll
      answers — a version typed into the markup would be the version of whatever built the page,
      which is the same file for every release and so always wrong. -->
-<div class="buildstamp" id="buildstamp" title="the running binary — docpreview version says more"></div>
+<div class="buildstamp" id="buildstamp" title="the running binary — nfpreview version says more"></div>
 
 <script>
 "use strict";
@@ -2563,7 +2563,7 @@ function renderList() {
       el.innerHTML = `<div class="empty">
         ${filtered
           ? `Nothing matches.<br><br><button class="btn" id="clear">Clear filters</button>`
-          : `No previews yet.<br><br>Push a branch to a repo made by <code>docpreview sim init</code>.`}
+          : `No previews yet.<br><br>Push a branch to a repo made by <code>nfpreview sim init</code>.`}
       </div>`;
       const c = document.getElementById("clear");
       if (c) c.onclick = clearFilters;
@@ -4130,7 +4130,7 @@ function renderEvents() {
 
     // The commit, because it is what distinguishes one entry from the next.
     // Without it a branch built eight times produced eight rows reading
-    // "docpreview#3 / next-fixes-3 — ready", identical apart from the clock, and
+    // "nfpreview#3 / next-fixes-3 — ready", identical apart from the clock, and
     // the one thing a reader wants — which push was this — was the one thing the
     // feed had and did not show.
     //
@@ -4463,7 +4463,7 @@ function renderSetup(s) {
     el.innerHTML = `<div class="notice bad">
       <strong>Not available on this daemon.</strong> ${esc(s.reason)}
       <p>Credentials on a reachable listener need authentication this does not have yet.
-      Use <code>docpreview vault set &lt;key&gt;</code> on the host instead.</p></div>`;
+      Use <code>nfpreview vault set &lt;key&gt;</code> on the host instead.</p></div>`;
     return;
   }
 
@@ -4512,7 +4512,7 @@ function renderSetup(s) {
     // The vault key, only when it says something the label does not.
     //
     // A known credential has both — "GitHub App private key" over `github.private_key` —
-    // and the key is what `docpreview vault set` takes, so it is worth the line. A build
+    // and the key is what `nfpreview vault set` takes, so it is worth the line. A build
     // variable's label *is* its key, and rendering both printed
     // GH_ZITI_CI_REPO_ACCESS_PAT twice, one line under the other, on every row.
     const key = e.label === e.key ? "" : `<div class="key">${esc(e.key)}</div>`;
@@ -4553,7 +4553,7 @@ function renderSetup(s) {
      the control stick. */
   const GROUPS = [
     ["daemon", "Platform and exposer credentials",
-     "Used by docpreview itself to verify webhooks, clone, and comment. " +
+     "Used by nfpreview itself to verify webhooks, clone, and comment. " +
      "Never given to a build."],
     ["build", "Build variables",
      "Injected into every build as environment variables and redacted from every log. " +
@@ -4649,8 +4649,8 @@ function renderSetup(s) {
 
   const banner = ro
     ? `<div class="notice warn"><strong>Read-only from here.</strong> ${esc(s.read_only_why || "")}
-       <p>Open the dashboard on the machine running docpreview, or use
-       <code>docpreview vault set &lt;key&gt;</code> there.</p></div>`
+       <p>Open the dashboard on the machine running nfpreview, or use
+       <code>nfpreview vault set &lt;key&gt;</code> there.</p></div>`
     // Shorter than it was: what each group is for now sits under its own heading, so
     // repeating it here made the same paragraph appear twice on one screen.
     : `<div class="notice ok">Values are written to the age-encrypted vault. Nothing here reads one
@@ -4746,7 +4746,7 @@ function renderUnlock(el, s) {
     el.innerHTML = `<div class="notice warn">
       <strong>${s.has_vault ? "The vault is locked." : "No vault yet."}</strong>
       Nothing can arrive until it is unlocked, and that has to happen on the machine
-      running docpreview. ${esc(s.read_only_why || "")}</div>`;
+      running nfpreview. ${esc(s.read_only_why || "")}</div>`;
     return;
   }
 
@@ -4959,7 +4959,7 @@ function renderPrefix(s) {
         characters, a hostname label. Existing previews keep the names they were published under
         until they are rebuilt.${s.can_write ? "" :
           " Read-only from here: this changes every preview URL, so it is only editable on the " +
-          "machine running docpreview."}</div>
+          "machine running nfpreview."}</div>
     </div>`;
 
   const input = document.getElementById("p-prefix");
@@ -5039,8 +5039,8 @@ function zrokRootRow(s, which, info, label) {
   // Un-enrolling is offered for this installation's own directory and never for the
   // machine's.
   //
-  // docpreview created the first one and nothing else reads it, so removing it is
-  // docpreview's business. `~/.zrok2` is the zrok CLI's, shared with whatever else that
+  // nfpreview created the first one and nothing else reads it, so removing it is
+  // nfpreview's business. `~/.zrok2` is the zrok CLI's, shared with whatever else that
   // account uses it for — a `zrok2 share` somebody left running, another tool, a colleague's
   // scripts. Deleting it from a documentation-preview dashboard would take those with it, and
   // the operator would have no reason to look here for the cause. `zrok2 disable` is the tool
@@ -5089,7 +5089,7 @@ function exposerSection(kind, label, chips, open, body, inUse, broken) {
   </details>`;
 }
 
-// zrokUnsupportedAnywhere reports whether either directory holds an enrolment docpreview
+// zrokUnsupportedAnywhere reports whether either directory holds an enrolment nfpreview
 // cannot use — a v1 service, or an on-disk format from an older zrok.
 const zrokUnsupportedAnywhere = s => Boolean(s.project?.unsupported || s.system?.unsupported);
 
@@ -5354,7 +5354,7 @@ function frontdoorForm(s, o) {
 
    This was the last thing on the panel that needed a second binary, and the reason was a
    binary rather than anything intrinsic: `ziti edge enroll` reads a JWT, generates a key pair,
-   exchanges the token and writes a JSON identity — and the Go SDK docpreview already depends
+   exchanges the token and writes a JSON identity — and the Go SDK nfpreview already depends
    on does exactly that.
 
    The token is one-time in the strict sense. The controller marks it spent on the exchange and
@@ -5375,7 +5375,7 @@ function zitiForm(s, o) {
       <div class="hint wide">From <code>ziti edge create identity</code>, or the enrolment token
         on an identity that has not enrolled yet. It works once: the controller marks it spent,
         and the key generated during enrolment exists only in the file this writes. Or run
-        <code>docpreview configure ziti</code>, which provisions a whole network including this
+        <code>nfpreview configure ziti</code>, which provisions a whole network including this
         identity.</div>
     </div>
     <div class="sec sub">
@@ -5389,7 +5389,7 @@ function zitiForm(s, o) {
       </div>
       <div class="act"></div>
       <div class="hint wide">One service serves every preview, separated by the HTTP Host
-        header. Exactly one docpreview may bind it — two binders means two terminators and
+        header. Exactly one nfpreview may bind it — two binders means two terminators and
         roughly half of all previews answering 404 while every log looks healthy.</div>
     </div>
     <div class="sec sub">
@@ -5415,7 +5415,7 @@ function zitiForm(s, o) {
          produce. -->
     <details class="ziti-cli">
       <summary>Or run the ziti CLI yourself</summary>
-      <div class="hint">Generated from the fields above. <code>docpreview configure ziti</code>
+      <div class="hint">Generated from the fields above. <code>nfpreview configure ziti</code>
         does all of it, plus a reviewer identity, if you would rather not.</div>
       <pre id="ziti-cli-text">${esc(zitiCliScript(s))}</pre>
       <div class="act"><button class="btn" id="ziti-cli-copy">Copy</button></div>
@@ -5427,15 +5427,15 @@ function zitiForm(s, o) {
    Kept beside the form rather than in a runbook because it has to agree with the fields, and a
    copy in the documentation would be a copy that drifts. The identity's role attribute and the
    Bind policy have to name each other, which is the part people get wrong by hand — the policy
-   grants by attribute (`#docpreview`), not by identity name, so an identity created without
-   `-a docpreview` enrols fine and then binds nothing.
+   grants by attribute (`#nfpreview`), not by identity name, so an identity created without
+   `-a nfpreview` enrols fine and then binds nothing.
 
-   No `host.v1` config. docpreview binds the service itself through the SDK, so there is nothing
+   No `host.v1` config. nfpreview binds the service itself through the SDK, so there is nothing
    for a tunneler to host — that config only exists when a tunneler is the one serving. */
 function zitiCliScript(s) {
-  const svc = (s.ziti?.service || "docpreview-previews").trim();
+  const svc = (s.ziti?.service || "nfpreview-previews").trim();
   const dom = (s.ziti?.domain || "preview.ziti").trim();
-  const id = "docpreview";
+  const id = "nfpreview";
   const intercept = JSON.stringify({
     protocols: ["tcp"],
     addresses: [`*.${dom}`],
@@ -5443,7 +5443,7 @@ function zitiCliScript(s) {
   });
 
   return [
-    `# 1. docpreview's own identity. The -a attribute is what the Bind policy grants to,`,
+    `# 1. nfpreview's own identity. The -a attribute is what the Bind policy grants to,`,
     `#    so an identity created without it enrols fine and then binds nothing.`,
     `ziti edge create identity ${id} -a ${id} -o ${id}.jwt`,
     ``,
@@ -5454,7 +5454,7 @@ function zitiCliScript(s) {
     `# 3. the service. One wildcard service serves every preview, separated by the Host header.`,
     `ziti edge create service ${svc} -a ${svc} --configs ${svc}-intercept`,
     ``,
-    `# 4. docpreview hosts it; readers dial it. Exactly one docpreview may bind — two binders`,
+    `# 4. nfpreview hosts it; readers dial it. Exactly one nfpreview may bind — two binders`,
     `#    means two terminators and roughly half of all previews answering 404.`,
     `ziti edge create service-policy ${svc}-bind Bind --service-roles "@${svc}" --identity-roles "#${id}"`,
     `ziti edge create service-policy ${svc}-dial Dial --service-roles "@${svc}" --identity-roles "#${svc}-reader"`,
@@ -5677,7 +5677,7 @@ function zrokWizard(s, preselect) {
         <label class="wiz-field">
           <span>A password for the zrok account</span>
           <input type="password" id="wiz-password" autocomplete="new-password">
-          <span class="wiz-why">Belongs to the zrok account, not to docpreview, and is not
+          <span class="wiz-why">Belongs to the zrok account, not to nfpreview, and is not
             stored here. Keep it — it is how that account is recovered.</span>
         </label>`,
       acts: [{
@@ -5909,7 +5909,7 @@ function wireZrok(s) {
   // The generated CLI follows the fields as they are typed.
   //
   // Regenerated rather than rendered once: the commands are only useful if they name the service
-  // and domain on screen, and a block that still said `docpreview-previews` after somebody typed
+  // and domain on screen, and a block that still said `nfpreview-previews` after somebody typed
   // their own name would be a block that produces the wrong objects — silently, since the wrong
   // ones are created successfully.
   const cliText = document.getElementById("ziti-cli-text");
@@ -5999,8 +5999,8 @@ const editKey = (() => {
 const isProjectEditPage = editKey !== null;
 
 /* ── Projects ─────────────────────────────────────────────────────────────
-   A project is a repository docpreview will build, and how. The row lives in
-   sqlite and wins over the repository's own .docpreview.yml, because that file
+   A project is a repository nfpreview will build, and how. The row lives in
+   sqlite and wins over the repository's own .nfpreview.yml, because that file
    arrives in the pull request — so on any repository where opening one is not a
    privilege, its author would otherwise choose the command that runs.
 
@@ -6127,7 +6127,7 @@ let formDirty = false;
    and then navigates to the list: a variable is gone the moment the document is replaced, and the
    save would land silently. Per tab, and cleared as it is read, so two tabs do not steal each
    other's message and a reload does not replay one. */
-const projFlashKey = "docpreview.projFlash";
+const projFlashKey = "nfpreview.projFlash";
 
 function setFlash(msg, kind) {
   // With its kind, so a refusal carried across a navigation is still shown as one. A plain
@@ -6423,7 +6423,7 @@ function renderProjectsPage(s) {
 
   const rows = s.projects.length ? s.projects.map(p => projectCard(p, s, ro)).join("") :
     `<div class="notice">No projects yet. Every repository the App is installed on still builds
-     using its own <code>.docpreview.yml</code> — adding a project is how you take the build
+     using its own <code>.nfpreview.yml</code> — adding a project is how you take the build
      command out of the branch.</div>`;
 
   /* The button goes above the list and the form it opens is a dialog.
@@ -6524,7 +6524,7 @@ function projectCard(p, s, ro) {
       <div class="pcard-acts">
         ${hasDetails ? `<button class="linkish" data-details="${esc(key)}"
             aria-expanded="${detailsOpen}">${detailsOpen ? "Hide settings" : "Settings"}</button>`
-          : `<span class="hint">Everything comes from the repository's .docpreview.yml.</span>`}
+          : `<span class="hint">Everything comes from the repository's .nfpreview.yml.</span>`}
         <span class="grow"></span>
         ${ro ? "" : `<a class="btn" href="/projects/${esc(key)}">Edit</a>
           <!-- A link, not a button that expands a panel here. The form is a page now: nineteen
@@ -6654,7 +6654,7 @@ function avatarField(p, elID) {
 }
 
 // monogram takes the first character of the first two words, or the first two
-// characters of one word. `unified-doc` gives UD; `docpreview` gives DO.
+// characters of one word. `unified-doc` gives UD; `nfpreview` gives DO.
 function monogram(name) {
   const parts = String(name || "?").split(/[^A-Za-z0-9]+/).filter(Boolean);
   if (!parts.length) return "?";
@@ -6683,7 +6683,7 @@ function projectFacts(p) {
 
   if (!fields.length && !env.length) {
     return `<dl class="facts"><div><dt>build</dt>
-      <dd class="inherit">entirely from the repository's .docpreview.yml</dd></div></dl>`;
+      <dd class="inherit">entirely from the repository's .nfpreview.yml</dd></div></dl>`;
   }
   return `<dl class="facts">${fields.concat(env).map(([k, v]) =>
     `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>`;
@@ -7796,9 +7796,9 @@ function projectForm(s, p) {
 
   return `<p class="form-title-why">${p
       ? "A field left blank defers to the framework preset, then to the repository's own " +
-        "<code>.docpreview.yml</code>."
+        "<code>.nfpreview.yml</code>."
       : "Everything except the URL is optional. A blank field falls through to the framework " +
-        "preset, then to the repository's own <code>.docpreview.yml</code>."}</p>
+        "preset, then to the repository's own <code>.nfpreview.yml</code>."}</p>
     <div class="grid-form">
       ${p ? "" : group("Repository", `
         ${field("url", "URL",
@@ -7845,15 +7845,15 @@ function projectForm(s, p) {
           "images do not have; alpine's musl breaks dependencies that ship prebuilt binaries.")}`)}
 
       ${group("When to build", `
-        ${field("detect", "Detect script", text("detect", "docusaurus/docpreview-detect"),
+        ${field("detect", "Detect script", text("detect", "docusaurus/nfpreview-detect"),
           "A path in the repository, not a command — it is executed directly, so its shebang " +
           "decides the interpreter and arguments would be read as part of the filename. Gets the " +
           "changed paths on stdin; exit 0 to build, 78 to skip. Under docker it runs in the build " +
           "image with no network and a read-only checkout. Blank under docker runs " +
-          "<code>docpreview-detect</code> from the <b>Directory</b> above when the branch has one. " +
+          "<code>nfpreview-detect</code> from the <b>Directory</b> above when the branch has one. " +
           "Otherwise the changed paths are matched against globs: <code>detect.paths</code> from " +
           "the repository's own " +
-          "<code>.docpreview.yml</code> if it sets them, otherwise everything under the " +
+          "<code>.nfpreview.yml</code> if it sets them, otherwise everything under the " +
           "<b>Directory</b> above, otherwise a Docusaurus layout anywhere in the repository.")}`)}
 
       ${scmCredentialFields(s, p, id)}
@@ -9011,7 +9011,7 @@ function showStarting(starting, startup) {
   // and the feed is empty until backfill, would leave a dashboard whose entire visible
   // contents are one notice — a page that reads as broken rather than as careful. The
   // rows are true: they come from the database, and their state is what it says. The
-  // dead-link window is a real problem and is a separate fix, listed in TODO.md — it is
+  // dead-link window is a real problem and is a separate fix, still open — it is
   // not solved by showing nothing at all.
   if (!el) {
     el = document.createElement("div");

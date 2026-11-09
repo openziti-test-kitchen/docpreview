@@ -1,4 +1,4 @@
-# Demoing docpreview, and making it look like it belongs to somebody
+# Demoing nfpreview, and making it look like it belongs to somebody
 
 Two related jobs. The first is what a stranger sees on a pull request, which is the App's name, avatar and the
 comment it writes. The second is what to show somebody who has two minutes.
@@ -8,14 +8,14 @@ This is a working document, not a description of code. Delete the parts that get
 ## Part 1 — The App, so the comment looks deliberate
 
 The comment on a pull request is the whole product for everyone who is not the operator. It carries the App's
-avatar and name. The App started as a test App called `docpreview-dovholuknf-test`, owned by a personal account,
+avatar and name. The App started as a test App called `nfpreview-dovholuknf-test`, owned by a personal account,
 so the comment showed that person's avatar.
 
 ### The App
 
 On 2026-11-05 the test App was **transferred** to the NetFoundry organization and renamed `netfoundry-preview`. A
 transfer rather than a new App keeps the App ID, the private key, the webhook secret and every installation, so
-docpreview needs no config change: it reads only the App ID, and the name is only logged. A new App would also
+nfpreview needs no config change: it reads only the App ID, and the name is only logged. A new App would also
 have stranded the comments already on open pull requests, because one App cannot edit another App's comments, so
 each open pull request would have gained a second one.
 
@@ -28,7 +28,7 @@ organization has to accept it. Then rename it under **General**.
 | **Description** | `Previews for pull requests. Builds the site on every push and comments with a URL. Self-hosted, over zrok.` | Shown on the install screen, which is the one moment somebody decides whether to trust it |
 | **Homepage URL** | the published docs site | Not the repository. Somebody clicking this wants to know what it does, not to read Go |
 | **Webhook URL** | your tunnel's `/webhook/github` | |
-| **Webhook secret** | generated in docpreview, pasted here | See the [App runbook](../www/docs/guides/github-app.md) |
+| **Webhook secret** | generated in nfpreview, pasted here | See the [App runbook](../www/docs/guides/github-app.md) |
 
 Permissions and events are in the runbook; nothing here changes them.
 
@@ -73,7 +73,7 @@ somebody else's mark on the avatar makes it look like a zrok product.
 | The pull request comment | Avatar and name, from the App |
 | The **Checks** tab | The check run is named by the App too |
 | The install screen | Name, description, homepage — the trust moment |
-| The preview URL | `docpreview.shares.zrok.io` today. An owned subdomain is a zrok account-level setting; see `docs/design/19-zrok-namespacing.md` |
+| The preview URL | `nfpreview.shares.zrok.io` today. An owned subdomain is a zrok account-level setting; see `docs/design/19-zrok-namespacing.md` |
 | The dashboard | Whatever the operator sees, which nobody outside the team does |
 
 ### Bitbucket has no App, and the token's name is the author
@@ -82,7 +82,7 @@ Worth stating because it is invisible until it is embarrassing: Bitbucket posts 
 token**, and shows the token's name beside it on every pull request. A token called `mytoken2` says that on every
 documentation review the team does, and renaming means creating a new token and re-storing it.
 
-Call it `docpreview`. This is now in the [Bitbucket runbook](../www/docs/guides/bitbucket.md).
+Call it `nfpreview`. This is now in the [Bitbucket runbook](../www/docs/guides/bitbucket.md).
 
 ## Part 2 — The demo
 

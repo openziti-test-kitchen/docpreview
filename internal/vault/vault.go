@@ -1,10 +1,10 @@
-// Package vault stores docpreview's credentials encrypted at rest.
+// Package vault stores nfpreview's credentials encrypted at rest.
 //
-// The threat model is deliberately modest and deliberately explicit. docpreview
+// The threat model is deliberately modest and deliberately explicit. nfpreview
 // runs on a laptop or a small VM, not in a cloud KMS. The property we want is:
 // somebody who walks off with the data directory — a stolen laptop, a leaked
 // backup, a snapshot of a VM disk — gets nothing. Somebody who is already
-// running code as the docpreview user has won, and no file format fixes that.
+// running code as the nfpreview user has won, and no file format fixes that.
 //
 // The whole vault is one age-encrypted blob.
 //
@@ -48,7 +48,7 @@ import (
 // accessible to all processes and may be included in logs or system dumps",
 // and using them is "not recommended unless the other methods are not
 // possible". Prefer a KeySource.
-const MasterKeyEnv = "DOCPREVIEW_MASTER_KEY"
+const MasterKeyEnv = "NFPREVIEW_MASTER_KEY"
 
 // Well-known vault keys. Using constants rather than bare strings means a typo
 // is a compile error instead of a silently missing credential at 3am.
@@ -77,7 +77,7 @@ const (
 	// the account.
 	//
 	// Here even though zrok also writes it to its own `environment.json` in plaintext, which
-	// docpreview does not control. Two reasons: enrolling a *second* host on the same account
+	// nfpreview does not control. Two reasons: enrolling a *second* host on the same account
 	// otherwise needs the registration email again, which has by then been used; and the
 	// registration response is the only place the token ever appears, so a signup done from the
 	// dashboard would produce a credential that exists in no readable place at all.
@@ -311,10 +311,10 @@ func (v *Vault) Get(key string) (Secret, error) {
 func (v *Vault) MustGet(key string) (Secret, error) {
 	s, err := v.Get(key)
 	if err != nil {
-		return Secret{}, fmt.Errorf("%w (set it with: docpreview vault set %s)", err, key)
+		return Secret{}, fmt.Errorf("%w (set it with: nfpreview vault set %s)", err, key)
 	}
 	if s.IsZero() {
-		return Secret{}, fmt.Errorf("secret %s is empty (set it with: docpreview vault set %s)", key, key)
+		return Secret{}, fmt.Errorf("secret %s is empty (set it with: nfpreview vault set %s)", key, key)
 	}
 	return s, nil
 }
@@ -541,7 +541,7 @@ func ResolveKey() (age.Identity, age.Recipient, error) {
 //
 //  1. The configured KeySource — a file, or a command that prints the key. This
 //     is the intended production path. See the KeySource doc for why.
-//  2. $DOCPREVIEW_MASTER_KEY. Still supported, no longer recommended: an
+//  2. $NFPREVIEW_MASTER_KEY. Still supported, no longer recommended: an
 //     environment variable is readable by every process under the same user and
 //     lands in service definitions, process listings and crash dumps.
 //  3. An interactive prompt on a TTY.
@@ -572,7 +572,7 @@ func ResolveKeyFrom(src KeySource) (age.Identity, age.Recipient, error) {
 			"unlock it from the dashboard, or run on a terminal", ErrLocked)
 	}
 
-	fmt.Fprint(os.Stderr, "docpreview vault passphrase: ")
+	fmt.Fprint(os.Stderr, "nfpreview vault passphrase: ")
 	pass, err := term.ReadPassword(fd)
 	fmt.Fprintln(os.Stderr)
 	if err != nil {

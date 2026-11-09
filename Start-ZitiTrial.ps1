@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Stand up a throwaway OpenZiti network and drive docpreview's ziti exposer against it.
+    Stand up a throwaway OpenZiti network and drive nfpreview's ziti exposer against it.
 
 .DESCRIPTION
     Everything needed to exercise the ziti path end to end on one machine, in one command, because
@@ -10,13 +10,13 @@
     What it does, in order:
 
       1. Builds `ziti.exe` from the local checkout into build.claude, unless it is already there.
-         Built rather than downloaded so it matches the SDK version docpreview is compiled against —
+         Built rather than downloaded so it matches the SDK version nfpreview is compiled against —
          the enrolment exchange is the thing under test, and a version skew there would be testing
          the wrong pair.
       2. Starts `ziti edge quickstart` in the background: a controller and a router in a temporary
-         home under .docpreview\ziti-test, with its output on disk.
+         home under .nfpreview\ziti-test, with its output on disk.
       3. Waits for the controller, then logs in.
-      4. Creates docpreview's identity and leaves its **one-time enrolment JWT** on disk, plus the
+      4. Creates nfpreview's identity and leaves its **one-time enrolment JWT** on disk, plus the
          service, the configs and the policies the exposer needs.
       5. With -Enroll, posts that JWT to the running daemon's /api/zrok/ziti/enroll — which is the
          path this whole script exists to exercise. The daemon generates the key pair, exchanges the
@@ -27,17 +27,17 @@
 
 .PARAMETER Enroll
     After the network is up, enrol the identity through the daemon's API. Needs the daemon running
-    and -Password, or DOCPREVIEW_PASSWORD in the environment.
+    and -Password, or NFPREVIEW_PASSWORD in the environment.
 
 .PARAMETER Password
-    The docpreview admin password, for -Enroll. Defaults to $env:DOCPREVIEW_PASSWORD.
+    The nfpreview admin password, for -Enroll. Defaults to $env:NFPREVIEW_PASSWORD.
 
 .PARAMETER Down
     Stop the quickstart. The home directory survives, so -Down then a plain run resumes the same
     network — the enrolment token does not, since it is one-time and by then it is spent.
 
 .PARAMETER Clean
-    Stop it and delete the home directory, the issued JWT, and the identity docpreview enrolled.
+    Stop it and delete the home directory, the issued JWT, and the identity nfpreview enrolled.
     The next run is a fresh network with a fresh token, which is what you want after a spent one.
 
 .PARAMETER Rebuild
@@ -60,9 +60,9 @@ param(
     [string] $Root = $PSScriptRoot,
     [string] $ZitiSource = 'D:\git\github\openziti\ziti',
     [string] $Base = 'http://127.0.0.1:8471',
-    [string] $Password = $env:DOCPREVIEW_PASSWORD,
-    [string] $Identity = 'docpreview',
-    [string] $Service = 'docpreview-previews',
+    [string] $Password = $env:NFPREVIEW_PASSWORD,
+    [string] $Identity = 'nfpreview',
+    [string] $Service = 'nfpreview-previews',
     [string] $Domain = 'preview.ziti',
     [int]    $CtrlPort = 1280,
     [switch] $Enroll,
@@ -74,11 +74,11 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location $Root
 
-$home_    = Join-Path $Root '.docpreview\ziti-test'
+$home_    = Join-Path $Root '.nfpreview\ziti-test'
 $ziti     = Join-Path $Root 'build.claude\ziti.exe'
 $jwt      = Join-Path $home_ "$Identity.jwt"
 $ctrl     = "127.0.0.1:$CtrlPort"
-$idFile   = Join-Path $Root ".docpreview\data\ziti\$Identity.json"
+$idFile   = Join-Path $Root ".nfpreview\data\ziti\$Identity.json"
 
 # ASCII, not a box-drawing rule: some consoles render em-dashes as mojibake, which makes a step
 # line look like a bug.
@@ -142,7 +142,7 @@ if ($holder) {
         Write-Host "reusing the quickstart already on $ctrl (PID $($holder.OwningProcess))"
         if ($proc.CommandLine -notmatch [regex]::Escape($home_)) {
             # Named, because every object this script creates lands there rather than in the home
-            # under .docpreview, and -Clean will not remove it.
+            # under .nfpreview, and -Clean will not remove it.
             Write-Host '  its home is not this trial''s:' -ForegroundColor Yellow
             Write-Host "  $($proc.CommandLine)" -ForegroundColor DarkGray
         }
@@ -194,8 +194,8 @@ Write-Step 'logging in to the controller'
 & $ziti edge login $ctrl -u admin -p admin -y | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'ziti edge login failed' }
 
-# ── 4. The objects docpreview needs ───────────────────────────────────────────────────────────────
-# Mirrors `docpreview configure ziti`, minus the part under test: the identity is created here and
+# ── 4. The objects nfpreview needs ───────────────────────────────────────────────────────────────
+# Mirrors `nfpreview configure ziti`, minus the part under test: the identity is created here and
 # left *unenrolled*, so its one-time JWT is what the daemon consumes. Provisioning it with the CLI
 # would enrol it too and there would be nothing left to test.
 #
@@ -241,7 +241,7 @@ if (-not (Test-ZitiObject 'configs' $interceptCfg)) {
 
 if (-not (Test-ZitiObject 'configs' $hostCfg)) {
     Write-Step "creating $hostCfg"
-    # forwardPort/forwardAddress, because docpreview binds the service itself through the SDK rather
+    # forwardPort/forwardAddress, because nfpreview binds the service itself through the SDK rather
     # than being fronted by a tunneler — the host config exists so the service is well-formed.
     $json = @{ protocol = 'tcp'; address = '127.0.0.1'; port = 8471 } | ConvertTo-Json -Compress
     & $ziti edge create config $hostCfg host.v1 $json
@@ -257,7 +257,7 @@ if (-not (Test-ZitiObject 'services' $Service)) {
     if ($LASTEXITCODE -ne 0) { throw "creating the service failed" }
 }
 
-# Bind for docpreview, Dial for anything holding the reader attribute. Exactly one docpreview may
+# Bind for nfpreview, Dial for anything holding the reader attribute. Exactly one nfpreview may
 # bind: two binders means two terminators and roughly half of all previews answering 404 while every
 # log looks healthy.
 if (-not (Test-ZitiObject 'service-policies' "$Service-bind")) {
@@ -290,13 +290,13 @@ if (-not (Test-Path $jwt)) {
           "Run with -Clean and start again."
 }
 if (-not $Password) {
-    throw 'no admin password: pass -Password or set $env:DOCPREVIEW_PASSWORD'
+    throw 'no admin password: pass -Password or set $env:NFPREVIEW_PASSWORD'
 }
 
 Write-Step 'enrolling the identity through the daemon'
-. (Join-Path $Root 'Invoke-Docpreview.ps1')
+. (Join-Path $Root 'Invoke-Nfpreview.ps1')
 
-$resp = Invoke-Docpreview POST /api/zrok/ziti/enroll -Base $Base -Password $Password -Body @{
+$resp = Invoke-Nfpreview POST /api/zrok/ziti/enroll -Base $Base -Password $Password -Body @{
     jwt     = (Get-Content -LiteralPath $jwt -Raw).Trim()
     service = $Service
     domain  = $Domain

@@ -4,7 +4,7 @@ sqlite via `modernc.org/sqlite` — pure Go, no cgo, so `go build` produces a st
 without a C toolchain. That constraint comes from "must run ANYWHERE", and it is the reason this is not
 `mattn/go-sqlite3`.
 
-One file, `<data_dir>/docpreview.db`. Four tables: `previews`, `jobs`, `builds`, and `comments` — the last of
+One file, `<data_dir>/nfpreview.db`. Four tables: `previews`, `jobs`, `builds`, and `comments` — the last of
 which exists only for the local platform, which has nowhere else to keep a comment
 (`internal/store/store.go:94-109`, and [09-scm.md](09-scm.md) for the protocol it serves).
 
@@ -12,7 +12,7 @@ which exists only for the local platform, which has nowhere else to keep a comme
 
 ```
 <data_dir>/
-  docpreview.db                  previews, jobs, builds, comments
+  nfpreview.db                  previews, jobs, builds, comments
   vault.age                      secrets
   workspaces/<id>/<sha12>/       scratch clones, one per commit, siblings pruned best-effort
   artifacts/<id>/<build-id>/     what is being served, one directory per build

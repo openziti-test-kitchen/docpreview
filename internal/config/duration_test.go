@@ -45,7 +45,7 @@ func TestDurationFieldsActuallyLoad(t *testing.T) {
 }
 
 // TestDurationRoundTripsThroughGeneratedForm checks the exact spelling
-// `docpreview init` writes, which is time.Duration's own String form.
+// `nfpreview init` writes, which is time.Duration's own String form.
 func TestDurationRoundTripsThroughGeneratedForm(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yml")

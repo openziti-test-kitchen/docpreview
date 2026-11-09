@@ -1,6 +1,6 @@
-# docpreview documentation
+# nfpreview documentation
 
-The docpreview documentation site, built with [Docusaurus](https://docusaurus.io/). It is also docpreview's
+The nfpreview documentation site, built with [Docusaurus](https://docusaurus.io/). It is also nfpreview's
 integration test: the tool builds and previews this directory, so if the docs render, the tool works.
 
 ## Read it locally
@@ -13,7 +13,7 @@ yarn start       # or: npm start
 
 Opens `http://localhost:3000/` with hot reload. Edit any `.md` under `docs/` and the browser updates.
 
-Both package managers work. The committed lockfile is `package-lock.json`, which is what docpreview itself
+Both package managers work. The committed lockfile is `package-lock.json`, which is what nfpreview itself
 uses (`npm ci`). `yarn install` generates its own `yarn.lock`; do not commit it.
 
 ## Where to start reading
@@ -48,7 +48,7 @@ yarn serve       # serve build/ on :3000
 
 ## Testing the baseUrl override
 
-`docusaurus.config.ts` reads `baseUrl` from the environment, which is what lets docpreview serve the same
+`docusaurus.config.ts` reads `baseUrl` from the environment, which is what lets nfpreview serve the same
 source tree at any mount point. Prove it:
 
 ```bash
@@ -57,12 +57,12 @@ grep -o 'href=/zrok/assets[^ ]*' build/index.html
 ```
 
 Every emitted asset URL now carries the `/zrok/` prefix. That value is baked in at build time and cannot be
-changed afterwards, which is why docpreview passes it to the build and uses it as the serve mount from the
+changed afterwards, which is why nfpreview passes it to the build and uses it as the serve mount from the
 same stored value.
 
 > **Git Bash on Windows.** MSYS rewrites a leading-slash argument into a Windows path, so
 > `DOCUSAURUS_BASE_URL=/zrok/` becomes `C:/Program Files/Git/zrok/` and the build fails on broken links.
-> Prefix with `MSYS_NO_PATHCONV=1`, or use PowerShell. docpreview is unaffected — Go's `exec` sets the
+> Prefix with `MSYS_NO_PATHCONV=1`, or use PowerShell. nfpreview is unaffected — Go's `exec` sets the
 > environment directly and does no path conversion.
 
 The Go tests exercise the same behaviour:

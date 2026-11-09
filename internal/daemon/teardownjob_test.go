@@ -52,7 +52,7 @@ func TestTeardownRemovesThePendingJob(t *testing.T) {
 }
 
 // Unlinking is the case that makes this user-facing. It is a button an operator presses to
-// make docpreview stop, and the ignore it records is only checked by handleBuild — a job
+// make nfpreview stop, and the ignore it records is only checked by handleBuild — a job
 // already in the queue never passes through that check again, so without the delete the
 // unlinked pull request builds one more time and puts its preview back.
 func TestUnlinkingRemovesTheQueuedBuild(t *testing.T) {

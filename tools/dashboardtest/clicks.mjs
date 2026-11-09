@@ -45,9 +45,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 // Overridable, as in logtail.mjs and for the same reason: a harness that can only load
 // the current file cannot tell a real assertion from one that would have passed
 // regardless of the change.
-const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
+const dashboard = process.env.NFPREVIEW_DASHBOARD ||
   join(here, "..", "..", "internal", "daemon", "dashboard.html");
-const daemon = process.env.DOCPREVIEW_URL || "http://127.0.0.1:8471";
+const daemon = process.env.NFPREVIEW_URL || "http://127.0.0.1:8471";
 
 let failures = 0;
 const fail = msg => { failures++; console.log(`   FAIL: ${msg}`); };

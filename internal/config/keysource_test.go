@@ -65,7 +65,7 @@ func TestExecKeySourceSkipsThePlacementRule(t *testing.T) {
 	// data_dir — `cat` of something in there would be silly, but it is the
 	// operator's silliness and not a containment violation this can detect.
 	dataDir := t.TempDir()
-	cfg, err := keySourceConfig(t, dataDir, "exec:op read op://ops/docpreview")
+	cfg, err := keySourceConfig(t, dataDir, "exec:op read op://ops/nfpreview")
 	if err != nil {
 		t.Fatal(err)
 	}

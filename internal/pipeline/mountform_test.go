@@ -43,10 +43,10 @@ func desktopPath(slashed string) string {
 // It logs and never fails, so it is safe to leave in the tree.
 func TestWhichMountFormDockerAccepts(t *testing.T) {
 	// Off by default: it starts six containers to answer a question nobody is
-	// asking on an ordinary test run. Set DOCPREVIEW_DOCKER_DIAG=1 when a new
+	// asking on an ordinary test run. Set NFPREVIEW_DOCKER_DIAG=1 when a new
 	// Docker version makes the answer worth rechecking.
-	if os.Getenv("DOCPREVIEW_DOCKER_DIAG") == "" {
-		t.Skip("set DOCPREVIEW_DOCKER_DIAG=1 to probe which host-path spellings docker accepts")
+	if os.Getenv("NFPREVIEW_DOCKER_DIAG") == "" {
+		t.Skip("set NFPREVIEW_DOCKER_DIAG=1 to probe which host-path spellings docker accepts")
 	}
 	dockerAvailable(t)
 

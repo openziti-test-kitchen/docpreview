@@ -4,7 +4,7 @@
 // # Why this exists
 //
 // The grouping is a security boundary rather than a layout choice. Everything under
-// "Platform and exposer credentials" is used by docpreview to verify a webhook, clone,
+// "Platform and exposer credentials" is used by nfpreview to verify a webhook, clone,
 // or comment, and is never handed to a build. Everything under "Build variables" is
 // injected into every build as an environment variable, where the pull request's own
 // script decides what to do with it. A flat list would put a GitHub App private key
@@ -162,7 +162,7 @@ console.log("\na row does not print its key twice");
   }
 
   // And a credential keeps it, because the label is prose and the key is what
-  // `docpreview vault set` takes.
+  // `nfpreview vault set` takes.
   const cred = box("daemon").querySelector('.sec[data-key="github.private_key"]');
   const shown = cred && cred.querySelector(".key");
   if (!shown || shown.textContent.trim() !== "github.private_key") {

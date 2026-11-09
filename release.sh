@@ -12,10 +12,10 @@
 #
 # Output, in dist/ by default:
 #
-#   docpreview_v0.3.0_linux_amd64.tar.gz
-#   docpreview_v0.3.0_linux_arm64.tar.gz
-#   docpreview_v0.3.0_darwin_arm64.tar.gz
-#   docpreview_v0.3.0_windows_amd64.zip
+#   nfpreview_v0.3.0_linux_amd64.tar.gz
+#   nfpreview_v0.3.0_linux_arm64.tar.gz
+#   nfpreview_v0.3.0_darwin_arm64.tar.gz
+#   nfpreview_v0.3.0_windows_amd64.zip
 #   SHA256SUMS
 #
 set -euo pipefail
@@ -68,19 +68,19 @@ targets="linux/amd64 linux/arm64 darwin/arm64 windows/amd64"
 for target in $targets; do
   goos="${target%/*}"
   goarch="${target#*/}"
-  name="docpreview_${VERSION}_${goos}_${goarch}"
+  name="nfpreview_${VERSION}_${goos}_${goarch}"
   work="$OUT/$name"
   mkdir -p "$work"
 
-  bin="docpreview"
-  [ "$goos" = "windows" ] && bin="docpreview.exe"
+  bin="nfpreview"
+  [ "$goos" = "windows" ] && bin="nfpreview.exe"
 
   echo
   echo "-- $target"
   # CGO off: the sqlite driver is modernc's pure-Go one, so there is nothing to link against, and
   # a cross-compile with cgo enabled needs a toolchain per target.
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-    go build -trimpath -ldflags "$LDFLAGS" -o "$work/$bin" ./cmd/docpreview
+    go build -trimpath -ldflags "$LDFLAGS" -o "$work/$bin" ./cmd/nfpreview
 
   # What somebody needs beside the binary.
   #
@@ -120,7 +120,7 @@ for target in $targets; do
   # Building twice risks two artifacts from one version that are not the same bytes.
   if [ "$goos" = "linux" ]; then
     mkdir -p "$OUT/.bin/$goarch"
-    cp "$work/$bin" "$OUT/.bin/$goarch/docpreview"
+    cp "$work/$bin" "$OUT/.bin/$goarch/nfpreview"
   fi
 
   rm -rf "$work"
@@ -149,7 +149,7 @@ else
     cfg="$OUT/.nfpm-$goarch.yaml"
     sed -e "s|@@ARCH@@|$goarch|" \
         -e "s|@@VERSION@@|$PKG_VERSION|" \
-        -e "s|@@BIN@@|$OUT/.bin/$goarch/docpreview|" \
+        -e "s|@@BIN@@|$OUT/.bin/$goarch/nfpreview|" \
         packaging/nfpm.yaml | tee "$cfg" >/dev/null
 
     for packager in deb rpm; do
@@ -215,7 +215,7 @@ cat "$OUT/SHA256SUMS"
 notes="$OUT/NOTES.md"
 {
   cat <<'INTRO'
-Documentation previews for pull requests. A pull request arrives as a webhook, docpreview clones
+Documentation previews for pull requests. A pull request arrives as a webhook, nfpreview clones
 it, builds the docs, publishes the output at a URL, and comments on the pull request with the
 link. Self-hosted, one binary, and no inbound port — the preview reaches the internet through a
 zrok tunnel.
@@ -225,22 +225,22 @@ zrok tunnel.
 INTRO
 
   cat <<INSTALL
-A package, if your distribution takes one. Both create the \`docpreview\` service account, install
+A package, if your distribution takes one. Both create the \`nfpreview\` service account, install
 the three systemd units, and start nothing — there is a config to write first, and the package says
 so on the way out.
 
 \`\`\`bash
 # RHEL, Fedora, Amazon Linux
-sudo dnf install -y https://github.com/$REPO/releases/download/$VERSION/docpreview-${PKG_VERSION}-1.x86_64.rpm
+sudo dnf install -y https://github.com/$REPO/releases/download/$VERSION/nfpreview-${PKG_VERSION}-1.x86_64.rpm
 
 # Debian, Ubuntu
-curl -fsSLO https://github.com/$REPO/releases/download/$VERSION/docpreview_${PKG_VERSION}_amd64.deb
-sudo apt install -y ./docpreview_${PKG_VERSION}_amd64.deb
+curl -fsSLO https://github.com/$REPO/releases/download/$VERSION/nfpreview_${PKG_VERSION}_amd64.deb
+sudo apt install -y ./nfpreview_${PKG_VERSION}_amd64.deb
 \`\`\`
 
 \`arm64\` and \`aarch64\` builds of both are below.
 
-Removing either leaves \`/var/lib/docpreview\` and \`/etc/docpreview\` in place. They hold the
+Removing either leaves \`/var/lib/nfpreview\` and \`/etc/nfpreview\` in place. They hold the
 vault, the database and the config naming the master key's source, and an uninstall that deleted
 them would destroy every stored credential with nothing to restore from.
 
@@ -265,8 +265,8 @@ Full walkthrough, from a provisioned VM to a preview URL:
 Download the archive for your platform below and put the binary on your PATH. Then:
 
 \`\`\`
-docpreview init
-docpreview preview -build ./docs
+nfpreview init
+nfpreview preview -build ./docs
 \`\`\`
 
 That publishes one directory and needs no account, no App and no webhook.

@@ -26,7 +26,7 @@ import (
 //
 // The locality gate (isLocalRequest, Available) is a boundary rather than authentication — it answers "did
 // this originate on this machine", not "who is this". Login adds the second question: administering
-// docpreview from anywhere but the machine itself, and reading it without publishing it to everyone who
+// nfpreview from anywhere but the machine itself, and reading it without publishing it to everyone who
 // finds the URL, both need an identity check the locality gate cannot provide.
 //
 // Two roles, because those are the two audiences:
@@ -49,7 +49,7 @@ import (
 // the vault.
 //
 // Reusing the vault's master key would be worse than a separate password rather than better. It
-// decrypts every credential docpreview holds, it is frequently a file or an `exec:` command
+// decrypts every credential nfpreview holds, it is frequently a file or an `exec:` command
 // rather than anything typeable, and putting it into a web form widens the exact thing it
 // exists to protect.
 //
@@ -201,7 +201,7 @@ func VerifyPassword(encoded, password string) bool {
 
 // SetConsolePassword stores the password for one role against a store the caller owns.
 //
-// Exported for `docpreview console password`, which runs in a separate process from the daemon.
+// Exported for `nfpreview console password`, which runs in a separate process from the daemon.
 // The rules live here rather than in the command so the two cannot disagree about what an
 // acceptable password is — the CLI is how the *first* one is set, so it is the path that most
 // needs to enforce them.
@@ -255,7 +255,7 @@ func ConsolePasswordSet(ctx context.Context, st *store.Store, role Role) (bool, 
 //
 // **The hashes are deliberately not cached.** Every check reads the settings row.
 //
-// Caching them in memory at startup would leave a password set from `docpreview console password` on a
+// Caching them in memory at startup would leave a password set from `nfpreview console password` on a
 // running daemon without effect until the next restart. A security control that silently takes effect
 // later is worse than one that is off, because the operator believes it is on.
 //
@@ -364,7 +364,7 @@ const decoyHash = "$argon2id$v=19$m=65536,t=2,p=4$" +
 	"ZGVjb3lzYWx0ZGVjb3lzYQ$3RaGmp5xrtUdWjSPWMkbHUxa9U8UYbCLg8O5wJHOYQA"
 
 // consoleCookie is the session cookie's name.
-const consoleCookie = "docpreview_session"
+const consoleCookie = "nfpreview_session"
 
 // issue mints a session token: the role, an expiry, and an HMAC over both.
 //

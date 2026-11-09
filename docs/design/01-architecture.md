@@ -13,7 +13,7 @@ webhook ──► queue ──► worker ──► clone ──► detect ──
 
 ## The two seams
 
-Everything portable about docpreview comes from two interfaces. Neither is speculative generality: each has
+Everything portable about nfpreview comes from two interfaces. Neither is speculative generality: each has
 three or more real implementations that behave differently enough to have forced the shape.
 
 ### `scm.Client` — where pull requests come from
@@ -109,7 +109,7 @@ than re-rendered, so a template that separates repositories keeps separating the
 3. `Daemon.Handle` per event. For `EventBuild`: cancel any in-flight build for this preview, report `queued`,
    `store.Enqueue` (which *replaces* any pending job for the same preview), nudge a worker.
 4. A worker claims the oldest job (`DELETE ... RETURNING`, atomic in sqlite) and runs `Daemon.build`.
-5. `runPipeline`: clone → load `.docpreview.yml` → changed files → detect → resolve the preview name and base
+5. `runPipeline`: clone → load `.nfpreview.yml` → changed files → detect → resolve the preview name and base
    URL → open a build log → build → **commit phase**.
 6. The commit phase, under a per-preview lock, checks it is still the current build and then does the four
    irreversible things: replace the artifact directory, construct the site handler, publish, save the row.
@@ -146,7 +146,7 @@ URLs in a second or two without re-cloning or re-running a single `npm install`.
 
 ## Deliberate limits
 
-- **One `.docpreview.yml` per repository**, so a monorepo with several documentation sites cannot preview the
+- **One `.nfpreview.yml` per repository**, so a monorepo with several documentation sites cannot preview the
   one a pull request touched.
 - **Fork pull requests are refused** at the webhook layer. Building one runs a stranger's `package.json` under
   an installation token. There is no flag for this. See [10-security.md](10-security.md).

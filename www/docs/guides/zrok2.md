@@ -15,8 +15,8 @@ takes fewer steps. Pick the second if you already have a zrok account for someth
 Open **`/secrets`** on the dashboard and use the section headed *Exposer configuration*. On a host with no browser:
 
 ```powershell
-docpreview zrok invite you@example.com          # zrok emails a registration link
-docpreview zrok register <the-link-from-that-email>
+nfpreview zrok invite you@example.com          # zrok emails a registration link
+nfpreview zrok register <the-link-from-that-email>
 ```
 
 `register` asks for a password on stdin. It is the password for the **zrok account**, not for NetFoundry Preview.
@@ -26,10 +26,10 @@ the registration response is the only time the token appears.
 Already have a zrok account?
 
 ```powershell
-docpreview zrok enable -token-stdin
+nfpreview zrok enable -token-stdin
 ```
 
-Then set `exposer.kind: zrok2` in the config and restart. `docpreview zrok status` says what is enrolled and where.
+Then set `exposer.kind: zrok2` in the config and restart. `nfpreview zrok status` says what is enrolled and where.
 
 :::note Signing up twice is refused
 
@@ -61,9 +61,9 @@ See [one daemon per exposer account](../troubleshooting.md).
 So the choice is explicit and stored, never guessed:
 
 ```powershell
-docpreview zrok status                # both directories, and which is in use
-docpreview zrok use project           # the daemon's own, beside the vault
-docpreview zrok use system            # the one the zrok2 CLI uses
+nfpreview zrok status                # both directories, and which is in use
+nfpreview zrok use project           # the daemon's own, beside the vault
+nfpreview zrok use system            # the one the zrok2 CLI uses
 ```
 
 A change takes effect at the **next restart**. zrok reads its root directory once, when the daemon starts, for the
@@ -73,8 +73,8 @@ whole process. Until you restart, the dashboard shows *chosen* and *in use* sepa
 directory the daemon chose:
 
 ```powershell
-docpreview webhook-only   -zrok-name docpreview      -zrok-home <data_dir>\zrok2
-docpreview dashboard-only -zrok-name docpreview-dash -zrok-home <data_dir>\zrok2
+nfpreview webhook-only   -zrok-name nfpreview      -zrok-home <data_dir>\zrok2
+nfpreview dashboard-only -zrok-name nfpreview-dash -zrok-home <data_dir>\zrok2
 ```
 
 Leave out `-zrok-home` and they use `~/.zrok2`. If that is a different account from the daemon's, the tunnel fails
@@ -136,7 +136,7 @@ exposer:
     namespace: my-namespace
 ```
 
-## What `docpreview` does with names
+## What `nfpreview` does with names
 
 A **name is an object with its own quota**, separate from a share, and the daemon manages its whole lifecycle:
 
@@ -177,7 +177,7 @@ shares.
 ## Verify the daemon can use it
 
 ```powershell
-docpreview doctor
+nfpreview doctor
 ```
 
 The zrok check does two things. It confirms the environment is enabled locally, and it makes a round trip to the
@@ -186,8 +186,8 @@ revoked on the server. Without the check, that shows up as an unexplained 401 on
 
 ## Failure modes
 
-**`no zrok environment is enrolled here; sign up and enrol from the dashboard at /secrets, or run 'docpreview zrok invite <email>'`**
-Enrol with [the short way](#the-short-way-let-netfoundry-preview-do-it). If you already did, `docpreview zrok
+**`no zrok environment is enrolled here; sign up and enrol from the dashboard at /secrets, or run 'nfpreview zrok invite <email>'`**
+Enrol with [the short way](#the-short-way-let-netfoundry-preview-do-it). If you already did, `nfpreview zrok
 status` shows which directory this installation is reading.
 
 **`zrok controller rejected this environment`**

@@ -1,4 +1,4 @@
-# docpreview
+# nfpreview
 
 Documentation previews for pull requests. One Go binary, runs anywhere.
 
@@ -21,22 +21,22 @@ binary you can start on a laptop, and the public URL comes from [zrok](https://d
 Try it with no accounts and no GitHub App:
 
 ```powershell
-docpreview init                    # one question: which exposer
-docpreview preview -build ./www    # publishes a real URL, holds it until Ctrl-C
+nfpreview init                    # one question: which exposer
+nfpreview preview -build ./www    # publishes a real URL, holds it until Ctrl-C
 ```
 
 Then, when you want it on pull requests:
 
 ```powershell
-docpreview vault keygen -out C:\ProgramData\docpreview\master.key   # then: vault.key_source in the config
-docpreview vault set github.private_key -file .\app-key.pem        # from the GitHub App
-"webhook-secret" | docpreview vault set github.webhook_secret
+nfpreview vault keygen -out C:\ProgramData\nfpreview\master.key   # then: vault.key_source in the config
+nfpreview vault set github.private_key -file .\app-key.pem        # from the GitHub App
+"webhook-secret" | nfpreview vault set github.webhook_secret
 
-docpreview doctor                                                  # real calls, not a config lint
-docpreview serve
+nfpreview doctor                                                  # real calls, not a config lint
+nfpreview serve
 ```
 
-The "vault" is one file — `~/.docpreview/vault.age` — holding every credential, encrypted with
+The "vault" is one file — `~/.nfpreview/vault.age` — holding every credential, encrypted with
 [age](https://age-encryption.org). Not a service, nothing to install; the age library is linked into the binary.
 
 Where its master key comes from is a choice, not a default. `vault.key_source` reads it from a file or from a
@@ -84,7 +84,7 @@ Docusaurus bakes `baseUrl` into every emitted `href` and `src` at build time. Bu
 at `/`, and `index.html` loads while every stylesheet 404s — an unstyled wall of text with nothing in the
 build log to explain it.
 
-docpreview passes the configured base URL into the build **and** uses it as the serve mount point, then
+nfpreview passes the configured base URL into the build **and** uses it as the serve mount point, then
 inspects the built `index.html` and refuses to publish a preview whose asset URLs disagree with where it is
 about to be mounted. `/`, `/docs/`, `/zrok/`, anything — configurable per repository, verified before it
 reaches a reviewer.
@@ -92,7 +92,7 @@ reaches a reviewer.
 ## Repository layout
 
 ```
-cmd/docpreview/         CLI: serve, doctor, vault, sim, configure
+cmd/nfpreview/         CLI: serve, doctor, vault, sim, configure
 internal/
   buildlog/             build output: redacted, stored, fanned out live
   config/               server config + attacker-influenced repo config
@@ -113,7 +113,7 @@ www/                    the documentation site — and the test subject
 
 ## The docs
 
-Everything is in `www/`, which docpreview builds and previews itself. If the documentation renders, the tool
+Everything is in `www/`, which nfpreview builds and previews itself. If the documentation renders, the tool
 works.
 
 ```bash

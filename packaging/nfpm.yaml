@@ -8,12 +8,12 @@
 #
 # The paths here must match install/install.sh exactly. A host installed from a package and a host
 # installed from the script have to be the same host, or a runbook is only true for one of them —
-# /usr/local/bin/docpreview, /etc/docpreview, /var/lib/docpreview, units in /etc/systemd/system.
+# /usr/local/bin/nfpreview, /etc/nfpreview, /var/lib/nfpreview, units in /etc/systemd/system.
 #
 # /etc/systemd/system rather than the /usr/lib/systemd/system a distribution package would normally
 # use. It is the directory install.sh writes to, and matching it means a host that has had both
 # cannot end up running one copy of a unit while editing another.
-name: docpreview
+name: nfpreview
 arch: "@@ARCH@@"
 platform: linux
 version: "@@VERSION@@"
@@ -22,7 +22,7 @@ priority: optional
 maintainer: NetFoundry <support@netfoundry.io>
 description: |
   Documentation previews for pull requests.
-  A pull request arrives as a webhook, docpreview clones it, builds the docs, publishes the
+  A pull request arrives as a webhook, nfpreview clones it, builds the docs, publishes the
   output at a URL, and comments on the pull request with the link. Self-hosted, one binary,
   and no inbound port.
 vendor: NetFoundry
@@ -31,47 +31,47 @@ license: Apache-2.0
 
 contents:
   - src: "@@BIN@@"
-    dst: /usr/local/bin/docpreview
+    dst: /usr/local/bin/nfpreview
     file_info:
       mode: 0755
 
-  - src: install/docpreview.service
-    dst: /etc/systemd/system/docpreview.service
+  - src: install/nfpreview.service
+    dst: /etc/systemd/system/nfpreview.service
     type: config|noreplace
-  - src: install/docpreview-webhook.service
-    dst: /etc/systemd/system/docpreview-webhook.service
+  - src: install/nfpreview-webhook.service
+    dst: /etc/systemd/system/nfpreview-webhook.service
     type: config|noreplace
-  - src: install/docpreview-dashboard.service
-    dst: /etc/systemd/system/docpreview-dashboard.service
+  - src: install/nfpreview-dashboard.service
+    dst: /etc/systemd/system/nfpreview-dashboard.service
     type: config|noreplace
 
   - src: README.md
-    dst: /usr/share/doc/docpreview/README.md
+    dst: /usr/share/doc/nfpreview/README.md
   - src: LICENSE
-    dst: /usr/share/doc/docpreview/LICENSE
+    dst: /usr/share/doc/nfpreview/LICENSE
 
   # Owned by the package so an uninstall does not leave them behind, and created empty so the
   # postinstall has somewhere to put permissions. The vault and the database live in the first and
   # the config in the second, so neither is ever removed on upgrade — see the postremove.
-  - dst: /var/lib/docpreview
+  - dst: /var/lib/nfpreview
     type: dir
     file_info:
       mode: 0700
-      owner: docpreview
-      group: docpreview
-  # Group-writable, because the service account writes into it: `docpreview init` creates
+      owner: nfpreview
+      group: nfpreview
+  # Group-writable, because the service account writes into it: `nfpreview init` creates
   # config.yml here and `vault keygen -out` puts the master key beside it, and both are documented
-  # as `sudo -u docpreview`. At 0750 that first command fails with a permission denied on a
+  # as `sudo -u nfpreview`. At 0750 that first command fails with a permission denied on a
   # temporary file, which reads as a broken package rather than as a directory mode.
   #
   # Not world-readable. The config names where the master key comes from, and the key itself is
-  # 0600 docpreview:docpreview once written; the vault refuses a key any other user can read.
-  - dst: /etc/docpreview
+  # 0600 nfpreview:nfpreview once written; the vault refuses a key any other user can read.
+  - dst: /etc/nfpreview
     type: dir
     file_info:
       mode: 0770
       owner: root
-      group: docpreview
+      group: nfpreview
 
 scripts:
   preinstall: packaging/preinstall.sh
@@ -82,7 +82,7 @@ scripts:
 # No dependency on docker. The local build driver needs node instead, the container driver needs a
 # docker socket that may be on another host, and a hard dependency would make the package
 # uninstallable on a machine that builds with neither. install.sh reports which is available and so
-# does `docpreview doctor`.
+# does `nfpreview doctor`.
 overrides:
   deb:
     recommends:

@@ -1,7 +1,7 @@
 // Package expose turns a locally-built documentation preview into something a
 // reviewer can open in a browser.
 //
-// This is the seam that makes docpreview portable. Everything upstream — clone,
+// This is the seam that makes nfpreview portable. Everything upstream — clone,
 // detect, build, serve — produces an http.Handler. Everything downstream — the
 // PR comment — consumes a URL. The Exposer in between is the only part that
 // knows whether that URL is backed by zrok, by NetFoundry Frontdoor, or by

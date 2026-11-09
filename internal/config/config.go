@@ -1,4 +1,4 @@
-// Package config loads the two kinds of configuration docpreview reads: the
+// Package config loads the two kinds of configuration nfpreview reads: the
 // server's own settings, and the per-repository settings that ship inside the
 // repository being previewed.
 //
@@ -22,7 +22,7 @@ import (
 	"github.com/netfoundry/docpreview/internal/vault"
 )
 
-// Server is the operator-supplied configuration for the docpreview daemon.
+// Server is the operator-supplied configuration for the nfpreview daemon.
 type Server struct {
 	// Listen is the address the webhook ingress binds to, e.g. "127.0.0.1:8080".
 	//
@@ -154,7 +154,7 @@ type ZitiListener struct {
 	//
 	// Exactly one process may bind a given service: binding creates a
 	// terminator, and a second binding creates a second one that the router
-	// load-balances against under the default strategy. Two docpreviews
+	// load-balances against under the default strategy. Two nfpreviews
 	// sharing a service would each answer about half the requests. Give a
 	// second instance its own service.
 	Service string `yaml:"service"`
@@ -165,7 +165,7 @@ type ZitiListener struct {
 	//
 	// **Empty means read-only, and that is the default.** Without it the whole
 	// authorization for a credential write would be "is enrolled on this network at all",
-	// which is not a decision anybody made about docpreview. So the dashboard serves over
+	// which is not a decision anybody made about nfpreview. So the dashboard serves over
 	// the overlay, and the admin pages explain that they are read-only rather than
 	// pretending the buttons will work.
 	//
@@ -188,8 +188,8 @@ type ZitiListener struct {
 //	listeners:
 //	  - tcp: "127.0.0.1:8471"
 //	  - ziti:
-//	      identity_file: "…/docpreview-host.json"
-//	      service: "docpreview-admin"
+//	      identity_file: "…/nfpreview-host.json"
+//	      service: "nfpreview-admin"
 //
 // A bare string is also accepted as shorthand for tcp, because a list of
 // addresses is the first thing anyone tries.
@@ -237,7 +237,7 @@ func nodeKind(node *yaml.Node) string {
 	}
 }
 
-// Describe renders a listener for a log line or `docpreview doctor`.
+// Describe renders a listener for a log line or `nfpreview doctor`.
 func (l Listener) Describe() string {
 	if l.Ziti != nil {
 		return fmt.Sprintf("ziti service %s (identity %s)", l.Ziti.Service, l.Ziti.IdentityFile)
@@ -306,7 +306,7 @@ func (s Server) FirstTCPAddr() string {
 //
 // It exists so the whole flow can be exercised without a GitHub App. Pushing to
 // one of these repositories triggers a real build and a real comment; the only
-// difference is that the comment is served by docpreview rather than by
+// difference is that the comment is served by nfpreview rather than by
 // github.com.
 type LocalSCMConfig struct {
 	// Enabled turns the local platform on. Off by default, because a webhook
@@ -337,7 +337,7 @@ type ExposerConfig struct {
 	// one exposer account without fighting over names.
 	//
 	// It exists because names are scoped to the *account* while shares are scoped to the
-	// environment. Two docpreviews on one zrok account therefore do not reap each other's
+	// environment. Two nfpreviews on one zrok account therefore do not reap each other's
 	// shares — that hazard is per environment — but they do both want
 	// `customer-connect-docs-main`, and the second one to ask gets a 409 for a name the
 	// account already holds. With `prefix: a` the second publishes
@@ -356,7 +356,7 @@ type ExposerConfig struct {
 	//
 	// The two tunnel commands are not covered by it. `webhook-only` and `dashboard-only`
 	// take their name on the command line, so a second installation passes
-	// `-zrok-name a-docpreview` itself.
+	// `-zrok-name a-nfpreview` itself.
 	Prefix string `yaml:"prefix"`
 
 	// BuildShares gives every successful build a second share of its own, pinned to its commit,
@@ -380,7 +380,7 @@ type ExposerConfig struct {
 // is created per preview: one wildcard service covers all of them and requests
 // are separated by Host header. See docs/design/ziti-native-previews.md.
 type ZitiConfig struct {
-	// IdentityFile is docpreview's own enrolled identity, the one the Bind
+	// IdentityFile is nfpreview's own enrolled identity, the one the Bind
 	// policy names. Produced by `ziti edge enroll <jwt> --out <file>`.
 	IdentityFile string `yaml:"identity_file"`
 
@@ -389,7 +389,7 @@ type ZitiConfig struct {
 
 	// Domain is the DNS suffix previews appear under. It must match the
 	// addresses in the service's intercept.v1 config, or the tunneler will
-	// resolve names docpreview does not answer to — and the mismatch is
+	// resolve names nfpreview does not answer to — and the mismatch is
 	// invisible until someone opens a link.
 	Domain string `yaml:"domain"`
 
@@ -453,7 +453,7 @@ type FrontdoorConfig struct {
 	EnvZID string `yaml:"env_z_id"`
 
 	// AgentReachableHost is the address at which the Frontdoor agent can reach
-	// this docpreview instance. Unlike zrok, Frontdoor shares point at a URL
+	// this nfpreview instance. Unlike zrok, Frontdoor shares point at a URL
 	// rather than dialing an overlay listener we own, so previews must bind a
 	// real TCP port that the agent can connect to.
 	AgentReachableHost string `yaml:"agent_reachable_host"`
@@ -506,7 +506,7 @@ type BitbucketConfig struct {
 }
 
 // BuildDefaults are the fallbacks applied when a repository does not ship its
-// own .docpreview.yml.
+// own .nfpreview.yml.
 type BuildDefaults struct {
 	// Driver is "docker" (run the build in a throwaway container) or "local" (run
 	// it on this host). Docker is the default and local must be enabled first —
@@ -562,7 +562,7 @@ type BuildDefaults struct {
 	//     secrets:
 	//       ALGOLIA_WRITE_KEY: algolia.write_key
 	//
-	// This lives in the *server* config, never in .docpreview.yml, because a
+	// This lives in the *server* config, never in .nfpreview.yml, because a
 	// pull request author must not be able to name a secret and have it handed
 	// to a script they wrote.
 	//
@@ -585,7 +585,7 @@ type BuildDefaults struct {
 	//
 	// Blank means <data_dir>/cache, set during loading. Set it explicitly to put
 	// the cache on a different disk, which is worth doing: it is the largest and
-	// most rewritten directory docpreview owns.
+	// most rewritten directory nfpreview owns.
 	CacheDir string `yaml:"cache_dir"`
 }
 
@@ -615,7 +615,7 @@ type PreviewConfig struct {
 	// Not zero, and not unlimited: zero would delete the build that just
 	// published, and unlimited fills a disk on the one repository somebody pushes
 	// to fifty times in an afternoon. The full story — byte caps, a total ceiling,
-	// eviction order, exempting the paid exposers — is in TODO.md.
+	// eviction order, exempting the paid exposers — is not written yet.
 	KeepBuilds int `yaml:"keep_builds"`
 
 	// Title heads the pull request comment and names the Bitbucket build status.
@@ -643,7 +643,7 @@ type PreviewConfig struct {
 // and quietly wrong for two is the wrong default.
 //
 // Deliberately not the commit SHA. Vercel gives every deployment its own
-// immutable URL and a branch alias on top; docpreview has one comment per pull
+// immutable URL and a branch alias on top; nfpreview has one comment per pull
 // request that is edited in place, so the link a reviewer already opened has to
 // keep working after the next push. Put {{.HeadSHA}} in the template if you
 // want per-commit URLs — the field is there — and accept that every push
@@ -681,7 +681,7 @@ func DefaultServer() Server {
 	home, _ := os.UserHomeDir()
 	return Server{
 		Listen:  "127.0.0.1:8471",
-		DataDir: filepath.Join(home, ".docpreview"),
+		DataDir: filepath.Join(home, ".nfpreview"),
 		Workers: 2,
 		Exposer: ExposerConfig{
 			Kind: "zrok2",
@@ -690,8 +690,8 @@ func DefaultServer() Server {
 				Open:         true,
 			},
 			Ziti: ZitiConfig{
-				Service:      "docpreview-svc",
-				Domain:       "docpreview.ziti",
+				Service:      "nfpreview-svc",
+				Domain:       "nfpreview.ziti",
 				NameTemplate: DefaultNameTemplate,
 			},
 			Frontdoor: FrontdoorConfig{
@@ -705,7 +705,7 @@ func DefaultServer() Server {
 		},
 		GitHub: GitHubConfig{APIBase: "https://api.github.com"},
 		Local: LocalSCMConfig{
-			ReposDir:    filepath.Join(home, ".docpreview", "repos"),
+			ReposDir:    filepath.Join(home, ".nfpreview", "repos"),
 			DefaultBase: "main",
 		},
 		Build: BuildDefaults{
@@ -875,7 +875,7 @@ func (s Server) KeySource() vault.KeySource {
 
 // Paths derived from DataDir.
 func (s Server) VaultPath() string     { return filepath.Join(s.DataDir, "vault.age") }
-func (s Server) DatabasePath() string  { return filepath.Join(s.DataDir, "docpreview.db") }
+func (s Server) DatabasePath() string  { return filepath.Join(s.DataDir, "nfpreview.db") }
 func (s Server) WorkspacesDir() string { return filepath.Join(s.DataDir, "workspaces") }
 func (s Server) ArtifactsDir() string  { return filepath.Join(s.DataDir, "artifacts") }
 func (s Server) LogsDir() string       { return filepath.Join(s.DataDir, "logs") }
@@ -884,7 +884,7 @@ func (s Server) LogsDir() string       { return filepath.Join(s.DataDir, "logs")
 //
 // Beside the vault rather than in the operator's home directory, and that is the point of it:
 // the directory holds an account token in plaintext — zrok writes `environment.json` itself and
-// docpreview has no say in the format — plus the ziti identity that token enrolled. It is
+// nfpreview has no say in the format — plus the ziti identity that token enrolled. It is
 // credential material, so it belongs with the other credential material, in the directory the
 // migration runbook already says to copy and to keep private.
 //
@@ -925,9 +925,9 @@ func (s Server) PreviewCacheDir(previewID string) string {
 	return filepath.Join(root, previewID)
 }
 
-// RepoConfigName is the file docpreview looks for in the root of a previewed
+// RepoConfigName is the file nfpreview looks for in the root of a previewed
 // repository.
-const RepoConfigName = ".docpreview.yml"
+const RepoConfigName = ".nfpreview.yml"
 
 // RepoConfig is the per-repository configuration, read from the *checked-out
 // working tree* of the pull request being built.
@@ -962,7 +962,7 @@ type RepoBuild struct {
 	// "/zrok/". Docusaurus bakes this into every emitted asset URL at build
 	// time, so it has to be decided here and not at serve time.
 	//
-	// docpreview passes it to the build and then mounts the output at the same
+	// nfpreview passes it to the build and then mounts the output at the same
 	// prefix, so the two can never disagree.
 	BaseURL string `yaml:"base_url"`
 
@@ -977,7 +977,7 @@ type RepoBuild struct {
 	// from the pull request's own working tree, and how long a branch may occupy a
 	// build worker is not the branch's decision. Only the operator's project row
 	// writes this, in applyProject — a repository that sets `build.timeout` in its
-	// .docpreview.yml is silently ignored, which is the correct outcome and not an
+	// .nfpreview.yml is silently ignored, which is the correct outcome and not an
 	// oversight.
 	Timeout time.Duration `yaml:"-"`
 }
@@ -992,7 +992,7 @@ type RepoDetect struct {
 	// check entirely. Exit 0 means build, exit 78 means skip.
 	Script string `yaml:"script"`
 
-	// PathsFromRepo records that the repository's own .docpreview.yml set Paths, so
+	// PathsFromRepo records that the repository's own .nfpreview.yml set Paths, so
 	// ScopeToBuildDir leaves them alone. Never read from the file.
 	PathsFromRepo bool `yaml:"-"`
 
@@ -1008,7 +1008,7 @@ type RepoDetect struct {
 //
 // No extension, because the shebang picks the interpreter, and `.sh` on a node script
 // would be a lie.
-const DetectScriptName = "docpreview-detect"
+const DetectScriptName = "nfpreview-detect"
 
 // DefaultDetectScript is where the implicit detect script lives for a build directory.
 func DefaultDetectScript(buildDir string) string {
@@ -1019,18 +1019,20 @@ func DefaultDetectScript(buildDir string) string {
 	return dir + "/" + DetectScriptName
 }
 
-/* ScopeToBuildDir narrows the default globs to the build directory.
+/*
+ScopeToBuildDir narrows the default globs to the build directory.
 
-   The defaults match a Docusaurus layout anywhere in the repository. That is right when the site is the
-   repository and wrong when it is one directory of it. `netfoundry/k8s-on-prem-installations` builds
-   from `docusaurus/`, and every README or `docs/` change elsewhere in it built a preview of a site that
-   had not changed.
+	The defaults match a Docusaurus layout anywhere in the repository. That is right when the site is the
+	repository and wrong when it is one directory of it. `netfoundry/k8s-on-prem-installations` builds
+	from `docusaurus/`, and every README or `docs/` change elsewhere in it built a preview of a site that
+	had not changed.
 
-   A build directory says where the site is, so nothing outside it can change what the preview shows.
-   Paths the repository wrote itself are kept, because that file is the more specific statement. A
-   build directory of `.` is left alone too: the whole repository is the site, and the defaults fit.
+	A build directory says where the site is, so nothing outside it can change what the preview shows.
+	Paths the repository wrote itself are kept, because that file is the more specific statement. A
+	build directory of `.` is left alone too: the whole repository is the site, and the defaults fit.
 
-   .docpreview.yml stays in the list because it decides, from the root, how the site is built. */
+	.nfpreview.yml stays in the list because it decides, from the root, how the site is built.
+*/
 func (c *RepoConfig) ScopeToBuildDir() {
 	if c.Detect.PathsFromRepo {
 		return
@@ -1042,7 +1044,7 @@ func (c *RepoConfig) ScopeToBuildDir() {
 	c.Detect.Paths = []string{dir + "/**", RepoConfigName}
 }
 
-// DefaultRepoConfig is what a repository gets when it ships no .docpreview.yml.
+// DefaultRepoConfig is what a repository gets when it ships no .nfpreview.yml.
 //
 // The globs cover a Docusaurus layout **wherever it sits in the repository**, which is why every
 // one of them starts with `**/`. Anchored at the root instead, they matched a stock layout and
@@ -1082,7 +1084,7 @@ func DefaultRepoConfig() RepoConfig {
 	}
 }
 
-// LoadRepoConfig reads .docpreview.yml from the root of a checked-out
+// LoadRepoConfig reads .nfpreview.yml from the root of a checked-out
 // repository. A missing file yields the defaults.
 func LoadRepoConfig(repoRoot string) (RepoConfig, error) {
 	cfg := DefaultRepoConfig()

@@ -102,5 +102,5 @@ Three questions worth asking of any check of this shape:
 3. Is the privileged thing on the same origin as the public thing? If it is, the check is load-bearing, and
    load-bearing checks should be boundaries you can see rather than conditions you can forget.
 
-docpreview is at [github.com/openziti-test-kitchen/docpreview](https://github.com/openziti-test-kitchen/docpreview).
+nfpreview is at [github.com/openziti-test-kitchen/docpreview](https://github.com/openziti-test-kitchen/docpreview).
 The reasoning above lives beside the code that implements it, which is the only place it stays true.

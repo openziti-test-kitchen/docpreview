@@ -24,7 +24,7 @@ const MountPrefix = "/preview/"
 // zrok or Frontdoor implementations misbehave you have something to compare
 // against.
 //
-// Each preview gets a path, `/preview/<name>/`, on the address docpreview already
+// Each preview gets a path, `/preview/<name>/`, on the address nfpreview already
 // serves the dashboard from — not an ephemeral port of its own. A port-per-preview
 // design is not stable across a restart, so a URL recorded in the database with the
 // row still claiming `ready` would go dead the moment the daemon restarted. A hundred
@@ -132,7 +132,7 @@ func (l *Local) Handler() http.Handler {
 		if h == nil {
 			// A preview that has been torn down, or a URL somebody kept. Say so
 			// rather than serving the dashboard's 404, which reads as a routing
-			// bug in docpreview rather than an expired link.
+			// bug in nfpreview rather than an expired link.
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			http.Error(w, "no preview named "+name+" is published", http.StatusNotFound)
 			return

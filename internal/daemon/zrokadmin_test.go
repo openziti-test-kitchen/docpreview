@@ -52,7 +52,7 @@ func zrokPost(h http.Handler, path string, body string) *httptest.ResponseRecord
 	return w
 }
 
-// docpreview must not delete the machine-wide zrok environment.
+// nfpreview must not delete the machine-wide zrok environment.
 //
 // `~/.zrok2` belongs to the zrok CLI and to whatever else that account is used for — a share
 // somebody left running, another tool, a colleague's scripts. Deleting it from a

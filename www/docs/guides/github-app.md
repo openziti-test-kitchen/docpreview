@@ -12,23 +12,23 @@ minutes. At the end you will have two secrets in the vault, the App ID in your c
 ## Before you start
 
 - Admin rights on the organization (or a personal account, for a personal repository).
-- `docpreview` built and on your PATH.
-- A vault master key. The vault is one [age](../background/age.md)-encrypted file at `~/.docpreview/vault.age`. If
+- `nfpreview` built and on your PATH.
+- A vault master key. The vault is one [age](../background/age.md)-encrypted file at `~/.nfpreview/vault.age`. If
   you have not made a key:
 
   ```powershell
-  docpreview vault keygen -out C:\ProgramData\docpreview\master.key
+  nfpreview vault keygen -out C:\ProgramData\nfpreview\master.key
   ```
 
   ```bash
-  docpreview vault keygen -out /etc/docpreview/master.key
+  nfpreview vault keygen -out /etc/nfpreview/master.key
   ```
 
   Then point the daemon at it, so it can unlock itself after a restart:
 
   ```yaml
   vault:
-    key_source: "file:/etc/docpreview/master.key"
+    key_source: "file:/etc/nfpreview/master.key"
   ```
 
   The key never reaches your clipboard or your shell history. **Back it up somewhere other than this machine.** It
@@ -41,13 +41,13 @@ minutes. At the end you will have two secrets in the vault, the App ID in your c
 GitHub checks the webhook URL when you save the App, so get it working before you start clicking. That has a guide
 of its own: **[expose the webhook](./webhook-tunnel.md)**. Work through it now and come back with two things.
 
-1. A URL like `https://docpreview.shares.zrok.io/webhook/github`. It stays the same across restarts because it is
+1. A URL like `https://nfpreview.shares.zrok.io/webhook/github`. It stays the same across restarts because it is
    bound to a reserved zrok name.
-2. A `PASS` from `docpreview webhook-check -url <that URL>`. The command signs a `ping` with the secret from the
+2. A `PASS` from `nfpreview webhook-check -url <that URL>`. The command signs a `ping` with the secret from the
    vault, which proves the whole path already accepts a signed delivery.
 
 Don't point a share at the daemon directly. `zrok2 share public http://127.0.0.1:8471` publishes every route,
-including `/api/secrets`, which puts the credential API on the internet. `docpreview webhook-only` publishes one
+including `/api/secrets`, which puts the credential API on the internet. `nfpreview webhook-only` publishes one
 route and nothing else. [That guide](./webhook-tunnel.md#why-not-share-the-daemon-directly) explains why.
 
 That guide also has you store `github.webhook_secret` in the vault first, because `webhook-check` reads it from
@@ -70,7 +70,7 @@ Fill in:
 | **Description** | What it does, in one line. It appears on the install screen, where someone decides whether to trust it |
 | **Homepage URL** | Your site, not the repository. Someone clicking it wants to know what this is |
 | **Webhook** | ✅ Active |
-| **Webhook URL** | The URL from step 1, e.g. `https://docpreview.shares.zrok.io/webhook/github` |
+| **Webhook URL** | The URL from step 1, e.g. `https://nfpreview.shares.zrok.io/webhook/github` |
 | **Webhook secret** | The value already in the vault under `github.webhook_secret`. It must match exactly |
 
 :::tip Own it with the organization, and give it an avatar
@@ -152,22 +152,22 @@ github:
 **b. Webhook secret.** Already stored, if you followed step 1. If not:
 
 ```powershell
-"paste-the-secret-here" | docpreview vault set github.webhook_secret
+"paste-the-secret-here" | nfpreview vault set github.webhook_secret
 ```
 
-Then run `docpreview webhook-check -url <your webhook URL>` again. A `401` there is the same mismatch GitHub would
+Then run `nfpreview webhook-check -url <your webhook URL>` again. A `401` there is the same mismatch GitHub would
 report, found without waiting for a delivery.
 
 **c. Private key.** Scroll to **Private keys** → **Generate a private key**. A `.pem` file downloads. Then:
 
 ```powershell
-docpreview vault set github.private_key -file "$env:USERPROFILE\Downloads\docpreview.2026-07-27.private-key.pem"
-Remove-Item "$env:USERPROFILE\Downloads\docpreview.*.private-key.pem"
+nfpreview vault set github.private_key -file "$env:USERPROFILE\Downloads\nfpreview.2026-07-27.private-key.pem"
+Remove-Item "$env:USERPROFILE\Downloads\nfpreview.*.private-key.pem"
 ```
 
 ```bash
-docpreview vault set github.private_key -file ~/Downloads/docpreview.2026-07-27.private-key.pem
-rm ~/Downloads/docpreview.*.private-key.pem
+nfpreview vault set github.private_key -file ~/Downloads/nfpreview.2026-07-27.private-key.pem
+rm ~/Downloads/nfpreview.*.private-key.pem
 ```
 
 Delete the download. That file is the App's identity. Anyone holding it can mint installation tokens for every
@@ -176,7 +176,7 @@ repository the App is installed on.
 Confirm both secrets landed:
 
 ```powershell
-docpreview vault list
+nfpreview vault list
 ```
 
 ```text
@@ -199,14 +199,14 @@ it is installed on.
 Installing the App is only half of it. **A repository with no project row is never built.** Its delivery is
 verified, answered `202` and dropped, and the server log names the repository. Add the row at
 `http://127.0.0.1:8471/projects`: **New project**, then the platform, owner and repository. Leave every build field
-blank unless you want to override the repository's own `.docpreview.yml`.
+blank unless you want to override the repository's own `.nfpreview.yml`.
 
 :::info Why this is not automatic
 
 The webhook secret is one value for the whole App, and GitHub signs every installation's deliveries with it. A
 valid signature proves GitHub sent the delivery. It says nothing about whether you wanted that repository built.
 Without the project row, anyone who could install the App would get a branch of their choosing cloned, and its
-`.docpreview.yml` honoured, on the machine holding the App private key and every project's tokens.
+`.nfpreview.yml` honoured, on the machine holding the App private key and every project's tokens.
 
 The cost is that installing the App is not self-service. Someone with access to the dashboard has to add the row
 before the first build.
@@ -219,17 +219,17 @@ Once the row exists, the daemon builds the default branch and scans the open pul
 ## Step 7: Verify
 
 ```powershell
-docpreview doctor
+nfpreview doctor
 ```
 
 ```text
-config:  C:\Users\you\.docpreview\config.yml
-data:    C:\Users\you\.docpreview
+config:  C:\Users\you\.nfpreview\config.yml
+data:    C:\Users\you\.nfpreview
 exposer: zrok2
 driver:  docker
 listen:  tcp 127.0.0.1:8471
-vault:   C:\Users\you\.docpreview\vault.age (2 secrets)
-key:     file C:\ProgramData\docpreview\master.key
+vault:   C:\Users\you\.nfpreview\vault.age (2 secrets)
+key:     file C:\ProgramData\nfpreview\master.key
 login:   required — either password reaches the dashboard
 scm:     github (app 1234567)
 
@@ -242,7 +242,7 @@ credentials work, not just that they are present.
 Then start it:
 
 ```powershell
-docpreview serve
+nfpreview serve
 ```
 
 Open a pull request that changes a file inside the project's build directory, such as `docs/`. A pull request that
@@ -256,7 +256,7 @@ lists every webhook with its request and response.
 | What you see | What it means |
 |---|---|
 | No delivery listed | The event never fired. Check the event subscription, and that the App is installed on *this* repository. |
-| Delivery with a red ❌ and no response | The URL is unreachable. Is `docpreview webhook-only` still running? |
+| Delivery with a red ❌ and no response | The URL is unreachable. Is `nfpreview webhook-only` still running? |
 | `401 unauthorized` | Signature mismatch. The webhook secret in the App and in the vault differ. |
 | `404 not found` | Wrong path. It must be exactly `/webhook/github`. |
 | `502 bad gateway` | The tunnel is up and the daemon behind it is not. See [502](./webhook-tunnel.md#what-a-502-means). |
@@ -276,8 +276,8 @@ sends `POST`. A 405 there means the URL is right. See
 Rotate it on a schedule, and right away if the `.pem` was ever somewhere it should not have been.
 
 1. App settings → **Private keys** → **Generate a private key**.
-2. `docpreview vault set github.private_key -file <new.pem>`
-3. Restart `docpreview serve`.
+2. `nfpreview vault set github.private_key -file <new.pem>`
+3. Restart `nfpreview serve`.
 4. Back on GitHub, **delete the old key**.
 
 GitHub allows several valid keys at once, so steps 1–3 cause no downtime. Step 4 is the one that matters, and the one

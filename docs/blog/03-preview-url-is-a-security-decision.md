@@ -6,7 +6,7 @@ Most of the time that is fine. Sometimes it is a product announcement under emba
 internal hostnames, or a page about a vulnerability that has not shipped a fix. The right audience for a preview
 is not a constant, and a preview system that only knows how to publish one way has already decided for you.
 
-So in docpreview it is one setting with four values, and everything above it is unchanged when you switch. Not
+So in nfpreview it is one setting with four values, and everything above it is unchanged when you switch. Not
 the queue, not the builder, not the comment.
 
 | | Reachable by | Public surface |

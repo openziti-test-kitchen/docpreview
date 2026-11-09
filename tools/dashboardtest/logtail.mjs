@@ -39,7 +39,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 // The page under test, overridable so a fix can be checked against the code it
 // fixes. A harness that only ever loads the current file cannot tell a real
 // assertion from one that would have passed regardless of the change.
-const dashboard = process.env.DOCPREVIEW_DASHBOARD ||
+const dashboard = process.env.NFPREVIEW_DASHBOARD ||
   join(here, "..", "..", "internal", "daemon", "dashboard.html");
 
 let failures = 0;

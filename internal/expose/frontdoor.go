@@ -54,7 +54,7 @@ import (
 // One documented fact is load-bearing and good news: a standard frontend serves a
 // share at "https://{share-name}.shares.netfoundry.io"
 // (https://netfoundry.io/docs/frontdoor/learn/frontends/), so the public URL is
-// derived from the name docpreview chose. Recreating a share under the same name
+// derived from the name nfpreview chose. Recreating a share under the same name
 // returns the same URL, which is what makes a restart quiet instead of editing
 // every open pull request's comment. See shareResponse.PublicURL.
 //
@@ -170,7 +170,7 @@ func checkFrontdoorAPIBase(base string) error {
 // listing this code can read.
 //
 // It does *not* confirm the configured frontend exists. Nothing here knows how to
-// ask: `frontend` is an id docpreview sends and never reads back, so a typo in it
+// ask: `frontend` is an id nfpreview sends and never reads back, so a typo in it
 // is discovered by the first publish at the earliest and by a reviewer opening a
 // dead link at the latest. Checking it needs whatever the API's frontend-listing
 // endpoint turns out to be, which is one of the questions a live tenant has to
@@ -390,7 +390,7 @@ func decodeShareListing(raw []byte) ([]shareResponse, error) {
 // omitting `type` would be rejected or silently ignored by the gateway — for
 // `target` that means a share pointing nowhere.
 type shareRequest struct {
-	// Type is "http" for a share fronting an HTTP target, which is all docpreview
+	// Type is "http" for a share fronting an HTTP target, which is all nfpreview
 	// publishes. Not defaulted server-side as far as the documentation says, so it
 	// must be sent explicitly.
 	Type string `json:"type"`
@@ -469,7 +469,7 @@ func (s shareResponse) ID() string {
 //
 // Per https://netfoundry.io/docs/frontdoor/learn/frontends/ a standard frontend
 // serves a share at "https://{share-name}.shares.netfoundry.io", so this is
-// derived from the name docpreview chose rather than assigned independently. That
+// derived from the name nfpreview chose rather than assigned independently. That
 // answers the question docs/design/17-exposer-frontdoor.md flagged as the first
 // thing to check: recreating a share under the same name should return the same
 // URL, so a restart is quiet rather than editing every open pull request's
@@ -607,7 +607,7 @@ func (f *Frontdoor) Publish(ctx context.Context, spec Spec, h http.Handler) (*Pu
 // what zrok's controller does — `Share.FrontendEndpoints` reports
 // "name.share.zrok.io" and not a URL. Without a scheme, "x.example.com/docs/" is
 // a *relative* path, so a preview link rendered by GitHub resolves against
-// github.com and 404s on their side, where it looks like docpreview published a
+// github.com and 404s on their side, where it looks like nfpreview published a
 // bad URL and cannot be debugged from this end. Cheap to defend against and
 // expensive to discover, so it is defended against on a field whose contents
 // nobody has seen.
@@ -689,7 +689,7 @@ func (f *Frontdoor) deleteShare(ctx context.Context, id string) error {
 		// turn a successful deletion into a startup error. Only on a retry: a 404
 		// on the first attempt means the share was already gone when the listing
 		// named it, which is worth knowing about because it means something else
-		// is deleting docpreview's shares.
+		// is deleting nfpreview's shares.
 		if attempt > 1 && isFrontdoorNotFound(err) {
 			return nil
 		}
@@ -701,12 +701,12 @@ func (f *Frontdoor) deleteShare(ctx context.Context, id string) error {
 	return nil
 }
 
-// Reap deletes docpreview-tagged shares whose publication keys are not in keep.
+// Reap deletes nfpreview-tagged shares whose publication keys are not in keep.
 //
 // The tag prefix is what stops this deleting a share an operator created by hand
 // in another terminal, which would be rude. It is also the only thing scoping the
 // sweep: the tag carries a publication key and nothing identifying the daemon, so
-// two docpreview instances sharing one Frontdoor tenant delete each other's live
+// two nfpreview instances sharing one Frontdoor tenant delete each other's live
 // shares — B's startup reap sees every one of A's shares as prefix-matching and
 // absent from B's keep-set. zrok escapes this because its listing is filtered by
 // the environment's ziti identity; there is no equivalent here. One daemon per
@@ -913,7 +913,7 @@ func (f *Frontdoor) retry(ctx context.Context, what string, fn func(attempt int)
 // Retried for every method, including the POST that creates a share, and that is
 // a deliberate trade rather than an oversight. A timed-out create may well have
 // succeeded on the far side, so the retry can leave a duplicate — but the
-// duplicate carries the `docpreview:` tag, so the next Reap collects it, while
+// duplicate carries the `nfpreview:` tag, so the next Reap collects it, while
 // the alternative is a preview that built successfully, has its artifacts on
 // disk, and is not served because one HTTP request was slow. The same call was
 // made for zrok, for the same reason, and is written up on Publish there.
@@ -980,7 +980,7 @@ func (f *Frontdoor) send(ctx context.Context, method, path string, in, out any) 
 		// with a clientId and password out of the credentials.json downloaded from
 		// the console
 		// (https://netfoundry.io/docs/platform/api-guides/authentication). So what
-		// `docpreview vault set frontdoor.api_token` holds is an access token with
+		// `nfpreview vault set frontdoor.api_token` holds is an access token with
 		// a lifetime, and a daemon that runs longer than that lifetime starts
 		// failing every publish and every reap with a 401 while nothing about the
 		// configuration has changed. Saying so is the difference between rotating
@@ -989,7 +989,7 @@ func (f *Frontdoor) send(ctx context.Context, method, path string, in, out any) 
 			return fmt.Errorf("%w — frontdoor.api_token is rejected. These tokens are short-lived: "+
 				"they come from an OAuth2 client-credentials exchange, so a token that worked "+
 				"at startup expires while the daemon runs. Mint a fresh one and "+
-				"'docpreview vault set frontdoor.api_token'; the lasting fix is for docpreview "+
+				"'nfpreview vault set frontdoor.api_token'; the lasting fix is for nfpreview "+
 				"to hold the clientId and password and do the exchange itself", apiErr)
 		}
 		return apiErr

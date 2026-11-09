@@ -24,7 +24,7 @@ import (
 //
 // # Why not the environment
 //
-// $DOCPREVIEW_MASTER_KEY still works and is still the fallback, but it is no
+// $NFPREVIEW_MASTER_KEY still works and is still the fallback, but it is no
 // longer the recommended path. OWASP is direct about it: environment variables
 // "are generally accessible to all processes and may be included in logs or
 // system dumps", and using them is "not recommended unless the other methods
@@ -70,9 +70,9 @@ const execTimeout = time.Minute
 // Accepted:
 //
 //	""                                  no source; the vault stays locked
-//	file:/etc/docpreview/master.key     read the key from a file
-//	D:\keys\docpreview.key              a bare path, same as file:
-//	exec:op read op://ops/docpreview    run a command and take its stdout
+//	file:/etc/nfpreview/master.key     read the key from a file
+//	D:\keys\nfpreview.key              a bare path, same as file:
+//	exec:op read op://ops/nfpreview    run a command and take its stdout
 //
 // A bare path is accepted because `file:` in front of a Windows path reads like
 // a mistake, and because the shorter spelling is the one people will write
@@ -167,7 +167,7 @@ func (k KeySource) readFile() (string, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", fmt.Errorf("%w: the key file %s does not exist "+
-				"(create one with: docpreview vault keygen -out %s)", ErrLocked, k.path, k.path)
+				"(create one with: nfpreview vault keygen -out %s)", ErrLocked, k.path, k.path)
 		}
 		return "", fmt.Errorf("reading the vault key file: %w", err)
 	}

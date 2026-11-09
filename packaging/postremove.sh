@@ -1,8 +1,8 @@
 #!/bin/sh
 # Reload systemd, and leave the data alone.
 #
-# **The data directory, the vault and the config are never removed.** /var/lib/docpreview holds the
-# age-encrypted vault and the sqlite database, and /etc/docpreview holds the config that names the
+# **The data directory, the vault and the config are never removed.** /var/lib/nfpreview holds the
+# age-encrypted vault and the sqlite database, and /etc/nfpreview holds the config that names the
 # master key's source. An uninstall that deleted them would destroy every credential the operator
 # stored, with nothing to restore from and no warning — and a package removal is something people do
 # to upgrade across a broken dependency, not only to say goodbye.
@@ -29,11 +29,11 @@ if [ "$is_upgrade" = "1" ]; then
 fi
 
 cat <<'KEPT'
-docpreview: removed. Left in place on purpose:
+nfpreview: removed. Left in place on purpose:
 
-  /var/lib/docpreview   the vault, the database, artifacts and build logs
-  /etc/docpreview       the config, which names where the master key comes from
-  the docpreview user   owns both of the above
+  /var/lib/nfpreview   the vault, the database, artifacts and build logs
+  /etc/nfpreview       the config, which names where the master key comes from
+  the nfpreview user   owns both of the above
 
 Delete them by hand once you are certain. The vault cannot be recovered without its master key,
 and the master key is not in either directory.

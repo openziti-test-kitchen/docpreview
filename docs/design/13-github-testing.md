@@ -28,7 +28,7 @@ not payload-shape failures. A programmable fake can be asked "how many POSTs did
 | Signature verification, payload → `scm.Event` | yes | `internal/scm/github/webhook_test.go` |
 | Fork refusal at the parser | yes | `webhook_test.go:119` |
 | 401 with no diagnostic detail at the ingress | yes, against a stub client | `internal/daemon/ingress_test.go:114` |
-| Client construction across a vault unlock | yes | `cmd/docpreview/rewire_test.go` |
+| Client construction across a vault unlock | yes | `cmd/nfpreview/rewire_test.go` |
 | Supersede ownership, commit phase | yes, at unit level | `internal/daemon/supersede_test.go`, `commit_test.go` |
 | App JWT, installation token, caching, refresh | **no** | — |
 | Comment upsert, marker matching, Retract | **no** | — |
@@ -162,7 +162,7 @@ client backfills to an hour (`auth.go:151`) — assert it does not re-exchange, 
 line is a zero time that expires immediately and re-exchanges forever.
 
 *Per installation*: two installation IDs must get two distinct tokens, and the fake must see each token only on
-requests for its own installation. The cache is keyed by installation (`auth.go:58`) and one docpreview can watch
+requests for its own installation. The cache is keyed by installation (`auth.go:58`) and one nfpreview can watch
 several. Presenting installation A's token for B's repository returns 404, which reads as a deleted file.
 
 ### A 401 mid-build is handled
@@ -204,9 +204,9 @@ Drive `Publish` five times with one `PreviewID` and states queued → building �
 the fake's list, and the marker (`internal/scm/scm.go:133`) appearing exactly once in the final body.
 
 The part that makes this test worth more than the obvious version is the decoys. Pre-seed the fake with a human
-comment, a comment whose body contains the literal string `docpreview` but no marker, and a comment carrying a
+comment, a comment whose body contains the literal string `nfpreview` but no marker, and a comment carrying a
 *different* preview's marker. `findComment` matches with `strings.Contains` (`github.go:265`), so all three must be
-skipped. The last one is the one that matters: `Marker` embeds the preview ID specifically so two docpreview instances
+skipped. The last one is the one that matters: `Marker` embeds the preview ID specifically so two nfpreview instances
 on one repository do not fight over one comment, and that claim has never been executed.
 
 Then the inverse: two different `PreviewID`s on the same pull request number must produce two comments.
@@ -293,8 +293,8 @@ table and not three assertions: every branch of `retryAfterFrom` is one line and
 place to invert a comparison.
 
 One finding to record rather than fix here: `Retryable()`, `RetryAfter` and `IsNotFound` have no callers anywhere in
-the tree. The classification is correct and informs no decision. Pin the classification with these tests and put the
-missing consumer in `TODO.md` — a classifier nobody calls is dead code that reads like a safety net, and the tests are
+the tree. The classification is correct and informs no decision. Pin the classification with these tests and treat the
+missing consumer as open work — a classifier nobody calls is dead code that reads like a safety net, and the tests are
 what make it safe to add the consumer later.
 
 ### The check run is a convenience, and behaves like one
@@ -398,7 +398,7 @@ Re-exec the test binary. `main.go:44` already exposes `run(args []string) error`
 
 ```go
 func TestMain(m *testing.M) {
-    if os.Getenv("DOCPREVIEW_TEST_CHILD") == "serve" {
+    if os.Getenv("NFPREVIEW_TEST_CHILD") == "serve" {
         if err := run(os.Args[1:]); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
         os.Exit(0)
     }
@@ -406,7 +406,7 @@ func TestMain(m *testing.M) {
 }
 ```
 
-No `go build`, no hunting for `build.claude/docpreview.exe`, no skew between the binary under test and the code in the
+No `go build`, no hunting for `build.claude/nfpreview.exe`, no skew between the binary under test and the code in the
 tree. The child is a real OS process with a real listener, which is the whole point.
 
 ### Ports, environment, readiness, and stopping
@@ -416,7 +416,7 @@ Racy in principle; in practice the kernel does not hand the same port to another
 and one retry on a bind failure covers it. The alternative — a fixed port — collides with the demo on `:8493` and
 the GitHub work on `:8471`, which is the exact failure this avoids.
 
-**Environment.** Set `cmd.Env` explicitly and *omit* `DOCPREVIEW_MASTER_KEY` (`internal/vault/vault.go:51`). A
+**Environment.** Set `cmd.Env` explicitly and *omit* `NFPREVIEW_MASTER_KEY` (`internal/vault/vault.go:51`). A
 developer with it exported would otherwise get a vault unlocked at boot and a test that proves nothing while passing.
 The temp config names no `key_source`, so the file and exec sources (`internal/vault/keysource.go:48`) stay out too.
 
@@ -425,7 +425,7 @@ captured stderr — `slog` writes there, and the answer is almost always in a lo
 
 **Stopping.** `cmd.Process.Kill()`, deliberately. Windows has no `SIGTERM` and `os.Interrupt` is unsupported there,
 and a hard kill is the stronger test anyway: "the passphrase did not survive a restart" was a hard-kill bug. Register
-the kill in `t.Cleanup` so a panicking test does not leave a `docpreview` holding the sqlite file, which on Windows
+the kill in `t.Cleanup` so a panicking test does not leave a `nfpreview` holding the sqlite file, which on Windows
 breaks the *next* run and looks like a different bug.
 
 ### The sequence it asserts
@@ -459,7 +459,7 @@ App is left pointing at a tunnel that no longer exists.
 3. **Install on the one test repository.** Nothing should happen. Confirm the dashboard shows no build.
 4. **Open a pull request touching `docs/`.** Watch for, in order: a 202 in Recent Deliveries; Queued then Building on
    the dashboard; a comment inside a minute; the preview URL in it opening in a browser. Then check the comment
-   carries one marker (view source) and that a `docpreview` check appears in the PR's Checks tab.
+   carries one marker (view source) and that a `nfpreview` check appears in the PR's Checks tab.
 5. **Push three commits inside a minute.** Look for: the comment count stays at one, its Updated timestamp advances,
    the final Commit matches `git rev-parse --short HEAD`, `superseding in-flight build` appears in the log at least
    once (`daemon.go:479`), and no `publishing report` error follows the final `ready`.
@@ -473,7 +473,7 @@ App is left pointing at a tunnel that no longer exists.
    (`github.go:378`).
 10. **Come back after an hour and push once more.** This is the only exercise of installation-token refresh against
     GitHub's real expiry (`auth.go:112`); everything before it runs inside one token's lifetime.
-11. **Uninstall the App.** Nothing in docpreview reacts to an uninstall — the previews stay live and the rows stay in
+11. **Uninstall the App.** Nothing in nfpreview reacts to an uninstall — the previews stay live and the rows stay in
     the database. Confirm that is what happens, and record it as a deliberate limit or a TODO.
 
 Steps 1–5 are the run that lets `11-github-setup-state.md` be deleted. Steps 6–11 are the ones worth doing once,
@@ -488,12 +488,12 @@ before anyone else uses this.
 3. The comment tests: upsert with decoys, marker per preview, pagination in `findComment`, `Retract`, the check-run
    behaviours, `CloneURL`.
 4. `ChangedFiles`: 237 files, empty, 3100, rename.
-5. Error classification: the full response table, and every branch of `retryAfterFrom`. Record in `TODO.md` that
+5. Error classification: the full response table, and every branch of `retryAfterFrom`. Note as open work that
    `Retryable()` and `RetryAfter` have no caller.
 6. Widen `testIngress` to accept an `scm.Client`, install a real one, and move the bad-signature and fork-refusal
    assertions to where they cost zero API calls to prove.
 7. The supersede test on the gated token exchange. Run it `-race -count 20` before believing it.
-8. The `serve`-across-a-restart test in `cmd/docpreview`.
+8. The `serve`-across-a-restart test in `cmd/nfpreview`.
 9. The live smoke run, once, with a human. Then delete `11-github-setup-state.md` and fold whatever survives into
    `09-scm.md`.
 

@@ -21,7 +21,7 @@ import (
 //
 // # Why this exists
 //
-// Getting from "docpreview is installed" to "a preview URL is in a pull request" needed a second
+// Getting from "nfpreview is installed" to "a preview URL is in a pull request" needed a second
 // binary, a web browser, an email, and two commands with a token pasted between them — and the
 // daemon's error for every one of those going wrong was the same sentence about running
 // `zrok2 enable`. This is that sequence, in the page that reports whether it worked.
@@ -314,7 +314,7 @@ func (a *ZrokAdmin) otherExposers(ctx context.Context) []exposerInfo {
 			What: "Previews reachable only through a tunneler with an enrolled identity. " +
 				"Nothing is on the internet, and there is no clickable link in a pull request.",
 			// No runbook of its own; the exposer comparison is where it is explained, and
-			// `docpreview configure ziti` is what provisions a whole network.
+			// `nfpreview configure ziti` is what provisions a whole network.
 			Doc:    "www/docs/exposers.md",
 			Setup:  "ziti",
 			Detail: zitiDetail,
@@ -698,7 +698,7 @@ func (a *ZrokAdmin) disable(w http.ResponseWriter, r *http.Request) {
 	if a.scopeOf() == expose.ZrokSystem {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "this daemon is using the machine's zrok environment, which is shared " +
-				"with the zrok CLI and with anything else on that account. docpreview will " +
+				"with the zrok CLI and with anything else on that account. nfpreview will " +
 				"not remove it — run 'zrok2 disable' if that is what you want"})
 		return
 	}
@@ -886,7 +886,7 @@ func (a *ZrokAdmin) enrollZiti(w http.ResponseWriter, r *http.Request) {
 			if rec := recover(); rec != nil {
 				a.log.Error("the ziti enrolment panicked", "panic", rec)
 				err = fmt.Errorf("the enrolment failed inside the ziti SDK: %v "+
-					"(this is a bug in docpreview, and the token may now be spent)", rec)
+					"(this is a bug in nfpreview, and the token may now be spent)", rec)
 			}
 		}()
 		return a.enrollZitiID(r.Context(), body.JWT, strings.TrimSpace(body.Name))
@@ -923,7 +923,7 @@ func (a *ZrokAdmin) enrollZiti(w http.ResponseWriter, r *http.Request) {
 // enrol enables the root this process is using and records that choice.
 func (a *ZrokAdmin) enrol(ctx context.Context, token vault.Secret, description string) error {
 	if description == "" {
-		description = "docpreview"
+		description = "nfpreview"
 	}
 	if err := expose.ZrokEnable(ctx, token, description); err != nil {
 		return err
@@ -958,7 +958,7 @@ func (a *ZrokAdmin) refuseIfEnrolled(r *http.Request) error {
 			"there is nothing to sign up for")
 	case state.System.Enabled:
 		return errors.New("this machine already has a zrok environment. Use it with " +
-			"\"Use the machine's\", or disable it first if docpreview should have its own account")
+			"\"Use the machine's\", or disable it first if nfpreview should have its own account")
 	}
 	return nil
 }

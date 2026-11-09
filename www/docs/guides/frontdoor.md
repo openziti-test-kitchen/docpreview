@@ -60,7 +60,7 @@ under **Organization → Manage API Account**, and exchange the account's creden
 [platform authentication](https://netfoundry.io/docs/platform/api-guides/authentication).
 
 ```powershell
-"paste-the-token" | docpreview vault set frontdoor.api_token
+"paste-the-token" | nfpreview vault set frontdoor.api_token
 ```
 
 :::warning These tokens expire
@@ -102,7 +102,7 @@ Frontdoor preview binds a real TCP port, and this value must be an address the a
 ## Step 4: Verify
 
 ```powershell
-docpreview doctor
+nfpreview doctor
 ```
 
 The Frontdoor check lists shares through the gateway. A pass confirms the token is valid and the API base is right.

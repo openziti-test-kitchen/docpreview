@@ -29,7 +29,7 @@ token** is scoped to exactly one repository. A leak costs you that repository. W
 exist and are worth it once you have more than a few repositories, and they are also a wider credential sitting
 in a process that runs builds, so the narrow one is the better default.
 
-docpreview stores a credential per project as well as workspace-wide. A project with its own token uses it, a
+nfpreview stores a credential per project as well as workspace-wide. A project with its own token uses it, a
 project without one falls back to the workspace token, and the page tells you which is happening rather than
 leaving you to work it out from a failure.
 
@@ -45,7 +45,7 @@ request.
 A token called `test` or `mytoken2` puts that on every documentation review your team does, forever, and
 renaming it means creating a new token and re-storing it.
 
-Call it `docpreview`. This is the cheapest mistake to avoid and the most annoying one to undo.
+Call it `nfpreview`. This is the cheapest mistake to avoid and the most annoying one to undo.
 
 Two scopes, and no more:
 
@@ -61,7 +61,7 @@ Treating Bitbucket as GitHub with different URLs gets you most of the way and th
 **HTML comments render as visible text.** The usual way to make a bot comment self-identifying is an HTML
 comment carrying an ID, so the bot can find its own comment later and edit it instead of posting a second one.
 Bitbucket escapes raw HTML and renders that marker as a paragraph the reader can see. The replacement is a
-CommonMark link reference definition, `[docpreview]: #<id>`, which renders to nothing on every platform.
+CommonMark link reference definition, `[nfpreview]: #<id>`, which renders to nothing on every platform.
 
 The rule that matters more than the syntax: a matcher may gain a style and may never lose one. Comments live on
 somebody else's server. A daemon that forgot the marker it used to write would post a second comment on every
@@ -69,7 +69,7 @@ open pull request the moment it shipped.
 
 **Commit hashes arrive abbreviated.** Deliveries carry a 12-character hash. It checks out fine, and then fails
 every comparison against a full hash, which produces a preview that builds correctly and matches nothing.
-docpreview resolves it to the full hash on the way in.
+nfpreview resolves it to the full hash on the way in.
 
 **`Updated` means more than new commits.** Bitbucket fires it for a title change, a description edit, a reviewer
 change and a retarget. So editing a typo in a pull request description rebuilds the site.
@@ -87,11 +87,11 @@ credential that can write to your repository.
 
 **Authenticated REST calls go to `api.bitbucket.org`.** A call to `bitbucket.org/api` answers 403 with a body
 that does not explain itself, which reads as a permissions problem and sends you back to re-check the token you
-just created. docpreview refuses that base URL at startup and names the right one.
+just created. nfpreview refuses that base URL at startup and names the right one.
 
 **IPv6 to the API can fail after the handshake.** The connection is accepted, TLS completes, and the response is
 reset partway through. It looks like a flaky network rather than a configuration issue, and it is the reason a
-hand-run `curl` sometimes needs `--ipv4`. docpreview's HTTP transport dials IPv4 first.
+hand-run `curl` sometimes needs `--ipv4`. nfpreview's HTTP transport dials IPv4 first.
 
 Neither of these is interesting. Both cost real time when you meet them without warning.
 

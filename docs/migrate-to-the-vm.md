@@ -34,13 +34,13 @@ Nothing on this box has been changed. Everything below is still to do.
 
 | | |
 |---|---|
-| Data directory | `D:\worktrees\tangents\vercel-replacement\.docpreview\data` |
-| Config | `D:\worktrees\tangents\vercel-replacement\.docpreview\config.yml` |
-| Master key | `C:\Users\claude\AppData\Local\docpreview\master.key` |
+| Data directory | `D:\worktrees\tangents\vercel-replacement\.nfpreview\data` |
+| Config | `D:\worktrees\tangents\vercel-replacement\.nfpreview\config.yml` |
+| Master key | `C:\Users\claude\AppData\Local\nfpreview\master.key` |
 | zrok environment | **`C:\Users\claude\.zrok2`** — system-scoped, so it is *not* under the data directory |
 | Hostname prefix | `a` |
 | Exposer | `zrok2`, selected on the dashboard rather than in the config file |
-| Share names | `docpreview` (webhook), `docpreview-dash` (dashboard) |
+| Share names | `nfpreview` (webhook), `nfpreview-dash` (dashboard) |
 | Source control | GitHub App 4420399, plus a Bitbucket access token |
 | Previews | 7 serving, 16 publications, as of 4 August 2026 — check with `shares list` before copying, and expect the same numbers on the far side |
 
@@ -55,7 +55,7 @@ docker with it, and starts nothing:
 
 ```bash
 sudo dnf install -y \
-  https://github.com/openziti-test-kitchen/docpreview/releases/download/v0.2.0/docpreview-0.2.0-1.x86_64.rpm
+  https://github.com/openziti-test-kitchen/docpreview/releases/download/v0.5.0/nfpreview-0.5.0-1.x86_64.rpm
 ```
 
 **Stop there.** The next steps of
@@ -65,7 +65,7 @@ and this installation brings all three with it.
 Confirm what you have before copying anything onto it:
 
 ```bash
-docpreview version
+nfpreview version
 docker run --rm hello-world
 ```
 
@@ -74,8 +74,8 @@ a one-entry vault from testing the package. **Delete both before step 5**, or th
 them and `doctor` reports a vault that is neither the old one nor empty:
 
 ```bash
-sudo systemctl stop docpreview docpreview-webhook docpreview-dashboard
-sudo rm -rf /var/lib/docpreview/vault.age /var/lib/docpreview/docpreview.db* /etc/docpreview/config.yml /etc/docpreview/master.key
+sudo systemctl stop nfpreview nfpreview-webhook nfpreview-dashboard
+sudo rm -rf /var/lib/nfpreview/vault.age /var/lib/nfpreview/nfpreview.db* /etc/nfpreview/config.yml /etc/nfpreview/master.key
 ```
 
 ### 2. Stop everything on the laptop
@@ -84,7 +84,7 @@ All three processes. **Nothing may overlap**: two daemons on one zrok account fi
 names, and the second to publish takes them.
 
 ```powershell
-Get-Process docpreview | Stop-Process -Force
+Get-Process nfpreview | Stop-Process -Force
 ```
 
 Confirm: `curl.exe -s -o NUL -w "%{http_code}" http://127.0.0.1:8471/healthz` should fail.
@@ -92,10 +92,10 @@ Confirm: `curl.exe -s -o NUL -w "%{http_code}" http://127.0.0.1:8471/healthz` sh
 ### 3. Copy the database, its WAL, and the artifacts
 
 ```powershell
-$data = "D:\worktrees\tangents\vercel-replacement\.docpreview\data"
-Copy-Item "$data\docpreview.db","$data\docpreview.db-wal","$data\docpreview.db-shm" $env:TEMP\out\ -EA SilentlyContinue
+$data = "D:\worktrees\tangents\vercel-replacement\.nfpreview\data"
+Copy-Item "$data\nfpreview.db","$data\nfpreview.db-wal","$data\nfpreview.db-shm" $env:TEMP\out\ -EA SilentlyContinue
 Copy-Item "$data\vault.age" $env:TEMP\out\
-Copy-Item "C:\Users\claude\AppData\Local\docpreview\master.key" $env:TEMP\out\
+Copy-Item "C:\Users\claude\AppData\Local\nfpreview\master.key" $env:TEMP\out\
 ```
 
 The `-wal` file matters. Copying the `.db` alone loses whatever has not been checkpointed, which on
@@ -124,10 +124,10 @@ the data directory.
 Copy-Item -Recurse "C:\Users\claude\.zrok2" "$env:TEMP\out\zrok2"
 ```
 
-On the VM it goes to **`/var/lib/docpreview/zrok2`**, and then the installation is told to use it:
+On the VM it goes to **`/var/lib/nfpreview/zrok2`**, and then the installation is told to use it:
 
 ```bash
-sudo -u docpreview /usr/local/bin/docpreview zrok use project -config /etc/docpreview/config.yml
+sudo -u nfpreview /usr/local/bin/nfpreview zrok use project -config /etc/nfpreview/config.yml
 ```
 
 Doing it this way rather than dropping it in the service account's `~/.zrok2` means the whole
@@ -145,10 +145,10 @@ there, unusable, forever.
 ### 5. Place the files
 
 ```bash
-sudo install -o docpreview -g docpreview -m 0600 docpreview.db* vault.age /var/lib/docpreview/
-sudo cp -r zrok2 /var/lib/docpreview/zrok2
-sudo chown -R docpreview:docpreview /var/lib/docpreview
-sudo install -o docpreview -g docpreview -m 0600 master.key /etc/docpreview/master.key
+sudo install -o nfpreview -g nfpreview -m 0600 nfpreview.db* vault.age /var/lib/nfpreview/
+sudo cp -r zrok2 /var/lib/nfpreview/zrok2
+sudo chown -R nfpreview:nfpreview /var/lib/nfpreview
+sudo install -o nfpreview -g nfpreview -m 0600 master.key /etc/nfpreview/master.key
 ```
 
 ### 6. Write the config
@@ -156,8 +156,8 @@ sudo install -o docpreview -g docpreview -m 0600 master.key /etc/docpreview/mast
 Copy `config.yml` across and change the values that were only true on the laptop:
 
 ```yaml
-data_dir: "/var/lib/docpreview"
-log_file: "/var/lib/docpreview/daemon.log"
+data_dir: "/var/lib/nfpreview"
+log_file: "/var/lib/nfpreview/daemon.log"
 
 workers: 1
 
@@ -166,7 +166,7 @@ build:
   memory: 3g
 
 vault:
-  key_source: "file:/etc/docpreview/master.key"
+  key_source: "file:/etc/nfpreview/master.key"
 ```
 
 The three paths are obvious. **The three sizing values are the ones that bite**, because the laptop's
@@ -186,8 +186,8 @@ their credentials are all in the database.
 ### 7. Check before starting
 
 ```bash
-sudo -u docpreview /usr/local/bin/docpreview doctor -config /etc/docpreview/config.yml
-sudo -u docpreview /usr/local/bin/docpreview zrok status -config /etc/docpreview/config.yml
+sudo -u nfpreview /usr/local/bin/nfpreview doctor -config /etc/nfpreview/config.yml
+sudo -u nfpreview /usr/local/bin/nfpreview zrok status -config /etc/nfpreview/config.yml
 ```
 
 Expect `exposer: zrok2 (selected on the dashboard, not from the config file)`, `login: required`,
@@ -199,13 +199,13 @@ before starting, or the daemon will reap nothing, publish nothing, and look brok
 ### 8. Start
 
 ```bash
-sudo systemctl enable --now docpreview
-sudo systemctl enable --now docpreview-webhook
-sudo systemctl enable --now docpreview-dashboard
-journalctl -u docpreview -f
+sudo systemctl enable --now nfpreview
+sudo systemctl enable --now nfpreview-webhook
+sudo systemctl enable --now nfpreview-dashboard
+journalctl -u nfpreview -f
 ```
 
-Both tunnel units already carry `-zrok-home /var/lib/docpreview/zrok2`, which is required now that
+Both tunnel units already carry `-zrok-home /var/lib/nfpreview/zrok2`, which is required now that
 the environment is project-scoped. Without it they would look in the service account's home, find
 nothing, and claim the names from a different account.
 
@@ -215,7 +215,7 @@ them, so **the URLs come back unchanged** and nothing in any pull request commen
 ### 9. Confirm, then decommission the laptop
 
 - Every preview `ready` on the dashboard, and one URL opened to be sure.
-- `docpreview webhook-check -url https://docpreview.shares.zrok.io/webhook/github` from the VM.
+- `nfpreview webhook-check -url https://nfpreview.shares.zrok.io/webhook/github` from the VM.
 - A test pull request, or a push to a default branch, and watch it build.
 
 Then make sure the laptop cannot start it again. It still holds a copy of the vault, the master key
@@ -224,23 +224,23 @@ every credential.
 
 ## Replacing the binary afterwards
 
-The three units run `/usr/local/bin/docpreview`, so that is the only path a deploy may write:
+The three units run `/usr/local/bin/nfpreview`, so that is the only path a deploy may write:
 
 ```bash
-scp build.claude/docpreview-linux-amd64 docprev:/tmp/docpreview-new
-ssh docprev 'sudo systemctl stop docpreview docpreview-webhook docpreview-dashboard \
-  && sudo install -m 0755 /tmp/docpreview-new /usr/local/bin/docpreview \
-  && sudo systemctl start docpreview docpreview-webhook docpreview-dashboard \
-  && docpreview version'
+scp build.claude/nfpreview-linux-amd64 docprev:/tmp/nfpreview-new
+ssh docprev 'sudo systemctl stop nfpreview nfpreview-webhook nfpreview-dashboard \
+  && sudo install -m 0755 /tmp/nfpreview-new /usr/local/bin/nfpreview \
+  && sudo systemctl start nfpreview nfpreview-webhook nfpreview-dashboard \
+  && nfpreview version'
 ```
 
 Stop first: a running daemon holds the file, and on Linux replacing it under a live process leaves the
 old code running with the new binary on disk — which reads as a deploy that did nothing.
 
-**A copy at `/usr/bin/docpreview` is not it, and writing there is silent.** `/usr/local/bin` comes
+**A copy at `/usr/bin/nfpreview` is not it, and writing there is silent.** `/usr/local/bin` comes
 first on `PATH`, so the stray copy is shadowed: the install succeeds, the services restart, and
-`docpreview version` answers with the version that was already there — the same answer a deploy that
-never happened gives. `which -a docpreview` lists every copy, and the units' `ExecStart` is the
+`nfpreview version` answers with the version that was already there — the same answer a deploy that
+never happened gives. `which -a nfpreview` lists every copy, and the units' `ExecStart` is the
 authority on which one runs.
 
 ## After the move

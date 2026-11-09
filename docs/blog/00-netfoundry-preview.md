@@ -18,10 +18,10 @@ The bot is called **netfoundry-preview**, and this is what it posts:
 >
 > | Project | Status | Preview | Commit | Updated (UTC) |
 > |---|---|---|---|---|
-> | openziti-test-kitchen/docpreview | ✅ Ready · 41s | [Preview](https://docpreview-my-branch.shares.zrok.io/) | `a1b2c3d` | Nov 5, 2026 2:22pm |
+> | openziti-test-kitchen/docpreview | ✅ Ready · 41s | [Preview](https://nfpreview-my-branch.shares.zrok.io/) | `a1b2c3d` | Nov 5, 2026 2:22pm |
 
-The software behind it is [docpreview](https://github.com/openziti-test-kitchen/docpreview). It's a single Go binary
-on a single VM. It's open source, and its [own documentation](https://openziti-test-kitchen.github.io/docpreview/)
+The software behind it is [nfpreview](https://github.com/openziti-test-kitchen/docpreview). It's a single Go binary
+on a single VM. It's open source, and its [own documentation](https://openziti-test-kitchen.github.io/nfpreview/)
 is built and previewed by itself.
 
 ## The one thing we wanted to be different
@@ -38,7 +38,7 @@ covers why that group matters so much for docs.
 
 We already had a way to put a site at a URL without anyone joining anything:
 [zrok](https://zrok.io) ([source](https://github.com/openziti/zrok)), which runs on [OpenZiti](https://openziti.io)
-([source](https://github.com/openziti/ziti)), NetFoundry's own open-source networking stack. So docpreview builds
+([source](https://github.com/openziti/ziti)), NetFoundry's own open-source networking stack. So nfpreview builds
 the pull request on our own VM and publishes the result as its own zrok share. Anybody who can open a pull request
 on the repository gets a preview, and the reviewer clicks the link and reads the page. The one exception is
 deliberate: pull requests from forks are refused, because building one would run a stranger's scripts on our build
@@ -74,7 +74,7 @@ Bitbucket.
 
 ## What it does
 
-A webhook arrives, and docpreview:
+A webhook arrives, and nfpreview:
 
 1. clones the branch,
 2. checks whether the pull request touches the site at all, and skips it if not, so a README edit doesn't rebuild
@@ -101,7 +101,7 @@ Two limits:
   client-side routing loads at its root, but a deep link like `/settings/profile` 404s on reload. Hash routing
   (`/#/settings/profile`) works.
 
-If your preview needs a running server, Vercel does that well and docpreview doesn't try to.
+If your preview needs a running server, Vercel does that well and nfpreview doesn't try to.
 
 ## The trap every preview builder has to handle
 
@@ -109,7 +109,7 @@ Docusaurus bakes its base URL into every `href` and `src` at build time. Build a
 `/`, and `index.html` loads with every stylesheet and script returning 404. You get unstyled text, and nothing in
 the build log explains it.
 
-docpreview reads the built `index.html` before publishing, works out which base URL the site was really built for,
+nfpreview reads the built `index.html` before publishing, works out which base URL the site was really built for,
 and refuses to publish if that doesn't match where the site is about to be mounted. The error names both values and
 the two ways to fix it. [Post 5](05-what-it-took.md) explains how the check works and why the obvious version of it
 is wrong.
@@ -121,7 +121,7 @@ Under a path prefix, those sites cannot render. The check caught it and refused 
 page but still leaves a reviewer with nothing to look at. Asking every repository to make its base URL configurable
 just to suit the previewer gets the dependency backwards, so we rolled it back. Each preview gets its own share
 again and is served at `/` on its own hostname, which is where most sites expect to live. A site that genuinely
-lives under a prefix declares it with `build.base_url` in `.docpreview.yml`, and docpreview builds and mounts it
+lives under a prefix declares it with `build.base_url` in `.nfpreview.yml`, and nfpreview builds and mounts it
 there.
 
 ## Making the bot look like it belongs to you
@@ -134,11 +134,11 @@ the NetFoundry organization and renamed it `netfoundry-preview`. Its avatar is t
 Two lessons from that, if you're setting up your own:
 
 - **Transfer the App, don't recreate it.** A transfer keeps the App ID, private key, webhook secret and every
-  installation, so docpreview needed no config change. A new App would also have stranded the old comments, because
+  installation, so nfpreview needed no config change. A new App would also have stranded the old comments, because
   one App can't edit another App's comments, so every open pull request would have ended up with two.
 - **Set the heading.** It defaults to **NetFoundry Preview** and is configured with `preview.title`. Comments are
   matched by a hidden marker, not by their heading, so changing the title on a running installation edits existing
-  comments in place. On Bitbucket, where the comment author is the access token, name the token `docpreview`.
+  comments in place. On Bitbucket, where the comment author is the access token, name the token `nfpreview`.
 
 ## Set it up yourself
 
@@ -148,28 +148,28 @@ only works on your own machine.
 
 ```powershell
 git clone https://github.com/openziti-test-kitchen/docpreview
-cd docpreview
-go build -o bin/ ./cmd/docpreview
+cd nfpreview
+go build -o bin/ ./cmd/nfpreview
 
-docpreview init                                        # one question: which exposer
-docpreview doctor                                      # makes real calls, not just a config lint
-docpreview preview -build -name my-first-preview ./www
+nfpreview init                                        # one question: which exposer
+nfpreview doctor                                      # makes real calls, not just a config lint
+nfpreview preview -build -name my-first-preview ./www
 ```
 
-That builds docpreview's own docs site and prints a URL. It runs the same build, base URL check and static server as
+That builds nfpreview's own docs site and prints a URL. It runs the same build, base URL check and static server as
 a real pull request, without the webhook and the comment. Point it at your own site's directory next, and press
 Ctrl-C to withdraw the URL.
 
 Then wire it to pull requests:
 
-1. **Make a vault key** with `docpreview vault keygen`, and put a copy in a password manager. Without it, the vault
+1. **Make a vault key** with `nfpreview vault keygen`, and put a copy in a password manager. Without it, the vault
    cannot be decrypted.
-2. **Expose the webhook** with `docpreview webhook-only`. It publishes the one route GitHub posts to, and not the
+2. **Expose the webhook** with `nfpreview webhook-only`. It publishes the one route GitHub posts to, and not the
    dashboard or credential API. See [Expose the webhook][tunnel].
 3. **Create a GitHub App** under your organization with Contents read, Pull requests and Checks read and write, and
    the Pull request event. Store its private key and webhook secret in the vault. Give it a real name and an avatar.
    See [Create the GitHub App][app].
-4. **Install it** on the repositories you want, start `docpreview serve`, and **add a project** for each repository
+4. **Install it** on the repositories you want, start `nfpreview serve`, and **add a project** for each repository
    on the dashboard at `http://127.0.0.1:8471/projects`. A repository with no project is never built, even with the
    App installed. That's deliberate: a valid webhook signature proves GitHub sent the delivery, not that you chose to
    build that repository.
@@ -192,8 +192,8 @@ preview for every contributor without adding anybody to anything first. Our than
 pull request review can be. If you love it, keep it. If you want another way, start at
 [github.com/openziti-test-kitchen/docpreview](https://github.com/openziti-test-kitchen/docpreview).
 
-[tunnel]: https://openziti-test-kitchen.github.io/docpreview/docs/guides/webhook-tunnel
-[app]: https://openziti-test-kitchen.github.io/docpreview/docs/guides/github-app
-[bitbucket]: https://openziti-test-kitchen.github.io/docpreview/docs/guides/bitbucket
-[linux]: https://openziti-test-kitchen.github.io/docpreview/docs/guides/linux-service
-[quickstart]: https://openziti-test-kitchen.github.io/docpreview/docs/quickstart
+[tunnel]: https://openziti-test-kitchen.github.io/nfpreview/docs/guides/webhook-tunnel
+[app]: https://openziti-test-kitchen.github.io/nfpreview/docs/guides/github-app
+[bitbucket]: https://openziti-test-kitchen.github.io/nfpreview/docs/guides/bitbucket
+[linux]: https://openziti-test-kitchen.github.io/nfpreview/docs/guides/linux-service
+[quickstart]: https://openziti-test-kitchen.github.io/nfpreview/docs/quickstart

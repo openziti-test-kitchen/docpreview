@@ -48,7 +48,7 @@ Copy the token now. Bitbucket shows it once.
 To share it across the workspace, so every Bitbucket project can use it:
 
 ```powershell
-docpreview vault set bitbucket.access_token
+nfpreview vault set bitbucket.access_token
 ```
 
 A repository-scoped token belongs to one project instead. Paste it on that project's page after you add the project
@@ -66,7 +66,7 @@ response to the call that created it, and you can't ask for it again. Copy it be
 Or from a terminal:
 
 ```powershell
-docpreview vault set bitbucket.webhook_secret     # reads the value from stdin
+nfpreview vault set bitbucket.webhook_secret     # reads the value from stdin
 ```
 
 ## Step 4: Turn Bitbucket on
@@ -87,11 +87,11 @@ Without `enabled: true`, `/webhook/bitbucket` answers 501.
 The webhook tunnel forwards only `/webhook/github` unless you tell it otherwise. Pass both paths:
 
 ```powershell
-docpreview webhook-only -zrok-name docpreview -upstream http://127.0.0.1:8471 `
+nfpreview webhook-only -zrok-name nfpreview -upstream http://127.0.0.1:8471 `
   -path /webhook/github -path /webhook/bitbucket
 ```
 
-The packaged `docpreview-webhook` service already passes both. The tunnel logs one
+The packaged `nfpreview-webhook` service already passes both. The tunnel logs one
 `this is the webhook URL to configure` line per path, and the `platform=bitbucket` one is the URL for this step. See
 [Expose the webhook](./webhook-tunnel.md).
 
@@ -100,7 +100,7 @@ Repository settings → **Webhooks** → **Add webhook**.
 | Field | Value |
 |---|---|
 | Title | `NetFoundry Preview` |
-| URL | The Bitbucket URL your webhook tunnel printed, such as `https://docpreview.shares.zrok.io/webhook/bitbucket` |
+| URL | The Bitbucket URL your webhook tunnel printed, such as `https://nfpreview.shares.zrok.io/webhook/bitbucket` |
 | Secret | The value from Step 3 |
 | Status | Active |
 
@@ -132,7 +132,7 @@ on the project's page.
 ## Check it
 
 ```powershell
-docpreview doctor
+nfpreview doctor
 ```
 
 `scm: bitbucket (access_token)` means Bitbucket is enabled, and a `not wired up` suffix means the vault is locked.
@@ -141,7 +141,7 @@ docpreview doctor
 project's page. Then open a pull request, or push to one, and watch:
 
 ```powershell
-journalctl -u docpreview -f     # or the daemon's own output
+journalctl -u nfpreview -f     # or the daemon's own output
 ```
 
 | What you see | What it means |

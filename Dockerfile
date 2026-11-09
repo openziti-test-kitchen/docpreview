@@ -1,4 +1,4 @@
-# docpreview, as a container.
+# nfpreview, as a container.
 #
 # The daemon runs docker builds, so the interesting part of this file is not what it
 # installs — it is that the container must reach a docker daemon and must agree with it
@@ -23,10 +23,10 @@ COPY . .
 # -trimpath so the binary does not carry /src paths, which end up in stack traces and in
 # error messages an operator reads.
 #
-# Only ./cmd/docpreview. Every subcommand — serve, webhook-only, dashboard-only, vault,
+# Only ./cmd/nfpreview. Every subcommand — serve, webhook-only, dashboard-only, vault,
 # doctor — is in this one binary, which is what lets the three containers below share one
 # image and differ only in their command.
-RUN CGO_ENABLED=0 go build -trimpath -o /out/docpreview ./cmd/docpreview
+RUN CGO_ENABLED=0 go build -trimpath -o /out/nfpreview ./cmd/nfpreview
 
 # ── Runtime ──────────────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -58,7 +58,7 @@ RUN apt-get update \
 # anywhere that suggests the client.
 COPY --from=docker:29-cli /usr/local/bin/docker /usr/local/bin/docker
 
-COPY --from=build /out/docpreview /usr/local/bin/docpreview
+COPY --from=build /out/nfpreview /usr/local/bin/nfpreview
 
 # Root, on purpose, and this is the one thing about the image worth arguing with.
 #
@@ -70,14 +70,14 @@ COPY --from=build /out/docpreview /usr/local/bin/docpreview
 # willing to treat as dedicated to it.
 USER root
 
-# DOCPREVIEW_CONFIG is the one environment variable the binary reads (main.go), so the
+# NFPREVIEW_CONFIG is the one environment variable the binary reads (main.go), so the
 # subcommands need no -config and a deployment that moves the file has one thing to change.
 #
 # The directory it lives in must be mounted at the same path inside and outside the
 # container — see the path note in docker-compose.yml. That is a property of the deployment,
 # which is why the path is only a default here.
-ENV DOCPREVIEW_CONFIG=/srv/docpreview/config.yml
-VOLUME ["/srv/docpreview"]
+ENV NFPREVIEW_CONFIG=/srv/nfpreview/config.yml
+VOLUME ["/srv/nfpreview"]
 
 # The daemon binds loopback by design and the admin surface refuses anything else, so this
 # port is documentation rather than something to publish. Reaching the dashboard from
@@ -90,9 +90,9 @@ EXPOSE 8471
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8471/healthz || exit 1
 
-ENTRYPOINT ["docpreview"]
-# No -config: DOCPREVIEW_CONFIG above is the default path, and passing the flag as well
+ENTRYPOINT ["nfpreview"]
+# No -config: NFPREVIEW_CONFIG above is the default path, and passing the flag as well
 # would mean two places to change when it moves. Without either, `serve` reads
-# ~/.docpreview/config.yml — a different file with its own empty database, which starts
+# ~/.nfpreview/config.yml — a different file with its own empty database, which starts
 # happily, restores nothing, and looks exactly like data loss.
 CMD ["serve"]

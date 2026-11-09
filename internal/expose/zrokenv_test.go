@@ -167,7 +167,7 @@ func TestEnrolmentRefusesTheImpossibleCases(t *testing.T) {
 
 	// No token, so nothing is attempted. Asserted because the alternative is a request to the
 	// controller with an empty credential, whose answer is a 401 the operator has to interpret.
-	if err := ZrokEnable(t.Context(), zrokNoSecret(), "docpreview"); err == nil {
+	if err := ZrokEnable(t.Context(), zrokNoSecret(), "nfpreview"); err == nil {
 		t.Error("ZrokEnable with no account token was attempted")
 	}
 

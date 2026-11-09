@@ -1,6 +1,6 @@
 # Getting the Frontdoor exposer into production
 
-Every preview docpreview has ever served has come from the `local` exposer, which mounts previews at
+Every preview nfpreview has ever served has come from the `local` exposer, which mounts previews at
 `/preview/<name>/` on the daemon's own listener (`internal/expose/local.go:111`). That URL is reachable from the
 machine the daemon runs on and nowhere else, which has been fine for proving the pipeline and is useless for the
 thing the pipeline exists to do: give a reviewer a link. This document is about the exposer that is meant to
@@ -19,7 +19,7 @@ one-line config change and nothing upstream can tell the difference
 (`internal/expose/frontdoor.go:34`).
 
 The difference that leaks through is the direction of the connection. zrok's SDK hands back a `net.Listener` on
-the OpenZiti overlay and docpreview serves into it, so a zrok preview binds no local TCP port and does not
+the OpenZiti overlay and nfpreview serves into it, so a zrok preview binds no local TCP port and does not
 appear in `netstat` (`internal/expose/expose.go:10`). Frontdoor's agent dials *out* to a target URL, so a
 Frontdoor preview must be something dialable. `Publish` therefore calls `Local.serve`, which binds an ephemeral
 port and starts an `http.Server` on it (`internal/expose/frontdoor.go:158`, `internal/expose/local.go:214`), and
@@ -48,8 +48,8 @@ whose resource use grows with the number of open pull requests.
 **Per-build shares multiply that, and the multiplier is the push rate rather than the pull request count.** A
 preview now publishes once for the branch and once per build kept, so a hundred pull requests at `keep_builds: 10`
 is up to eleven hundred listeners, shares and goroutines rather than a hundred — and each one is a remote share on a
-paid tenant as well as a local port. Nothing enforces a ceiling on the Frontdoor side today. The disk caps in
-`TODO.md` are written for zrok's free tier and explicitly should not be inherited here, but *some* bound on live
+paid tenant as well as a local port. Nothing enforces a ceiling on the Frontdoor side today. The proposed disk caps
+are written for zrok's free tier and explicitly should not be inherited here, but *some* bound on live
 shares per tenant is the thing this exposer needs that the others do not.
 
 ### What the bound address must be, and what that costs
@@ -58,7 +58,7 @@ shares per tenant is the thing this exposer needs that the others do not.
 in `targetUrl`. That is one field, one value, two jobs, and it is the field with a real constraint
 (`internal/config/config.go:345`).
 
-- **Agent on the same host as docpreview** — `127.0.0.1`, the default (`internal/config/config.go:463`).
+- **Agent on the same host as nfpreview** — `127.0.0.1`, the default (`internal/config/config.go:463`).
   Nothing is exposed beyond loopback. The loopback-plus-tunnel property that makes the `zrok2` and `ziti`
   exposers pleasant to reason about survives intact: the only route to a preview is through the frontend, which
   is where the WAF and the IdP are.
@@ -66,7 +66,7 @@ in `targetUrl`. That is one field, one value, two jobs, and it is the field with
   anything that can route to it. The frontend is no longer the only door. `nosniff` and read-only methods are
   hardening, not access control ([10-security.md](10-security.md)), and the content is HTML written by whoever
   opened the pull request. A host firewall scoped to the agent's address is doing the whole job, and nothing in
-  docpreview checks that it exists.
+  nfpreview checks that it exists.
 
 So the honest statement is: **Frontdoor preserves "nothing exposed to the network directly" only when the agent
 is co-located.** The remote-agent arrangement trades that property for deployment convenience, and the trade is
@@ -92,30 +92,30 @@ case "frontdoor":
     return expose.NewFrontdoor(cfg.Exposer.Frontdoor, token, log)
 ```
 
-`cmd/docpreview/main.go:307`. `local` needs nothing, `zrok2` reads an enabled environment from disk, `ziti`
+`cmd/nfpreview/main.go:307`. `local` needs nothing, `zrok2` reads an enabled environment from disk, `ziti`
 reads an identity file. Only this one opens the vault, and `NewFrontdoor` refuses a zero token outright
 (`internal/expose/frontdoor.go:83`).
 
-`buildExposer` is called from `setup` before anything else and its error is fatal (`cmd/docpreview/main.go:217`).
-`w.Vault()` returns `vault.ErrLocked` when there is no key source, no `DOCPREVIEW_MASTER_KEY` and no terminal
+`buildExposer` is called from `setup` before anything else and its error is fatal (`cmd/nfpreview/main.go:217`).
+`w.Vault()` returns `vault.ErrLocked` when there is no key source, no `NFPREVIEW_MASTER_KEY` and no terminal
 (`internal/vault/vault.go:66`, `internal/vault/vault.go:319`) — which is the *default* configuration, chosen
 deliberately so that the key that decrypts the vault is not sitting somewhere a process can read it
 (`internal/config/config.go:64`).
 
 **This is now an inconsistency, and it is the exact bug that was just fixed one level up.** With `github.app_id`
 set and the vault locked, `setup` no longer fails; it warns and starts without a GitHub client, and
-`rewireGitHub` installs one the moment the vault opens (`cmd/docpreview/main.go:223`,
-`cmd/docpreview/main.go:476`, [11-github-setup-state.md](11-github-setup-state.md)). The reason was that the
+`rewireGitHub` installs one the moment the vault opens (`cmd/nfpreview/main.go:223`,
+`cmd/nfpreview/main.go:476`, [11-github-setup-state.md](11-github-setup-state.md)). The reason was that the
 page which unlocks the vault is served by the daemon that refused to start. With `exposer.kind: frontdoor` that
 reasoning applies unchanged and the fix was not applied: the daemon cannot boot to its own setup page. And the
 setup page already lists `frontdoor.api_token` as a key it knows how to collect, gated on
 `c.Exposer.Kind == "frontdoor"` (`internal/daemon/secrets.go:216`) — so the UI offers to store a credential the
-daemon must already have in order to serve that UI. `docpreview init` compounds it by telling a frontdoor user
-to set up a key source and store the token *before* running anything (`cmd/docpreview/init.go:369`), which is
+daemon must already have in order to serve that UI. `nfpreview init` compounds it by telling a frontdoor user
+to set up a key source and store the token *before* running anything (`cmd/nfpreview/init.go:369`), which is
 correct advice and also the only path that works today.
 
 The cost is concrete: a fresh frontdoor install, or any restart after a key rotation, is a terminal-only
-recovery. Two `docpreview vault set` invocations and an edit to `key_source` before the process will start at
+recovery. Two `nfpreview vault set` invocations and an edit to `key_source` before the process will start at
 all.
 
 The fix is not "tolerate the error and continue", because `d.exposer` is fixed at `daemon.New`
@@ -125,7 +125,7 @@ path-serving exposer while wiring (`internal/daemon/ingress.go:128`). Two shapes
 1. **A lazy token.** `NewFrontdoor` takes a `func() (vault.Secret, error)` instead of a `vault.Secret`, resolved
    inside `do` (`internal/expose/frontdoor.go:355`) rather than at construction. Construction then never
    touches the vault, `Validate` returns a clear "no Frontdoor token yet" that `validate` treats as a warning
-   rather than fatal (`cmd/docpreview/main.go:357`), and `Publish` fails per-build with the same message until
+   rather than fatal (`cmd/nfpreview/main.go:357`), and `Publish` fails per-build with the same message until
    the token exists. This is the smaller change and it matches how the GitHub fix reads: the daemon boots into
    a known-incomplete state and says so.
 2. **A swappable exposer**, mirroring `SetClient`. More faithful to the GitHub fix and considerably more
@@ -151,7 +151,7 @@ url := JoinURL(created.URL, spec.BaseURL)
 `internal/expose/frontdoor.go:214`. Whether that URL is a function of the name we sent is unverified — it is
 the controller's answer, and the code has no way to predict it. Two consequences follow from that alone. First,
 Frontdoor cannot implement `PathExposer`, so it cannot answer `MountPath` before the build; that is fine,
-because the base URL comes from `.docpreview.yml` and the host is appended to it, not the other way round
+because the base URL comes from `.nfpreview.yml` and the host is appended to it, not the other way round
 (`internal/expose/expose.go:39`). Second, **every publish creates a new share** — there is no reserved-name
 reuse of the kind zrok v2 gets from decoupling names from shares (`internal/expose/zrok.go:35`). So on every
 restart, `recover` reaps everything and republishes from artifacts (`internal/daemon/daemon.go:375`), each
@@ -184,9 +184,9 @@ for exactly this consistency argument in the sibling case where the database wri
 
 ## Reap, orphans, and two daemons in one tenant
 
-`Reap(ctx, keep)` lists shares, skips anything whose `Tag` lacks the `docpreview:` prefix, skips anything whose
+`Reap(ctx, keep)` lists shares, skips anything whose `Tag` lacks the `nfpreview:` prefix, skips anything whose
 publication key is in `keep`, and deletes the rest (`internal/expose/frontdoor.go:284`). The tag is
-`docpreview:` + `Spec.Key()`, so a preview's branch share and each of its build shares tag differently — see
+`nfpreview:` + `Spec.Key()`, so a preview's branch share and each of its build shares tag differently — see
 [02-exposers.md](02-exposers.md). The prefix is what stops it deleting a share an operator made by hand
 (`internal/expose/zrok.go:24-32`). At startup `keep` is nil, so everything tagged is an orphan by definition
 (`internal/daemon/daemon.go:463`); on the hourly tick `keep` is every preview id the database holds plus
@@ -205,14 +205,14 @@ identifies the daemon, and `Reap` filters on that prefix alone. Daemon B's start
 A's shares as prefix-matching and not in B's `keep`, and deletes them — A keeps serving local ports that nothing
 routes to, with rows that say `ready`. zrok does not have this problem because its listing is filtered by the
 environment's ziti identity (`internal/expose/zrok.go:304`). The fix is the same shape: put an instance
-identifier in the tag — `docpreview:<instance>:<previewID>` — and filter on it, with the instance name a config
+identifier in the tag — `nfpreview:<instance>:<previewID>` — and filter on it, with the instance name a config
 field defaulting to the hostname. Until that exists it is a documented "one daemon per tenant" rule, and it
 should be documented rather than discovered.
 
 ## Authorization: previews are as public as the frontend is
 
 `shareRequest` has four fields — name, frontend, target URL, tag (`internal/expose/frontdoor.go:122`) — and
-`FrontdoorConfig` has four settings, none of them about access (`internal/config/config.go:338`). docpreview
+`FrontdoorConfig` has four settings, none of them about access (`internal/config/config.go:338`). nfpreview
 therefore asserts **nothing** about who may reach a preview. Compare zrok, where the same code path sets a
 permission mode, access grants, and optionally an OAuth provider with email patterns
 (`internal/expose/zrok.go:155`), all driven from config (`internal/config/config.go:322`).
@@ -221,7 +221,7 @@ So: whatever the named frontend's default policy is, that is the policy. If the 
 is public to anyone with the URL, and the URL is guessable — it is the repository name and the branch. The
 runbook sells Frontdoor precisely on IdP-enforced authentication and MFA (`www/docs/guides/frontdoor.md:83`),
 and that is a truthful description of the product and not of this integration: the protection is entirely a
-property of a frontend somebody configured elsewhere, docpreview neither sets it nor checks it, and there is no
+property of a frontend somebody configured elsewhere, nfpreview neither sets it nor checks it, and there is no
 per-preview access control of any kind. That is a weaker position than `zrok2` with `open: false`, and much
 weaker than `ziti`, which reaches only enrolled identities. It should be stated in
 [10-security.md](10-security.md) alongside the `ziti` Host-header gap rather than left to be inferred.
@@ -233,7 +233,7 @@ the same "say what you mean" posture that `zrok.Open` takes.
 ## Failure modes
 
 **A missing or unreadable token is fatal at startup** — `MustGet` fails, `setup` fails, the process exits
-(`cmd/docpreview/main.go:312`). That covers both "never stored" and "vault locked", and it is the bug above; it
+(`cmd/nfpreview/main.go:312`). That covers both "never stored" and "vault locked", and it is the bug above; it
 should boot, warn, and fail per-build until the token exists.
 
 **A revoked or expired token** is caught by `Validate` at startup, which reports the gateway's status line plus
@@ -272,21 +272,21 @@ deleted.
 config → store → exposer → scm clients → validate → daemon → recover → listeners → serve
 ```
 
-`Validate` lists shares before anything binds (`cmd/docpreview/main.go:357`), so a dead token is one clear error
+`Validate` lists shares before anything binds (`cmd/nfpreview/main.go:357`), so a dead token is one clear error
 at boot rather than a mystery on the first pull request of the day. Then `recover` reaps every tagged share and
 republishes each `ready` row from its artifacts (`internal/daemon/daemon.go:367`). For Frontdoor that means, per
 preview: a fresh ephemeral port, a fresh share, possibly a fresh URL, and possibly a comment edit. The log line
 is `recovered previews_restored=N jobs_pending=M` (`internal/daemon/daemon.go:402`) plus one `published preview`
 per preview carrying the name, URL and share ID (`internal/expose/frontdoor.go:215`). That is enough to audit a
 restart from the log, which is more than can be said for the tenant side: there is still no
-`docpreview shares list` to compare what the tenant holds against what the database thinks it holds, and the
+`nfpreview shares list` to compare what the tenant holds against what the database thinks it holds, and the
 case that matters is a share created by a daemon whose database was then deleted — nothing claims it and nothing
-looks (`TODO.md:105`).
+looks.
 
 ## Operational requirements
 
-An account with API access, a token minted for it, and an enrolled agent that can reach the docpreview host
-(`www/docs/guides/frontdoor.md:35`). The agent is a separate process, not part of docpreview, and where it
+An account with API access, a token minted for it, and an enrolled agent that can reach the nfpreview host
+(`www/docs/guides/frontdoor.md:35`). The agent is a separate process, not part of nfpreview, and where it
 runs is the whole deployment decision:
 
 - **Same host** — `agent_reachable_host: 127.0.0.1` and nothing else is reachable from anywhere. This is the
@@ -297,8 +297,8 @@ runs is the whole deployment decision:
 - **Separate host** — a firewall rule scoped to the agent, and the acknowledgement that unauthenticated preview
   content is now on a network interface.
 
-Under systemd, the agent is a second unit and docpreview does not depend on it for startup — `Validate` talks to
-the gateway, not to the agent, so a docpreview that starts with the agent down will publish shares nothing can
+Under systemd, the agent is a second unit and nfpreview does not depend on it for startup — `Validate` talks to
+the gateway, not to the agent, so a nfpreview that starts with the agent down will publish shares nothing can
 reach. That is another argument for the reachability check in the failure table.
 
 ## Testing
@@ -315,8 +315,8 @@ the collection (`internal/expose/frontdoor_test.go:162`).
 What it does not cover, all testable against the same fake:
 
 1. **Reap.** The fake's `GET /shares` returns an empty list unconditionally
-   (`internal/expose/frontdoor_test.go:43`). Make it return a mix — docpreview-tagged in `keep`,
-   docpreview-tagged not in `keep`, untagged — and assert exactly the middle set is deleted. This is the test
+   (`internal/expose/frontdoor_test.go:43`). Make it return a mix — nfpreview-tagged in `keep`,
+   nfpreview-tagged not in `keep`, untagged — and assert exactly the middle set is deleted. This is the test
    that would have caught the two-daemons problem by making somebody write down what `keep` means.
 2. **The replace-then-close order.** `local` has
    `TestLocalExposerSurvivesTheDaemonsReplaceThenCloseOrder`; Frontdoor's `withdrawEntry` identity check
@@ -330,8 +330,8 @@ What it does not cover, all testable against the same fake:
 5. **Ports are released.** The existing test checks `live` is empty; check the ports are actually closed by
    dialing the address recorded from the fake's request body.
 6. **A locked vault boots.** Once the lazy-token change lands, the analogue of
-   `cmd/docpreview/rewire_test.go`: `exposer.kind: frontdoor`, no token, `setup` succeeds, `Publish` fails with
-   a message naming `docpreview vault set frontdoor.api_token`.
+   `cmd/nfpreview/rewire_test.go`: `exposer.kind: frontdoor`, no token, `setup` succeeds, `Publish` fails with
+   a message naming `nfpreview vault set frontdoor.api_token`.
 
 None of this needs a live account. What does need one is the wire format, whether the URL is derived from the
 name, and whether per-share access policy exists — three questions, one afternoon, and everything above is
@@ -401,7 +401,7 @@ of implementing `Adopter` here considerably, which was previously assumed to be 
 
 **Per-share access policy does exist** — `authProviderId`, `oauthEmailDomains`,
 `oauthAuthorizationCheckInterval` — so the "previews are as public as the frontend is" section above is a statement
-about what docpreview asserts, not about what Frontdoor can do.
+about what nfpreview asserts, not about what Frontdoor can do.
 
 **Ownership tagging is unimplementable as designed.** With no tag field, `Reap` cannot recognise its own work and
 deletes nothing, which fails safe and leaks one share per preview per restart. The only free-form field that
@@ -432,5 +432,5 @@ Everything in this section is inference or recollection, not something read out 
 - Port-exhaustion sizing is arithmetic about ephemeral ranges, not a measurement. Nobody has run a hundred
   concurrent Frontdoor previews.
 - The assertion that a remote agent means unauthenticated content on a LAN interface follows from
-  `net.Listen` on the configured host and from docpreview having no authentication on preview content. It has
+  `net.Listen` on the configured host and from nfpreview having no authentication on preview content. It has
   not been observed on a real deployment because there has not been one.

@@ -19,7 +19,7 @@ survives restarts and a `PASS` that proves a signed delivery is accepted end to 
 - `github.webhook_secret` already in the vault. `webhook-check` reads it from there, so store it first:
 
   ```powershell
-  "paste-the-secret-here" | docpreview vault set github.webhook_secret
+  "paste-the-secret-here" | nfpreview vault set github.webhook_secret
   ```
 
   If you have not generated one yet, [step 2 of the GitHub App guide](./github-app.md#step-2-create-the-app) has
@@ -31,17 +31,17 @@ An ephemeral share gets a new hostname every time it starts, and you would have 
 every restart. Reserve a name once instead:
 
 ```powershell
-zrok2 create name docpreview
+zrok2 create name nfpreview
 ```
 
 ```bash
-zrok2 create name docpreview
+zrok2 create name nfpreview
 ```
 
-That gives you `docpreview.shares.zrok.io`. If your environment has no default namespace, name one:
+That gives you `nfpreview.shares.zrok.io`. If your environment has no default namespace, name one:
 
 ```powershell
-zrok2 create name -n <namespace> docpreview
+zrok2 create name -n <namespace> nfpreview
 ```
 
 Confirm it. `SHARE TOKEN` stays empty until a share binds to the name:
@@ -54,7 +54,7 @@ zrok2 list names
 ╭───────────────────────────┬────────────┬───────────┬─────────────┬──────────┬─────────────────────╮
 │ URL                       │ NAME       │ NAMESPACE │ SHARE TOKEN │ RESERVED │ CREATED             │
 ├───────────────────────────┼────────────┼───────────┼─────────────┼──────────┼─────────────────────┤
-│ docpreview.shares.zrok.io │ docpreview │ public    │             │ true     │ 2026-07-29 07:42:57 │
+│ nfpreview.shares.zrok.io │ nfpreview │ public    │             │ true     │ 2026-07-29 07:42:57 │
 ╰───────────────────────────┴────────────┴───────────┴─────────────┴──────────┴─────────────────────╯
 ```
 
@@ -68,24 +68,24 @@ public`. That is what lets it run with no local port and pick its own share back
 ## Step 2: Serve only the webhook
 
 ```powershell
-docpreview webhook-only -zrok-name docpreview -upstream http://127.0.0.1:8471
+nfpreview webhook-only -zrok-name nfpreview -upstream http://127.0.0.1:8471
 ```
 
 ```bash
-docpreview webhook-only -zrok-name docpreview -upstream http://127.0.0.1:8471
+nfpreview webhook-only -zrok-name nfpreview -upstream http://127.0.0.1:8471
 ```
 
 Leave it running in its own terminal. It logs the URL to configure:
 
 ```text
-level=INFO msg="webhook-only serving over zrok" url=https://docpreview.shares.zrok.io forwards="POST /webhook/github" to=http://127.0.0.1:8471
-level=INFO msg="this is the webhook URL to configure" platform=github webhook=https://docpreview.shares.zrok.io/webhook/github
+level=INFO msg="webhook-only serving over zrok" url=https://nfpreview.shares.zrok.io forwards="POST /webhook/github" to=http://127.0.0.1:8471
+level=INFO msg="this is the webhook URL to configure" platform=github webhook=https://nfpreview.shares.zrok.io/webhook/github
 ```
 
 For Bitbucket, pass `-path` once per route. Each `-path` replaces the default, so name both if you use both:
 
 ```powershell
-docpreview webhook-only -zrok-name docpreview -upstream http://127.0.0.1:8471 `
+nfpreview webhook-only -zrok-name nfpreview -upstream http://127.0.0.1:8471 `
   -path /webhook/github -path /webhook/bitbucket
 ```
 
@@ -115,7 +115,7 @@ Stopping `webhook-only` closes its listener and leaves the share on the zrok con
 The next start finds that share and serves on it, so a restart creates no new share:
 
 ```text
-level=INFO msg="adopted the existing zrok share" token=abc123xyz name=docpreview
+level=INFO msg="adopted the existing zrok share" token=abc123xyz name=nfpreview
 ```
 
 It only creates a share when there is none to adopt. Creations go through the share gate the daemon uses, 15 per
@@ -133,21 +133,21 @@ that can hold it is your own share.
 Start the daemon in another terminal:
 
 ```powershell
-docpreview serve
+nfpreview serve
 ```
 
 Then check the whole path:
 
 ```powershell
-docpreview webhook-check -url https://docpreview.shares.zrok.io/webhook/github
+nfpreview webhook-check -url https://nfpreview.shares.zrok.io/webhook/github
 ```
 
 ```bash
-docpreview webhook-check -url https://docpreview.shares.zrok.io/webhook/github
+nfpreview webhook-check -url https://nfpreview.shares.zrok.io/webhook/github
 ```
 
 ```text
-POST https://docpreview.shares.zrok.io/webhook/github
+POST https://nfpreview.shares.zrok.io/webhook/github
   event     ping
   delivery  check-3f9a1c04b7e2d518
   status    202 Accepted in 412ms
@@ -181,14 +181,14 @@ When it fails, it says which hop:
 | connection error | Nothing answers the URL. Is `webhook-only` running? |
 | `401` | The request arrived and the signature was rejected. This command read a different vault from the daemon's: `-config` points elsewhere, or the secret was rotated after the daemon started. |
 | `404` | The tunnel is up and the path is wrong. It must match what `webhook-only` was given, `/webhook/github` unless you passed `-path`. |
-| `501` | The daemon has no GitHub client: `github.app_id` is unset, or the vault is still locked. Run `docpreview doctor`. |
+| `501` | The daemon has no GitHub client: `github.app_id` is unset, or the vault is still locked. Run `nfpreview doctor`. |
 | `502` | zrok has the share and can't reach the backend. See below. |
 
 ## Step 4: Give GitHub the URL
 
 Now go to the [GitHub App guide](./github-app.md). Two fields take what you built here:
 
-- **Webhook URL**: `https://docpreview.shares.zrok.io/webhook/github`, the exact URL `webhook-check` passed on.
+- **Webhook URL**: `https://nfpreview.shares.zrok.io/webhook/github`, the exact URL `webhook-check` passed on.
 - **Webhook secret**: the value in the vault under `github.webhook_secret`. A mismatch is the `401` in the table
   above, coming from GitHub's side instead of yours.
 
@@ -227,7 +227,7 @@ name buys you that:
 
 1. Stop `webhook-only`. The share and the name both stay on the controller.
 2. Start it again. It adopts the share and serves the same hostname without creating a new one.
-3. Run `docpreview webhook-check -url https://docpreview.shares.zrok.io/webhook/github` to confirm.
+3. Run `nfpreview webhook-check -url https://nfpreview.shares.zrok.io/webhook/github` to confirm.
 
 If step 2 fails with a name-in-use error that reclaiming did not fix, something you did not create holds the name.
 `zrok2 list shares` shows what.

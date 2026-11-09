@@ -27,9 +27,9 @@ func testReport(state State) Report {
 
 func TestFailureCommentQuotesNeitherTheErrorNorTheLog(t *testing.T) {
 	r := testReport(StateFailed)
-	r.Reason = `registering zrok name "docpreview-first-preview" in namespace "public": ` +
+	r.Reason = `registering zrok name "nfpreview-first-preview" in namespace "public": ` +
 		`[POST /share/name][409] createShareNameConflict ""`
-	r.LogExcerpt = "npm ERR! path D:\\worktrees\\tangents\\vercel-replacement\\.docpreview\\data\\workspaces\\7ac8"
+	r.LogExcerpt = "npm ERR! path D:\\worktrees\\tangents\\vercel-replacement\\.nfpreview\\data\\workspaces\\7ac8"
 
 	body := RenderComment(r)
 
@@ -41,7 +41,7 @@ func TestFailureCommentQuotesNeitherTheErrorNorTheLog(t *testing.T) {
 		"/share/name",
 		"npm ERR!",
 		"worktrees",
-		".docpreview",
+		".nfpreview",
 	} {
 		if strings.Contains(body, leaked) {
 			t.Errorf("the comment leaks %q:\n%s", leaked, body)
@@ -56,7 +56,7 @@ func TestFailureCommentQuotesNeitherTheErrorNorTheLog(t *testing.T) {
 func TestFailureCommentLinksToTheBuildLogWhenItCan(t *testing.T) {
 	r := testReport(StateFailed)
 	r.Reason = "internal detail"
-	r.DetailURL = "https://docpreview.example/logs/abc123"
+	r.DetailURL = "https://nfpreview.example/logs/abc123"
 
 	body := RenderComment(r)
 	if !strings.Contains(body, r.DetailURL) {
@@ -76,7 +76,7 @@ func TestEveryURLInTheCommentIsALink(t *testing.T) {
 	ready.Name = "docs-feature-x-b400e0"
 
 	failed := testReport(StateFailed)
-	failed.DetailURL = "https://docpreview.example/logs/abc123"
+	failed.DetailURL = "https://nfpreview.example/logs/abc123"
 
 	for _, r := range []Report{ready, failed} {
 		body := RenderComment(r)
@@ -162,14 +162,14 @@ func TestTheReportIsOneRowUnderHeadings(t *testing.T) {
 	r := testReport(StateReady)
 	r.URL = "https://a-acme-docs-add-guide.shares.zrok.io/"
 	r.Name = "a-acme-docs-add-guide"
-	r.DashboardURL = "https://docpreview.example/"
+	r.DashboardURL = "https://nfpreview.example/"
 	r.Duration = 117 * time.Second
 
 	body := RenderComment(r)
 
 	for _, want := range []string{
 		"| Project | Status | Preview | Commit | Updated (UTC) |",
-		"[acme/docs](https://docpreview.example/)",
+		"[acme/docs](https://nfpreview.example/)",
 		"✅ Ready · 1m57s",
 		"[Preview](" + r.URL + ")",
 		"`d141f6e`",
@@ -192,7 +192,7 @@ func TestTheReportIsOneRowUnderHeadings(t *testing.T) {
 	// Every state renders the same five columns, so nothing shifts as a build progresses.
 	for _, state := range []State{StateQueued, StateBuilding, StateReady, StateFailed, StateSkipped} {
 		s := testReport(state)
-		s.DashboardURL = "https://docpreview.example/"
+		s.DashboardURL = "https://nfpreview.example/"
 		row := dataRow(t, RenderComment(s))
 		if got := strings.Count(row, "|"); got != 6 {
 			t.Errorf("%s renders %d cell borders, want 6 — the row is not five columns:\n%s",
@@ -207,7 +207,7 @@ func TestTheReportIsOneRowUnderHeadings(t *testing.T) {
 // that has not published there are two of them side by side.
 func TestAnEmptyColumnSaysSo(t *testing.T) {
 	r := testReport(StateBuilding)
-	r.DashboardURL = "https://docpreview.example/"
+	r.DashboardURL = "https://nfpreview.example/"
 
 	row := dataRow(t, RenderComment(r))
 	if strings.Contains(row, "|  |") || strings.Contains(row, "| |") {
@@ -246,7 +246,7 @@ func dataRow(t *testing.T, body string) string {
 // that only appears once the build has failed arrives after the thing worth watching.
 func TestBuildingLinksToItsOwnLog(t *testing.T) {
 	r := testReport(StateBuilding)
-	r.DetailURL = "https://docpreview.example/#preview=abc123"
+	r.DetailURL = "https://nfpreview.example/#preview=abc123"
 
 	body := RenderComment(r)
 	if !strings.Contains(body, "[Building]("+r.DetailURL+")") {

@@ -28,7 +28,7 @@ type planLine struct {
 
 	// From is the source that won, for the badge beside the line: "project" is a field
 	// the operator typed, "preset" is the framework's, "server" is the daemon's config,
-	// "repo" is the repository's own .docpreview.yml, and "build" is decided on the build
+	// "repo" is the repository's own .nfpreview.yml, and "build" is decided on the build
 	// host when the tree is there to look at.
 	From string `json:"from"`
 
@@ -128,7 +128,7 @@ func (a *ProjectsAdmin) planFor(p store.Project) planView {
 			return "repo"
 		}
 	}
-	const repoNote = "blank here, so the repository's own .docpreview.yml decides; " +
+	const repoNote = "blank here, so the repository's own .nfpreview.yml decides; " +
 		"this is what it gets if that file says nothing"
 	noteFor := func(src string) string {
 		if src == "repo" {

@@ -20,9 +20,9 @@ underlay address. Those are two different grants on two different services with 
 | Piece | Where | State |
 |---|---|---|
 | The exposer | `internal/expose/ziti.go` | Works. Bound, served, host-routed, exercised end to end. |
-| Provisioning | `internal/zitiadmin/provision.go` | Works, idempotently, via `docpreview configure ziti`. |
+| Provisioning | `internal/zitiadmin/provision.go` | Works, idempotently, via `nfpreview configure ziti`. |
 | Config | `internal/config/config.go:293` (`ZitiConfig`) | Three required fields, validated in `NewZiti`. |
-| Wiring | `cmd/docpreview/main.go:305` | `case "ziti": return expose.NewZiti(...)`. |
+| Wiring | `cmd/nfpreview/main.go:305` | `case "ziti": return expose.NewZiti(...)`. |
 | Name template | `internal/daemon/daemon.go:907` | Its own template, separate from zrok's. |
 | Offline tests | `internal/expose/ziti_test.go` | Seven tests, no controller needed. |
 | Live tests | `internal/expose/ziti_integration_test.go` | Skip unless pointed at two identity files. |
@@ -31,17 +31,17 @@ underlay address. Those are two different grants on two different services with 
 `edge.Listener` (`internal/expose/ziti.go:110-149`). `Publish` is a map insert (`ziti.go:233`). `Reap` returns
 `nil` (`ziti.go:278`). `Close` shuts the server, closes the listener, closes the ziti context (`ziti.go:290`).
 
-One gap worth noting before anything else, because it is a one-line fix: `docpreview init` will not select this
-exposer. `checkExposerKind` accepts only `zrok2`, `frontdoor`, `local` (`cmd/docpreview/init.go:316-323`) and
+One gap worth noting before anything else, because it is a one-line fix: `nfpreview init` will not select this
+exposer. `checkExposerKind` accepts only `zrok2`, `frontdoor`, `local` (`cmd/nfpreview/init.go:316-323`) and
 the interactive menu lists the same three (`init.go:96-99`), while `config.Server.validate` accepts `ziti`
-(`internal/config/config.go:513`) and `configure ziti` sets it (`cmd/docpreview/configure.go:114`). So the
+(`internal/config/config.go:513`) and `configure ziti` sets it (`cmd/nfpreview/configure.go:114`). So the
 supported way in is `configure ziti`, and `init -exposer ziti` fails with "unknown exposer".
 
 ## The reviewer's experience, stated up front
 
 A reviewer needs three things before a preview URL means anything: a tunneler (Ziti Desktop Edge or
 `ziti-edge-tunnel`), an enrolled identity carrying the reader attribute, and the tunneler switched on. Without
-them `http://my-branch.docpreview.ziti/` is NXDOMAIN — the `.ziti` TLD does not exist publicly and is not meant
+them `http://my-branch.nfpreview.ziti/` is NXDOMAIN — the `.ziti` TLD does not exist publicly and is not meant
 to.
 
 Consequences that follow, and that should be in the user documentation rather than discovered:
@@ -51,7 +51,7 @@ Consequences that follow, and that should be in the user documentation rather th
   subdomain the organization owns, so a reviewer without the tunneler gets NXDOMAIN on a name that at least
   looks legitimate rather than an invalid TLD.
 - Onboarding a reviewer is a one-time-token ceremony. `configure ziti` mints exactly one sample reviewer
-  (`provision.go:436`) and there is no `docpreview identity add` yet, so today the answer to "add Bob" is
+  (`provision.go:436`) and there is no `nfpreview identity add` yet, so today the answer to "add Bob" is
   "use the `ziti` CLI".
 - There is **no revocation story**. `docs/design/10-security.md:118` calls this the largest known gap, and it is
   worse here than anywhere else, because on this exposer the enrolled identity *is* the authorization.
@@ -63,9 +63,9 @@ every reviewer is an enrollment.
 
 This is the headline, and it is the thing that gates calling the exposer finished.
 
-One wildcard service carries every preview. The `intercept.v1` config covers `docpreview.ziti` and
-`*.docpreview.ziti` (`provision.go:166`, `provision.go:209-239`), one Dial policy grants
-`#docpreview-reader` (`provision.go:291-297`), and `route` picks the preview from the first label of the HTTP
+One wildcard service carries every preview. The `intercept.v1` config covers `nfpreview.ziti` and
+`*.nfpreview.ziti` (`provision.go:166`, `provision.go:209-239`), one Dial policy grants
+`#nfpreview-reader` (`provision.go:291-297`), and `route` picks the preview from the first label of the HTTP
 `Host` header (`ziti.go:156-205`).
 
 The `Host` header is client-supplied. Nothing in `route` consults the connection it arrived on. So **any
@@ -84,11 +84,11 @@ listener is ziti, for precisely this reason:
 > admin surface does not yet check the dialing identity, so "enrolled at all" would be the whole authorization.
 
 That is the same argument, and it reaches the same conclusion: an authenticated channel is not an authorization
-decision. `TODO.md:43-50` records the question as **undecided**:
+decision. The question is **undecided**:
 
 > **Per-preview authorization on the ziti exposer.** Today one wildcard service serves every preview and requests
 > are separated by the HTTP `Host` header. That is not zero trust: the header is client-supplied, so anyone
-> holding the `docpreview-reader` attribute can reach every preview by sending any hostname. Per-preview services
+> holding the `nfpreview-reader` attribute can reach every preview by sending any hostname. Per-preview services
 > with per-preview Dial policies would put authorization on the overlay where it belongs, at a cost of four
 > management-API objects per pull request and DNS churn on every connected tunneler. A middle option exists —
 > keep one service and check the dialing identity in the HTTP handler, since `edge.Conn` carries it — which gets
@@ -112,7 +112,7 @@ What it costs:
 3. **Twenty open pull requests is twenty entries in the reviewer's identity tile.**
 4. **Four objects to leak per preview instead of zero** — see [Reap and orphans](#reap-and-orphans) below,
    where a leaked Dial policy is a standing grant nobody remembers making.
-5. **It answers a question nobody has asked.** Who is the per-preview grant *for*? docpreview has no model of
+5. **It answers a question nobody has asked.** Who is the per-preview grant *for*? nfpreview has no model of
    "these reviewers may see this pull request"; the SCM does. Wiring a Dial policy per preview needs a source of
    truth for its identity roles, and there is not one.
 
@@ -121,8 +121,8 @@ What it costs:
 Keep one service. Keep the `Host` routing. Add a map from dialing identity to the set of preview names it may
 reach, consulted in `route` before dispatch.
 
-This has the shape of authorization without the substance, because docpreview would be the one inventing the
-mapping. Where does it come from — config? A vault key? The pull request's reviewer list, which docpreview does
+This has the shape of authorization without the substance, because nfpreview would be the one inventing the
+mapping. Where does it come from — config? A vault key? The pull request's reviewer list, which nfpreview does
 not fetch? Until there is a real answer, an allowlist is a second copy of the reader attribute with more places
 to get it wrong. **Not recommended, and not because of cost — because the input does not exist.**
 
@@ -186,7 +186,7 @@ z.srv = &http.Server{
    who asked. That alone turns "somebody is probing hostnames" from invisible into a log line, and it is the
    cheapest thing on this list.
 2. **Enforce it per preview once there is a rule to enforce.** The natural rule is not a config list but the
-   pull request: a preview is reachable by the identities docpreview can associate with that pull request, plus
+   pull request: a preview is reachable by the identities nfpreview can associate with that pull request, plus
    an always-allowed operator attribute. That is a feature with an owner, not a plumbing change.
 3. **Make the admin listener use it too.** `internal/daemon/secrets.go:91` refuses to serve because the
    dialing identity is unchecked. The same `ConnContext` hook on the ingress server (`internal/daemon/listen.go`)
@@ -194,10 +194,10 @@ z.srv = &http.Server{
    is the argument for Option C over Option A on its own.
 
 **Recommended: C, in that order, with step 1 done immediately.** The reason is not that C is stronger than A —
-it is not; A puts the decision on the controller where an attacker who compromises docpreview cannot reach it.
+it is not; A puts the decision on the controller where an attacker who compromises nfpreview cannot reach it.
 The reason is that C is *honest about where the boundary is* and can be built now, whereas A requires inventing
 the per-preview identity model that neither option can do without. The cost of C, stated plainly: the boundary
-lives in docpreview's process, so a bug in `route` is a bypass, and there is no defence in depth behind it. That
+lives in nfpreview's process, so a bug in `route` is a bypass, and there is no defence in depth behind it. That
 should be written into `docs/design/10-security.md` under "what is deliberately not defended" the day it ships,
 replacing the current **Open** paragraph at `10-security.md:108`.
 
@@ -207,13 +207,13 @@ tunneler has to re-sync. Deciding late is more expensive than deciding now.
 
 ## The single-binder constraint
 
-**Exactly one docpreview process may bind a given service.** This is stated in three places — the type comment
+**Exactly one nfpreview process may bind a given service.** This is stated in three places — the type comment
 at `internal/expose/ziti.go:36-42`, the ingress equivalent at `internal/daemon/listen.go:69-75`, and the
-generated config comment at `cmd/docpreview/init.go:454` ("Exactly one docpreview may bind it") — because it is
+generated config comment at `cmd/nfpreview/init.go:454` ("Exactly one nfpreview may bind it") — because it is
 not discoverable from a failure.
 
 What happens if two try: binding creates a ziti **terminator**. Two bindings create two terminators on the same
-service, and the router load-balances across them under the default strategy. Each docpreview holds a *disjoint*
+service, and the router load-balances across them under the default strategy. Each nfpreview holds a *disjoint*
 `live` map, so each preview is served by exactly one of the two processes. A reviewer's requests are split
 between them, and roughly half of them 404 — served by the instance that never published that preview. It looks
 like a flaky network, or a flaky browser cache, or an intermittent build problem. It does not look like a
@@ -235,17 +235,17 @@ daemon is a second port. Under `zrok2` and `frontdoor` the remote namespace arbi
 refused by something outside the process. Here, two instances on one service is a *silently degraded* state.
 The options, none of them free:
 
-- **Two services, two domains, two docpreviews.** Works today, needs no code, and means two sets of preview
+- **Two services, two domains, two nfpreviews.** Works today, needs no code, and means two sets of preview
   URLs. Which is what `ziti.go:42` recommends: "Give a second instance its own service and domain."
 - **Active-passive with an external lease.** The standby must not bind until the active's terminator is gone.
-  docpreview has no leader election and sqlite is the only shared state; this is a real feature, not a flag.
-- **Detect it.** After binding, docpreview could ask the controller how many terminators the service has and
+  nfpreview has no leader election and sqlite is the only shared state; this is a real feature, not a flag.
+- **Detect it.** After binding, nfpreview could ask the controller how many terminators the service has and
   refuse to serve if the answer is more than one. That converts a silent 50% failure into a startup error, which
   is the single highest-value hour on this list. It needs management-API credentials at `serve` time, which the
   exposer does not have today — `ZitiConfig` has no controller endpoint, only an identity file
   (`config.go:293-301`).
 
-Until one of those exists, "one docpreview per service" is an operational invariant enforced by a comment.
+Until one of those exists, "one nfpreview per service" is an operational invariant enforced by a comment.
 
 ## Reap and orphans
 
@@ -265,7 +265,7 @@ grant, for a pull request that closed weeks ago, that nobody remembers creating 
 forgotten SSH key.
 
 Finding them requires what `zrok` already has and this exposer does not: a tag. `zrok` tags every share
-`Target: "docpreview:<previewID>"`, and that prefix is how `Reap` distinguishes an object docpreview made from
+`Target: "nfpreview:<previewID>"`, and that prefix is how `Reap` distinguishes an object nfpreview made from
 one an operator made by hand (`docs/design/02-exposers.md:73-74`). Under Option A the same discipline applies —
 every created object carries the preview ID, `Reap` lists by tag, and anything whose ID is not in `keep` is
 deleted. Deleting untagged objects is not an option: the wildcard service, the admin service and the bootstrap
@@ -280,20 +280,20 @@ Two ordering rules that a naive `Reap` gets wrong:
    Option A: republishing first would find its own orphaned objects present and either fail or adopt them.
 
 There is also an orphan class that no `Reap` will ever find, and it is worth stating because it applies today:
-a docpreview whose database was deleted. Nothing claims its objects and nothing looks for them — the same gap
-`02-exposers.md:187` records for zrok. A `docpreview ziti audit` that diffs the controller against the database
+a nfpreview whose database was deleted. Nothing claims its objects and nothing looks for them — the same gap
+`02-exposers.md:187` records for zrok. A `nfpreview ziti audit` that diffs the controller against the database
 is the answer, and it does not exist.
 
 ## Identity and enrollment
 
-docpreview's own identity is the credential that lets a process host previews. `configure ziti` creates it,
+nfpreview's own identity is the credential that lets a process host previews. `configure ziti` creates it,
 enrolls it, and writes the enrolled identity to `<out-dir>/<host-identity>.json` at mode `0600` with the comment
-"this file is the private key that lets anything host docpreview's services" (`provision.go:355-404`). The
-default location is `<data-dir>/ziti` (`cmd/docpreview/configure.go:79`). `exposer.ziti.identity_file` points at
+"this file is the private key that lets anything host nfpreview's services" (`provision.go:355-404`). The
+default location is `<data-dir>/ziti` (`cmd/nfpreview/configure.go:79`). `exposer.ziti.identity_file` points at
 it; `NewZiti` refuses to construct without it (`ziti.go:82-85`).
 
 **Does it belong in the vault?** No, and the reasoning is worth recording so it is not relitigated. The vault
-holds values docpreview *reads and passes on* — a GitHub private key, a Frontdoor token, build secrets — and its
+holds values nfpreview *reads and passes on* — a GitHub private key, a Frontdoor token, build secrets — and its
 whole purpose is that they never reach disk in the clear or a log (`docs/design/05-secrets.md`). A ziti identity
 file is not passed anywhere: `ziti.NewContextFromFile` takes a path (`ziti.go:115`) and the SDK owns the key
 material from there. Putting it in the vault would mean decrypting it to a temporary file for the SDK to read,
@@ -305,7 +305,7 @@ because today an operator has no way to know the vault is not the answer.
 **Rotation** is the destructive path in `provision.go`, and it is deliberately narrow. `ensureHostIdentity`
 authenticates the existing file rather than stat-ing it (`identityFileUnusable`, `provision.go:415-429`), and if
 the controller rejects it, deletes the identity and recreates it — "the one destructive act in this package, and
-it is confined to docpreview's own identity" (`provision.go:341-354`). The reasoning is that an enrollment token
+it is confined to nfpreview's own identity" (`provision.go:341-354`). The reasoning is that an enrollment token
 is one-time: an identity whose file cannot authenticate is not a state worth preserving, because nothing can
 ever host with it. So rotation is: delete the file, re-run `configure ziti`. That works and it is undocumented.
 
@@ -314,10 +314,10 @@ ever host with it. So rotation is: delete the file, re-run `configure ziti`. Tha
 - An *enrollment token* that expires unused. For the hosting identity this cannot happen — `configure ziti`
   enrolls immediately (`provision.go:388`). For a reviewer it happens all the time, and re-running `configure
   ziti` does not fix it: `ensureReviewer` is never destructive, and a spent or expired token reads as
-  `ReviewerEnrolled` with no `.jwt` written (`provision.go:436-479`). `TODO.md:69-71` records
-  `docpreview identity add` as the fix.
+  `ReviewerEnrolled` with no `.jwt` written (`provision.go:436-479`). The proposed fix is
+  `nfpreview identity add`, not written yet.
 - An *enrolled certificate* reaching end of life. The SDK handles renewal while the process is running and
-  authenticated. A docpreview that has been *stopped* for longer than the certificate's life comes back with a
+  authenticated. A nfpreview that has been *stopped* for longer than the certificate's life comes back with a
   `Authenticate` failure at `ziti.go:121`, whose error text names the identity file but does not say
   "expired" — an operator sees an authentication error and reasonably suspects the wrong file. **Not verified:**
   the certificate lifetime and the SDK's renewal behaviour are recalled, not read out of the vendored SDK.
@@ -330,37 +330,37 @@ Two independent things must agree on the same string:
 exposer:
   kind: ziti
   ziti:
-    identity_file: /var/lib/docpreview/ziti/docpreview-host.json
-    service: docpreview                 # exactly one docpreview may bind this
-    domain: docpreview.ziti             # must equal the intercept.v1 addresses
+    identity_file: /var/lib/nfpreview/ziti/nfpreview-host.json
+    service: nfpreview                 # exactly one nfpreview may bind this
+    domain: nfpreview.ziti             # must equal the intercept.v1 addresses
     name_template: "{{.Repo.Name}}-{{.Name}}"
 ```
 
-`domain` decides the URL docpreview *publishes* — `JoinURL("http://"+name+"."+z.cfg.Domain, spec.BaseURL)`
+`domain` decides the URL nfpreview *publishes* — `JoinURL("http://"+name+"."+z.cfg.Domain, spec.BaseURL)`
 (`ziti.go:252`). The service's `intercept.v1` addresses decide what the tunneler *resolves* —
 `[]string{p.o.Domain, "*." + p.o.Domain}` (`provision.go:166`). `configure ziti` sets both from one `-domain`
 flag, which is why the happy path works and why nobody notices the coupling. The generated config warns about it
-at `cmd/docpreview/init.go:456-457` and `NewZiti` repeats it in the error text when `domain` is empty
+at `cmd/nfpreview/init.go:456-457` and `NewZiti` repeats it in the error text when `domain` is empty
 (`ziti.go:90-91`), but nothing checks it: the exposer never reads the intercept config.
 
 The failure mode from a user's point of view, if someone edits `domain` in the YAML and restarts:
 
-1. docpreview starts clean. `Validate` succeeds — the identity is fine, the Bind policy is fine, the service
+1. nfpreview starts clean. `Validate` succeeds — the identity is fine, the Bind policy is fine, the service
    binds. The log says `bound ziti service` with the new domain (`ziti.go:146`).
 2. Builds succeed. The dashboard shows `ready`. The pull request comment gets a link.
 3. The reviewer clicks it and the browser says the site cannot be reached. Not a 404 — a DNS failure. The
    tunneler still resolves `*.old-domain.ziti`, and was never told about the new one.
-4. Meanwhile `http://anything.old-domain.ziti/` *does* resolve, reaches docpreview, and gets the 404 page
+4. Meanwhile `http://anything.old-domain.ziti/` *does* resolve, reaches nfpreview, and gets the 404 page
    listing previews with links built from the **new** domain (`ziti.go:191`) — which also do not resolve.
 
 So the symptom is "every preview is unreachable, the daemon is healthy, and the one page that does load offers
 links that also fail". Every layer reports success. The apex hostname is the only thing that answers, and it
 answers with a page whose links are wrong.
 
-The fix is cheap and belongs in `Validate`: docpreview binds the service, so it can read the service's configs
+The fix is cheap and belongs in `Validate`: nfpreview binds the service, so it can read the service's configs
 and compare the `intercept.v1` addresses to `cfg.Domain`, failing at startup with both values named. **Not
 verified:** whether the addresses are reachable from `ziti.Context` alone or need the management API — if the
-latter, the check belongs in `docpreview doctor`, which already has a home for controller-touching checks.
+latter, the check belongs in `nfpreview doctor`, which already has a home for controller-touching checks.
 
 Naming otherwise follows the shared rules in `02-exposers.md`: `RenderName` then `SanitizeName`, with `ziti`'s
 own `name_template` (`daemon.go:907`). The collision rule matters more here than elsewhere because the label
@@ -375,9 +375,9 @@ check, the withdraw-identity guard, the 404 listing, the `Host` escaping, and `h
 the bind. Seven tests, no network, and they run in `go test ./...` today.
 
 **The integration tests do not run today, and nothing says so.** `zitiIdentities` skips unless both
-`DOCPREVIEW_ZITI_HOST_IDENTITY` and `DOCPREVIEW_ZITI_READER_IDENTITY` are set and readable
-(`ziti_integration_test.go:37-51`), and they additionally hardcode `Service: "docpreview-svc"` and
-`Domain: "docpreview.ziti"` (`ziti_integration_test.go:107-108`) — so they need not just any two identities but
+`NFPREVIEW_ZITI_HOST_IDENTITY` and `NFPREVIEW_ZITI_READER_IDENTITY` are set and readable
+(`ziti_integration_test.go:37-51`), and they additionally hardcode `Service: "nfpreview-svc"` and
+`Domain: "nfpreview.ziti"` (`ziti_integration_test.go:107-108`) — so they need not just any two identities but
 a network provisioned with exactly those names. `configure ziti` defaults are not guaranteed to match. The same
 is true of `internal/zitiadmin/provision_integration_test.go`. A green `go test ./...` proves nothing about the
 overlay, which is fine as long as it is not mistaken for proof.
@@ -434,7 +434,7 @@ hand.
 1. **Log the dialing identity.** `ConnContext` on the exposer's `http.Server`, the identity onto the request
    context, and into every request log line and the 404 page. Half a day, no policy decisions, and it makes the
    hole observable before it is closed.
-2. **Make `init` offer this exposer.** Add `ziti` to `checkExposerKind` (`cmd/docpreview/init.go:316`) and to the
+2. **Make `init` offer this exposer.** Add `ziti` to `checkExposerKind` (`cmd/nfpreview/init.go:316`) and to the
    interactive menu, with a line naming the trade: no public URL, every reviewer needs a tunneler. One hour.
 3. **Fail fast when two instances bind.** Either a terminator count check at startup, or — if that needs
    management credentials the exposer does not have — a loud startup warning naming the invariant and pointing at
@@ -444,16 +444,16 @@ hand.
 5. **Write down what the identity file is.** That it is peer to the vault and not content of it, that rotation is
    delete-the-file-and-re-run, and that `0600` is load-bearing. `docs/design/05-secrets.md` and the generated
    config comments.
-6. **Decide the authorization question, and record it in `TODO.md` as decided.** The recommendation here is
+6. **Decide the authorization question, and record the decision in this document.** The recommendation here is
    Option C. Without a decision, steps 7 and 8 cannot start.
 7. **Per-preview authorization in the handler**, with the offline tests described above, and the honest note in
-   `docs/design/10-security.md` that the boundary now lives in docpreview's process.
+   `docs/design/10-security.md` that the boundary now lives in nfpreview's process.
 8. **Reuse the same hook on the ingress listener** and lift the secrets-surface refusal at
    `internal/daemon/secrets.go:91`. This is the payoff that makes C worth more than its own scope.
-9. **`docpreview identity {add,list,remove}`** (`TODO.md:69-71`). Until `remove` exists there is no revocation,
+9. **`nfpreview identity {add,list,remove}`**. Until `remove` exists there is no revocation,
    and on this exposer revocation is the only thing that undoes access.
 10. **Make the integration tests runnable from `configure ziti` output** — read the service and domain from
-    environment or config instead of hardcoding `docpreview-svc`, and say in the README that a green
+    environment or config instead of hardcoding `nfpreview-svc`, and say in the README that a green
     `go test ./...` proves nothing about the overlay.
 11. **Only then, if per-preview overlay authorization is genuinely required:** Option A, with tagging and the
     delete-grant-first `Reap` ordering designed in from the start rather than retrofitted.
@@ -469,9 +469,9 @@ Everything above cited as `path/file.go:NN` was read. These were not:
   confirmed against ziti's router source, and the specific claim "about half the time" is illustrative.
 - **Whether a service's `intercept.v1` addresses are readable from `ziti.Context`** without management-API
   credentials. Step 4 above depends on this and it was not checked in the vendored SDK.
-- **Whether the controller exposes a terminator count** reachable with the credentials docpreview has at `serve`
+- **Whether the controller exposes a terminator count** reachable with the credentials nfpreview has at `serve`
   time. Step 3's cheap form exists either way; its good form depends on this.
-- **Enrolled-certificate lifetime and the SDK's renewal behaviour**, including what happens to a docpreview
+- **Enrolled-certificate lifetime and the SDK's renewal behaviour**, including what happens to a nfpreview
   stopped for longer than the certificate's life. Recalled, not read.
 - **`ConnContext` receiving the `edge.Conn` unwrapped.** `http.Server` passes the `net.Conn` it accepted, and
   `edge.Listener.Accept` returns the edge connection, so the type assertion should hold — but no code in this
@@ -481,5 +481,5 @@ Everything above cited as `path/file.go:NN` was read. These were not:
   re-verified against the zrok tree here.
 - **That the integration tests have never been run in this worktree.** Inferred from the skip guard and the
   hardcoded service name, not from a test log.
-- **NetFoundry-hosted networks** as an alternative to a self-hosted controller. `TODO.md:52-53` records the
-  decision as unmade; nothing in this document assumes either.
+- **NetFoundry-hosted networks** as an alternative to a self-hosted controller. That decision is
+  unmade; nothing in this document assumes either.

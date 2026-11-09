@@ -44,7 +44,7 @@ param(
     [string] $Kind,
     [string] $Root = $PSScriptRoot,
     [string] $Base = 'http://127.0.0.1:8471',
-    [string] $Password = $env:DOCPREVIEW_PASSWORD,
+    [string] $Password = $env:NFPREVIEW_PASSWORD,
     [switch] $Restart,
     [switch] $Yes,
     [switch] $Live
@@ -52,7 +52,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-Location $Root
-. (Join-Path $Root 'Invoke-Docpreview.ps1')
+. (Join-Path $Root 'Invoke-Nfpreview.ps1')
 
 # The live instance needs -Live said out loud.
 #
@@ -71,7 +71,7 @@ if ($Kind -and $isLive -and -not $Live) {
 }
 
 function Show-State {
-    $s = Invoke-Docpreview GET /api/zrok -Base $Base -Password $Password
+    $s = Invoke-Nfpreview GET /api/zrok -Base $Base -Password $Password
     if ($s.error) { throw $s.error }
 
     Write-Host "running : $($s.exposer_kind)"
@@ -117,16 +117,16 @@ if (-not $Yes) {
     }
 }
 
-$resp = Invoke-Docpreview POST /api/zrok/exposer -Body @{ kind = $Kind } -Base $Base -Password $Password
+$resp = Invoke-Nfpreview POST /api/zrok/exposer -Body @{ kind = $Kind } -Base $Base -Password $Password
 if ($resp.error) { throw "the daemon refused it: $($resp.error)" }
 Write-Host ''
 Write-Host $resp.note -ForegroundColor Green
 
 if (-not $Restart) {
-    Write-Host 'Apply it with:  .\Restart-Docpreview.ps1 -NoBuild'
+    Write-Host 'Apply it with:  .\Restart-Nfpreview.ps1 -NoBuild'
     return
 }
 
-& (Join-Path $Root 'Restart-Docpreview.ps1') -NoBuild -Idle
+& (Join-Path $Root 'Restart-Nfpreview.ps1') -NoBuild -Idle
 Write-Host ''
 Show-State | Out-Null

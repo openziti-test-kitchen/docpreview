@@ -2,9 +2,9 @@
 # or a credential — and a Docker build context is copied to the daemon whole, so anything
 # left in here travels to whatever daemon builds the image.
 
-# Credentials and live state. .docpreview holds the vault, the database and every
+# Credentials and live state. .nfpreview holds the vault, the database and every
 # preview's workspace; it is the single most important thing to keep out of an image.
-.docpreview/
+.nfpreview/
 *.age
 *.key
 

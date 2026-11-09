@@ -64,7 +64,7 @@ the service. The daemon starts fine, and then a build fails immediately on `dock
 :::tip The package may have done this already
 
 The `.deb` and `.rpm` in Step 2 recommend docker, so `apt` and `dnf` install it with them by default. On Amazon
-Linux 2023, `dnf install ./docpreview*.rpm` brings in docker, containerd and runc without being asked.
+Linux 2023, `dnf install ./nfpreview*.rpm` brings in docker, containerd and runc without being asked.
 
 It is a *weak* dependency, so a minimal image or `--setopt=install_weak_deps=False` skips it. Run
 `docker run --rm hello-world`, and come back here only if it fails.
@@ -83,19 +83,19 @@ See [Security](../reference/security.md).
 
 Use a package if your distribution takes one. Take the version from the
 [release page](https://github.com/openziti-test-kitchen/docpreview/releases) and substitute it below. These
-examples use `0.2.0`.
+examples use `0.5.0`.
 
 ```bash
 # RHEL, Fedora, Amazon Linux
 sudo dnf install -y \
-  https://github.com/openziti-test-kitchen/docpreview/releases/download/v0.2.0/docpreview-0.2.0-1.x86_64.rpm
+  https://github.com/openziti-test-kitchen/docpreview/releases/download/v0.5.0/nfpreview-0.5.0-1.x86_64.rpm
 ```
 
 ```bash
 # Debian, Ubuntu
 curl -fsSLO \
-  https://github.com/openziti-test-kitchen/docpreview/releases/download/v0.2.0/docpreview_0.2.0_amd64.deb
-sudo apt install -y ./docpreview_0.2.0_amd64.deb
+  https://github.com/openziti-test-kitchen/docpreview/releases/download/v0.5.0/nfpreview_0.5.0_amd64.deb
+sudo apt install -y ./nfpreview_0.5.0_amd64.deb
 ```
 
 `aarch64` and `arm64` builds of both are on the release page. Watch the filenames: the rpm spells the architecture
@@ -105,11 +105,11 @@ The package does everything in Step 3 (the service account, the directories, the
 prints the next three commands when it finishes.
 
 **To upgrade, run the same command with a newer file.** There is no apt or dnf repository, so nothing upgrades on
-its own. `/var/lib/docpreview` and `/etc/docpreview` survive an upgrade and a removal, because they hold the vault,
+its own. `/var/lib/nfpreview` and `/etc/nfpreview` survive an upgrade and a removal, because they hold the vault,
 the database and the config that names the master key's source. Restart the service to run the new binary:
 
 ```bash
-sudo systemctl restart docpreview
+sudo systemctl restart nfpreview
 ```
 
 ### No package for your distribution
@@ -135,20 +135,20 @@ On the VM or on your laptop:
 ```bash
 # on the VM, with Go installed
 git clone https://github.com/openziti-test-kitchen/docpreview
-cd docpreview
-go build -o docpreview ./cmd/docpreview
+cd nfpreview
+go build -o nfpreview ./cmd/nfpreview
 ```
 
 ```bash
 # or cross-compiled from a laptop
-GOOS=linux GOARCH=amd64 go build -o docpreview ./cmd/docpreview
-scp docpreview install/*.service install/install.sh you@vm:
+GOOS=linux GOARCH=amd64 go build -o nfpreview ./cmd/nfpreview
+scp nfpreview install/*.service install/install.sh you@vm:
 ```
 
-However you got it, `docpreview version` prints the tag and the commit:
+However you got it, `nfpreview version` prints the tag and the commit:
 
 ```text
-docpreview v0.2.0  a162fad0ffe3  2026-08-01T16:30:48-04:00  linux/amd64  go1.26.0
+nfpreview v0.2.0  a162fad0ffe3  2026-08-01T16:30:48-04:00  linux/amd64  go1.26.0
 ```
 
 ## Step 3: Run the installer
@@ -157,25 +157,25 @@ Skip this if you installed the `.deb` or `.rpm`, or ran `install.sh --version`. 
 you built:
 
 ```bash
-sudo ./install.sh --binary ./docpreview
+sudo ./install.sh --binary ./nfpreview
 ```
 
-Every route ends at the same host: the `docpreview` service account, `/var/lib/docpreview` (0700, owned by it),
-`/etc/docpreview` (0770, `root:docpreview`), the binary at `/usr/local/bin/docpreview`, and three systemd units.
+Every route ends at the same host: the `nfpreview` service account, `/var/lib/nfpreview` (0700, owned by it),
+`/etc/nfpreview` (0770, `root:nfpreview`), the binary at `/usr/local/bin/nfpreview`, and three systemd units.
 Nothing is started, and no config, key or credential is written. The next steps make those choices one at a time.
 
-`/etc/docpreview` is group-writable because the service account writes into it. Step 4 creates `config.yml` there
-and Step 5 puts the master key beside it, both as `sudo -u docpreview`.
+`/etc/nfpreview` is group-writable because the service account writes into it. Step 4 creates `config.yml` there
+and Step 5 puts the master key beside it, both as `sudo -u nfpreview`.
 
 ### The service account
 
-Everything from here on runs as `docpreview`, so every CLI command below starts with `sudo -u docpreview`. A file
+Everything from here on runs as `nfpreview`, so every CLI command below starts with `sudo -u nfpreview`. A file
 written as root in the data directory is a file the daemon can't read at three in the morning.
 
 | | |
 |---|---|
-| Name | `docpreview`, a system account with no login and no password |
-| Home | `/var/lib/docpreview`, the same as `data_dir` |
+| Name | `nfpreview`, a system account with no login and no password |
+| Home | `/var/lib/nfpreview`, the same as `data_dir` |
 | Shell | `/usr/sbin/nologin` |
 | Groups | `docker`, so builds can run containers |
 
@@ -195,11 +195,11 @@ driver, and it is why this VM should do nothing else.
 :::note Why the uid matters
 
 A build container runs as **root**, so everything it writes through the bind mount is root-owned on the host. The
-daemon, running as `docpreview`, then can't read its own build output, copy it into `artifacts/`, or remove the
+daemon, running as `nfpreview`, then can't read its own build output, copy it into `artifacts/`, or remove the
 workspace.
 
 To handle that, the daemon appends a `chown` to the build's command, using its own uid and gid. You don't have to
-do anything. But if you change `User=` in the unit file to an account that does not own `/var/lib/docpreview`, the
+do anything. But if you change `User=` in the unit file to an account that does not own `/var/lib/nfpreview`, the
 daemon builds fine and then fails to publish.
 
 :::
@@ -207,18 +207,18 @@ daemon builds fine and then fails to publish.
 ## Step 4: Write the config
 
 ```bash
-sudo -u docpreview /usr/local/bin/docpreview init -config /etc/docpreview/config.yml
+sudo -u nfpreview /usr/local/bin/nfpreview init -config /etc/nfpreview/config.yml
 ```
 
 It asks one question, which exposer, then writes commented YAML and prints everything it defaulted. Answer
 `zrok2`.
 
-Then fix the data directory. `init` defaults it to `.docpreview` *inside* the account's home, so here it writes
-`data_dir: "/var/lib/docpreview/.docpreview"`. That is one level below the directory the package created, which the
+Then fix the data directory. `init` defaults it to `.nfpreview` *inside* the account's home, so here it writes
+`data_dir: "/var/lib/nfpreview/.nfpreview"`. That is one level below the directory the package created, which the
 units and every command in this guide use:
 
 ```yaml
-data_dir: "/var/lib/docpreview"
+data_dir: "/var/lib/nfpreview"
 ```
 
 If you leave it, nothing fails. The daemon builds and publishes out of the nested directory, and a backup, a
@@ -280,17 +280,17 @@ Without a key the daemon boots **locked**. It starts and serves its dashboard, b
 person unlocks it. That suits a laptop. It does not suit a VM you expect to reboot unattended.
 
 ```bash
-sudo -u docpreview /usr/local/bin/docpreview vault keygen -out /etc/docpreview/master.key
+sudo -u nfpreview /usr/local/bin/nfpreview vault keygen -out /etc/nfpreview/master.key
 ```
 
 ```yaml
 vault:
-  key_source: "file:/etc/docpreview/master.key"
+  key_source: "file:/etc/nfpreview/master.key"
 ```
 
 :::danger Do not widen the key's permissions
 
-`keygen` writes the key `0600`, owned by `docpreview`, and the daemon requires exactly that. **A key file readable
+`keygen` writes the key `0600`, owned by `nfpreview`, and the daemon requires exactly that. **A key file readable
 by group or other is refused at startup.** A `chmod 0640` to "let the group read it" leaves a daemon that can't
 open its own vault, and the error, `it must not be readable by group or other`, reads like a bug in the check.
 
@@ -303,34 +303,34 @@ vault, and reading one directory must not give anyone both halves.
 
 :::tip Better than a file
 
-`key_source: "exec:op read op://ops/docpreview/master-key"` runs a command and keeps the key out of every file on
+`key_source: "exec:op read op://ops/nfpreview/master-key"` runs a command and keeps the key out of every file on
 the machine. Any secrets manager with a CLI works. The command runs as the service account and must not prompt.
 
 :::
 
 ## Step 6: Sign up for zrok and enrol this host
 
-**Run these as the service account.** `docpreview zrok use project` keeps the zrok environment in
-`/var/lib/docpreview/zrok2` instead of a home directory. The whole installation is then one directory to back up,
+**Run these as the service account.** `nfpreview zrok use project` keeps the zrok environment in
+`/var/lib/nfpreview/zrok2` instead of a home directory. The whole installation is then one directory to back up,
 and an enrolment made by the wrong user can't hide from the daemon.
 
 ```bash
-D=/etc/docpreview/config.yml
-sudo -u docpreview /usr/local/bin/docpreview zrok use project    -config $D
-sudo -u docpreview /usr/local/bin/docpreview zrok invite you@example.com -config $D
+D=/etc/nfpreview/config.yml
+sudo -u nfpreview /usr/local/bin/nfpreview zrok use project    -config $D
+sudo -u nfpreview /usr/local/bin/nfpreview zrok invite you@example.com -config $D
 # open the email, then:
-sudo -u docpreview /usr/local/bin/docpreview zrok register '<the link from that email>' -config $D
+sudo -u nfpreview /usr/local/bin/nfpreview zrok register '<the link from that email>' -config $D
 ```
 
 `register` asks for a password on stdin. It is the password for the **zrok account**, not for NetFoundry Preview.
 It is not stored here, and you need it to recover that account.
 
-Already have a zrok account? `docpreview zrok enable -token-stdin -config $D`.
+Already have a zrok account? `nfpreview zrok enable -token-stdin -config $D`.
 
 Check it:
 
 ```bash
-sudo -u docpreview /usr/local/bin/docpreview zrok status -config $D
+sudo -u nfpreview /usr/local/bin/nfpreview zrok status -config $D
 ```
 
 ## Step 7: Set the dashboard passwords
@@ -338,21 +338,21 @@ sudo -u docpreview /usr/local/bin/docpreview zrok status -config $D
 There are two roles. Until the **viewer** password exists, nothing is gated.
 
 ```bash
-sudo -u docpreview /usr/local/bin/docpreview console password -role admin  -config $D
-sudo -u docpreview /usr/local/bin/docpreview console password -role viewer -config $D
+sudo -u nfpreview /usr/local/bin/nfpreview console password -role admin  -config $D
+sudo -u nfpreview /usr/local/bin/nfpreview console password -role viewer -config $D
 ```
 
 ## Step 8: Check, then start
 
 ```bash
-sudo -u docpreview /usr/local/bin/docpreview doctor -config $D
+sudo -u nfpreview /usr/local/bin/nfpreview doctor -config $D
 ```
 
 Read these four lines:
 
 ```text
 exposer: zrok2
-key:     file /etc/docpreview/master.key
+key:     file /etc/nfpreview/master.key
 login:   required — either password reaches the dashboard
 scm:     none — set local.enabled or github.app_id to receive webhooks
 ```
@@ -361,9 +361,9 @@ scm:     none — set local.enabled or github.app_id to receive webhooks
 build.
 
 ```bash
-sudo systemctl enable --now docpreview
-sudo systemctl enable --now docpreview-webhook
-journalctl -u docpreview-webhook
+sudo systemctl enable --now nfpreview
+sudo systemctl enable --now nfpreview-webhook
+journalctl -u nfpreview-webhook
 ```
 
 The webhook tunnel logs the public URL it claimed, on the line `this is the webhook URL to configure`. That URL
@@ -372,18 +372,18 @@ goes into the App or the Bitbucket webhook.
 ## Step 9: Connect your source control
 
 Follow [the GitHub App guide](./github-app.md) or [the Bitbucket guide](./bitbucket.md), using the URL from Step
-8. With the unit's default `-zrok-name docpreview` it looks like this:
+8. With the unit's default `-zrok-name nfpreview` it looks like this:
 
 ```text
-https://docpreview.shares.zrok.io/webhook/github
+https://nfpreview.shares.zrok.io/webhook/github
 ```
 
 Then check it end to end without pushing anything. The command signs a test delivery with the secret from the
 vault, which is never printed and never reaches your shell history:
 
 ```bash
-sudo -u docpreview /usr/local/bin/docpreview webhook-check \
-  -url https://docpreview.shares.zrok.io/webhook/github -config $D
+sudo -u nfpreview /usr/local/bin/nfpreview webhook-check \
+  -url https://nfpreview.shares.zrok.io/webhook/github -config $D
 ```
 
 ## Step 10: Reach the dashboard
@@ -400,16 +400,16 @@ To reach it without the ssh tunnel, publish it. Do this **after Step 7**, becaus
 open pull request on the internet:
 
 ```bash
-sudo systemctl enable --now docpreview-dashboard
+sudo systemctl enable --now nfpreview-dashboard
 ```
 
 ## Afterwards
 
 | | |
 |---|---|
-| Logs | `journalctl -u docpreview -f`, and `-u docpreview-webhook` and `-u docpreview-dashboard` for the two tunnels |
-| Restart | `sudo systemctl restart docpreview`. Previews adopt their existing shares and come back at the same URLs |
-| Back up | `/var/lib/docpreview` and `/etc/docpreview/master.key`. That is everything |
+| Logs | `journalctl -u nfpreview -f`, and `-u nfpreview-webhook` and `-u nfpreview-dashboard` for the two tunnels |
+| Restart | `sudo systemctl restart nfpreview`. Previews adopt their existing shares and come back at the same URLs |
+| Back up | `/var/lib/nfpreview` and `/etc/nfpreview/master.key`. That is everything |
 | Move it | [Move an installation](./move-an-installation.md) |
 
 :::danger One daemon per zrok environment
@@ -417,8 +417,8 @@ sudo systemctl enable --now docpreview-dashboard
 At startup the daemon deletes the shares in its zrok environment that its database no longer claims, and adopts
 the rest. Two installations on one enrolment each delete the other's previews on every restart. Give a second
 installation its own account, or at least its own enrolment and its own [hostname prefix](../reference/cli.md).
-The prefix does not reach the tunnels, so also change `-zrok-name` in `docpreview-webhook.service` and
-`docpreview-dashboard.service`.
+The prefix does not reach the tunnels, so also change `-zrok-name` in `nfpreview-webhook.service` and
+`nfpreview-dashboard.service`.
 
 :::
 
@@ -426,8 +426,8 @@ The prefix does not reach the tunnels, so also change `-zrok-name` in `docprevie
 
 | | |
 |---|---|
-| The service will not start | `journalctl -u docpreview -n 50`. A bad config is named on the first line |
-| `502` from the public URL | The tunnel is up and nothing is behind it. `systemctl status docpreview` |
+| The service will not start | `journalctl -u nfpreview -n 50`. A bad config is named on the first line |
+| `502` from the public URL | The tunnel is up and nothing is behind it. `systemctl status nfpreview` |
 | Builds fail with `ENOMEM` | The VM is too small. See the note at the top |
-| Builds fail with a docker permission error | The service account is not in the `docker` group, or was added while the service was running. `systemctl restart docpreview` |
+| Builds fail with a docker permission error | The service account is not in the `docker` group, or was added while the service was running. `systemctl restart nfpreview` |
 | Everything looks fine, nothing happens | [Troubleshooting](../troubleshooting.md) |

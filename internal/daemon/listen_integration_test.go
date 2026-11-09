@@ -21,11 +21,11 @@ import (
 // It skips unless pointed at a live network, so `go test ./...` on a machine
 // with no controller stays green:
 //
-//	DOCPREVIEW_ZITI_HOST_IDENTITY=…/docpreview-host.json
-//	DOCPREVIEW_ZITI_READER_IDENTITY=…/reviewer.json
-//	DOCPREVIEW_ZITI_ADMIN_SERVICE=docpreview-admin
+//	NFPREVIEW_ZITI_HOST_IDENTITY=…/nfpreview-host.json
+//	NFPREVIEW_ZITI_READER_IDENTITY=…/reviewer.json
+//	NFPREVIEW_ZITI_ADMIN_SERVICE=nfpreview-admin
 //
-// `docpreview configure ziti` creates all three.
+// `nfpreview configure ziti` creates all three.
 //
 // Unlike the exposer's integration tests there is no shared listener here.
 // Each test binds the admin service for its own duration and closes it, which
@@ -35,12 +35,12 @@ import (
 func adminOverlay(t *testing.T) (hostIdentity, readerIdentity, service string) {
 	t.Helper()
 
-	hostIdentity = os.Getenv("DOCPREVIEW_ZITI_HOST_IDENTITY")
-	readerIdentity = os.Getenv("DOCPREVIEW_ZITI_READER_IDENTITY")
-	service = os.Getenv("DOCPREVIEW_ZITI_ADMIN_SERVICE")
+	hostIdentity = os.Getenv("NFPREVIEW_ZITI_HOST_IDENTITY")
+	readerIdentity = os.Getenv("NFPREVIEW_ZITI_READER_IDENTITY")
+	service = os.Getenv("NFPREVIEW_ZITI_ADMIN_SERVICE")
 	if hostIdentity == "" || readerIdentity == "" || service == "" {
-		t.Skip("set DOCPREVIEW_ZITI_HOST_IDENTITY, DOCPREVIEW_ZITI_READER_IDENTITY " +
-			"and DOCPREVIEW_ZITI_ADMIN_SERVICE to run")
+		t.Skip("set NFPREVIEW_ZITI_HOST_IDENTITY, NFPREVIEW_ZITI_READER_IDENTITY " +
+			"and NFPREVIEW_ZITI_ADMIN_SERVICE to run")
 	}
 	for _, p := range []string{hostIdentity, readerIdentity} {
 		if _, err := os.Stat(p); err != nil {
@@ -98,7 +98,7 @@ func TestIngressReachableOverTheOverlay(t *testing.T) {
 	// The dashboard, which is the sensitive one: it enumerates every open
 	// documentation pull request, and this is the whole reason for putting the
 	// ingress on the overlay.
-	resp, err := client.Get("http://docpreview.invalid/")
+	resp, err := client.Get("http://nfpreview.invalid/")
 	if err != nil {
 		t.Fatalf("GET the dashboard over the overlay: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestIngressReachableOverTheOverlay(t *testing.T) {
 
 	// /status is what the dashboard polls. Serving the page but not the data
 	// it needs would look like a working overlay and a broken daemon.
-	resp, err = client.Get("http://docpreview.invalid/status")
+	resp, err = client.Get("http://nfpreview.invalid/status")
 	if err != nil {
 		t.Fatalf("GET /status over the overlay: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestOverlayIngressStopsWhenClosed(t *testing.T) {
 	go srv.Serve(listeners.Net[0])
 
 	client := overlayClient(t, readerIdentity, service)
-	resp, err := client.Get("http://docpreview.invalid/healthz")
+	resp, err := client.Get("http://nfpreview.invalid/healthz")
 	if err != nil {
 		t.Fatalf("GET /healthz over the overlay: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestOverlayIngressStopsWhenClosed(t *testing.T) {
 		t.Fatalf("Close after Shutdown: %v", err)
 	}
 
-	if resp, err := client.Get("http://docpreview.invalid/healthz"); err == nil {
+	if resp, err := client.Get("http://nfpreview.invalid/healthz"); err == nil {
 		resp.Body.Close()
 		t.Error("the service still answers after shutdown")
 	}
@@ -176,14 +176,14 @@ func TestOverlayIngressStopsWhenClosed(t *testing.T) {
 // sends the dialer, or that the id it sends is the one the controller lists. This one
 // grants the reader identity, then dials as it and as a second, unlisted identity:
 //
-//	DOCPREVIEW_ZITI_OTHER_IDENTITY=…/other.json  (enrolled, may Dial the service)
+//	NFPREVIEW_ZITI_OTHER_IDENTITY=…/other.json  (enrolled, may Dial the service)
 //
 // "No id at all" stays an offline test: a real overlay always names its dialer.
 func TestOverlayAdminGrantFollowsTheRealDialer(t *testing.T) {
 	hostIdentity, readerIdentity, service := adminOverlay(t)
-	otherIdentity := os.Getenv("DOCPREVIEW_ZITI_OTHER_IDENTITY")
+	otherIdentity := os.Getenv("NFPREVIEW_ZITI_OTHER_IDENTITY")
 	if otherIdentity == "" {
-		t.Skip("set DOCPREVIEW_ZITI_OTHER_IDENTITY to an enrolled identity not in admin_identities")
+		t.Skip("set NFPREVIEW_ZITI_OTHER_IDENTITY to an enrolled identity not in admin_identities")
 	}
 
 	// The id as the controller reports it to the identity itself. A grant written
@@ -232,7 +232,7 @@ func TestOverlayAdminGrantFollowsTheRealDialer(t *testing.T) {
 	t.Cleanup(func() { srv.Close() })
 
 	ask := func(identity string) (int, string, string) {
-		resp, err := overlayClient(t, identity, service).Get("http://docpreview.invalid/")
+		resp, err := overlayClient(t, identity, service).Get("http://nfpreview.invalid/")
 		if err != nil {
 			t.Fatalf("GET over the overlay as %s: %v", identity, err)
 		}

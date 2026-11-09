@@ -131,7 +131,7 @@ func (a *ProjectsAdmin) clearAllCaches(w http.ResponseWriter, r *http.Request) {
 	var cleared []string
 	var failed []string
 
-	// The docker driver's caches, which are volumes named `docpreview-cache-<preview>-…`.
+	// The docker driver's caches, which are volumes named `nfpreview-cache-<preview>-…`.
 	// Enumerated from docker rather than from the database, because the caches that most
 	// need clearing belong to previews that have been torn down — the row is gone and the
 	// volume is not.
@@ -197,7 +197,7 @@ func listCacheVolumes(ctx context.Context) ([]string, error) {
 	defer cancel()
 
 	out, err := exec.CommandContext(ctx, "docker", "volume", "ls",
-		"--filter", "name=docpreview-cache-", "--format", "{{.Name}}").Output()
+		"--filter", "name=nfpreview-cache-", "--format", "{{.Name}}").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -207,14 +207,14 @@ func listCacheVolumes(ctx context.Context) ([]string, error) {
 		name := strings.TrimSpace(line)
 		// Re-checked here: `--filter name=` is a substring match on docker's side, and a
 		// volume that merely contains the prefix is not one of ours.
-		if strings.HasPrefix(name, "docpreview-cache-") {
+		if strings.HasPrefix(name, "nfpreview-cache-") {
 			names = append(names, name)
 		}
 	}
 	return names, nil
 }
 
-// previewIDsFromVolumes reduces `docpreview-cache-<preview>-<manager>` names to the
+// previewIDsFromVolumes reduces `nfpreview-cache-<preview>-<manager>` names to the
 // distinct preview ids in them, in a stable order.
 //
 // Parsed by pattern rather than by splitting on the last dash: a manager name is a word
@@ -226,7 +226,7 @@ func previewIDsFromVolumes(names []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, n := range names {
-		rest, ok := strings.CutPrefix(n, "docpreview-cache-")
+		rest, ok := strings.CutPrefix(n, "nfpreview-cache-")
 		if !ok {
 			continue
 		}

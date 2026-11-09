@@ -1,4 +1,4 @@
-// Package model holds the types shared across every layer of docpreview: the
+// Package model holds the types shared across every layer of nfpreview: the
 // identity of a repository, the pull request being previewed, and the stable
 // identifiers derived from them.
 //

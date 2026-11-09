@@ -244,8 +244,8 @@ func TestVerifyBaseURLIgnoresRelativeAndExternalRefs(t *testing.T) {
 // A reference scanner that only matched href="..." would find zero references in output
 // like this, and would skip the base URL check on every real site.
 const realDocusaurusIndex = `<!doctype html><html lang=en dir=ltr><head><meta charset=UTF-8>` +
-	`<link rel=icon href=/zrok/img/favicon.ico><title>docpreview</title>` +
-	`<link rel=canonical href=https://docpreview.example.com/zrok/>` +
+	`<link rel=icon href=/zrok/img/favicon.ico><title>nfpreview</title>` +
+	`<link rel=canonical href=https://nfpreview.example.com/zrok/>` +
 	`<link rel=stylesheet href=/zrok/assets/css/styles.160a45a5.css>` +
 	`<script src=/zrok/assets/js/runtime~main.ea36d912.js defer></script>` +
 	`<script src=/zrok/assets/js/main.2fee3156.js defer></script></head>` +
@@ -342,7 +342,7 @@ func TestBuildEnvSetsBaseURLAndIgnoresRepoOverrides(t *testing.T) {
 		BaseURL: "/zrok/",
 		Env: map[string]string{
 			"DOCUSAURUS_BASE_URL": "/evil/",
-			"DOCPREVIEW_COMMIT":   "0000000000000000000000000000000000000000",
+			"NFPREVIEW_COMMIT":    "0000000000000000000000000000000000000000",
 			"MY_FLAG":             "yes",
 		},
 	}}
@@ -360,7 +360,7 @@ func TestBuildEnvSetsBaseURLAndIgnoresRepoOverrides(t *testing.T) {
 		if kv == "DOCUSAURUS_BASE_URL=/evil/" {
 			t.Error("repo config overrode the base URL")
 		}
-		if kv == "DOCPREVIEW_COMMIT=0000000000000000000000000000000000000000" {
+		if kv == "NFPREVIEW_COMMIT=0000000000000000000000000000000000000000" {
 			// A site that stamps its own commit is trusted to be telling the
 			// truth about which build it is. A pull request that could forge it
 			// could make a stale preview claim to be the current one.
@@ -382,10 +382,10 @@ func TestBuildEnvSetsBaseURLAndIgnoresRepoOverrides(t *testing.T) {
 
 	// What is being built, so a preview can say which push produced it.
 	for _, want := range []string{
-		"DOCPREVIEW_COMMIT=4f0c2a1deadbeef",
-		"DOCPREVIEW_BRANCH=feature/x",
-		"DOCPREVIEW_PR=42",
-		"DOCPREVIEW_REPO=github:acme/docs",
+		"NFPREVIEW_COMMIT=4f0c2a1deadbeef",
+		"NFPREVIEW_BRANCH=feature/x",
+		"NFPREVIEW_PR=42",
+		"NFPREVIEW_REPO=github:acme/docs",
 	} {
 		if !slices.Contains(env, want) {
 			t.Errorf("missing %s\ngot: %v", want, env)

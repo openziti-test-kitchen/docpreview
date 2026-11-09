@@ -58,7 +58,7 @@ build secret would discard a cached installation token for nothing.
 Until a client exists, `/webhook/github` answers 501, which is the truth: nothing could be verified.
 
 Verified: with the vault locked and `app_id` set, `serve` starts, `/healthz` is 200, `/api/secrets` reports
-`locked: true`, and `/webhook/github` is 501. `cmd/docpreview/rewire_test.go` covers the sequence — locked,
+`locked: true`, and `/webhook/github` is 501. `cmd/nfpreview/rewire_test.go` covers the sequence — locked,
 one credential, both, unrelated key, no app ID.
 
 ## Then — all four done

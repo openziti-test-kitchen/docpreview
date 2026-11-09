@@ -51,7 +51,7 @@ file fails to decrypt instead of returning partial plaintext.
 Then it wraps that file key once for each recipient, and each `->` stanza is one wrapping. There are two ways to wrap
 it, and NetFoundry Preview supports both:
 
-- **X25519.** An ECDH exchange against your public key. `docpreview vault keygen` makes one of these, and an
+- **X25519.** An ECDH exchange against your public key. `nfpreview vault keygen` makes one of these, and an
   `AGE-SECRET-KEY-1...` value is one.
 - **scrypt.** A key derivation function over your passphrase. Its work factor makes the passphrase path noticeably
   slower to open. That slowness is deliberate: it makes a guessing attack expensive.
@@ -108,8 +108,8 @@ left alone for a year, so that matters more than flexibility.
 
 | | Where it lives | Created by |
 |---|---|---|
-| The encrypted secrets | `~/.docpreview/vault.age` on disk | `docpreview vault set`, on first use |
-| The master key | wherever `vault.key_source` points, or nowhere | you, from `docpreview vault keygen` |
+| The encrypted secrets | `~/.nfpreview/vault.age` on disk | `nfpreview vault set`, on first use |
+| The master key | wherever `vault.key_source` points, or nowhere | you, from `nfpreview vault keygen` |
 
 Lose the key and the vault is gone for good. That is what "encrypted at rest" has to mean. **Put the key in a password
 manager before you do anything else.**
@@ -119,15 +119,15 @@ system to live. Every choice is a trade:
 
 | `vault.key_source` | What you get | What it costs |
 |---|---|---|
-| `exec:op read op://ops/docpreview` | the key exists in the daemon process and nowhere else on the machine | the helper has to be able to run unattended |
-| `file:/etc/docpreview/master.key` | the daemon survives a reboot on its own | anyone who can read that path can read every secret |
+| `exec:op read op://ops/nfpreview` | the key exists in the daemon process and nowhere else on the machine | the helper has to be able to run unattended |
+| `file:/etc/nfpreview/master.key` | the daemon survives a reboot on its own | anyone who can read that path can read every secret |
 | unset | no key at rest anywhere | a person unlocks after every restart, from the dashboard |
 
-Unset is the default. For the `file:` row, `docpreview vault keygen -out <path>` writes a new key at mode 0600 and
+Unset is the default. For the `file:` row, `nfpreview vault keygen -out <path>` writes a new key at mode 0600 and
 refuses to overwrite one that exists. The path must be outside `data_dir`, or the config is rejected. For the `exec:`
-row, bare `docpreview vault keygen` prints the key so you can pipe it into a password manager.
+row, bare `nfpreview vault keygen` prints the key so you can pipe it into a password manager.
 
-`$DOCPREVIEW_MASTER_KEY` still works, and is read when `key_source` is unset. It is the weakest option: every process
+`$NFPREVIEW_MASTER_KEY` still works, and is read when `key_source` is unset. It is the weakest option: every process
 under the same user can read an environment variable, and it ends up in service definitions, process listings and
 crash dumps.
 
@@ -142,7 +142,7 @@ terminal, the CLI commands prompt for the key with echo off. Off a terminal, wit
 vault is locked: no master key available: set vault.key_source in the config, unlock it from the dashboard, or run on a terminal
 ```
 
-To change the key later without losing secrets, stop the daemon and run `docpreview vault rekey -generate -yes`.
+To change the key later without losing secrets, stop the daemon and run `nfpreview vault rekey -generate -yes`.
 
 ## Inspecting a vault yourself
 
@@ -150,16 +150,16 @@ The vault is a standard age file, so the [age CLI](https://github.com/FiloSottil
 what is on disk matches this page.
 
 ```bash
-head -c 60 ~/.docpreview/vault.age          # the header shown above
-grep -c "BEGIN RSA PRIVATE KEY" ~/.docpreview/vault.age   # 0
-grep -c "github" ~/.docpreview/vault.age                  # 0: even the names are encrypted
+head -c 60 ~/.nfpreview/vault.age          # the header shown above
+grep -c "BEGIN RSA PRIVATE KEY" ~/.nfpreview/vault.age   # 0
+grep -c "github" ~/.nfpreview/vault.age                  # 0: even the names are encrypted
 ```
 
 ```bash
-age --decrypt -i key.txt ~/.docpreview/vault.age
+age --decrypt -i key.txt ~/.nfpreview/vault.age
 ```
 
-NetFoundry Preview has no command that prints a secret value. `docpreview vault list` shows names only.
+NetFoundry Preview has no command that prints a secret value. `nfpreview vault list` shows names only.
 
 ## Further reading
 

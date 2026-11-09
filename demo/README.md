@@ -1,7 +1,7 @@
-# docpreview demo harness
+# nfpreview demo harness
 
 PowerShell. Every script defaults its root to its own directory, so everything lands here under `demo\`.
-`data\`, `repos\`, `work-*\`, `template\` and `docpreview.exe` are all generated and all disposable.
+`data\`, `repos\`, `work-*\`, `template\` and `nfpreview.exe` are all generated and all disposable.
 
 Each of the four demo projects is a **real Docusaurus site** built with `yarn build`, so a build is a genuine
 `yarn install` plus a webpack run — a couple of hundred lines of log to watch stream, twenty-odd seconds with
@@ -11,7 +11,7 @@ a warm yarn cache and a few minutes the first time.
 
 ```powershell
 cd D:\worktrees\tangents\vercel-replacement
-go build -o build.claude\ .\cmd\docpreview\   # the harness picks this up automatically
+go build -o build.claude\ .\cmd\nfpreview\   # the harness picks this up automatically
 cd demo
 
 .\Build-Template.ps1      # scaffold + install the Docusaurus template all projects are cut from (once)
@@ -66,7 +66,7 @@ with no newline between them — then greps the whole data directory for it. Non
 | `Clear-Branches.ps1` | Deletes the feature branches both sides. |
 | `Test-Redaction.ps1` | End-to-end secret-redaction proof, isolated daemon. |
 | `Test-PreviewUrls.ps1` | Fetches every advertised preview URL; non-zero exit if a `ready` one is dead. |
-| `Resolve-Docpreview.ps1` | Finds the binary — `..\build.claude\` first, then `.\`. Dot-called by the rest. |
+| `Resolve-Nfpreview.ps1` | Finds the binary — `..\build.claude\` first, then `.\`. Dot-called by the rest. |
 
 ## `ziti-trial\`
 

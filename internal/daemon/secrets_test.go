@@ -318,7 +318,7 @@ func TestSecretsWriteRefusedFromARemoteAddress(t *testing.T) {
 
 func TestSecretsWriteRefusedWhenForwarded(t *testing.T) {
 	// The tunnel case, and the reason RemoteAddr alone is not enough. Anything
-	// proxying to the daemon sets one of these, including docpreview's own
+	// proxying to the daemon sets one of these, including nfpreview's own
 	// webhook-only proxy.
 	a, h := testAdmin(t, "127.0.0.1:8471")
 	a.v = nil

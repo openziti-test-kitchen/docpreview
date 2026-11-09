@@ -11,7 +11,7 @@ import (
 
 // /readyz answers without a login, because the thing that waits on a restart is a script.
 //
-// If it were gated, `Restart-Docpreview.ps1` would poll a redirect to the login form until it
+// If it were gated, `Restart-Nfpreview.ps1` would poll a redirect to the login form until it
 // times out, since `/status` — the only payload reporting recovery — sits behind the login with
 // everything else. Gating /readyz turns a restart into a wait loop that never returns.
 func TestReadyzAnswersWithoutALogin(t *testing.T) {

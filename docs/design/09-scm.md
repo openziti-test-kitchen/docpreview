@@ -40,7 +40,7 @@ appears — Bitbucket, which signs differently, will be that caller and will sho
 The requirement was "update, don't duplicate". A twelve-commit pull request must not have twelve bot comments.
 
 ```markdown
-<!-- docpreview:<previewID> -->
+<!-- nfpreview:<previewID> -->
 | | |
 |---|---|
 | **Preview** | https://mydocs-new-install-guide.share.zrok.io/ |
@@ -54,7 +54,7 @@ is no platform API for "the comment I made earlier", and storing comment IDs in 
 or a fresh install starts spamming. So the comment identifies itself. Upsert is: list the pull request's comments,
 find the one whose body `scm.HasMarker` recognises, `PATCH` it if found, `POST` if not.
 
-The marker carries the preview ID rather than a fixed string, so two docpreview instances watching the same
+The marker carries the preview ID rather than a fixed string, so two nfpreview instances watching the same
 repository — staging and production, say — do not fight over one comment.
 
 **Invisible is a property of the renderer, not of the syntax**, and that turned one function into three
@@ -63,7 +63,7 @@ repository — staging and production, say — do not fight over one comment.
 | | |
 |---|---|
 | `MarkerStyle` | which syntax, because the protocol is platform-neutral and the syntax is not |
-| `MarkerFor(id, style)` | renders one. `MarkerHTMLComment` is `<!-- docpreview:<id> -->`; `MarkerLinkRef` is `[docpreview]: #<id>` |
+| `MarkerFor(id, style)` | renders one. `MarkerHTMLComment` is `<!-- nfpreview:<id> -->`; `MarkerLinkRef` is `[nfpreview]: #<id>` |
 | `HasMarker(body, id)` | matches **every style there has ever been**, which is what every caller must use |
 
 `scm.Marker(previewID)` remains, as the one-argument form meaning "the style GitHub wants" — every caller writing a
@@ -93,7 +93,7 @@ The revision counter exists so a reviewer can tell "still says building" from "s
 **Rendering is deterministic and stays that way.** `RenderComment` is a pure function of `Report`. An agent
 writing free text through the app's installation token would be an unaccountable actor with write access to
 every repository the app is installed on; any generated content belongs in a clearly-labelled `<details>` block
-inside a comment the code still renders. See `TODO.md`.
+inside a comment the code still renders. None is written yet.
 
 ## GitHub
 
@@ -175,7 +175,7 @@ there should not be. See [10-security.md](10-security.md).
 `internal/scm/local` is a real `scm.Client` against **bare git repositories on disk**. It exists so the entire
 loop — push, detect, build, publish, comment, update — runs with no GitHub account, no network, and no tunnel.
 
-`docpreview sim init <name>` creates a bare repo with a generated `post-receive` hook that `curl`s
+`nfpreview sim init <name>` creates a bare repo with a generated `post-receive` hook that `curl`s
 `/webhook/local`. **Nothing monitors git** — no polling, no file watching. A push is a webhook delivery, exactly
 as on GitHub; only the sender differs.
 
@@ -246,7 +246,7 @@ failure would overwrite a perfectly good "ready".
 
 ## Invariants
 
-1. One comment per pull request per docpreview instance, matched by marker.
+1. One comment per pull request per nfpreview instance, matched by marker.
 2. Comment rendering is a pure function of `Report`.
 3. An unverified webhook is rejected with 401 and no diagnostic detail, on **every** platform. A client that
    cannot authenticate a delivery returns `scm.ErrBadSignature` and nothing else.

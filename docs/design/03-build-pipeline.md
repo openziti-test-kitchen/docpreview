@@ -85,7 +85,7 @@ must be remembered at every return is one that will be missed the next time some
 already trust; unacceptable for a public one. `docker` runs it in a throwaway container with the workspace
 bind-mounted, 4 GB, 2 CPUs, and nothing else.
 
-`build.command` from `.docpreview.yml` is honored **only under the docker driver**. Under `local` it is ignored,
+`build.command` from `.nfpreview.yml` is honored **only under the docker driver**. Under `local` it is ignored,
 because it would be arbitrary shell on the host chosen by whoever opened the pull request. To change the command
 under `local`, put it behind `npm run build` in `package.json` — which puts the decision in the hands of
 whoever can merge rather than whoever can open a pull request.
@@ -209,22 +209,22 @@ from a drifted lockfile.
 ### Environment
 
 ```
-DOCPREVIEW=1
-DOCPREVIEW_BASE_URL     the resolved base URL
+NFPREVIEW=1
+NFPREVIEW_BASE_URL     the resolved base URL
 DOCUSAURUS_BASE_URL     the same, under the name a Docusaurus config expects
-DOCPREVIEW_COMMIT       head SHA
-DOCPREVIEW_BRANCH
-DOCPREVIEW_REPO         platform:owner/name
-DOCPREVIEW_PR           number
+NFPREVIEW_COMMIT       head SHA
+NFPREVIEW_BRANCH
+NFPREVIEW_REPO         platform:owner/name
+NFPREVIEW_PR           number
 CI=true
 <operator secrets>      from build.secrets, via the vault
-<repo env>              from .docpreview.yml build.env
+<repo env>              from .nfpreview.yml build.env
 ```
 
 Order matters. Repository-supplied entries are applied before operator secrets, and **every name above is
 reserved** — a pull request cannot shadow `DOCUSAURUS_BASE_URL` (which would break its own preview in a way
 that looks like our bug), cannot shadow `ALGOLIA_WRITE_KEY` (which would let it watch what the build does with a
-value the redactor does not know about), and cannot shadow `DOCPREVIEW_COMMIT` (which would let a stale preview
+value the redactor does not know about), and cannot shadow `NFPREVIEW_COMMIT` (which would let a stale preview
 claim to be the current one).
 
 The commit variables exist because a site otherwise cannot say which push produced it, and "am I looking at the

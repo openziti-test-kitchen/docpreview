@@ -9,7 +9,7 @@ import (
 //
 // Live on 2026-08-13: a project was saved with `../scripts/vercel-ignore.sh unified-doc/`, which is
 // Vercel's ignore *command*. It saved cleanly, and every build then failed with
-// `lstat /var/lib/docpreview/workspaces/<id>/scripts: no such file or directory` — a path nobody
+// `lstat /var/lib/nfpreview/workspaces/<id>/scripts: no such file or directory` — a path nobody
 // typed, produced by joining a repository-relative `..` onto a workspace directory the operator has
 // never seen. The value was wrong in two ways at once, and the error named neither.
 func TestValidDetectScript(t *testing.T) {
@@ -19,7 +19,7 @@ func TestValidDetectScript(t *testing.T) {
 		want   string // a phrase the refusal must contain, "" to accept
 	}{
 		{"empty defers to the globs", "", ""},
-		{"a path in the repository", ".docpreview/detect", ""},
+		{"a path in the repository", ".nfpreview/detect", ""},
 		{"a path with a dot slash", "./scripts/detect.sh", ""},
 		{"a windows-style path", `scripts\detect.bat`, ""},
 		{"a dotted filename", "scripts/detect.v2.sh", ""},

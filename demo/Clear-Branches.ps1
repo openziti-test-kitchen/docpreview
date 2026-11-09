@@ -3,7 +3,7 @@
     Delete the feature branches, locally and on the preview remote, so the next wave cuts them from current main.
 
 .DESCRIPTION
-    A branch cut before main changed carries the old .docpreview.yml and builds the old way regardless of what
+    A branch cut before main changed carries the old .nfpreview.yml and builds the old way regardless of what
     main now says — which is exactly how a stale branch behaves in real life, and exactly what makes the
     dashboard flick from queued to ready with nothing visible between.
 #>

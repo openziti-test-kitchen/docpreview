@@ -18,7 +18,7 @@
 /demo/secret-repos/
 /demo/work-*/
 /demo/template/
-/demo/docpreview.exe
+/demo/nfpreview.exe
 /demo/*.log
 /demo/*.out
 /demo/*.err
@@ -33,7 +33,7 @@
 /demo/ziti-trial/*.json
 
 # Local state — the vault lives here. Never commit it, even encrypted.
-/.docpreview/
+/.nfpreview/
 *.age
 
 # Credentials that should never have been in the tree in the first place

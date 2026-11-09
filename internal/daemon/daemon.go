@@ -282,7 +282,7 @@ func (d *Daemon) recordFailure(ctx context.Context, pr model.PullRequest, buildE
 // Without a row a skipped pull request appears only in the activity feed, so the
 // list shows nothing for it and the preview picker cannot offer it — while a
 // *failed* build does get a row and does appear. That inconsistency is the bug:
-// both outcomes are "docpreview looked at this pull request and produced no
+// both outcomes are "nfpreview looked at this pull request and produced no
 // preview", and both are things somebody needs to see to know the webhook is
 // working at all.
 //
@@ -1233,7 +1233,7 @@ func (d *Daemon) applyProject(ctx context.Context, pr model.PullRequest, cfg con
 // which is the specific failure the preset table is sent to the page to avoid.
 //
 // Precedence, top down: the project's explicit field, then its preset, then the
-// repository's own .docpreview.yml. A preset outranks the repository's file because an
+// repository's own .nfpreview.yml. A preset outranks the repository's file because an
 // operator who chose "Docusaurus" in the dashboard has said something more recent and
 // more specific. The blank preset defers to the repository, and it is the default, so an
 // untouched project behaves as if there were no preset at all.
@@ -1367,15 +1367,17 @@ func (d *Daemon) confineToDriver(
 	return cfg
 }
 
-/* detectorFor returns the detector for a build under driver, and fills in the implicit detect script.
+/*
+detectorFor returns the detector for a build under driver, and fills in the implicit detect script.
 
-   Under docker the script runs in a container, and a build directory's `docpreview-detect` is used
-   when nothing else is configured. The project and the repository both outrank it, and a branch
-   without the file falls back to the globs.
+	Under docker the script runs in a container, and a build directory's `nfpreview-detect` is used
+	when nothing else is configured. The project and the repository both outrank it, and a branch
+	without the file falls back to the globs.
 
-   Under local neither happens. The script would run on this host, and a file any pull request can
-   add is not something the operator chose; confineToDriver drops a branch-named script there for
-   the same reason. */
+	Under local neither happens. The script would run on this host, and a file any pull request can
+	add is not something the operator chose; confineToDriver drops a branch-named script there for
+	the same reason.
+*/
 func (d *Daemon) detectorFor(driver, image string, cfg *config.RepoConfig) *pipeline.Detector {
 	if driver != config.DriverDocker {
 		return d.detector
@@ -1658,7 +1660,7 @@ func (d *Daemon) markUnpublished(ctx context.Context, p store.Preview, cause err
 // signature proves the delivery came from GitHub and says nothing about whether the operator
 // wanted this repository. Anyone who can install the App could otherwise get a build of a
 // branch of their choosing on the host holding the App private key and every project's
-// tokens, with `.docpreview.yml` arriving in the pull request to say what the build runs.
+// tokens, with `.nfpreview.yml` arriving in the pull request to say what the build runs.
 //
 // Checked here rather than in handleBuild, and that is deliberate. handleBuild is the funnel
 // for every route to a build including the operator's own — Rebuild, Build now, LinkPR, the
@@ -2305,7 +2307,7 @@ func (d *Daemon) teardown(ctx context.Context, pr model.PullRequest, previewID s
 //
 // Only zrok has anything to release — a reserved name is an object with its own
 // lifetime, counted against the account's quota, and it survives the share bound to
-// it on purpose. Nothing released them, so docpreview leaked one name per branch and,
+// it on purpose. Nothing released them, so nfpreview leaked one name per branch and,
 // once builds got their own shares, one per commit. An exposer that does not
 // implement NameReleaser has no such object and this is a no-op.
 //
@@ -2503,7 +2505,7 @@ func (d *Daemon) build(parent context.Context, pr model.PullRequest) {
 // attempt so the log has a row beside it in the picker.
 //
 // The failures this exists for are the ones a reader is least equipped to diagnose: a clone that
-// could not authenticate, a `.docpreview.yml` that does not parse, a detect script that is not at
+// could not authenticate, a `.nfpreview.yml` that does not parse, a detect script that is not at
 // the path a project row names. Each ends up in the daemon's log on the host and in one line of a
 // pull request comment, and until now the pane said "No build log was kept for <commit>" — the same
 // sentence a log pruned by retention produces. Somebody who clicked Rebuild and got that reasonably
@@ -2562,7 +2564,7 @@ func (d *Daemon) runPipeline(
 	// The build's identity and its log, declared before anything can fail.
 	//
 	// Everything below this point can fail before the build log is opened — a clone that cannot
-	// authenticate, an unparsable `.docpreview.yml`, a detect script that is not there. Those
+	// authenticate, an unparsable `.nfpreview.yml`, a detect script that is not there. Those
 	// failures reached the daemon's log on the host and the pull request comment, and nothing
 	// else: the pane a reader opens said "No build log was kept", which is what a *pruned* log
 	// says, so a misconfiguration was indistinguishable from an expired one.
@@ -2635,7 +2637,7 @@ func (d *Daemon) runPipeline(
 
 	// The project's settings win over the branch's.
 	//
-	// .docpreview.yml arrived in the pull request, so on any repository where
+	// .nfpreview.yml arrived in the pull request, so on any repository where
 	// opening one is not a privilege, its author chose what runs — and the local
 	// driver runs it. An operator-authored project row cannot be edited by a
 	// contributor, so where the two disagree the row is the trustworthy one.
@@ -2737,7 +2739,7 @@ func (d *Daemon) runPipeline(
 			// The builder wraps the whole build output into its error so a pull request comment can
 			// quote it. Writing err.Error() here would append a second copy of the log to the log.
 			//
-			// But errArtifactsUnusable is docpreview's own, carries no build output, and is
+			// But errArtifactsUnusable is nfpreview's own, carries no build output, and is
 			// four lines of diagnosis: the base URL the preview will serve at, the one the
 			// site was built for, the asset that proves it, and the two ways to fix it.
 			// Truncating that to its first line left "the site was built for a different
@@ -2813,7 +2815,7 @@ func (d *Daemon) runPipeline(
 	// One directory per build, not per preview. A single directory per preview was
 	// overwritten by every build, so an older commit had nothing left to serve —
 	// which is why the log pane could offer a build the Open button beside it could
-	// not reach. Retention is what bounds this; see TODO.md.
+	// not reach. Retention is what bounds this; byte caps are still open.
 	//
 	// buildID is safe as a path component: buildlog.Begin refuses one containing a
 	// separator, and this is the same value.
@@ -3655,7 +3657,7 @@ type Status struct {
 	// next share can be created, and the newest attempts. Absent when this daemon has no gate —
 	// an exposer that is not zrok — or its state cannot be read.
 	ZrokShares *expose.ShareGateStatus `json:"zrok_shares,omitempty"`
-	Events   []Event         `json:"events"`
+	Events     []Event                 `json:"events"`
 
 	// Starting is true while recovery is still running.
 	//
@@ -3751,7 +3753,7 @@ type StartupProgress struct {
 	Total int `json:"total"`
 
 	// Items is what has been done so far, most recent last — "adopted docs-main-3fc1a0d",
-	// "created docpreview-round-4". A stage and a count say how far along a four-minute
+	// "created nfpreview-round-4". A stage and a count say how far along a four-minute
 	// wait is and not what it is spending the time on, which is the question that gets
 	// asked out loud.
 	Items []string `json:"items,omitempty"`

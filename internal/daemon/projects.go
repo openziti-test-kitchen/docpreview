@@ -575,7 +575,7 @@ func validAvatar(a string) string {
 // **The field is a path in the repository, not a command.** It is executed directly — no shell, no
 // argument splitting — so a value with arguments in it is looked up as one long filename that
 // cannot exist. Checked here because the build-time failure is unrecognisable as this mistake: the
-// daemon reports `lstat /var/lib/docpreview/workspaces/<id>/scripts: no such file or directory`,
+// daemon reports `lstat /var/lib/nfpreview/workspaces/<id>/scripts: no such file or directory`,
 // naming a path the operator never typed, an hour after they typed the one they did.
 //
 // `..` is refused for the same reason and one more. The detect script runs on the build host under
@@ -592,7 +592,7 @@ func validDetectScript(s string) string {
 	if strings.ContainsAny(s, " \t") {
 		return `a detect script is a path in the repository, not a command — it runs directly, ` +
 			`so arguments are part of the filename. Put the arguments in a script and name that: ` +
-			`".docpreview/detect"`
+			`".nfpreview/detect"`
 	}
 	if strings.HasPrefix(s, "/") || strings.HasPrefix(s, `\`) ||
 		(len(s) > 1 && s[1] == ':') {

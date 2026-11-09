@@ -32,7 +32,7 @@ import (
 // is gated: every listener must be loopback. See Available.
 //
 // On a loopback-only daemon the boundary is the same one that already protects
-// `docpreview vault set` — anyone who can reach 127.0.0.1 can run the binary.
+// `nfpreview vault set` — anyone who can reach 127.0.0.1 can run the binary.
 // This adds no reachability that a shell did not already have. The moment a
 // listener is not loopback, it does, and it refuses to serve.
 //
@@ -92,7 +92,7 @@ func NewSecretsAdmin(cfg config.Server, log *slog.Logger, rearm func(changed str
 //     sees the connection from the local tunnel process — so this alone is not
 //     enough.
 //   - The request must carry no forwarding header. Anything that proxies to the
-//     daemon adds `X-Forwarded-For` or `Forwarded`, including docpreview's own
+//     daemon adds `X-Forwarded-For` or `Forwarded`, including nfpreview's own
 //     `webhook-only` proxy. A caller can add one itself, but that only ever
 //     makes this stricter, which is the right direction to be wrong in.
 //
@@ -151,7 +151,7 @@ func isLocalRequest(r *http.Request) (bool, string) {
 		host = r.RemoteAddr
 	}
 	if !isLoopback(host) {
-		return false, "credentials can only be managed from the machine running docpreview, " +
+		return false, "credentials can only be managed from the machine running nfpreview, " +
 			"and this request came from " + host
 	}
 	for _, h := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Real-Ip", "Forwarded"} {
@@ -246,7 +246,7 @@ type secretsState struct {
 
 // Secret groups, which are a security boundary and not a display preference.
 //
-// GroupDaemon holds what docpreview uses to talk to a platform or an exposer: a
+// GroupDaemon holds what nfpreview uses to talk to a platform or an exposer: a
 // GitHub App private key, a Bitbucket access token, a webhook secret. **None of them
 // ever reaches a build.** GroupBuild is the opposite — every one of those is injected
 // into every build as an environment variable and is readable by whatever the pull

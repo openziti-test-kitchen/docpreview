@@ -102,7 +102,7 @@ func TestRenderNameResanitizesTemplateOutput(t *testing.T) {
 
 // The name prefix is what lets two installations share one exposer account.
 //
-// Names are scoped to the account and shares to the environment, so two docpreviews on one
+// Names are scoped to the account and shares to the environment, so two nfpreviews on one
 // zrok account do not reap each other's shares — but both want `docs-main`, and the second
 // to ask gets a 409 for a name the account already holds.
 func TestRenderNamePrependsThePrefix(t *testing.T) {

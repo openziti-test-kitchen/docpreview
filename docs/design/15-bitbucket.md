@@ -18,9 +18,9 @@ after it is the consequence.
 
 ## What a GitHub App actually is, and what Bitbucket has instead
 
-A GitHub App bundles three things docpreview depends on:
+A GitHub App bundles three things nfpreview depends on:
 
-1. **A non-human identity.** Comments and check runs are attributed to `docpreview[bot]`, not to whoever's
+1. **A non-human identity.** Comments and check runs are attributed to `nfpreview[bot]`, not to whoever's
    credential is in the vault.
 2. **A per-installation grant.** An installation token reaches exactly the repositories the App was installed on,
    with exactly the permissions the App declared, and it expires in an hour
@@ -41,15 +41,15 @@ Bitbucket Cloud has five candidate constructs and not one of them provides all t
 
 ### Why not Forge
 
-Forge is where Atlassian points every new app, and if docpreview were a marketplace product it would be a Forge
+Forge is where Atlassian points every new app, and if nfpreview were a marketplace product it would be a Forge
 app. It is not the right vehicle here, for a reason that has nothing to do with Atlassian's roadmap: **a Forge
-app's code runs on Atlassian's infrastructure.** docpreview's entire job is to clone a branch and run
+app's code runs on Atlassian's infrastructure.** nfpreview's entire job is to clone a branch and run
 `npm install` on hardware the operator controls, behind whatever network boundary the operator chose — which is
 why the exposer abstraction exists at all. A Forge app would therefore be a thin control plane that calls out to
 the operator's daemon (Forge remotes), and every credential problem would still be there on the daemon side, plus
 an app manifest, a deployment pipeline, a distribution decision, and an Atlassian developer account.
 
-That is a real option for a future in which docpreview is installed by people who did not build it. It is the
+That is a real option for a future in which nfpreview is installed by people who did not build it. It is the
 wrong first implementation, and choosing it would mean the operator cannot get a preview working without becoming
 an Atlassian app developer. If this decision is reversed later, what changes is the authenticator and the runbook;
 the event mapping, the payload parsing, and the comment protocol below are all still needed, because a Forge
@@ -69,7 +69,7 @@ What it costs an operator, in full — this is the shape of the Bitbucket siblin
 | Create the token | Repository settings → Security → Access tokens → Create | one bearer token, shown once |
 | Choose scopes | same dialog | `repository` (read, to clone) and `pullrequest:write` (to comment) |
 | Add the webhook | Repository settings → Webhooks → Add webhook | URL + secret, triggers = pull request events |
-| Store both | `docpreview vault set bitbucket.access_token`, `… bitbucket.webhook_secret` | vault entries |
+| Store both | `nfpreview vault set bitbucket.access_token`, `… bitbucket.webhook_secret` | vault entries |
 
 No app registration, no manifest, no review, no Atlassian developer account, and nothing global to the workspace.
 Compared with the GitHub runbook it is *shorter* — there is no App to create and no private key to download and
@@ -84,7 +84,7 @@ Both halves have a workspace-level collapse, and one of them is not discoverable
   exists only through the API — `POST /2.0/workspaces/{workspace}/hooks` — with no page in the web UI, which is
   why most integration guides do not mention it.
 
-That second one is worth building a command around: `docpreview bitbucket install-hook -workspace acme` doing the
+That second one is worth building a command around: `nfpreview bitbucket install-hook -workspace acme` doing the
 one API call the UI will not do, generating the secret, storing it in the vault, and printing what it created. The
 GitHub runbook cannot automate its equivalent because creating a GitHub App genuinely requires a browser; here the
 browser is only a limitation of Atlassian's UI, and taking ten webhook forms down to one command is the single
@@ -114,7 +114,7 @@ Not real, despite appearances:
   platforms.
 - The three vault keys are reserved in name only. `knownKeys()` (`internal/daemon/secrets.go:209`) lists the two
   GitHub keys and the Frontdoor token; the setup page has no Bitbucket rows, so the credentials cannot be
-  entered anywhere except `docpreview vault set`.
+  entered anywhere except `nfpreview vault set`.
 - `config.Server` has no `Bitbucket` field (`internal/config/config.go:53`), so there is nothing to switch on.
 - The reserved vault keys name the *wrong* credential to prefer. `bitbucket.email` + `bitbucket.api_token` is the
   fallback mode under the recommendation below, not the default, so a fourth key `bitbucket.access_token` is needed
@@ -141,13 +141,13 @@ the fallback rather than the recommendation. The dates matter, because one of th
 
 The security difference from GitHub is not a detail of header construction. A GitHub App private key mints a
 ten-minute JWT which mints a **one-hour installation token scoped to the repositories that installation covers**
-(`internal/scm/github/auth.go:31`, `:103`). Three properties fall out of that, and docpreview relies on all three:
+(`internal/scm/github/auth.go:31`, `:103`). Three properties fall out of that, and nfpreview relies on all three:
 a token that leaks into a log expires by itself; a token cannot reach a repository the app was not installed on;
 and the comment is attributed to the app rather than to a person.
 
 An Atlassian API token has none of them. It carries **everything the human it belongs to can see** — every
 workspace, every repository, and Jira and Confluence too unless the token was created with Bitbucket-only scopes —
-and every comment docpreview writes is written by that human. If the vault leaks, the blast radius is a person's
+and every comment nfpreview writes is written by that human. If the vault leaks, the blast radius is a person's
 whole Atlassian identity rather than one app installation's repository list.
 
 A **repository access token** recovers two of the three. It is scoped to one repository with an explicit scope
@@ -160,7 +160,7 @@ Bitbucket integration cannot manage it.** Every comment it posted on `customer-c
 API with `user.type: "user"`, `user.display_name: "Clint Dovholuk"`, and the account ID of the human who connected
 Vercel to the workspace. So the pull request shows a maintainer cheerfully announcing his own deploy failures. If
 Vercel — with a Connect app, a marketplace listing and an Atlassian partnership — writes comments as a person, then
-"comments attributed to a bot" is not something docpreview is going to achieve on Bitbucket either. The best
+"comments attributed to a bot" is not something nfpreview is going to achieve on Bitbucket either. The best
 available answer is the one the runbook should state plainly: **create a dedicated Atlassian account for the bot,
 or use an access token and accept that comments are attributed to whoever's account created it.** Do not let an
 operator discover this from a screenshot.
@@ -173,7 +173,7 @@ the reason to refuse it is architectural rather than about tokens.
 Bitbucket's refresh tokens can rotate: the refresh response may contain a new refresh token, and the old one stops
 working. That makes the credential *mutable state owned by the request path* — and this daemon's credential store is
 an age-encrypted file that can be **locked**, that a human unlocks through the dashboard, and that the daemon is
-specifically designed not to read during wiring (`cmd/docpreview/CLAUDE.md`). A client that must write a new
+specifically designed not to read during wiring (`cmd/nfpreview/CLAUDE.md`). A client that must write a new
 refresh token into the vault from inside `Publish` introduces: a vault write on a hot path, two concurrent
 `Publish` calls racing to store two different refresh tokens, a restart window in which the token in the vault is
 the one that was just invalidated, and an authentication failure mode whose fix is "clear the vault key and do the
@@ -360,7 +360,7 @@ back from the API carries `"draft": false` as a first-class field, alongside `"s
 at `internal/scm/github/webhook.go:154` — a draft is still worth previewing, because drafts are where documentation
 gets written — transfers directly: **do not filter on `pullrequest.draft`.** Which is the same as ignoring the
 field, but ignoring it by decision rather than by not knowing it exists. Bitbucket's approval events have no GitHub
-equivalent in this codebase because docpreview does not care who approved anything.
+equivalent in this codebase because nfpreview does not care who approved anything.
 
 ### The payload fields `model.PullRequest` needs
 
@@ -528,7 +528,7 @@ is the difference between a defence and a convention.
 ## The comment, and the marker that must change
 
 This section is no longer speculation. Vercel's own Bitbucket integration is live on
-`bitbucket.org/netfoundry/customer-connect-docs`, doing the same job docpreview does, and its comments were read
+`bitbucket.org/netfoundry/customer-connect-docs`, doing the same job nfpreview does, and its comments were read
 back through the API (`GET /2.0/repositories/{ws}/{repo}/pullrequests/{id}/comments`). Bitbucket returns both the
 source and the rendering — `content.raw`, `content.markup: "markdown"`, `content.html` — so the renderer's
 behaviour can be observed rather than guessed. Two findings, and the first one breaks `scm.Marker`.
@@ -544,7 +544,7 @@ with `<!-- vercel-commit-author-required -->` and Bitbucket rendered it as:
 
 That is a paragraph of literal text on a public pull request, put there by a company whose whole business is this
 feature. `scm.Marker` (`internal/scm/scm.go:161`) produces exactly the same construction, so shipping it unchanged
-means every docpreview comment on Bitbucket ends with a visible `<!-- docpreview:a1b2c3 -->`. The upsert protocol
+means every nfpreview comment on Bitbucket ends with a visible `<!-- nfpreview:a1b2c3 -->`. The upsert protocol
 would still work — the marker is matched against `content.raw`, not against the rendering — so this is cosmetic,
 but it is cosmetic on the most public surface this system has, and it is the kind of thing an operator screenshots.
 
@@ -573,9 +573,9 @@ So `Marker` becomes platform-dependent, and the honest shape is a marker *and* a
 type MarkerStyle int
 
 const (
-    // MarkerHTMLComment is "<!-- docpreview:<id> -->". Invisible on GitHub.
+    // MarkerHTMLComment is "<!-- nfpreview:<id> -->". Invisible on GitHub.
     MarkerHTMLComment MarkerStyle = iota
-    // MarkerLinkRef is "[docpreview]: #<id>", a CommonMark link reference
+    // MarkerLinkRef is "[nfpreview]: #<id>", a CommonMark link reference
     // definition. Invisible everywhere, because it renders to nothing rather
     // than relying on raw HTML being honored. Bitbucket Cloud escapes raw HTML,
     // which turns MarkerHTMLComment into a visible line of text; observed on a
@@ -607,7 +607,7 @@ tamper-evident state store, which is a genuinely good idea: it removes any need 
 comment, and the signature stops a pull request author from editing the comment to change what the integration
 believes.
 
-docpreview does not need it. Its state is in sqlite (`internal/store/`) and `PreviewID` is derived, not stored
+nfpreview does not need it. Its state is in sqlite (`internal/store/`) and `PreviewID` is derived, not stored
 (`internal/model/model.go:75`), so there is nothing to carry. Recording it because it is the answer if a future
 feature ever wants per-comment state, and because it explains why Vercel's marker looks like line noise.
 
@@ -626,7 +626,7 @@ Two consequences for `CommentStore`:
   publish successfully while showing nothing. `List` must drop `deleted` entries, and that is a "must not" with a
   test: *a deleted comment carrying our marker must not be matched.*
 
-`pending: true` is a comment in an unpublished review draft. docpreview never creates one; skipping those on read
+`pending: true` is a comment in an unpublished review draft. nfpreview never creates one; skipping those on read
 costs nothing and avoids one more way to match something invisible.
 
 ### Tables render, and `Flavor` is not needed after all
@@ -680,7 +680,7 @@ comment can, and they are the sources of truth.
 **`url` being required settles the earlier open question.** GitHub's check run only sets `details_url` once the state
 is ready (`internal/scm/github/github.go:299`); here there is no such option, and before the preview exists the only
 candidate is the dashboard — which under the ziti listener or a loopback-only daemon has no address a reviewer's
-browser could open (`localOrigin`, `cmd/docpreview/main.go:276`, returns `""`). So build statuses are not merely
+browser could open (`localOrigin`, `cmd/nfpreview/main.go:276`, returns `""`). So build statuses are not merely
 optional as a matter of taste: **the API cannot be called at all without a reachable URL.** Skip them entirely when
 `localOrigin` is empty, and make them best-effort otherwise — logged and swallowed exactly as the check run is
 (`internal/scm/github/github.go:205`), because the comment is the durable artifact and the status is a convenience.
@@ -756,7 +756,7 @@ bitbucket:
 ```
 
 `enabled` rather than a sentinel value, because there is no Bitbucket equivalent of `github.app_id`. GitHub is
-"configured" when `cfg.GitHub.AppID != 0` (`cmd/docpreview/main.go:223`) — a number the operator must go and
+"configured" when `cfg.GitHub.AppID != 0` (`cmd/nfpreview/main.go:223`) — a number the operator must go and
 fetch, which makes a good tripwire. Bitbucket has no such number, so it needs the explicit switch the local
 platform already uses (`internal/config/config.go:261`). `validate` (`internal/config/config.go:511`) gains a
 check that `auth` is one of the two spellings, in the same style as `exposer.kind`.
@@ -797,7 +797,7 @@ would read the interface, believe it, and be wrong.
 | `comment.go:13` `maxLogExcerpt` | "GitHub's comment limit is 65536 characters" | a per-platform limit stated as the reason for a shared constant | keep the constant, note that Bitbucket's limit is unconfirmed and the value is a safety margin, not a computed bound |
 | `model.go:38` `Repo.Name` | one field for what Bitbucket splits into `name` and `slug` | see below — this one has a security consequence | store the **slug** and say so |
 | `model.go:68` `InstallationID` | a GitHub-only `int64` on the shared struct | already documented as unused elsewhere; genuinely the least-bad option | leave it |
-| `scm.go:97` `Client` | no `Validate`, so `cmd/docpreview/main.go:501` type-switches on concrete client types | a new platform is not validated at startup until somebody edits that switch | add `interface{ Validate(context.Context) error }` and iterate `w.clients` |
+| `scm.go:97` `Client` | no `Validate`, so `cmd/nfpreview/main.go:501` type-switches on concrete client types | a new platform is not validated at startup until somebody edits that switch | add `interface{ Validate(context.Context) error }` and iterate `w.clients` |
 
 `Repo.Name` is the one worth dwelling on, because it is the only leak on this list that can fail *unsafely* rather
 than merely look wrong. Bitbucket distinguishes a repository's display `name` from its URL `slug` — for
@@ -865,19 +865,19 @@ form, fork detection, and check runs versus build statuses.
 
 Two wiring changes are needed as well, neither of which is a refactor of `scm`:
 
-- **`rewireGitHub`** (`cmd/docpreview/main.go:476`) becomes `rewireSCM`, dispatching on the changed vault key.
+- **`rewireGitHub`** (`cmd/nfpreview/main.go:476`) becomes `rewireSCM`, dispatching on the changed vault key.
   Its existing guarantees have to hold per platform: an unrelated key must not build a client, and a stray
   credential with the platform disabled must not conjure one — the two properties asserted at
-  `cmd/docpreview/rewire_test.go:181` and `:198`. The Bitbucket client is built from vault contents at
+  `cmd/nfpreview/rewire_test.go:181` and `:198`. The Bitbucket client is built from vault contents at
   construction just as the GitHub one is, so it has the same locked-at-boot problem and the same answer.
-- **`validate`** (`cmd/docpreview/main.go:501`) type-switches on `*github.Client` and `*local.Client`. Add
+- **`validate`** (`cmd/nfpreview/main.go:501`) type-switches on `*github.Client` and `*local.Client`. Add
   `interface { Validate(ctx) error }` to `scm` and iterate `w.clients`, so a new platform is validated at
   startup without an edit here. A Bitbucket `Validate` asks the API who the credential belongs to, and its
   error message names the vault keys to fix, in the style of `internal/scm/github/github.go:95`.
 
 And the setup page: four rows in `knownKeys()` (`internal/daemon/secrets.go:209`), `required` keyed off
 `cfg.Bitbucket.Enabled` and the selected auth mode, plus a line in `doctor`'s `scm:` output
-(`cmd/docpreview/main.go:563`) that reports the mode and whether the client was built.
+(`cmd/nfpreview/main.go:563`) that reports the mode and whether the client was built.
 
 ## Testing
 
@@ -938,7 +938,7 @@ answer from documentation, and each one changes a design decision rather than an
 
 Capture the payloads while doing this, redact them, and commit them under `internal/scm/bitbucket/testdata/`. A
 hand-written fixture tests the parser against the author's belief about the payload, which is the failure mode
-`TODO.md:76` already records for Frontdoor's wire format. **Until a real payload is in `testdata/`, the client is
+Frontdoor's unverified wire format already shows. **Until a real payload is in `testdata/`, the client is
 unverified no matter how green the tests are.**
 
 **Stage 1 — the marker, on GitHub, before Bitbucket exists. Done.** `MarkerStyle`, `MarkerFor`, and `HasMarker`
@@ -973,15 +973,15 @@ Everything above works without them.
 
 **Stage 9 — documentation.** A `www/docs/guides/bitbucket.md` sibling to the GitHub App runbook, including the
 attribution warning and the per-repository-webhook limit; then `docs/design/09-scm.md` (whose Bitbucket section says
-"interface only"), `docs/design/README.md`, `README.md:187`, `www/docs/quickstart.md:31`, and the `TODO.md`
-checklist. And fold this document into 09-scm.md, per the rule in `CLAUDE.md` that a plan which lands is deleted.
+"interface only"), `docs/design/README.md`, `README.md:187`, and `www/docs/quickstart.md:31`. And fold
+this document into 09-scm.md, per the rule in `CLAUDE.md` that a plan which lands is deleted.
 
 ## How each claim here was established
 
 An earlier draft of this document had a long "not verified" list, and most of it has since been settled — some by
 Atlassian's documentation, and more usefully by reading a live Bitbucket workspace through the read-only API.
 `bitbucket.org/netfoundry/customer-connect-docs` is a Docusaurus documentation repository with Vercel's own Bitbucket
-integration attached to it, which makes it a working reference implementation of the exact feature docpreview is
+integration attached to it, which makes it a working reference implementation of the exact feature nfpreview is
 building. Anything below marked **observed** came from a real API response on that workspace and can be re-derived.
 
 | Claim | Status | Source |
@@ -1019,11 +1019,11 @@ that is the only useful thing to say about an unverified claim.
 - **Whether the webhook body abbreviates `source.commit.hash` the way the REST object does.** The REST abbreviation
   is observed; the webhook is a different serializer and might not. **This is the single highest-value check**,
   because a full hash in the payload deletes an API call from the webhook path.
-- **Whether editing a comment is `PUT` or `PATCH`.** `TODO.md:60` says `PUT`, which is this repository citing itself.
+- **Whether editing a comment is `PUT` or `PATCH`.** This repository's own notes say `PUT`, which is it citing itself.
   A 405 catches it immediately, so the cost of being wrong is minutes, not days.
 - **The exact top-level webhook envelope.** That the pull request object nests under `pullrequest` and the repository
   under `repository` is near-certain from every third-party parser, but not observed here. `actor` is presumably
-  present and docpreview does not need it.
+  present and nfpreview does not need it.
 - **Whether `pullrequest:updated` fires on description and title edits.** Still asserted from how the event is
   described, not from observation. If it fires only on source-branch movement, the churn discussion in the event
   mapping evaporates and nothing else changes.

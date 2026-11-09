@@ -14,7 +14,7 @@ republishes every ready preview from artifacts on disk without re-cloning
 readiness signal that somebody on call can tell "up" from "up and inert".
 
 **Tier 2 — two instances serving at once.** Not close, and not one change. Five separate assumptions in the
-code say "there is exactly one docpreview", and two of them are in interface contracts rather than in
+code say "there is exactly one nfpreview", and two of them are in interface contracts rather than in
 implementations, which is what makes the ordering below matter: they are cheap to change while there are four
 exposers and expensive once there are eight.
 
@@ -49,7 +49,7 @@ per build in flight, times `workers`.
 
 Shutdown is already graceful on the signal path: `signal.NotifyContext` on `os.Interrupt` and `SIGTERM`, then
 `srv.Shutdown` with a 30-second budget, with `BaseContext` wired so the dashboard's server-sent-event handlers
-unblock instead of holding shutdown open for the full timeout (`cmd/docpreview/main.go`, `cmdServe`).
+unblock instead of holding shutdown open for the full timeout (`cmd/nfpreview/main.go`, `cmdServe`).
 
 ### What is missing
 
@@ -74,7 +74,7 @@ So a production box configures one of three sources.
 |---|---|---|
 | `exec:` a credential helper | the key exists in this process and nowhere else on the machine | there is already a secret manager on the box |
 | `file:` a key file | anyone who can read that path can read every secret | there is not |
-| `$DOCPREVIEW_MASTER_KEY` | visible in the unit file, in `ps`, and in crash dumps | never, on a box you did not build by hand |
+| `$NFPREVIEW_MASTER_KEY` | visible in the unit file, in `ps`, and in crash dumps | never, on a box you did not build by hand |
 
 Two constraints bind the choice. A key file may not live inside `data_dir` — config load refuses it
 (`internal/config/config.go:568`), because one directory read would otherwise yield both `vault.age` and the
@@ -90,17 +90,17 @@ expansion**, so `$CREDENTIALS_DIRECTORY` cannot appear in `key_source`. The lite
 out. It is stable, being derived from the unit name.
 
 ```ini
-# /etc/systemd/system/docpreview.service
+# /etc/systemd/system/nfpreview.service
 [Unit]
-Description=docpreview — documentation previews for pull requests
+Description=nfpreview — documentation previews for pull requests
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=exec
-User=docpreview
-Group=docpreview
-ExecStart=/usr/local/bin/docpreview serve -config /etc/docpreview/config.yml
+User=nfpreview
+Group=nfpreview
+ExecStart=/usr/local/bin/nfpreview serve -config /etc/nfpreview/config.yml
 
 Restart=always
 RestartSec=5s
@@ -109,37 +109,37 @@ RestartSec=5s
 TimeoutStopSec=45s
 
 # The key, in tmpfs, mode 0400, owned by this unit's user, gone when it stops.
-LoadCredential=master.key:/etc/docpreview/master.key
+LoadCredential=master.key:/etc/nfpreview/master.key
 
-StateDirectory=docpreview
-WorkingDirectory=/var/lib/docpreview
+StateDirectory=nfpreview
+WorkingDirectory=/var/lib/nfpreview
 # npm caches under $HOME. Without this it lands wherever /etc/passwd says, which
 # under ProtectHome=yes is a directory the build cannot write.
-Environment=HOME=/var/lib/docpreview
+Environment=HOME=/var/lib/nfpreview
 
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/docpreview
+ReadWritePaths=/var/lib/nfpreview
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```yaml
-# /etc/docpreview/config.yml
-data_dir: /var/lib/docpreview
+# /etc/nfpreview/config.yml
+data_dir: /var/lib/nfpreview
 workers: 2
 listeners:
   - tcp: "127.0.0.1:8471"
 vault:
-  key_source: "file:/run/credentials/docpreview.service/master.key"
+  key_source: "file:/run/credentials/nfpreview.service/master.key"
 ```
 
 The hardening directives are not decoration. Under the `local` driver a build runs `package.json` scripts as
 the daemon's user (`docs/design/10-security.md`), so `ProtectSystem=strict` plus a single `ReadWritePaths` is
-the difference between "a contributor's postinstall script can write to `/var/lib/docpreview`" and "…can write
+the difference between "a contributor's postinstall script can write to `/var/lib/nfpreview`" and "…can write
 anywhere that user can". It does not make an untrusted repository safe — fork pull requests are refused at the
 webhook layer for that, and the `docker` driver exists for repositories whose contributors are not fully
 trusted — but it bounds the trusted-contributor accident.
@@ -150,14 +150,14 @@ most the in-flight builds, which the design already treats as expendable.
 
 ### Windows
 
-**docpreview is not a Windows service.** There is no `golang.org/x/sys/windows/svc` handler anywhere in the
+**nfpreview is not a Windows service.** There is no `golang.org/x/sys/windows/svc` handler anywhere in the
 tree, so `sc.exe create` pointed straight at the binary produces a service that the SCM kills for not
 responding to its start request. It needs a wrapper — WinSW, NSSM, or `shawl` — or Task Scheduler with an
 at-startup trigger running as a service account.
 
 Two things are worse on Windows and both are worth knowing before choosing it.
 
-Graceful stop is unproven. `TODO.md` lists it explicitly: `docpreview serve` graceful SIGINT has never been
+Graceful stop is unproven, and is an open verification gap: `nfpreview serve` graceful SIGINT has never been
 exercised interactively on Windows, and a background process there is killed hard. A wrapper's "stop" is
 therefore likely to be a hard kill, which loses in-flight builds — cheap, per the `Claim` design — and leaves
 an orphaned workspace directory behind, which the next `recover` does not sweep. See the disk section.
@@ -179,7 +179,7 @@ file — that is the demoted path for exactly this reason. A secret mount (`/run
 as the mount is not under `data_dir`.
 
 **Node.** The `local` driver shells out to `npm` through `sh -c` (`internal/pipeline/build.go:382`), so the
-image needs Node in it. The published `docpreview` binary is static — pure-Go sqlite, no cgo
+image needs Node in it. The published `nfpreview` binary is static — pure-Go sqlite, no cgo
 (`internal/store/store.go:11`) — which makes `FROM node:24-bookworm-slim` plus one `COPY` the whole
 Dockerfile. That is a real advantage of the container option: the build toolchain becomes an image tag rather
 than something you `apt install` on a host and then forget you did.
@@ -198,7 +198,7 @@ driver on a host, not the cross.
 
 **A small Linux VM with the systemd unit above, the `local` driver, and the master key as a systemd
 credential.** It is the shape with the fewest moving parts that satisfies "restart surviving": one static
-binary, one state directory, one unit file, `journalctl -u docpreview` for logs. The container option is
+binary, one state directory, one unit file, `journalctl -u nfpreview` for logs. The container option is
 better only if the deployment target is already a container platform — in which case the argument for it is
 not isolation but that Node's version becomes part of the artifact.
 
@@ -209,7 +209,7 @@ not isolation but that Node's version becomes part of the artifact.
 ```
 <data_dir>/
   vault.age              PRECIOUS   every credential, age-encrypted
-  docpreview.db          PRECIOUS   previews, jobs, local-platform comments
+  nfpreview.db          PRECIOUS   previews, jobs, local-platform comments
   artifacts/<id>/        reproducible, but only by rebuilding
   workspaces/<id>/       scratch, deleted when the build output is copied out
   logs/<id>/<build>.log  reproducible not at all, and worth nothing durable
@@ -221,9 +221,9 @@ Two files matter. Everything else is derived.
 secret in two places, and re-enter every build secret. **And it is worthless without the master key, which is
 deliberately not in `data_dir`** — so a backup of `data_dir` alone is not a restorable backup. The key belongs
 in whatever holds the rest of the organisation's secrets; if the answer is "the key file on that box", then
-the backup of that box's `/etc/docpreview` is part of the backup of docpreview.
+the backup of that box's `/etc/nfpreview` is part of the backup of nfpreview.
 
-**`docpreview.db` is what makes a restart cheap rather than a rebuild.** It holds the mapping from preview ID
+**`nfpreview.db` is what makes a restart cheap rather than a rebuild.** It holds the mapping from preview ID
 to artifact directory, name, URL and `base_url`. Without it, `recover` finds no rows, republishes nothing, the
 artifacts on disk are unreferenced, and every existing pull request comment points at a URL that no longer
 answers — with nothing left that knows those comments exist to retract them.
@@ -236,9 +236,9 @@ database without the artifacts beside it silently shrinks the preview set.
 ### Backing up
 
 The database is open with WAL and a 5-second busy timeout (`internal/store/store.go:91`). **A `cp` of
-`docpreview.db` while the daemon is running is not a backup** — WAL means recent commits live in
-`docpreview.db-wal`, and copying the three files individually can capture them at different instants. There is
-no `docpreview backup` command and no `VACUUM INTO` exposed, so the two honest options are a filesystem or
+`nfpreview.db` while the daemon is running is not a backup** — WAL means recent commits live in
+`nfpreview.db-wal`, and copying the three files individually can capture them at different instants. There is
+no `nfpreview backup` command and no `VACUUM INTO` exposed, so the two honest options are a filesystem or
 volume snapshot (atomic across all three files), or `systemctl stop`, copy, `systemctl start` — which costs
 the in-flight builds and a few seconds of preview downtime, and is entirely acceptable nightly.
 
@@ -253,7 +253,7 @@ large, boring, regenerable part.
 This is the part that is easy to get wrong, because a restore is not neutral.
 
 Restore a database **older** than the artifacts on disk and every preview created since the snapshot vanishes
-from docpreview's view. Its artifacts sit unreferenced, its share is reaped at the next startup as an orphan
+from nfpreview's view. Its artifacts sit unreferenced, its share is reaped at the next startup as an orphan
 (`internal/daemon/daemon.go:375`), and its pull request comment still says `ready` and links to a URL that now
 answers connection-refused. Nothing will ever fix that comment, because `Retract` is only called from
 `teardown` (`internal/daemon/daemon.go:536`) and teardown only ever runs for previews the database knows
@@ -285,7 +285,7 @@ can yield a different URL, in which case the row is rewritten and a fresh `ready
 
 **What an in-flight build costs.** It is lost, per `Claim`. `workers` is the bound, so at most `workers`
 reviewers see a stuck comment. To upgrade with zero lost builds: watch `GET /status` until `running` is 0 and
-`pending` is 0, then stop. There is no drain mode and no `docpreview drain`; polling `/status` is the whole
+`pending` is 0, then stop. There is no drain mode and no `nfpreview drain`; polling `/status` is the whole
 mechanism.
 
 **Rolling back the binary is safe for the data.** Artifacts are static files plus a stored `base_url`, so an
@@ -319,9 +319,9 @@ running count, a row per preview with its state, URL and reason, and the last 60
 states are composed at read time from the store, the job queue and the in-flight map, so it does not lie about
 a build that is running — which is the failure mode it was written to fix.
 
-`docpreview doctor` prints the config path, data dir, exposer, driver, every listener, the vault path and
+`nfpreview doctor` prints the config path, data dir, exposer, driver, every listener, the vault path and
 secret count, the key source, and the SCM wiring, then runs every component's `Validate`
-(`cmd/docpreview/main.go`, `cmdDoctor`). **Do not run it against a live daemon under the `ziti` exposer.**
+(`cmd/nfpreview/main.go`, `cmdDoctor`). **Do not run it against a live daemon under the `ziti` exposer.**
 `Ziti.Validate` binds the service (`internal/expose/ziti.go:110`), binding creates a terminator, and a second
 terminator makes the router load-balance previews between the daemon and the doctor process
 (`internal/config/config.go:120`–`:130`). Roughly half the preview requests fail for the duration of the
@@ -336,9 +336,8 @@ restoring" or, worse, "up and permanently unable to accept webhooks".
 
 **The vault's state.** The single most important fact about a restarted daemon is whether the vault opened,
 because a locked vault means every GitHub webhook gets a 501 and the only symptom is on GitHub's deliveries
-page. It appears in one startup log line and in `doctor`, and in neither of the two endpoints. `TODO.md`
-already carries the dashboard half of this ("Show the key source on the dashboard"); the monitoring half is
-the same field.
+page. It appears in one startup log line and in `doctor`, and in neither of the two endpoints. Showing the key
+source on the dashboard is the open half of this; the monitoring half is the same field.
 
 **Rates and ages.** `/status` reports queue *depth* but not queue *age*, so a wedged worker and a busy one
 look identical. There are no build durations, no failure counts, no last-successful-webhook timestamp, and no
@@ -351,7 +350,7 @@ for a service with one instance.
 
 ### Log volume, and where a secret could still leak
 
-Logs are `slog` text to stderr (`newLogger` in `cmd/docpreview/main.go`), so under systemd journald owns
+Logs are `slog` text to stderr (`newLogger` in `cmd/nfpreview/main.go`), so under systemd journald owns
 rotation and there is nothing to configure. Volume is low by design: a handful of lines per build plus one per
 state change. **Build output does not go to stderr** — it goes to `data_dir/logs/<id>/<build>.log` and to live
 subscribers, and it is bounded by `build.keep_logs`.
@@ -454,12 +453,12 @@ listener whose host is not loopback (`internal/daemon/secrets.go:86`–`:105`). 
 it (`:302`); the read route is not, so the page can explain itself.
 
 The reasoning holds: on a loopback-only daemon the boundary is the same one that already protects
-`docpreview vault set` — anyone who can reach `127.0.0.1` can run the binary — and the surface adds no
+`nfpreview vault set` — anyone who can reach `127.0.0.1` can run the binary — and the surface adds no
 reachability a shell did not already have. The moment a listener is not loopback, it does.
 
 The production consequence, stated plainly: **a box that binds anything other than loopback has no unlock
 button and no way to enter a credential from the browser.** On such a box `vault.key_source` is not a
-convenience, it is mandatory, and every credential has to be placed with `docpreview vault set` over SSH.
+convenience, it is mandatory, and every credential has to be placed with `nfpreview vault set` over SSH.
 That is a coherent configuration. What is not coherent is discovering it after a reboot.
 
 This is the strongest argument for the recommended shape: keep every listener on loopback, put the tunnel in
@@ -470,7 +469,7 @@ front, and the setup page keeps working over an SSH forward — the tunnel termi
 
 ## Tier 2: actual HA
 
-Five assumptions in the code say "there is exactly one docpreview". Ordered by *when the decision has to be
+Five assumptions in the code say "there is exactly one nfpreview". Ordered by *when the decision has to be
 made*, not by difficulty: the first two are interface contracts, and changing an interface with four
 implementations is a morning's work while changing one with eight is a project.
 
@@ -484,7 +483,7 @@ whatever *its own* database does not claim, which includes every preview belongi
 **A second instance starting reaps the first instance's live shares.** How badly depends on the exposer, and
 the differences are instructive:
 
-- `frontdoor` lists every share in the **tenant** and deletes any carrying the `docpreview:` tag prefix that
+- `frontdoor` lists every share in the **tenant** and deletes any carrying the `nfpreview:` tag prefix that
   is not in `keep` (`internal/expose/frontdoor.go:284`–`:314`). Worst case: instance B's boot deletes all of
   instance A's previews.
 - `zrok` scopes both `Reap` and `reapName` to the environment's own ziti identity
@@ -499,8 +498,8 @@ the differences are instructive:
 
 **The change:** an instance identity that reaches the remote object. Concretely, a configured `instance` string
 folded into the target tag alongside the preview ID, and a `Reap` contract of "delete what *this instance*
-owns and `keep` does not name", with a separate, explicitly-invoked sweep for "delete anything docpreview owns
-that no instance claims". That second mode is the audit command `TODO.md` already wants ("No audit command").
+owns and `keep` does not name", with a separate, explicitly-invoked sweep for "delete anything nfpreview owns
+that no instance claims". That second mode is the audit command that does not exist yet.
 This is a small change to `Spec`, one line in each implementation's tag construction, and a rewrite of one
 sentence of contract — today. It is worth doing **before the fifth exposer exists**, whether or not HA
 follows, because it also fixes the single-instance case of two daemons sharing one zrok account.
@@ -569,8 +568,8 @@ The `local` exposer serves previews as paths on the daemon's own listener
 (`internal/expose/local.go:111`, `internal/daemon/ingress.go:131`), so its URLs *are* one instance's address.
 The `ziti` exposer binds one wildcard service, and **exactly one process may bind a given service**: binding
 creates a terminator, a second binding creates a second one, and the router load-balances between them under
-the default strategy — so two docpreviews sharing a service each answer about half the requests
-(`internal/config/config.go:120`–`:130`, restated in `TODO.md` under "Known limits").
+the default strategy — so two nfpreviews sharing a service each answer about half the requests
+(`internal/config/config.go:120`–`:130`), a known limit.
 
 So HA is impossible under `local` and requires either a second service or per-preview routing under `ziti`.
 zrok and Frontdoor are the two that could work, both because the URL is a remote object rather than a local
@@ -605,9 +604,9 @@ blocker 1 is worth making on its own merits while there are four exposers rather
 ## The order to build it in
 
 1. **Write the systemd unit and the config beside it**, master key as a systemd credential named by its
-   literal `/run/credentials/docpreview.service/` path. Confirm a reboot brings the daemon back with an
+   literal `/run/credentials/nfpreview.service/` path. Confirm a reboot brings the daemon back with an
    unlocked vault and a GitHub client, by checking that `/webhook/github` no longer answers 501.
-2. **Set up the backup**: a volume snapshot, or a nightly stop-copy-start of `vault.age` and `docpreview.db`,
+2. **Set up the backup**: a volume snapshot, or a nightly stop-copy-start of `vault.age` and `nfpreview.db`,
    plus wherever the master key lives. Then *restore it once* into a scratch box, and write down what it did
    to the comments — that paragraph is the runbook.
 3. **Extend `/status` with the four facts on-call needs**: vault locked or open, recovery complete, oldest
@@ -644,11 +643,11 @@ Inferred from reading rather than confirmed by running:
 - **Container specifics.** The npm cache location (`$HOME/.npm`) is inferred from npm's defaults, since nothing
   in `internal/pipeline` sets `npm_config_cache`. No image has been built.
 - **sqlite over NFS.** Asserted from sqlite's documented locking caveats, not from an attempt.
-- **Backup consistency.** That copying `docpreview.db` alone under WAL can miss recent commits is from sqlite's
+- **Backup consistency.** That copying `nfpreview.db` alone under WAL can miss recent commits is from sqlite's
   documented WAL behaviour. No corrupted restore has been produced deliberately.
 - **The frontdoor tenant-wide reap** follows from `internal/expose/frontdoor.go:284` listing `/shares` with no
-  instance filter, but Frontdoor's wire format has never been exercised against a live tenant at all — see
-  `TODO.md`, "Verification gaps". The blast radius is real if the endpoint behaves as modelled.
+  instance filter, but Frontdoor's wire format has never been exercised against a live tenant at all, an
+  open verification gap. The blast radius is real if the endpoint behaves as modelled.
 - **Resource sizing.** The 2 vCPU / 4 GB / 20–40 GB figures are reasoned from "two concurrent Docusaurus builds
   plus one artifact directory per open pull request", not measured on a real repository.
 - **Failover timing.** "Tens of seconds to a couple of minutes" is an estimate. `recover`'s own cost is one

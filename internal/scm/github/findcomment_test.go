@@ -72,7 +72,7 @@ func TestFindCommentMatchesEitherMarkerStyle(t *testing.T) {
 }
 
 // TestFindCommentIgnoresOtherComments — the marker carries a preview id so that two
-// docpreview instances watching one repository, staging and production, do not fight
+// nfpreview instances watching one repository, staging and production, do not fight
 // over a single comment. A reviewer quoting the marker in a discussion must not be
 // mistaken for it either.
 func TestFindCommentIgnoresOtherComments(t *testing.T) {
