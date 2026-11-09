@@ -2298,9 +2298,10 @@ function matches(p) {
 // preview and a count of everything else it has; the older ones are a dropdown
 // inside, so they are one click away instead of permanently in the way.
 //
-// "Newest" is by state first, then time: a failure nobody has looked at is more
-// interesting than a build that went green a minute later, and a project whose
-// row says Ready while one of its branches is broken is a lie of omission.
+// "Newest" is by time alone, so the row and its dropdown agree with the dates they
+// print. It used to rank state first, which put a failed build from Nov 04 above a
+// Ready one from Nov 05 and sank Skipped to the bottom whatever its age. Projects
+// are still ordered by their row's state, below, so a broken project still rises.
 /* Every preview is in the list, a project's branch preview included.
 
    The branch preview used to step out of the list once it finished, on the reasoning that an
@@ -2326,8 +2327,7 @@ function groups() {
 
   const out = [];
   for (const [name, list] of by) {
-    list.sort((a, b) =>
-      rank(a) - rank(b) || new Date(b.updated_at) - new Date(a.updated_at));
+    list.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
 
     const picked = list.find(p => p.preview_id === ui.pick[name]) || list[0];
     out.push({name, list, current: picked});
@@ -2938,7 +2938,7 @@ function updateBody(item, g) {
   // Pin the selection on expand.
   //
   // Without this the picker had no stored choice and groups() re-derived it as
-  // list[0] on every render — and that list is sorted by state, so a build
+  // list[0] on every render — and that list is sorted newest first, so a build
   // starting anywhere in the project made the new preview "first" and swapped
   // it into the dropdown under a reader who was part-way through a different
   // log. Opening a row is a choice; it should stick until the reader makes

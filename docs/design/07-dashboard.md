@@ -194,17 +194,16 @@ from.
 A project with a dozen open pull requests produced a dozen rows all naming the same project, and the list
 stopped being scannable at exactly the point it started being useful.
 
-Each row shows the project's **most interesting** preview and per-state count chips. The rest are a dropdown
-inside the expanded row, labelled `branch · #num · state · 4m ago`.
+Each row shows the project's **newest** preview and per-state count chips. The rest are a dropdown inside the
+expanded row, labelled `branch · #num · state · 4m ago`, newest first.
 
-"Most interesting" is by state first, then time:
+Within a project, order is by time alone. It used to rank state first (`failed`, `building`, `queued`,
+`ready`), so a failed build from Nov 04 sat above a Ready one from Nov 05 and Skipped sank to the bottom whatever
+its age. The dropdown prints a time on every entry, and an order that disagrees with those times reads as
+unsorted.
 
-```js
-const ORDER = ["failed", "building", "queued", "ready"];
-```
-
-A failure nobody has looked at matters more than a build that went green a minute later. A project row saying
-Ready while one of its branches is broken is a lie of omission.
+Projects are still ordered by their row's state, so a project whose newest build failed rises to the top. The
+count chips say when an older preview in the project is broken.
 
 ## Filters
 
@@ -544,7 +543,7 @@ A class other code queries by is state. It does not belong behind a repaint opti
 ### 5. Pin a choice the reader made
 
 The picker had no stored selection; `groups()` re-derived it as `list[0]` every render. Since that list is
-sorted by state, a build starting anywhere in the project made the new preview "first" and swapped it into the
+sorted newest first, a build starting anywhere in the project made the new preview "first" and swapped it into the
 dropdown under a reader part-way through a different log.
 
 Expanding pins the selection. It holds until the reader picks another or collapses the row; collapsing releases
