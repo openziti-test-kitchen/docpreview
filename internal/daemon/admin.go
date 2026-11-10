@@ -33,6 +33,16 @@ func (i *Ingress) admin(w http.ResponseWriter, r *http.Request) {
 	local, why := isLocalRequest(r)
 
 	state := adminState{Why: why}
+
+	// An admin session is admin on every listener, as the write gates already decide (see
+	// SecretsAdmin.gated). Without this, a ziti listener naming no admin_identities hid the
+	// links from a signed-in admin whose writes would have succeeded.
+	if roleOfContext(r.Context()) == RoleAdmin {
+		state = adminState{Secrets: i.secrets != nil, Projects: i.projects != nil}
+		writeJSON(w, http.StatusOK, state)
+		return
+	}
+
 	if local {
 		if i.secrets != nil {
 			if ok, unavailable := i.secrets.Available(); ok {

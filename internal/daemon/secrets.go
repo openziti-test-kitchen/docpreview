@@ -201,6 +201,10 @@ func listenersAllowAdmin(listeners []config.Listener, what string) (bool, string
 			}
 			continue
 		}
+		if l.ZrokPrivate != nil {
+			// Closed permission mode limits it to the owning account and its grants.
+			continue
+		}
 		host, _, err := net.SplitHostPort(l.TCP)
 		if err != nil {
 			return false, "unparseable listener " + l.TCP

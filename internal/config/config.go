@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -137,7 +138,35 @@ type Listener struct {
 	// Ziti binds an OpenZiti service instead of a port, so the dashboard and
 	// the webhook endpoint have no address on the underlay at all.
 	Ziti *ZitiListener
+
+	// ZrokPrivate serves the daemon over a zrok private share, so an operator reaches the
+	// whole dashboard, admin pages included, with `zrok2 access private <token>`.
+	ZrokPrivate *ZrokPrivateListener
 }
+
+// ZrokPrivateListener is an ingress listener bound to a zrok private share.
+//
+// The share is created in closed permission mode: only the account that owns this daemon's
+// zrok environment, and the accounts in AccessGrants, can access it. That is what makes it an
+// admin path where a public share is not. A public share is reachable by anyone with the URL,
+// so the dashboard goes out over one only through `nfpreview dashboard-only`, whose allowlist
+// leaves the admin pages out.
+//
+// The login still applies. Over this listener the admin password gives admin and the viewer
+// password gives read-only, as on loopback.
+type ZrokPrivateListener struct {
+	// Token is the private share's token, which is also what an operator passes to
+	// `zrok2 access private`. Fixed rather than generated, so the access command survives a
+	// restart. Lowercase letters and digits.
+	Token string `yaml:"token"`
+
+	// AccessGrants are zrok account emails allowed to access the share besides the owner.
+	// Empty means the owner alone.
+	AccessGrants []string `yaml:"access_grants"`
+}
+
+// zrokTokenPattern is what zrok accepts as a private share token.
+var zrokTokenPattern = regexp.MustCompile(`^[a-z0-9]{4,32}$`)
 
 // ZitiListener is an ingress listener bound to an OpenZiti service.
 //
@@ -215,8 +244,13 @@ func (l *Listener) UnmarshalYAML(node *yaml.Node) error {
 			if err := value.Decode(l.Ziti); err != nil {
 				return fmt.Errorf("listener ziti: %w", err)
 			}
+		case "zrok_private":
+			l.ZrokPrivate = &ZrokPrivateListener{}
+			if err := value.Decode(l.ZrokPrivate); err != nil {
+				return fmt.Errorf("listener zrok_private: %w", err)
+			}
 		default:
-			return fmt.Errorf("unknown listener kind %q (use tcp or ziti)", key)
+			return fmt.Errorf("unknown listener kind %q (use tcp, ziti or zrok_private)", key)
 		}
 	}
 	if len(keys) != 1 {
@@ -241,6 +275,9 @@ func nodeKind(node *yaml.Node) string {
 func (l Listener) Describe() string {
 	if l.Ziti != nil {
 		return fmt.Sprintf("ziti service %s (identity %s)", l.Ziti.Service, l.Ziti.IdentityFile)
+	}
+	if l.ZrokPrivate != nil {
+		return "zrok private share " + l.ZrokPrivate.Token
 	}
 	return "tcp " + l.TCP
 }
@@ -274,6 +311,11 @@ func (s *Server) resolveListeners() error {
 			if l.Ziti.Service == "" {
 				return fmt.Errorf("listeners[%d].ziti.service must be set", i)
 			}
+		case l.ZrokPrivate != nil:
+			if !zrokTokenPattern.MatchString(l.ZrokPrivate.Token) {
+				return fmt.Errorf("listeners[%d].zrok_private.token %q must be 4 to 32 lowercase "+
+					"letters and digits (it is what `zrok2 access private` takes)", i, l.ZrokPrivate.Token)
+			}
 		case l.TCP != "":
 			// A malformed address is otherwise not caught until Serve, which
 			// reports it as an opaque address error after every other
@@ -294,7 +336,7 @@ func (s *Server) resolveListeners() error {
 // and `doctor` — have nothing to print in that case.
 func (s Server) FirstTCPAddr() string {
 	for _, l := range s.Listeners {
-		if l.Ziti == nil && l.TCP != "" {
+		if l.Ziti == nil && l.ZrokPrivate == nil && l.TCP != "" {
 			return l.TCP
 		}
 	}

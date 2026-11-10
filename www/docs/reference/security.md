@@ -206,12 +206,15 @@ All of them are on the same listener as the dashboard, the previews and the webh
 depends on your deployment, not on the code. **One of these must be true** before any of them will act
 (`internal/daemon/secrets.go`):
 
-- **The request has an admin session.** This is authentication. It's the only one of the three that can be true from
-  another machine, which is the point of having a password and the only way to manage credentials remotely.
+- **The request has an admin session.** This is authentication. Apart from the two overlay routes below, it's the only one
+  that can be true from another machine, which is the point of having a password and the only way to manage credentials remotely.
 - **The request came over an OpenZiti listener from an identity in `admin_identities`.** See below.
+- **The request came over a [`zrok_private` listener](./configuration.md#a-zrok_private-listener).** The share is in
+  closed permission mode, so zrok already limited who can connect to the owning account and its access grants.
 - **The request came from this machine**: a loopback `RemoteAddr` **and** no `X-Forwarded-For`, `X-Forwarded-Host`,
-  `X-Real-Ip` or `Forwarded` header. On top of that, every configured listener must be loopback or a ziti listener
-  naming `admin_identities`. A daemon bound to `0.0.0.0` refuses on this route however local the request looks.
+  `X-Real-Ip` or `Forwarded` header. On top of that, every configured listener must be loopback, a ziti listener
+  naming `admin_identities`, or a `zrok_private` listener. A daemon bound to `0.0.0.0` refuses on this route however
+  local the request looks.
 
 A **viewer** session doesn't fall through to the locality test. Signing in as a viewer says this caller is not an
 admin. Treating a viewer on loopback as admin would make signing in as a viewer give you more than not signing in.
@@ -236,7 +239,7 @@ The locality test doesn't check a credential. It decides whether a request start
 network setup tells it, not from anything the caller proves. It assumes nothing proxies to the daemon while stripping
 forwarding headers.
 
-So it's one of three routes, not the only one. **Set an admin password and the surface has authentication.** The
+So it's one of several routes, not the only one. **Set an admin password and the surface has authentication.** The
 locality route is there so a fresh installation with no password can be set up from its own machine. The boundary
 there is the same one that already protects `nfpreview vault set`: anyone who can reach `127.0.0.1` can run the
 binary, and the API gives them nothing a shell doesn't.

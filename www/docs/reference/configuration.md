@@ -123,7 +123,8 @@ When it is unset, the comment names the dashboard without linking to it.
 
 ## `listeners`
 
-`listen` binds one TCP address. `listeners` binds any number, TCP or OpenZiti, all served by one HTTP server:
+`listen` binds one TCP address. `listeners` binds any number, TCP, OpenZiti or zrok private, all served by one HTTP
+server:
 
 ```yaml
 listeners:
@@ -180,6 +181,46 @@ dashboard, `/status` and every build log, and refuses every write with a message
 that will only fail.
 
 The refusal names the identity it turned away, so adding it is a copy and paste.
+
+:::
+
+### A `zrok_private` listener
+
+A `zrok_private` listener serves the whole daemon, admin pages included, over a zrok private share. Use it to manage a
+remote installation without an ssh tunnel to `127.0.0.1`.
+
+```yaml
+listeners:
+  - tcp: "127.0.0.1:8471"
+  - zrok_private:
+      token: "nfpadmin"
+      access_grants: ["ops@example.com"]
+```
+
+| Field | Notes |
+|---|---|
+| `token` | The private share's token: 4 to 32 lowercase letters and digits. It's what you pass to `zrok2 access private`, so it is fixed rather than generated. |
+| `access_grants` | zrok account emails that may access the share besides the account that owns it. Empty, the default, means the owner alone. |
+
+The share uses the zrok environment the daemon already uses for its exposer. It's created in **closed** permission
+mode, so only the owning account and `access_grants` can reach it. A restart adopts the existing share instead of
+creating a new one.
+
+To reach the dashboard, run this on your own machine, signed in to one of those accounts, and open the address it
+prints:
+
+```sh
+zrok2 access private nfpadmin
+```
+
+The login still applies. The admin password gives admin and the viewer password gives read-only, the same as on
+loopback.
+
+:::note Public shares never carry the admin pages
+
+A public share is reachable by anyone with its URL, so publish the dashboard over one only with
+[`nfpreview dashboard-only`](./cli.md). Its allowlist leaves out the project and credential pages and APIs, so they
+answer 404 there whatever session the visitor has.
 
 :::
 
