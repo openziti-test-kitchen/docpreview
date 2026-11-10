@@ -204,6 +204,9 @@ var ErrNotFound = errors.New("no such secret")
 type Vault struct {
 	path string
 
+	// saveMu serializes Save from snapshot to rename. See Save.
+	saveMu sync.Mutex
+
 	mu      sync.RWMutex
 	secrets map[string]Secret
 
@@ -407,7 +410,16 @@ func (v *Vault) RevealPrefix(prefix string) map[string]string {
 // harmless. It is not any more: a Set or a Save in flight while Rekey swaps the key is a data race,
 // and the value read decides which key the file on disk can be opened with. Taking both under one
 // lock also means the ciphertext is a consistent pair — these secrets, that key.
+//
+// Whole saves are serialized too. Two saves that each snapshot under the read lock and then write
+// unlocked can rename in either order, so an older snapshot could land last: a Set racing a Rekey
+// left the file under the old key while the object held the new one. On Windows the two renames
+// also collide and one fails with "Access is denied". With saveMu, the last save to finish is the
+// last to snapshot, so the file matches the object.
 func (v *Vault) Save() error {
+	v.saveMu.Lock()
+	defer v.saveMu.Unlock()
+
 	v.mu.RLock()
 	onDisk := make(map[string]string, len(v.secrets))
 	for k, s := range v.secrets {

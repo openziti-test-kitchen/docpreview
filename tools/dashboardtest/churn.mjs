@@ -145,3 +145,5 @@ if (writes.size === 0) {
 }
 console.log("\n'same-value' writes are pure churn: they collapse a selection and reset a control");
 console.log("for no change. 'CHANGED' writes may be legitimate — a clock, a state, a new line.");
+// The dashboard's one-second timers keep the event loop alive, so leave explicitly.
+process.exit(0);
