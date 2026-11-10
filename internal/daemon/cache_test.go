@@ -57,8 +57,7 @@ func clearCacheRequest(t *testing.T, h http.Handler, previewID, remote string) *
 	t.Helper()
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("DELETE", "/api/cache/"+previewID, nil)
-	r.RemoteAddr = remote
-	h.ServeHTTP(rec, r)
+	h.ServeHTTP(rec, fromCaller(r, remote))
 	return rec
 }
 

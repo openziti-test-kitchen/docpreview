@@ -335,7 +335,7 @@ sudo -u nfpreview /usr/local/bin/nfpreview zrok status -config $D
 
 ## Step 7: Set the dashboard passwords
 
-There are two roles. Until the **viewer** password exists, nothing is gated.
+There are two roles. Every dashboard request needs one of these passwords; with none set, the dashboard is closed.
 
 ```bash
 sudo -u nfpreview /usr/local/bin/nfpreview console password -role admin  -config $D

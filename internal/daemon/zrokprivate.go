@@ -74,7 +74,7 @@ func (ls *Listeners) openZrokPrivate(cfg config.ZrokPrivateListener, log *slog.L
 	if err != nil {
 		return nil, fmt.Errorf("opening the zrok listener for private share %s: %w", cfg.Token, err)
 	}
-	return &overlayListener{Listener: ln, grantAll: true, label: "zrok private " + cfg.Token}, nil
+	return &overlayListener{Listener: ln, label: "zrok private " + cfg.Token}, nil
 }
 
 // zrokShareExists reports whether this environment already holds a share with the token.

@@ -10,7 +10,7 @@ import (
 	"github.com/netfoundry/docpreview/internal/config"
 )
 
-// An admin session shows the admin links on every listener, as the write gates already allow.
+// An admin session shows the admin links on any listener it reaches, as the write gates already allow.
 //
 // The case that used to fail: a ziti listener naming no admin_identities makes the listener check
 // say no, so a signed-in admin got no Projects or Secrets link while every write would have worked.

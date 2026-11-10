@@ -92,10 +92,10 @@ func cmdConsolePassword(args []string) error {
 		}
 		switch role {
 		case daemon.RoleAdmin:
-			fmt.Fprintln(os.Stderr, "admin password removed; writes are loopback-only again")
+			fmt.Fprintln(os.Stderr, "admin password removed; nobody can change anything from the dashboard")
 		default:
-			fmt.Fprintln(os.Stderr, "viewer password removed; anyone who can reach the "+
-				"dashboard can read it")
+			fmt.Fprintln(os.Stderr, "viewer password removed; only the admin password and Google sign-in "+
+				"open the dashboard")
 		}
 		return nil
 	}
@@ -117,13 +117,10 @@ func cmdConsolePassword(args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "%s password set\n", role)
-	if role == daemon.RoleViewer {
-		fmt.Fprintln(os.Stderr, "the dashboard now asks for a login before showing anything")
-	} else {
-		fmt.Fprintln(os.Stderr, "projects and credentials now accept a login from anywhere "+
-			"this daemon is reachable")
+	if role == daemon.RoleAdmin {
+		fmt.Fprintln(os.Stderr, "admin works over 127.0.0.1 (or ssh -L), zrok private and OpenZiti; "+
+			"anywhere else this password is refused")
 	}
-	fmt.Fprintln(os.Stderr, "loopback and named overlay identities still work without one")
 	return nil
 }
 
@@ -230,8 +227,8 @@ func cmdConsoleStatus(args []string) error {
 		return err
 	}
 
-	fmt.Printf("admin password:  %s\n", yesNo(admin, "set", "none — writes are loopback-only"))
-	fmt.Printf("viewer password: %s\n", yesNo(viewer, "set", "none — reading is open to anyone who can reach it"))
+	fmt.Printf("admin password:  %s\n", yesNo(admin, "set", "none — nobody can change anything from the dashboard"))
+	fmt.Printf("viewer password: %s\n", yesNo(viewer, "set", "none — only the admin password and Google sign-in open the dashboard"))
 
 	domains, _, err := st.Setting(ctx, daemon.SettingOAuthDomains)
 	if err != nil {
@@ -240,23 +237,21 @@ func cmdConsoleStatus(args []string) error {
 	fmt.Printf("google sign-in:  %s\n", yesNo(domains != "",
 		"grants viewer for an address at "+domains, "off — no domains allowed"))
 
-	// The listeners, because a password is only half the answer. A loopback-only daemon with no
-	// password is not exposed; the same daemon behind a tunnel is.
+	// The listeners, because they decide which paths may carry an admin session.
 	for _, l := range cfg.Listeners {
 		fmt.Printf("listener: %s\n", l.Describe())
 		if l.Ziti != nil && len(l.Ziti.AdminIdentities) > 0 {
-			fmt.Printf("  admin identities: %s\n", strings.Join(l.Ziti.AdminIdentities, ", "))
+			fmt.Printf("  admin_identities is set but grants nothing; remove it\n")
 		}
 	}
 
 	// What is publishing the dashboard decides whether any of the above is reachable, and two
 	// of the three exposers can do the authentication themselves. Said here because this is the
 	// command somebody runs when asking "is this thing exposed".
-	if !viewer {
+	if !viewer && !admin {
 		fmt.Println()
-		fmt.Println("With no viewer password, anything that can reach this daemon can read it.")
-		fmt.Println("If a zrok or Frontdoor share publishes the dashboard, gate the share on")
-		fmt.Println("OAuth and an email domain instead — see www/docs/reference/security.md.")
+		fmt.Println("With no password set, the dashboard is closed to everyone. Set one with:")
+		fmt.Println("  nfpreview console password -role admin")
 	}
 	return nil
 }

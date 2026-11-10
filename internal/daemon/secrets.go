@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,13 +27,9 @@ import (
 // # Why this is allowed to exist at all
 //
 // The design note in docs/design/05-secrets.md says a credential-write endpoint
-// on an unauthenticated surface is worse than no UI. That still holds, so this
-// is gated: every listener must be loopback. See Available.
-//
-// On a loopback-only daemon the boundary is the same one that already protects
-// `nfpreview vault set` — anyone who can reach 127.0.0.1 can run the binary.
-// This adds no reachability that a shell did not already have. The moment a
-// listener is not loopback, it does, and it refuses to serve.
+// on an unauthenticated surface is worse than no UI. That still holds, so every
+// write needs an admin session, which exists only over a private path. See
+// isLocalRequest and privatePath.
 //
 // # What it never does
 //
@@ -77,52 +72,13 @@ func NewSecretsAdmin(cfg config.Server, log *slog.Logger, rearm func(changed str
 	return a
 }
 
-// isLocalRequest reports whether a request came from this machine, with nothing
-// in between.
+// isLocalRequest reports whether a request may use the admin surfaces: it carries an admin session.
 //
-// Available checks where the daemon *listens*; this checks where a request
-// actually *came from*. Both are needed and neither substitutes for the other.
-// The gap between them is a tunnel: `zrok2 share public http://127.0.0.1:8471`
-// makes every route internet-reachable while the listener is still loopback, so
-// Available says yes and the credential API is on the internet.
-//
-// Two conditions, and the second is the one that closes that gap:
-//
-//   - RemoteAddr must be a loopback address. Under a tunnel it is — the daemon
-//     sees the connection from the local tunnel process — so this alone is not
-//     enough.
-//   - The request must carry no forwarding header. Anything that proxies to the
-//     daemon adds `X-Forwarded-For` or `Forwarded`, including nfpreview's own
-//     `webhook-only` proxy. A caller can add one itself, but that only ever
-//     makes this stricter, which is the right direction to be wrong in.
-//
-// A tunnel that strips forwarding headers would defeat this. That is why the
-// recommended arrangement is to tunnel the `webhook-only` proxy rather than the
-// daemon: then the credential API is not reachable at all and this check is a
-// second line rather than the only one.
-//
-// # The overlay case
-//
-// A request that arrived over a ziti listener is judged on *who dialed it* instead. That is a
-// stronger statement than either check above — the overlay authenticated the identity, and
-// there is no address to spoof — but it is only as good as the grant, so it is an explicit
-// list of identity ids on the listener rather than "enrolled at all".
-//
-// It is deliberately checked before the loopback rule, because an overlay connection's
-// RemoteAddr is not a loopback address and would fail it. Nothing here trusts the request:
-// the identity was recorded by the accept path, in a context key this package alone can
-// write, and an unrecognised or absent identity is refused.
+// That is the whole rule. Where a request came from grants nothing on its own: not loopback, not an
+// overlay identity, not a closed zrok share. requireLogin has already confined an admin session to a
+// private path (see privatePath), so a request that reaches here as admin arrived over OpenZiti, zrok
+// private, or directly from this machine.
 func isLocalRequest(r *http.Request) (bool, string) {
-	// An admin session outranks everything below, and is the only one of the three checks that
-	// is authentication rather than a statement about the network. It is first because it is
-	// also the only one that can be true from another machine — which is the entire point of
-	// having a password, and the reason "managing credentials remotely is unsupported" is no
-	// longer the answer.
-	//
-	// A viewer session deliberately does not fall through to the locality checks: it is a
-	// positive statement that this caller is *not* an admin, so treating a viewer on the
-	// loopback interface as an admin would make logging in as a viewer a way to gain less than
-	// nothing. It is refused here with a reason the page can show.
 	switch roleOfContext(r.Context()) {
 	case RoleAdmin:
 		return true, ""
@@ -131,88 +87,23 @@ func isLocalRequest(r *http.Request) (bool, string) {
 			"change nothing; sign in with the admin password to make changes"
 	}
 
-	if caller, ok := overlayCallerFrom(r.Context()); ok {
-		if caller.MayWrite {
-			return true, ""
-		}
-		if caller.Dialer == "" {
-			// The router sent no dialer, or something that is not an overlay connection
-			// reached this path. Either way we cannot say who this is, and "cannot say" is
-			// not a grant.
-			return false, "this request arrived over the overlay with no dialing identity, " +
-				"so there is nothing to authorize it against"
-		}
-		return false, "the identity " + caller.Dialer + " is not in this listener's " +
-			"admin_identities, so it may read but not change anything"
-	}
-
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	if !isLoopback(host) {
-		return false, "credentials can only be managed from the machine running nfpreview, " +
-			"and this request came from " + host
-	}
-	for _, h := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Real-Ip", "Forwarded"} {
-		if r.Header.Get(h) != "" {
-			return false, "this request was forwarded by a proxy (" + h + " is set), so it did not " +
-				"originate on this machine; credentials can only be managed locally"
-		}
-	}
-	return true, ""
+	return false, "sign in with the admin password to make changes"
 }
 
 // Available reports whether this daemon may serve the secrets surface at all.
 //
-// Every listener must be one of two things: loopback, or a ziti service that names the
-// identities allowed to write through it.
-//
-// "Enrolled at all" is not authorization for a credential write, so a ziti listener is read-only unless
-// it grants write access explicitly. Refusing the whole daemon whenever any listener is ziti would make
-// loopback writes fail too, on a daemon that also has a loopback listener.
-//
-// The grant is explicit. `admin_identities` on the listener names the identity ids that may write, the
-// accept path records which identity dialed, and isLocalRequest checks one against the other. A listener
-// with no list is still refused — the default is read-only.
-//
-// This is a property of the daemon, not of a request. See isLocalRequest for the
-// per-request half, and why one without the other is not sufficient.
+// This is a property of the daemon, not of a request. See isLocalRequest for the per-request half.
 func (a *SecretsAdmin) Available() (bool, string) {
 	return listenersAllowAdmin(a.cfg.Listeners, "secrets")
 }
 
-// listenersAllowAdmin is the listener half of the gate, shared by both admin surfaces.
+// listenersAllowAdmin is the daemon half of the gate, shared by every admin surface.
 //
-// One implementation because the rule is one rule: the projects surface decides what command
-// runs on the build host and the secrets surface decides which credentials it runs with, and
-// a daemon that guarded them differently would be guarding the weaker of the two. `what`
-// names the surface in the refusal, which is the only thing that differs.
+// Only a daemon with no listeners is refused. Which listeners exist does not matter: every admin
+// request needs an admin session, and requireLogin decides which paths may carry one.
 func listenersAllowAdmin(listeners []config.Listener, what string) (bool, string) {
 	if len(listeners) == 0 {
-		return false, "no listeners"
-	}
-	for _, l := range listeners {
-		if l.Ziti != nil {
-			if len(l.Ziti.AdminIdentities) == 0 {
-				return false, fmt.Sprintf("the ziti service %s names no admin_identities, "+
-					"so %s are read-only over it: add the identity ids allowed to write "+
-					"(ziti edge list identities)", l.Ziti.Service, what)
-			}
-			continue
-		}
-		if l.ZrokPrivate != nil {
-			// Closed permission mode limits it to the owning account and its grants.
-			continue
-		}
-		host, _, err := net.SplitHostPort(l.TCP)
-		if err != nil {
-			return false, "unparseable listener " + l.TCP
-		}
-		if !isLoopback(host) {
-			return false, fmt.Sprintf("the ingress listens on %s; %s can only be managed "+
-				"from a loopback-only daemon", l.TCP, what)
-		}
+		return false, "no listeners, so " + what + " cannot be managed"
 	}
 	return true, ""
 }

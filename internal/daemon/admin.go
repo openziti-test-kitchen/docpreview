@@ -30,33 +30,20 @@ type adminState struct {
 // A Host-header test would be the wrong instrument. Host is whatever the client
 // typed, so "localhost" proves nothing; where the connection came from does.
 func (i *Ingress) admin(w http.ResponseWriter, r *http.Request) {
-	local, why := isLocalRequest(r)
-
-	state := adminState{Why: why}
-
-	// An admin session is admin on every listener, as the write gates already decide (see
-	// SecretsAdmin.gated). Without this, a ziti listener naming no admin_identities hid the
-	// links from a signed-in admin whose writes would have succeeded.
-	if roleOfContext(r.Context()) == RoleAdmin {
-		state = adminState{Secrets: i.secrets != nil, Projects: i.projects != nil}
-		writeJSON(w, http.StatusOK, state)
+	// The same answer the write gates give. An admin session reaches here only on a private
+	// path, because requireLogin downgrades it everywhere else.
+	if ok, why := isLocalRequest(r); !ok {
+		writeJSON(w, http.StatusOK, adminState{Why: why})
 		return
 	}
-
-	if local {
-		if i.secrets != nil {
-			if ok, unavailable := i.secrets.Available(); ok {
-				state.Secrets = true
-			} else {
-				state.Why = unavailable
-			}
-		}
-		if i.projects != nil {
-			if ok, unavailable := i.projects.available(); ok {
-				state.Projects = true
-			} else if state.Why == "" {
-				state.Why = unavailable
-			}
+	state := adminState{}
+	if i.secrets != nil {
+		state.Secrets, state.Why = i.secrets.Available()
+	}
+	if i.projects != nil {
+		var why string
+		if state.Projects, why = i.projects.available(); state.Why == "" {
+			state.Why = why
 		}
 	}
 	writeJSON(w, http.StatusOK, state)

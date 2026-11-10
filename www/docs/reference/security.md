@@ -20,19 +20,18 @@ and what it doesn't.
 - An outsider opening a fork pull request to get code run.
 - A path in a repository config pointing somewhere it shouldn't.
 - Someone who finds the tunnel URL and tries to write a credential through it.
-- Someone who finds the dashboard URL. With a password set, every page except the previews, the webhooks and the
-  health endpoints asks for a login.
+- Someone who finds the dashboard URL. Every page except the previews, the webhooks and the health endpoints asks for
+  a login.
 
 **Not defended against:**
 
 - Someone already running code as the daemon's user. They've won, and no file format changes that.
-- Anything that proxies to the daemon and strips forwarding headers. The locality route below would treat those
-  requests as local. Nothing NetFoundry Preview ships does this, but a proxy you put in front of it might.
+- Anything that proxies to the daemon and strips forwarding headers. The private-path test below would treat those
+  requests as local, so an admin password typed through them would work. Nothing NetFoundry Preview ships does this,
+  but a proxy you put in front of it might.
 - A guessed or shared password. `/login` has no rate limit and no lockout, so the password is the whole defence. The
   comparison is constant-time and the hash is argon2id, which slows an offline attack on a stolen database but not
   an online one against the form.
-- Anyone at all, until a viewer password is set. Nothing is gated before then, on purpose: an upgrade must not lock
-  people out of their own dashboard.
 - A contributor with push access to a branch, under the `local` build driver. They can run any code on the build host.
   That's what `npm run build` is. Use the `docker` driver if that isn't acceptable.
 - A malicious dependency in the repository's `package.json`. Same category.
@@ -141,16 +140,16 @@ Getting a value out means calling `Reveal()`, which is awkward to type and easy 
 
 ## The login
 
-**Once a viewer password is set, the whole dashboard is behind a login**, including from loopback. There are two
-roles, and they're different things rather than two levels of one:
+**Every dashboard request needs a login.** That holds from every address, loopback included, and on a fresh
+installation with no password set. There are two roles:
 
 | Username | What it can do |
 |---|---|
-| `admin` | Everything, from anywhere the daemon is reachable |
+| `admin` | Everything, but only over a [private path](#admin-needs-a-private-path) |
 | `viewer` | Read everything and rebuild a preview. Nothing else |
 
-Set them with [`nfpreview console password`](./cli.md). Until a **viewer** password exists nothing is gated, so an
-upgrade can't lock an installation with no password out of its own dashboard.
+Set them with [`nfpreview console password`](./cli.md). With no password set, the dashboard is closed to everyone and
+the login page says how to set one. The CLI writes the database directly, so it needs no dashboard.
 
 These are never gated:
 
@@ -160,16 +159,6 @@ These are never gated:
 | `/healthz`, `/readyz` | What a supervisor and the restart script poll. `/readyz` carries counts and a stage name and nothing that identifies a repository. See [the CLI reference](./cli.md) |
 | The previews | A preview URL goes in a pull request for a reviewer who has no login and shouldn't need one. Under `local` that's `/preview/…` on this listener. The other exposers never reach this mux |
 | `/login`, `/logout`, `/auth/*` | The form can't be behind the form, and the OAuth callback comes from Google with no cookie of ours |
-
-:::danger Loopback is not exempt
-
-Letting a request from this machine in as admin with no session sounds reasonable, since anyone who can reach
-`127.0.0.1` can already run the binary. It's still the wrong rule, because the daemon can't tell a request is really
-from this machine. A tunnel in proxy mode connects from a local process, so `RemoteAddr` is loopback for a request
-that came from the internet. Trusting that would give every visitor an admin session as soon as something proxies
-without setting a forwarding header.
-
-:::
 
 Sessions are a signed cookie with no server-side store, and the signing key is generated per process. So **every
 restart signs everybody out**. Otherwise a session lasts twelve hours.
@@ -184,6 +173,31 @@ test, so a list naming `acme.com` doesn't let in `evil-acme.com`.
 The client id and secret live in the vault. When the vault is locked, the login page shows only the password field,
 not a button that can't work.
 
+### Admin needs a private path
+
+An admin session counts only on a request that arrived by one of these paths:
+
+- An OpenZiti [`ziti` listener](./configuration.md#a-ziti-listener).
+- A [`zrok_private` listener](./configuration.md#a-zrok_private-listener).
+- This machine: a loopback `RemoteAddr` with no `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-Ip` or `Forwarded`
+  header. An ssh tunnel (`ssh -L`) counts, because the daemon sees a plain loopback connection.
+
+Anywhere else, the session counts as a viewer, and the login form refuses the admin password without checking it.
+That covers the public dashboard proxy, a reverse proxy, and a listener bound to `0.0.0.0`. A leaked admin cookie or
+password is no use from the internet.
+
+The path is never a grant on its own. Reaching the daemon over OpenZiti, zrok private or loopback gets you to the login
+page, not past it.
+
+The forwarding-header test matters because of tunnels. `zrok2 share public http://127.0.0.1:8471` connects from a
+local process, so `RemoteAddr` is loopback for a request that came from the internet. Anything that proxies to the
+daemon sets one of those headers, including NetFoundry Preview's own `webhook-only` and `dashboard-only` proxies. A
+caller that adds a header itself only makes the check refuse more, which is the safe way to be wrong.
+
+An overlay connection is recorded when it is accepted, not read from the request. `http.Server.ConnContext` is the
+only hook that sees the connection. It is stored under a context key only this package can write, so a value forged
+elsewhere in the process does not make a request a private path.
+
 ## The mutating surfaces
 
 Apart from the webhook and the login routes, three surfaces change anything:
@@ -194,95 +208,29 @@ Apart from the webhook and the login routes, three surfaces change anything:
 | [Projects](./projects.md) | `/api/projects/…`, `/api/builds/…`, `/api/images/…`, `/api/cache/…`, `/api/settings/…` | Decide which repositories build and how, hold a per-project environment variable, cancel, rebuild or unlink a build, clear a build cache, set the hostname prefix |
 | Exposer | `/api/zrok/…` | Sign up for zrok, enrol or un-enrol this host, store the Frontdoor token, enrol a ziti identity, switch which exposer publishes |
 
-All three share the gates below. **The projects surface is the most dangerous.** A project decides what command runs
-on the build host, and its environment variables are credentials handed to the process that runs it. That's a more
-direct route to running code on this machine than reading the vault. The exposer surface is next: it spends an
-account's quota and can take every published preview URL down.
+**Every one of them needs an admin session** (`internal/daemon/secrets.go`), and an admin session exists only on a
+private path. Nothing else grants a write: not loopback, not an OpenZiti identity, not a zrok private share.
+
+**The projects surface is the most dangerous.** A project decides what command runs on the build host, and its
+environment variables are credentials handed to the process that runs it. That's a more direct route to running code
+on this machine than reading the vault. The exposer surface is next: it spends an account's quota and can take every
+published preview URL down.
 
 The one exception is **Rebuild**. Any signed-in user can press it, viewers too. A rebuild runs the command the project
 or the repository already set, at a commit already recorded, so it can't choose what runs.
 
-All of them are on the same listener as the dashboard, the previews and the webhook, so how reachable they are
-depends on your deployment, not on the code. **One of these must be true** before any of them will act
-(`internal/daemon/secrets.go`):
+A **viewer** session is refused with a reason the page shows.
 
-- **The request has an admin session.** This is authentication. Apart from the two overlay routes below, it's the only one
-  that can be true from another machine, which is the point of having a password and the only way to manage credentials remotely.
-- **The request came over an OpenZiti listener from an identity in `admin_identities`.** See below.
-- **The request came over a [`zrok_private` listener](./configuration.md#a-zrok_private-listener).** The share is in
-  closed permission mode, so zrok already limited who can connect to the owning account and its access grants.
-- **The request came from this machine**: a loopback `RemoteAddr` **and** no `X-Forwarded-For`, `X-Forwarded-Host`,
-  `X-Real-Ip` or `Forwarded` header. On top of that, every configured listener must be loopback, a ziti listener
-  naming `admin_identities`, or a `zrok_private` listener. A daemon bound to `0.0.0.0` refuses on this route however
-  local the request looks.
+`admin_identities` on a `ziti` listener no longer grants anything. The daemon still reads it, so an older config loads,
+and logs a warning when it is set.
 
-A **viewer** session doesn't fall through to the locality test. Signing in as a viewer says this caller is not an
-admin. Treating a viewer on loopback as admin would make signing in as a viewer give you more than not signing in.
-The request is refused with a reason the page shows.
-
-### Why the locality route needs both halves
-
-Checking where the daemon listens isn't enough, because of tunnels. `zrok2 share public http://127.0.0.1:8471`
-publishes every route the daemon serves while the listener is still loopback. A listener test alone would say yes
-with `/api/secrets` on the internet. With the vault unlocked, `PUT`, `DELETE` and generate would all work for anyone
-holding the share URL.
-
-`RemoteAddr` alone can't tell the difference either. In zrok's proxy mode the daemon sees the connection from the
-local tunnel process, so the address is loopback too, and `Host` is whatever the client sent. The forwarding-header
-test catches it. Anything that proxies to the daemon sets one of those headers, including NetFoundry Preview's own
-`webhook-only` proxy. A caller that adds a header itself only makes the check refuse more, which is the safe way to be
-wrong.
-
-### The locality route is a boundary, not authentication
-
-The locality test doesn't check a credential. It decides whether a request started on this machine from what the
-network setup tells it, not from anything the caller proves. It assumes nothing proxies to the daemon while stripping
-forwarding headers.
-
-So it's one of several routes, not the only one. **Set an admin password and the surface has authentication.** The
-locality route is there so a fresh installation with no password can be set up from its own machine. The boundary
-there is the same one that already protects `nfpreview vault set`: anyone who can reach `127.0.0.1` can run the
-binary, and the API gives them nothing a shell doesn't.
-
-To manage credentials from another machine, set the admin password.
-
-### Over an OpenZiti listener, the gate is an identity
-
-A request on a [`ziti` listener](./configuration.md#a-ziti-listener) is judged on **who dialed it**, not where it came
-from. That's stronger than the locality test, since the overlay authenticated the identity and there's no address to
-spoof. It's only as good as the grant, though, so the grant is an explicit list of identity ids on the listener:
-`admin_identities`.
-
-| | |
-|---|---|
-| An id in `admin_identities` | Can write |
-| A listener naming nobody | Read-only, and the default. Being enrolled on the network doesn't mean you may write a credential |
-| An enrolled id not on the list | Read-only. The refusal names the id, so adding it is a copy and paste |
-| No id at all | Refused. That's what a router that never sent the header produces, and "we can't tell who this is" is not a grant |
-
-The identity is recorded when the connection is accepted, not read from the request. `http.Server.ConnContext` is the
-only hook that sees the connection, and the grant belongs to the listener. It's stored under a context key only this
-package can write, so a value forged elsewhere in the process grants nothing.
-
-A mixed configuration is judged on its weakest listener. One `http.Server` serves them all, so allowing writes
-because *a* listener is loopback would allow them through the one that isn't.
-
-:::note Tested against a live overlay
-
-`TestOverlayAdminGrantFollowsTheRealDialer` binds a real service and grants one identity by the id the controller
-reports for it. The router names the dialer on every circuit, and the id it sends is the one the controller lists. The
-listed identity may write. An unlisted identity is refused, and the refusal names its id. Every overlay client has an
-identity, so the "no id at all" row is tested offline only. Point the test at your own network with the variables in
-`internal/daemon/listen_integration_test.go`.
-
-:::
 
 ### Point the tunnel at `webhook-only`, not the daemon
 
 This matters more than the header check. `nfpreview webhook-only` forwards only `POST` to its webhook paths:
 `/webhook/github` by default, or the paths you give it with `-path`, which you can repeat (`-path /webhook/bitbucket`).
 A `GET` on one of those paths gets a `405`, and everything else gets a `404`. The credential API isn't reachable
-through the tunnel at all, so the locality gate is a second line of defence instead of the only one. With `-zrok-name`
+through the tunnel at all, so the admin-session gate is a second line of defence instead of the only one. With `-zrok-name`
 it binds no local TCP port either. See the [webhook tunnel guide](../guides/webhook-tunnel.md).
 
 ### Reading is open to anyone past the login
@@ -428,8 +376,8 @@ running a minute fast fails every API call with a 401 that says nothing about cl
 
 ## Operational advice
 
-**Set both passwords first.** Run `nfpreview console password -role admin` and `-role viewer`. Until the viewer
-password exists nothing is gated. `nfpreview console status` shows what is set and what this daemon listens on.
+**Set both passwords first.** Run `nfpreview console password -role admin` and `-role viewer`. Every dashboard request
+needs a login. `nfpreview console status` shows what is set and what this daemon listens on.
 
 **Bind loopback, and don't share the daemon.** The default `listen` is `127.0.0.1:8471`. Run `nfpreview
 webhook-only` and point the tunnel at that. A share of the daemon itself publishes the dashboard, every preview and

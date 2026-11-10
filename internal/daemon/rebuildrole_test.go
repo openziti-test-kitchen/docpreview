@@ -32,8 +32,7 @@ func TestAViewerMayRebuildAndNothingElse(t *testing.T) {
 		return r
 	}
 
-	// A loopback listener, so the locality route is available in principle and the only thing
-	// refusing the remote request is the request itself.
+	// A loopback listener, so the only thing refusing the request is its missing session.
 	cfg := config.Server{Listeners: []config.Listener{{TCP: "127.0.0.1:8471"}}}
 	admin := &ProjectsAdmin{cfg: cfg, log: slog.New(slog.DiscardHandler)}
 

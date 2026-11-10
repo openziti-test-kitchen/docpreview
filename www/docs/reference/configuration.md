@@ -151,38 +151,16 @@ address on the underlay at all**. It gives the admin surface the same posture th
 |---|---|
 | `identity_file` | An enrolled identity, named by a **Bind** policy on the service. `nfpreview configure ziti` makes one. |
 | `service` | The service to bind. |
-| `admin_identities` | Identity **ids** allowed to edit projects and store credentials through this listener. Empty, the default, means the dashboard is read-only over it. |
 
-The first two are required. A `ziti` listener missing either one fails at startup instead of on the first request.
+Both are required. A `ziti` listener missing either one fails at startup instead of on the first request.
 `nfpreview doctor` goes further and binds each one. That's the only way to catch an identity that won't
 authenticate, or a service with no Bind policy naming it.
 
-#### Who can change things over the overlay
+The login applies over the overlay like everywhere else. A ziti listener is a
+[private path](./security.md#admin-needs-a-private-path), so the admin password works over it.
 
-The whole dashboard is served over a ziti listener. Two parts of it change things: projects, which decide what
-command runs on the build host, and credentials, which decide what it runs with. Both are refused unless the dialing
-identity is listed in `admin_identities`.
-
-```yaml
-listeners:
-  - ziti:
-      identity_file: "/home/you/.nfpreview/ziti/nfpreview-host.json"
-      service: "nfpreview-admin"
-      admin_identities: ["abc123"]
-```
-
-Get the ids from the **ID** column of `ziti edge list identities`, not the name column. A name can be changed on the
-controller without the grant following it, which would quietly widen or empty this list.
-
-:::note Empty means read-only, on purpose
-
-Being enrolled on the network doesn't mean you may write a credential. A listener that names nobody serves the
-dashboard, `/status` and every build log, and refuses every write with a message saying why. It doesn't show buttons
-that will only fail.
-
-The refusal names the identity it turned away, so adding it is a copy and paste.
-
-:::
+`admin_identities` used to let listed identities change things without a password. It no longer grants anything. The
+daemon still reads it so an older config loads, and logs a warning while it is set. Remove it.
 
 ### A `zrok_private` listener
 
@@ -214,7 +192,8 @@ zrok2 access private nfpadmin
 ```
 
 The login still applies. The admin password gives admin and the viewer password gives read-only, the same as on
-loopback.
+loopback. Admin works only on a private path like this one; see
+[Admin needs a private path](./security.md#admin-needs-a-private-path).
 
 :::note Public shares never carry the admin pages
 

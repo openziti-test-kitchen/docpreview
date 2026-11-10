@@ -292,10 +292,6 @@ func (a *ProjectsAdmin) Handler() http.Handler {
 
 // available reports whether this daemon may serve the write side at all.
 //
-// The same rule as the credential surface, deliberately sharing its reasoning
-// rather than restating it: on a loopback-only daemon the boundary is the one that
-// already protects the binary, and anyone who can reach 127.0.0.1 can edit the
-// database directly.
 // One rule, one implementation, shared with the credential surface — see
 // listenersAllowAdmin. A project row decides what command runs on the build host and the
 // vault decides which credentials it runs with; guarding them differently would mean
@@ -322,9 +318,9 @@ func (a *ProjectsAdmin) available() (bool, string) {
 // a preview and its comment, and the project and credential routes decide what command runs on
 // this host — none of those are recoverable by pressing the button again.
 //
-// No locality check and no listener check, which is the point: a viewer reaching this through the
-// read-only dashboard tunnel is exactly the caller it is for. The session is the credential, and
-// there is no path to a session without a password.
+// No admin check, which is the point: a viewer reaching this through the read-only dashboard
+// tunnel is exactly the caller it is for. The session is the credential, and there is no path to
+// a session without a password.
 func (a *ProjectsAdmin) rebuildGated(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch roleOfContext(r.Context()) {
@@ -332,8 +328,7 @@ func (a *ProjectsAdmin) rebuildGated(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		// No session. That is either an installation with no password set — where the locality
-		// gate is the only boundary there is — or a caller who never signed in.
+		// No session. requireLogin lets none through to here, so this refuses.
 		a.gated(next)(w, r)
 	}
 }

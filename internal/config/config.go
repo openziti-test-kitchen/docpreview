@@ -188,27 +188,8 @@ type ZitiListener struct {
 	// second instance its own service.
 	Service string `yaml:"service"`
 
-	// AdminIdentities are the overlay identities allowed to write through this listener —
-	// to edit projects and store credentials, the two surfaces that decide what runs on
-	// this host and with which secrets.
-	//
-	// **Empty means read-only, and that is the default.** Without it the whole
-	// authorization for a credential write would be "is enrolled on this network at all",
-	// which is not a decision anybody made about nfpreview. So the dashboard serves over
-	// the overlay, and the admin pages explain that they are read-only rather than
-	// pretending the buttons will work.
-	//
-	// Listed per listener rather than once for the daemon because that is the scope the
-	// grant belongs to: a network may bind one service for reviewers and another for
-	// operators, and those are different lists.
-	//
-	// The values are identity **ids** as the controller knows them — what
-	// `edge.ServiceConn.GetDialerIdentityId` reports, and what `ziti edge list identities`
-	// shows in its ID column. Not names: a name can be changed on the controller without
-	// the grant following it, which would silently widen or void this list.
-	//
-	// An identity that dials and is not here gets the read-only dashboard, and the refusal
-	// is logged with the id so an operator can copy it in.
+	// AdminIdentities grants nothing: admin needs the admin password on every connection. Still
+	// parsed so an existing config loads, and the daemon logs a warning when it is set.
 	AdminIdentities []string `yaml:"admin_identities"`
 }
 

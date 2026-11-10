@@ -51,12 +51,20 @@ func loginGet(h http.Handler, method, path string, cookie string) *httptest.Resp
 	return w
 }
 
-// With no viewer password nothing is gated. A feature that locks people out on upgrade is not shippable.
-func TestWithNoViewerPasswordEverythingIsOpen(t *testing.T) {
+// Every dashboard request needs a session, even with no password set and even from this machine.
+func TestWithNoPasswordTheDashboardIsClosed(t *testing.T) {
 	_, h := loginFixture(t)
-	for _, p := range []string{"/", "/status", "/logs/abc", "/pr"} {
-		if got := loginGet(h, http.MethodGet, p, "").Code; got != http.StatusOK {
-			t.Errorf("GET %s = %d with no password set, want 200", p, got)
+	for _, remote := range []string{"203.0.113.9:44444", "127.0.0.1:51000"} {
+		for _, p := range []string{"/", "/status", "/logs/abc", "/pr"} {
+			r := httptest.NewRequest(http.MethodGet, p, nil)
+			r.RemoteAddr = remote
+			r.Header.Set("Accept", "text/html")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusSeeOther {
+				t.Errorf("GET %s from %s = %d with no password set, want a redirect to the login page",
+					p, remote, w.Code)
+			}
 		}
 	}
 }
@@ -139,21 +147,6 @@ func TestLoopbackIsNotExemptFromTheLogin(t *testing.T) {
 	}
 }
 
-// Until a password exists, the local operator reaches everything, so the daemon does not need a
-// loopback exemption from the login to be safe on a fresh install or an upgrade.
-func TestLoopbackIsOpenUntilAPasswordExists(t *testing.T) {
-	_, h := loginFixture(t)
-
-	r := httptest.NewRequest(http.MethodGet, "/status", nil)
-	r.RemoteAddr = "127.0.0.1:51000"
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("GET /status from loopback with no password set = %d, want 200", w.Code)
-	}
-}
-
 // An API caller gets a 401 and a sentence rather than a redirect to a form.
 //
 // A fetch that receives an HTML login page has no way to report what went wrong: it either
@@ -177,7 +170,8 @@ func TestAnAPICallerGetsA401RatherThanAForm(t *testing.T) {
 	}
 }
 
-// A session reaches the handler, carrying its role.
+// A session reaches the handler, carrying its role. From off-machine an admin session carries
+// viewer: see TestAdminOnlyOnAPrivatePath.
 func TestASessionReachesTheHandlerWithItsRole(t *testing.T) {
 	i, h := loginFixture(t)
 	ctx := context.Background()
@@ -185,14 +179,75 @@ func TestASessionReachesTheHandlerWithItsRole(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, role := range []Role{RoleViewer, RoleAdmin} {
-		w := loginGet(h, http.MethodGet, "/status", i.console.issue(role, time.Now()))
+	for _, tc := range []struct{ role, want Role }{{RoleViewer, RoleViewer}, {RoleAdmin, RoleViewer}} {
+		w := loginGet(h, http.MethodGet, "/status", i.console.issue(tc.role, time.Now()))
 		if w.Code != http.StatusOK {
-			t.Errorf("a %s session got %d", role, w.Code)
+			t.Errorf("a %s session got %d", tc.role, w.Code)
 		}
-		if got := w.Header().Get("X-Role"); got != string(role) {
-			t.Errorf("the handler saw role %q, want %q", got, role)
+		if got := w.Header().Get("X-Role"); got != string(tc.want) {
+			t.Errorf("a %s session reached the handler as %q, want %q", tc.role, got, tc.want)
 		}
+	}
+}
+
+// Admin is honoured only over OpenZiti, zrok private, or a direct connection from this machine.
+// Anywhere else an admin session is a viewer, and the admin password is not even checked.
+func TestAdminOnlyOnAPrivatePath(t *testing.T) {
+	i, h := loginFixture(t)
+	ctx := context.Background()
+	if err := SetConsolePassword(ctx, i.console.store, RoleViewer, "a-viewer-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetConsolePassword(ctx, i.console.store, RoleAdmin, "an-admin-password"); err != nil {
+		t.Fatal(err)
+	}
+	admin := i.console.issue(RoleAdmin, time.Now())
+
+	for _, tc := range []struct {
+		name    string
+		remote  string
+		proxied bool
+		overlay bool
+		want    Role
+	}{
+		{name: "loopback", remote: "127.0.0.1:51000", want: RoleAdmin},
+		{name: "overlay", remote: "100.64.0.7:39000", overlay: true, want: RoleAdmin},
+		{name: "off-machine", remote: "203.0.113.9:44444", want: RoleViewer},
+		{name: "loopback behind a proxy", remote: "127.0.0.1:51000", proxied: true, want: RoleViewer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := func(method, path, body string) *http.Request {
+				r := httptest.NewRequest(method, path, strings.NewReader(body))
+				r.RemoteAddr = tc.remote
+				if tc.proxied {
+					r.Header.Set("X-Forwarded-For", "203.0.113.9")
+				}
+				if tc.overlay {
+					r = r.WithContext(context.WithValue(r.Context(), overlayKey{}, overlayCaller{Dialer: "id"}))
+				}
+				return r
+			}
+
+			r := req(http.MethodGet, "/status", "")
+			r.AddCookie(&http.Cookie{Name: consoleCookie, Value: admin})
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if got := w.Header().Get("X-Role"); got != string(tc.want) {
+				t.Errorf("an admin session reached the handler as %q, want %q", got, tc.want)
+			}
+
+			r = req(http.MethodPost, "/login", "username=admin&password=an-admin-password")
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w = httptest.NewRecorder()
+			i.login(w, r)
+			wantCode := http.StatusSeeOther
+			if tc.want != RoleAdmin {
+				wantCode = http.StatusUnauthorized
+			}
+			if w.Code != wantCode {
+				t.Errorf("admin login = %d, want %d", w.Code, wantCode)
+			}
+		})
 	}
 }
 
@@ -220,7 +275,7 @@ func TestLoginIssuesTheRoleThePasswordEarns(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/login",
 			strings.NewReader("username="+string(tc.want)+"&password="+tc.password))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		r.RemoteAddr = "203.0.113.9:44444"
+		r.RemoteAddr = "127.0.0.1:51000"
 		w := httptest.NewRecorder()
 		i.login(w, r)
 
@@ -285,6 +340,7 @@ func TestLoginRefusesAnOffsiteNext(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/login",
 			strings.NewReader("username=admin&password=an-admin-password&next="+next))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.RemoteAddr = "127.0.0.1:51000"
 		w := httptest.NewRecorder()
 		i.login(w, r)
 
@@ -297,6 +353,7 @@ func TestLoginRefusesAnOffsiteNext(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/login",
 		strings.NewReader("username=admin&password=an-admin-password&next=/projects"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.RemoteAddr = "127.0.0.1:51000"
 	w := httptest.NewRecorder()
 	i.login(w, r)
 	if got := w.Header().Get("Location"); got != "/projects" {
@@ -323,7 +380,8 @@ func TestAViewerSessionCannotWrite(t *testing.T) {
 	}
 }
 
-// An admin session may write from anywhere, which is the entire point of having a password.
+// An admin role that reached the write gate may write. requireLogin has already confined it to a
+// private path (TestAdminOnlyOnAPrivatePath), so the gate does not judge the address again.
 func TestAnAdminSessionMayWriteFromAnywhere(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "/api/secrets/github.app_id", nil)
 	r.RemoteAddr = "203.0.113.9:44444"

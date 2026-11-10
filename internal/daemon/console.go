@@ -22,12 +22,8 @@ import (
 
 // A login on the whole dashboard, with two roles.
 //
-// # What this adds on top of the locality gate
-//
-// The locality gate (isLocalRequest, Available) is a boundary rather than authentication — it answers "did
-// this originate on this machine", not "who is this". Login adds the second question: administering
-// nfpreview from anywhere but the machine itself, and reading it without publishing it to everyone who
-// finds the URL, both need an identity check the locality gate cannot provide.
+// Every dashboard request needs a session. Where a request came from never stands in for one: it only
+// decides whether an admin session is honoured (see privatePath).
 //
 // Two roles, because those are the two audiences:
 //
@@ -72,12 +68,9 @@ import (
 //     (`oauth_provider`, `oauth_email_domains`), so an unauthenticated request never reaches
 //     this process.
 //   - **Frontdoor** has the same idea per share (`authProviderId`, `oauthEmailDomains`).
-//   - **OpenZiti** has no such notion, so the equivalent is two services: one bound for
-//     viewers and one for admins, with `admin_identities` naming who may write on the second.
-//     A reviewer holding the viewer service's grant cannot reach the admin one at all.
+//   - **OpenZiti** limits who can dial the service at all, through its service policies.
 //
-// The passwords here are what covers everything else: a bare TCP listener, a tunnel with no
-// OAuth configured, and the first login on a fresh host.
+// The passwords here apply on top of all of those, on every connection.
 
 // Role is what a session is allowed to do.
 type Role string
@@ -292,16 +285,6 @@ func (c *console) hashFor(ctx context.Context, role Role) string {
 		return ""
 	}
 	return v
-}
-
-// loginRequired reports whether an unauthenticated request should be sent to the login page.
-//
-// False when no viewer *or* admin password is set, which is every installation that has not
-// opted in: the dashboard stays open, exactly as before. Setting only an admin password
-// protects the write surfaces and leaves reading open, which is a reasonable arrangement and
-// the reason this is not simply "is any password set".
-func (c *console) loginRequired(ctx context.Context) bool {
-	return c.hashFor(ctx, RoleViewer) != ""
 }
 
 // anyPasswordSet reports whether logging in is possible at all, which is what decides whether

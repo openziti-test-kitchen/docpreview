@@ -24,8 +24,10 @@ admin password you get the whole daemon, admin pages included. With the viewer p
 
 - **The share is closed.** Only the zrok account that owns the install, and any accounts you list in
   `access_grants`, can open it. Nobody else can even reach the login page.
-- **The login still applies.** Getting through zrok gets you to the sign-in form, not past it. The admin password
-  is the admin password everywhere.
+- **The login still applies.** Every dashboard connection needs a password, this one included. Getting through
+  zrok gets you to the sign-in form, not past it.
+- **Admin only works on a private path.** That means zrok private, OpenZiti, or the machine itself. Anywhere else,
+  the admin password is refused and an admin session counts as a viewer.
 - **Public stays public-only.** The public dashboard still goes out through `nfpreview dashboard-only`, which only
   forwards the dashboard's own routes. Every admin page and admin API answers 404 there, even for someone signed in
   as admin. We tested exactly that.

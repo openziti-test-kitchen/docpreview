@@ -110,7 +110,7 @@ exposer: zrok2
 driver:  docker
 listen:  tcp 127.0.0.1:8471
 key:     none — the daemon starts locked and is unlocked from the dashboard
-login:   none — anyone who can reach this daemon can read it (nfpreview console password -role viewer)
+login:   no password set, so the dashboard is closed to everyone (nfpreview console password -role admin)
 scm:     none — set local.enabled or github.app_id to receive webhooks
 
 all checks passed
@@ -298,7 +298,7 @@ driver:  docker
 listen:  tcp 127.0.0.1:8471
 vault:   C:\Users\you\.nfpreview\vault.age (2 secrets)
 key:     none — the daemon starts locked and is unlocked from the dashboard
-login:   none — anyone who can reach this daemon can read it (nfpreview console password -role viewer)
+login:   no password set, so the dashboard is closed to everyone (nfpreview console password -role admin)
 scm:     github (app 1234567)
 
 all checks passed
@@ -345,13 +345,21 @@ to that build's log, which tails as it runs. Without it, both are plain text.
 
 ### 10. Open the dashboard
 
+Every dashboard request needs a login, so set the admin password first:
+
+```sh
+nfpreview console password -role admin
+```
+
+Then open the dashboard and sign in as `admin`:
+
 ```text
 http://127.0.0.1:8471/
 ```
 
 Every preview, the activity feed, and each build's log, live. Two more pages, **Settings** and **Projects**, are
-linked from it, but only when you open it on the machine running the daemon. From anywhere else the links are absent,
-because the daemon would refuse the writes they lead to.
+linked from it for an admin session. Admin works only over a private path: this machine, an ssh tunnel, zrok private
+or OpenZiti. See [Admin needs a private path](./reference/security.md#admin-needs-a-private-path).
 
 The link in the comment is the **branch** URL and always serves the latest build. A rebuild serves the new build on
 the same share, so a push costs no zrok calls. To give every build its own URL as well, pinned to its commit, set

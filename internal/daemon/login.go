@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -43,10 +44,11 @@ import (
 // which is why `isLocalRequest` also demands the absence of forwarding headers. Betting the whole login on
 // loopback alone would make every visitor an admin the moment something proxies without setting one.
 //
-// The bootstrap does not need the exemption. `loginRequired` is false until a password exists,
-// so a fresh installation is open at 127.0.0.1 exactly as before, and the CLI that sets the
-// first password reads the store directly rather than going through this mux. Once a password
-// exists, the local operator types it like everyone else.
+// # Every dashboard request needs a session
+//
+// There is no unauthenticated reading, not even on a fresh installation with no password set: the
+// login page then says how to set one. The CLI that sets the first password reads the store
+// directly rather than going through this mux, so nothing here is needed to bootstrap.
 
 // roleKey types the role a middleware records for the request. Unexported and an empty struct,
 // so nothing outside this package can claim a role by writing a context value.
@@ -97,18 +99,15 @@ func (i *Ingress) requireLogin(next http.Handler) http.Handler {
 		// request with an admin session must be allowed to write even though this middleware
 		// lets every authenticated role through.
 		role := i.console.roleOfRequest(r)
+		if role == RoleAdmin && !privatePath(r) {
+			role = RoleViewer
+		}
 		if role != RoleNone {
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), roleKey{}, role)))
 			return
 		}
 
 		if openPath(r.URL.Path) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// No viewer password means reading is open. The write surfaces are still gated by their own rules.
-		if !i.console.loginRequired(r.Context()) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -124,11 +123,34 @@ func (i *Ingress) requireLogin(next http.Handler) http.Handler {
 	})
 }
 
-// requireAdmin is the second half, for the routes that change something.
+// privatePath reports whether a request arrived by a path that may carry admin: an overlay
+// listener (OpenZiti or zrok private), or a direct connection from this machine with no proxy in
+// between.
 //
-// Not used as middleware: the two admin surfaces have their own gates, which already combine
-// the daemon-wide and per-request checks, and this feeds those rather than replacing them. See
-// isLocalRequest.
+// Everything else is read-only whatever the session says, so an admin password typed into a
+// public dashboard, or a stolen admin cookie replayed through one, buys a viewer and nothing more.
+// The public dashboard and webhook proxies reach the daemon on 127.0.0.1, which is why a
+// forwarding header disqualifies a loopback request.
+func privatePath(r *http.Request) bool {
+	if _, ok := overlayCallerFrom(r.Context()); ok {
+		return true
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return isLoopback(host) && !forwarded(r)
+}
+
+// forwarded reports whether any proxy forwarding header is set.
+func forwarded(r *http.Request) bool {
+	for _, h := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Real-Ip", "Forwarded"} {
+		if r.Header.Get(h) != "" {
+			return true
+		}
+	}
+	return false
+}
 
 // wantsJSON reports whether a caller would rather have an error than a page.
 //
@@ -201,7 +223,7 @@ func (i *Ingress) login(w http.ResponseWriter, r *http.Request) {
 	// Nothing to log into. Saying so beats a form that refuses every password with no explanation.
 	if !i.console.anyPasswordSet(ctx) {
 		i.serveLogin(w, "", "No password is set on this daemon, so there is nothing to log in to. "+
-			"Set one with: nfpreview console password -role viewer", http.StatusOK)
+			"Set one on the host with: nfpreview console password -role admin", http.StatusOK)
 		return
 	}
 
@@ -217,6 +239,15 @@ func (i *Ingress) login(w http.ResponseWriter, r *http.Request) {
 	password := r.PostFormValue("password")
 	next := r.PostFormValue("next")
 	role := RoleFromUsername(r.PostFormValue("username"))
+
+	// An admin session off a private path would be downgraded to viewer on every request, so the
+	// password is not checked at all: typing it into a public page should not even confirm it.
+	// The same message as a wrong password, so the page stays no oracle for the account list.
+	if role == RoleAdmin && !privatePath(r) {
+		i.log.Warn("refused an admin login off a private path", "remote", r.RemoteAddr)
+		i.serveLogin(w, next, "That username and password were not accepted.", http.StatusUnauthorized)
+		return
+	}
 
 	if !i.console.Verify(ctx, role, password) {
 		// One message for every way this fails: an unknown username, a role with no password
