@@ -34,6 +34,32 @@ import (
 // would be rude.
 const targetPrefix = "nfpreview:"
 
+// legacyTargetPrefix is the tag releases up to v0.4.9 wrote, when the program was called
+// docpreview.
+//
+// Recognised as ours wherever a share is listed: adopted at startup, reaped when nothing
+// claims it, and reclaimed when it holds a name a preview needs. Without this an upgraded
+// daemon neither adopts nor reaps the shares the old one left, and each of them still holds
+// the reserved name its preview republishes under, so every restored preview fails to publish.
+// An adopted share keeps the old tag until its preview next gets a share of its own, so this
+// stays.
+const legacyTargetPrefix = "docpreview:"
+
+// listTargetFilter is the substring passed to ListShares. The controller's Target filter is a
+// substring match, so this one call returns both spellings; ownedKey then checks the prefix.
+const listTargetFilter = "preview:"
+
+// ownedKey reports whether a share's Target is one this program wrote, under either name, and
+// returns the publication key it carries.
+func ownedKey(target string) (string, bool) {
+	for _, p := range []string{targetPrefix, legacyTargetPrefix} {
+		if key, ok := strings.CutPrefix(target, p); ok {
+			return key, true
+		}
+	}
+	return "", false
+}
+
 // Zrok publishes previews over an OpenZiti overlay using zrok v2.
 //
 // The v2 model is what makes this work cleanly. In v1 a stable public address
@@ -418,7 +444,7 @@ func (z *Zrok) Adoptable(ctx context.Context) (map[string]Adoptable, error) {
 	}
 
 	envZID := z.root.Environment().ZitiIdentity
-	prefix := targetPrefix
+	prefix := listTargetFilter
 
 	params := metadata.NewListSharesParamsWithContext(ctx)
 	params.EnvZID = &envZID
@@ -434,7 +460,11 @@ func (z *Zrok) Adoptable(ctx context.Context) (map[string]Adoptable, error) {
 
 	out := make(map[string]Adoptable, len(resp.Payload.Shares))
 	for _, shr := range resp.Payload.Shares {
-		if shr == nil || !strings.HasPrefix(shr.Target, prefix) {
+		if shr == nil {
+			continue
+		}
+		key, ours := ownedKey(shr.Target)
+		if !ours {
 			continue
 		}
 		// No endpoint, no adoption. The URL goes into a pull request comment, so a
@@ -447,7 +477,7 @@ func (z *Zrok) Adoptable(ctx context.Context) (map[string]Adoptable, error) {
 		if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
 			origin = "https://" + origin
 		}
-		out[strings.TrimPrefix(shr.Target, prefix)] = Adoptable{Handle: shr.ShareToken, Origin: origin}
+		out[key] = Adoptable{Handle: shr.ShareToken, Origin: origin}
 	}
 	return out, nil
 }
@@ -616,7 +646,7 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 	}
 
 	envZID := z.root.Environment().ZitiIdentity
-	prefix := targetPrefix
+	prefix := listTargetFilter
 
 	params := metadata.NewListSharesParamsWithContext(ctx)
 	params.EnvZID = &envZID
@@ -646,10 +676,11 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 		}
 		// Defend against the substring filter matching something that merely
 		// contains our prefix rather than starting with it.
-		if !strings.HasPrefix(shr.Target, prefix) {
+		key, ours := ownedKey(shr.Target)
+		if !ours {
 			continue
 		}
-		if keep[strings.TrimPrefix(shr.Target, prefix)] {
+		if keep[key] {
 			continue
 		}
 		z.log.Info("reaping orphaned zrok share", "token", shr.ShareToken, "target", shr.Target)
@@ -1147,7 +1178,7 @@ func (z *Zrok) reapName(ctx context.Context, name string) bool {
 	}
 
 	envZID := z.root.Environment().ZitiIdentity
-	prefix := targetPrefix
+	prefix := listTargetFilter
 
 	params := metadata.NewListSharesParamsWithContext(ctx)
 	params.EnvZID = &envZID
@@ -1160,7 +1191,10 @@ func (z *Zrok) reapName(ctx context.Context, name string) bool {
 
 	deleted := false
 	for _, shr := range resp.Payload.Shares {
-		if shr == nil || !strings.HasPrefix(shr.Target, prefix) {
+		if shr == nil {
+			continue
+		}
+		if _, ours := ownedKey(shr.Target); !ours {
 			continue
 		}
 		if !endpointsMatchName(shr.FrontendEndpoints, name) {

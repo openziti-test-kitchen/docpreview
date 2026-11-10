@@ -173,7 +173,7 @@ the reason to refuse it is architectural rather than about tokens.
 Bitbucket's refresh tokens can rotate: the refresh response may contain a new refresh token, and the old one stops
 working. That makes the credential *mutable state owned by the request path* — and this daemon's credential store is
 an age-encrypted file that can be **locked**, that a human unlocks through the dashboard, and that the daemon is
-specifically designed not to read during wiring (`cmd/nfpreview/CLAUDE.md`). A client that must write a new
+specifically designed not to read during wiring. A client that must write a new
 refresh token into the vault from inside `Publish` introduces: a vault write on a hot path, two concurrent
 `Publish` calls racing to store two different refresh tokens, a restart window in which the token in the vault is
 the one that was just invalidated, and an authentication failure mode whose fix is "clear the vault key and do the
@@ -728,8 +728,8 @@ from a screenshot of the dialog, not from the API error strings.**
 | Ceiling | documented per endpoint class | rolling one-hour window, scaled by the workspace's paid seat count |
 | Secondary limit | yes, a 403 with non-zero remaining | not documented as a separate mechanism |
 
-Two traps, and this codebase has already been bitten by the first one on the other platform. `internal/scm/CLAUDE.md`
-records that `X-RateLimit-Reset` was parsed as RFC3339 when it is epoch seconds, so every rate-limited response
+Two traps, and this codebase has already been bitten by the first one on the other platform. GitHub's
+`X-RateLimit-Reset` was once parsed as RFC3339 when it is epoch seconds, so every rate-limited response
 reported a zero wait. Bitbucket's `Retry-After` is the mirror image: it is *usually* an integer and *may* be an
 HTTP-date, so a parser that only handles the integer form will silently produce zero on the day it is a date. Handle
 both, and keep the existing distinction between an explicit zero (retry now) and an absent header (no idea, use the
@@ -974,7 +974,7 @@ Everything above works without them.
 **Stage 9 — documentation.** A `www/docs/guides/bitbucket.md` sibling to the GitHub App runbook, including the
 attribution warning and the per-repository-webhook limit; then `docs/design/09-scm.md` (whose Bitbucket section says
 "interface only"), `docs/design/README.md`, `README.md:187`, and `www/docs/quickstart.md:31`. And fold
-this document into 09-scm.md, per the rule in `CLAUDE.md` that a plan which lands is deleted.
+this document into 09-scm.md, per the rule that a plan which lands is deleted.
 
 ## How each claim here was established
 

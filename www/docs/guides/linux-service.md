@@ -411,6 +411,7 @@ sudo systemctl enable --now nfpreview-dashboard
 | Restart | `sudo systemctl restart nfpreview`. Previews adopt their existing shares and come back at the same URLs |
 | Back up | `/var/lib/nfpreview` and `/etc/nfpreview/master.key`. That is everything |
 | Move it | [Move an installation](./move-an-installation.md) |
+| Installed as `docpreview` (v0.4.9 or earlier) | [Upgrade from docpreview](./migrate-from-docpreview.md) |
 
 :::danger One daemon per zrok environment
 

@@ -53,13 +53,6 @@ them by line number, so edit them with care.
 | [ziti-native-previews.md](ziti-native-previews.md) | Tunneler-only previews: the evidence behind the ziti exposer, per-preview authorization, effort |
 | [vercel-features.md](vercel-features.md) | Vercel preview features nfpreview lacks, and a verdict on each |
 
-## CLAUDE.md files
-
-Each substantial directory carries one: the root, `cmd/nfpreview/`, `internal/daemon/`, `internal/vault/`,
-`internal/expose/`, `internal/scm/`, `demo/` and `www/`. They are the short version — the rules that must not be
-relaxed and the traps that have already caught somebody — and they point here for the reasoning. Keep them
-consistent with these documents; a CLAUDE.md that contradicts a design doc is worse than one that is missing.
-
 ## How to read a rule in these documents
 
 **Reasoning lives here, not in the code.** Comments in the source describe what the code does; where a rule needs

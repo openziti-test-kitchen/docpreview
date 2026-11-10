@@ -77,8 +77,8 @@ browser. Both are fixed and written up in [16-exposer-zrok.md](16-exposer-zrok.m
 changed as a result, which is the useful part of the answer.
 
 The running arrangement — three processes, in order, and the two config traps that cost an afternoon each — is in
-the root `CLAUDE.md`, which is where it belongs now that it is a thing somebody does rather than a thing somebody is
-planning.
+the [Linux service guide](../../www/docs/guides/linux-service.md), which is where it belongs now that it is a thing
+somebody does rather than a thing somebody is planning.
 
 ## What this exercise has cost so far
 

@@ -30,6 +30,22 @@ func TestHasMarkerMatchesEveryStyleEverWritten(t *testing.T) {
 	}
 }
 
+// TestHasMarkerMatchesTheDocpreviewSpellings covers comments written before the rename.
+// Releases up to v0.4.9 were called docpreview, and their comments are still on open
+// pull requests. A matcher that missed them would post a second comment on each one at
+// the first nfpreview build.
+func TestHasMarkerMatchesTheDocpreviewSpellings(t *testing.T) {
+	for _, marker := range []string{"<!-- docpreview:abc123 -->", "[docpreview]: #abc123"} {
+		body := marker + "\n\n**Documentation preview**\n"
+		if !HasMarker(body, "abc123") {
+			t.Errorf("%q is not recognised; every open pull request would get a second comment", marker)
+		}
+		if HasMarker(body, "def456") {
+			t.Errorf("%q matched another preview's id", marker)
+		}
+	}
+}
+
 // TestMarkerStyleRenderings pins the two syntaxes, because each is chosen for what a
 // specific renderer does with it and a plausible-looking edit breaks that silently —
 // the marker still matches, and only the rendered comment is wrong.

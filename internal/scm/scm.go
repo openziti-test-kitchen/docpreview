@@ -393,7 +393,14 @@ func MarkerFor(previewID string, s MarkerStyle) string {
 // this function is the one change that cannot be made safely, however dead the old
 // style looks: the comments are on somebody else's server and outlive every release
 // of this program.
+//
+// The same rule covers the program's own name. Releases up to v0.4.9 were called
+// docpreview and wrote `docpreview` in both styles, and those comments are still on
+// open pull requests. Matching them lets the first nfpreview build edit the existing
+// comment, which rewrites its marker to the new spelling, instead of posting a second.
 func HasMarker(body, previewID string) bool {
 	return strings.Contains(body, MarkerFor(previewID, MarkerHTMLComment)) ||
-		strings.Contains(body, MarkerFor(previewID, MarkerLinkRef))
+		strings.Contains(body, MarkerFor(previewID, MarkerLinkRef)) ||
+		strings.Contains(body, fmt.Sprintf("<!-- docpreview:%s -->", previewID)) ||
+		strings.Contains(body, fmt.Sprintf("[docpreview]: #%s", previewID))
 }
