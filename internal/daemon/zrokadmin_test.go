@@ -45,10 +45,9 @@ func zrokAdminFixture(t *testing.T, scope expose.ZrokScope) (*ZrokAdmin, http.Ha
 
 func zrokPost(h http.Handler, path string, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
-	r.RemoteAddr = "127.0.0.1:5000"
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	h.ServeHTTP(w, fromCaller(r, localCaller))
 	return w
 }
 
@@ -112,9 +111,8 @@ func TestTheZrokStateNeverCarriesTheAccountToken(t *testing.T) {
 
 	_, h := zrokAdminFixture(t, expose.ZrokProject)
 	r := httptest.NewRequest(http.MethodGet, "/api/zrok", nil)
-	r.RemoteAddr = "127.0.0.1:5000"
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	h.ServeHTTP(w, fromCaller(r, localCaller))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET /api/zrok = %d", w.Code)

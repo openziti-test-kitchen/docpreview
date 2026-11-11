@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -23,21 +24,29 @@ func testAdmin(t *testing.T, listen string) (*SecretsAdmin, http.Handler) {
 	return a, a.Handler()
 }
 
-// do issues a request that looks like it came from this machine.
-//
-// The RemoteAddr override is load-bearing. httptest.NewRequest defaults it to
-// 192.0.2.1:1234, which the locality gate correctly refuses — so without this
-// every write test would assert the 403 path and none would cover the behaviour
-// they were written for.
+// do issues a request from this machine carrying an admin session, as requireLogin would pass it on.
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	return doFrom(t, h, method, path, body, "127.0.0.1:54321", nil)
+	return doAs(t, h, method, path, body, "127.0.0.1:54321", nil, RoleAdmin)
 }
 
-// doFrom issues a request from a chosen address, optionally with headers, for the
-// tests that are about the locality gate itself.
+// doFrom issues a request with no session from a chosen address, optionally with headers.
 func doFrom(t *testing.T, h http.Handler, method, path, body, remote string,
 	headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	return doAs(t, h, method, path, body, remote, headers, RoleNone)
+}
+
+// asRole attaches a session role to a request, as requireLogin does.
+func asRole(r *http.Request, role Role) *http.Request {
+	if role == RoleNone {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), roleKey{}, role))
+}
+
+func doAs(t *testing.T, h http.Handler, method, path, body, remote string,
+	headers map[string]string, role Role) *httptest.ResponseRecorder {
 	t.Helper()
 	var r *http.Request
 	if body == "" {
@@ -50,57 +59,25 @@ func doFrom(t *testing.T, h http.Handler, method, path, body, remote string,
 		r.Header.Set(k, v)
 	}
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, r)
+	h.ServeHTTP(rec, asRole(r, role))
 	return rec
 }
 
-func TestSecretsRefusedOnANonLoopbackListener(t *testing.T) {
-	// The gate this whole surface depends on. A credential-write endpoint on an
-	// address other people can reach has no authentication in front of it, and
-	// that is worse than having no UI at all.
-	_, h := testAdmin(t, "0.0.0.0:8471")
+// Without an admin session every write is refused, even from this machine.
+func TestSecretsWriteRefusedWithoutAnAdminSession(t *testing.T) {
+	_, h := testAdmin(t, "127.0.0.1:8471")
 
-	for _, tc := range []struct{ method, path, body string }{
-		{"POST", "/api/secrets/unlock", `{"key":"hunter2"}`},
-		{"PUT", "/api/secrets/github.webhook_secret", `{"value":"x"}`},
-		{"DELETE", "/api/secrets/github.webhook_secret", ""},
-	} {
-		rec := do(t, h, tc.method, tc.path, tc.body)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("%s %s = %d, want 403", tc.method, tc.path, rec.Code)
+	for _, role := range []Role{RoleNone, RoleViewer} {
+		for _, tc := range []struct{ method, path, body string }{
+			{"POST", "/api/secrets/unlock", `{"key":"hunter2"}`},
+			{"PUT", "/api/secrets/github.webhook_secret", `{"value":"x"}`},
+			{"DELETE", "/api/secrets/github.webhook_secret", ""},
+		} {
+			rec := doAs(t, h, tc.method, tc.path, tc.body, "127.0.0.1:54321", nil, role)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("role %q: %s %s = %d, want 403", role, tc.method, tc.path, rec.Code)
+			}
 		}
-	}
-
-	// The read path still answers, and explains itself. A feature that vanishes
-	// with no reason reads as broken.
-	rec := do(t, h, "GET", "/api/secrets", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET = %d, want 200", rec.Code)
-	}
-	var st secretsState
-	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
-		t.Fatal(err)
-	}
-	if st.Available {
-		t.Error("available on a wildcard listener")
-	}
-	if !strings.Contains(st.Reason, "0.0.0.0:8471") {
-		t.Errorf("the reason does not name the listener: %q", st.Reason)
-	}
-}
-
-func TestSecretsRefusedWithAZitiListener(t *testing.T) {
-	cfg := config.DefaultServer()
-	cfg.DataDir = t.TempDir()
-	cfg.Listeners = []config.Listener{{Ziti: &config.ZitiListener{
-		IdentityFile: "id.json", Service: "admin",
-	}}}
-
-	a := NewSecretsAdmin(cfg, slog.New(slog.DiscardHandler), func(string) {})
-	if ok, why := a.Available(); ok {
-		t.Error("available behind a ziti listener with no identity check")
-	} else if !strings.Contains(why, "identity") {
-		t.Errorf("the reason does not say why: %q", why)
 	}
 }
 
@@ -296,13 +273,7 @@ func TestSecretsWriteRefusedWhileLocked(t *testing.T) {
 	}
 }
 
-// The locality gate. Available() asks whether the daemon's *listeners* are
-// loopback; these ask whether a *request* came from this machine. The gap between
-// the two is a tunnel: `zrok2 share public http://127.0.0.1:8471` publishes every
-// route on the internet while the listener is still loopback, so Available says
-// yes and the credential API is exposed. RemoteAddr does not close that gap on
-// its own — under a tunnel the daemon sees the connection from the local tunnel
-// process — which is why the forwarding headers are checked too.
+// With no session, no address grants a write: not another machine, not loopback behind a proxy.
 
 func TestSecretsWriteRefusedFromARemoteAddress(t *testing.T) {
 	a, h := testAdmin(t, "127.0.0.1:8471")
@@ -382,14 +353,14 @@ func TestSecretsLocalReadReportsWritable(t *testing.T) {
 	}
 }
 
-func TestIsLocalRequestAcceptsEveryLoopbackForm(t *testing.T) {
+func TestPrivatePathAcceptsEveryLoopbackForm(t *testing.T) {
 	// 127.0.0.53 is loopback and is what systemd-resolved uses, so a check that
 	// only accepted 127.0.0.1 would refuse a legitimate local caller.
 	for _, remote := range []string{"127.0.0.1:54321", "[::1]:54321", "127.0.0.53:9"} {
 		r := httptest.NewRequest("GET", "/", nil)
 		r.RemoteAddr = remote
-		if ok, why := isLocalRequest(r); !ok {
-			t.Errorf("%s was refused: %s", remote, why)
+		if !privatePath(r) {
+			t.Errorf("%s was not a private path", remote)
 		}
 	}
 }

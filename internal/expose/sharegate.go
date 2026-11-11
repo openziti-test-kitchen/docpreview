@@ -38,6 +38,7 @@ const (
 	ShareReasonReclaim   = "reclaim"
 	ShareReasonWebhook   = "webhook listener"
 	ShareReasonDashboard = "dashboard listener"
+	ShareReasonAdmin     = "admin listener"
 )
 
 // File names inside the zrok environment directory. Beside the environment rather than in data_dir

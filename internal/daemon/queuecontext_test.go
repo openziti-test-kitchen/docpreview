@@ -48,8 +48,7 @@ func TestADroppedRequestDoesNotCancelABranchBuild(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/projects/bitbucket/netfoundry/k8s-on-prem-installations/branch", nil).
 		WithContext(reqCtx)
-	r.RemoteAddr = localCaller
-	h.ServeHTTP(rec, r)
+	h.ServeHTTP(rec, fromCaller(r, localCaller))
 
 	if workErr != nil {
 		t.Fatalf("the branch build's context was cancelled with the request: %v", workErr)

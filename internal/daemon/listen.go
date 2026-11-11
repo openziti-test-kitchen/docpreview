@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"strings"
 
 	"github.com/openziti/sdk-golang/ziti"
 	"github.com/openziti/sdk-golang/ziti/edge"
@@ -50,9 +49,12 @@ func Open(listeners []config.Listener, log *slog.Logger) (*Listeners, error) {
 			ln  net.Listener
 			err error
 		)
-		if l.Ziti != nil {
-			ln, err = open.openZiti(*l.Ziti)
-		} else {
+		switch {
+		case l.Ziti != nil:
+			ln, err = open.openZiti(*l.Ziti, log)
+		case l.ZrokPrivate != nil:
+			ln, err = open.openZrokPrivate(*l.ZrokPrivate, log)
+		default:
 			ln, err = net.Listen("tcp", l.TCP)
 		}
 		if err != nil {
@@ -76,7 +78,7 @@ func Open(listeners []config.Listener, log *slog.Logger) (*Listeners, error) {
 // nothing about them. The error text names the Bind policy because a missing
 // one is the overwhelmingly common cause and the SDK's own message does not
 // mention policies at all.
-func (ls *Listeners) openZiti(cfg config.ZitiListener) (net.Listener, error) {
+func (ls *Listeners) openZiti(cfg config.ZitiListener, log *slog.Logger) (net.Listener, error) {
 	zctx, err := ziti.NewContextFromFile(cfg.IdentityFile)
 	if err != nil {
 		return nil, fmt.Errorf("loading the ziti identity %s "+
@@ -98,38 +100,26 @@ func (ls *Listeners) openZiti(cfg config.ZitiListener) (net.Listener, error) {
 	// Recorded only once the bind succeeded, so the failure paths above own
 	// their own cleanup and Close never double-closes a context.
 	ls.contexts = append(ls.contexts, zctx)
-	return &overlayListener{Listener: ln, admins: adminSet(cfg.AdminIdentities)}, nil
+	if len(cfg.AdminIdentities) > 0 {
+		log.Warn("admin_identities on this ziti listener grants nothing: admin needs the admin "+
+			"password on every connection; remove it from the config", "service", cfg.Service)
+	}
+	return &overlayListener{Listener: ln}, nil
 }
 
-// adminSet indexes a listener's admin identities.
+// overlayListener tags every connection it accepts as having arrived over the overlay, with who
+// dialed it.
 //
-// A nil map for an empty list, which is the default: every lookup then misses, which is the
-// read-only answer. Fail-closed by construction rather than by remembering to check the
-// length somewhere.
-func adminSet(ids []string) map[string]bool {
-	if len(ids) == 0 {
-		return nil
-	}
-	out := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		if id = strings.TrimSpace(id); id != "" {
-			out[id] = true
-		}
-	}
-	return out
-}
-
-// overlayListener tags every connection it accepts with who dialed it and whether that
-// identity may write.
-//
-// The decision is made here, at accept, for one reason: `http.Server.ConnContext` is handed
-// a `net.Conn` and nothing else, so by the time a request is being served there is no way
-// back to *which listener* it arrived on — and the admin grant is a property of the listener.
-// One http.Server serves every listener, so without this tag a two-listener config could not
-// tell an operator's service from a reviewer's.
+// The tag is made here, at accept, because `http.Server.ConnContext` is handed a `net.Conn` and
+// nothing else, so by the time a request is being served there is no way back to which listener
+// it arrived on. The tag grants nothing by itself: it is what lets privatePath honour an admin
+// session on this connection.
 type overlayListener struct {
 	net.Listener
-	admins map[string]bool
+
+	// label stands in for the dialer when the overlay reports none, so the request is still
+	// recognised as having arrived over the overlay.
+	label string
 }
 
 func (l *overlayListener) Accept() (net.Conn, error) {
@@ -137,26 +127,17 @@ func (l *overlayListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &overlayConn{Conn: c, dialer: dialerOf(c), admins: l.admins}, nil
+	dialer := dialerOf(c)
+	if dialer == "" {
+		dialer = l.label
+	}
+	return &overlayConn{Conn: c, dialer: dialer}, nil
 }
 
-// overlayConn carries the dialing identity and the grant through to ConnContext.
+// overlayConn carries the dialing identity through to ConnContext.
 type overlayConn struct {
 	net.Conn
 	dialer string
-	admins map[string]bool
-}
-
-// mayWrite reports whether this connection's dialer may use the admin surfaces.
-//
-// Empty identity is refused, always. That is what both a non-overlay connection and a router
-// that never sent the header produce, and treating "we could not tell" as "allowed" is how a
-// credential surface ends up open.
-func (c *overlayConn) mayWrite() bool {
-	if c.dialer == "" {
-		return false
-	}
-	return c.admins[c.dialer]
 }
 
 // dialerOf reads the dialing identity from an accepted overlay connection.
@@ -180,11 +161,6 @@ type overlayKey struct{}
 type overlayCaller struct {
 	// Dialer is the identity id the controller reported, empty for a plain TCP connection.
 	Dialer string
-
-	// MayWrite is whether that identity is in this listener's admin list. Decided at
-	// accept, because the grant belongs to the listener and a request cannot see which one
-	// it came from.
-	MayWrite bool
 }
 
 // ConnContext stamps the accepted connection's overlay identity onto every request served on
@@ -198,8 +174,7 @@ func ConnContext(ctx context.Context, c net.Conn) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, overlayKey{}, overlayCaller{
-		Dialer:   oc.dialer,
-		MayWrite: oc.mayWrite(),
+		Dialer: oc.dialer,
 	})
 }
 

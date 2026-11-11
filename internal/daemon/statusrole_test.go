@@ -71,32 +71,6 @@ func TestBothStatusPayloadsCarryTheSessionRole(t *testing.T) {
 	})
 }
 
-// An unauthenticated request reports no role, so the page offers no sign-out to somebody who
-// never signed in.
-func TestNoSessionMeansNoRoleOnTheStatusPayload(t *testing.T) {
-	ingress, d, _ := testIngress(t, &fakeClient{})
-	if _, err := ingress.WithLogin(d.store); err != nil {
-		t.Fatal(err)
-	}
-
-	// No password set at all, so the request is served without a login — and must still report
-	// an empty role rather than inventing one.
-	r := httptest.NewRequest(http.MethodGet, "/status", nil)
-	r.RemoteAddr = "127.0.0.1:5000"
-	w := httptest.NewRecorder()
-	ingress.Handler().ServeHTTP(w, r)
-
-	var st struct {
-		Role string `json:"role"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
-		t.Fatal(err)
-	}
-	if st.Role != "" {
-		t.Errorf("an unauthenticated request reported role %q", st.Role)
-	}
-}
-
 func firstLines(s string, n int) string {
 	lines := strings.SplitN(s, "\n", n+1)
 	if len(lines) > n {

@@ -13,8 +13,7 @@ func clearAllRequest(t *testing.T, h http.Handler, remote string) *httptest.Resp
 	t.Helper()
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("DELETE", "/api/cache", nil)
-	r.RemoteAddr = remote
-	h.ServeHTTP(rec, r)
+	h.ServeHTTP(rec, fromCaller(r, remote))
 	return rec
 }
 

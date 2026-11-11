@@ -128,8 +128,8 @@ func cmdShares(args []string) error {
 // answer; it never acts.
 //
 // Safe to run against a running daemon, and this is the one command where that needs
-// saying. `internal/expose/CLAUDE.md` records that two processes sharing one exposer
-// account delete each other's live shares — that hazard is entirely in Reap. Listing
+// saying. Two processes sharing one exposer account delete each other's live shares,
+// and that hazard is entirely in Reap. Listing
 // is one GET, and it takes nothing away.
 func cmdSharesList(args []string) error {
 	fs := flag.NewFlagSet("shares list", flag.ExitOnError)

@@ -78,8 +78,7 @@ distinguishable from the other without reading the log on the controller. This i
 
 ### The CLI equivalent
 
-`zrok2 delete name <name>` — the mirror of the `zrok2 create name <name>` that `internal/expose/CLAUDE.md` already
-records. It is not what nfpreview should use: shelling out cannot report the 409 payload as a typed error, and the
+`zrok2 delete name <name>` — the mirror of `zrok2 create name <name>`. It is not what nfpreview should use: shelling out cannot report the 409 payload as a typed error, and the
 SDK path is already wired.
 
 ### A second way, and a better one: stop reserving
@@ -384,7 +383,7 @@ and the release path have since landed, with the decision moved out of `close` a
   this to a sales conversation. Answering it is a question for NetFoundry, not for the source.
 - **Whether a `NameSelections` slice with more than one entry works end to end on hosted zrok.io.** The controller
   loops the slice and the schema permits it, but nfpreview has only ever sent one, and the rc8 CLI could not send
-  even that (see `internal/expose/CLAUDE.md`).
+  even that.
 
 ## Order to build it in
 
@@ -406,8 +405,8 @@ What is left:
 6. **Extend `Reap` to names**, using `ListNamesForNamespace`, deleting reserved nfpreview-shaped names with no live
    share. This is the only way to recover what earlier versions already leaked, and teardown cannot reach those: they
    belong to previews whose rows are long gone. It needs an ownership marker in the name itself, because unlike a
-   share a name has no `Target` field to stamp — which is the same instance-identity problem
-   `internal/expose/CLAUDE.md` already records for shares. Filed as `nfpreview names prune` in
+   share a name has no `Target` field to stamp — which is the same instance-identity problem shares already have.
+   Filed as `nfpreview names prune` in
    [16-exposer-zrok.md](16-exposer-zrok.md)'s build order.
 7. **Probe the actual name ceiling** on a throwaway account, per section 2. Steady state is now the number of *live*
    previews rather than the number of builds ever run, which is what makes the unknown ceiling tolerable rather than

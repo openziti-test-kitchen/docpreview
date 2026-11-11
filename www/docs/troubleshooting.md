@@ -206,32 +206,27 @@ restart.
 
 ### There are no Settings or Projects links on the dashboard
 
-They are drawn only for a request the daemon would accept a write from, and the daemon decides, not the page. Open
-the dashboard on the machine running the daemon, `http://127.0.0.1:8471/`, instead of through a tunnel, or sign in
-with the admin console password.
+They are drawn only for an admin session, and the daemon decides, not the page. Sign in as `admin` over a private
+path: `http://127.0.0.1:8471/` on the daemon's machine or through `ssh -L`, a `zrok_private` listener, or a `ziti`
+listener. Anywhere else an admin session counts as a viewer, and the login form refuses the admin password. See
+[Admin needs a private path](reference/security.md#admin-needs-a-private-path).
 
 Through [`dashboard-only`](reference/cli.md#dashboard-only) they never appear. That proxy does not forward the
 endpoint the page asks, so the links stay hidden, and `/secrets` and `/projects` answer 404. That is deliberate.
 
-Through any other tunnel to the daemon's own listener, the pages still answer if you type `/secrets` or `/projects`,
-read-only, with a banner saying why.
-
 ### The Settings or Projects page shows what is stored but no input fields
 
-It is read-only, and the banner at the top says why: the request did not come from the machine running the daemon.
-Without an admin login, writing a credential, changing a project or clearing a cache requires **both** of:
+It is read-only, and the banner at the top says why: this session is not an admin session. Writing a credential,
+changing a project or clearing a cache needs the admin password, signed in over a private path as above. Or set the
+value on the host with `nfpreview vault set <key>`.
 
-- a loopback `RemoteAddr`, and
-- no forwarding header: `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-Ip` or `Forwarded`.
+### The dashboard asks for a login and no password works
 
-A tunnel passes the first check and fails the second, which is the point. Otherwise
-`zrok2 share public http://127.0.0.1:8471` would put the credential API on the internet while the listener is still
-loopback. A session signed in with the admin console password may write from anywhere. Otherwise, open the page on
-the daemon's own machine, tunnel `nfpreview webhook-only` instead of the daemon, or set the value on the host with
-`nfpreview vault set <key>`.
+With no password set, the dashboard is closed to everyone. Set one on the host:
 
-The whole panel is replaced by **Not available on this daemon** when a TCP listener is not loopback, or when a ziti
-listener names no `admin_identities`. A ziti listener that lists them lets those dialing identities write.
+```sh
+nfpreview console password -role admin
+```
 
 The projects page is gated the same way for a stronger reason: a project row decides what command runs on the build
 host. See [Projects](reference/projects.md) and [the security model](reference/security.md#the-mutating-surfaces).

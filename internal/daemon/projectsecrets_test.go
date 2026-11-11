@@ -49,9 +49,18 @@ func secretCall(t *testing.T, h http.Handler, method, path, body, remote string)
 	} else {
 		r = httptest.NewRequest(method, path, strings.NewReader(body))
 	}
-	r.RemoteAddr = remote
-	h.ServeHTTP(rec, r)
+	h.ServeHTTP(rec, fromCaller(r, remote))
 	return rec
+}
+
+// fromCaller sets where a request came from. localCaller also carries an admin session, as
+// requireLogin passes one on; every other address carries none.
+func fromCaller(r *http.Request, remote string) *http.Request {
+	r.RemoteAddr = remote
+	if remote == localCaller {
+		return asRole(r, RoleAdmin)
+	}
+	return r
 }
 
 const localCaller = "127.0.0.1:54321"

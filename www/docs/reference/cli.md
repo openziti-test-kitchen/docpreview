@@ -371,9 +371,8 @@ once.
 | `/secrets` | The credential surface, and nothing else. No stream, because nothing on it changes by itself. |
 | `/projects` | [Projects](./projects.md) and their environment variables. No stream either. |
 
-**The links to the last two appear only for a local request.** The page asks `/api/admin`, which runs the same
-locality check the write endpoints run, and draws **Projects**, **Settings** and **Clear caches** only on a clear
-yes. The server decides, not the page. A `Host` check in the browser would prove nothing, because `Host` is whatever
+**The links to the last two appear only for an admin session.** The page asks `/api/admin`, which runs the same
+check the write endpoints run, and draws **Projects**, **Settings** and **Clear caches** only on a clear yes. The server decides, not the page. A `Host` check in the browser would prove nothing, because `Host` is whatever
 the client typed. You can still type the paths. Those pages load read-only, with a banner saying why.
 
 :::note A tab left open across a restart runs the code it loaded
@@ -395,8 +394,8 @@ the daemon instance changed and offers a reload. **If the page contradicts the c
 | `GET` | `/projects` | [Projects](./projects.md) and their environment variables. |
 | `GET` | `/api/admin` | Whether this request may write to the admin pages. The dashboard asks before drawing **Projects**, **Settings** and **Clear caches**, so it never offers an action that would `403`. |
 | `GET` | `/api/secrets` | What `/secrets` reads: names, whether the vault is unlocked, and whether this daemon may be written to at all. Never a value. |
-| `PUT` `DELETE` `POST` | `/api/secrets/…` | Store, delete, unlock, generate. Refused unless every listener is loopback *and* the request came from this machine with no forwarding header. Loopback is not the same as local: through a tunnel the listener is loopback while the caller is on the internet. That is why [`webhook-only`](#webhook-only) exists. |
-| `GET` `PUT` `DELETE` | `/api/projects/…` | Project rows and their environment variables. Same two gates as `/api/secrets`, because a project row decides what command runs on the build host. |
+| `PUT` `DELETE` `POST` | `/api/secrets/…` | Store, delete, unlock, generate. Refused without an admin session, and an admin session exists only over a [private path](./security.md#admin-needs-a-private-path). |
+| `GET` `PUT` `DELETE` | `/api/projects/…` | Project rows and their environment variables. Same gate as `/api/secrets`, because a project row decides what command runs on the build host. |
 | `POST` | `/api/projects/…/branch` | Build a project's default branch, or the branch named in the body. This is the permanent preview described in [Projects](./projects.md). Same gates. |
 | `POST` | `/api/projects/…/link` | Build one pull request by number, and stop skipping it if it was unlinked. Same gates. |
 | `POST` | `/api/builds/{preview}/unlink` | Remove a preview and record that its pull request must not be built again. The ignore is written before the teardown, so a failure partway leaves the pull request unbuilt instead of rebuilding on the next push. Same gates. |
@@ -440,8 +439,8 @@ the daemon instance changed and offers a reload. **If the page contradicts the c
 ```
 
 `/status` carries no secrets, but it lists every open pull request that has a preview. Keep that in mind before you
-publish the ingress next to the webhook endpoint. Once a console password is set, `/status` is behind the login with
-the rest of the dashboard, including from loopback.
+publish the ingress next to the webhook endpoint. `/status` is behind the login with the rest of the dashboard,
+including from loopback.
 
 Poll `/readyz` instead from a script or a supervisor. It answers without a login, and it says how busy the daemon is
 without saying what it is busy with: counts and a stage name, never a repository, branch or URL.
@@ -462,8 +461,8 @@ was already running.
 
 ## `console`
 
-Sets the dashboard login. The dashboard is open until a password is set. After that, everything except the previews,
-the webhooks and the health endpoints asks for a login, including from loopback. See
+Sets the dashboard login. Everything except the previews, the webhooks and the health endpoints asks for a login,
+including from loopback. With no password set, the dashboard is closed to everyone. See
 [The login](./security.md#the-login).
 
 ```text

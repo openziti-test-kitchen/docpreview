@@ -66,7 +66,7 @@ the host. Worth doing; deliberately not bundled with getting the image to exist.
 ## Three containers, one image, one network namespace
 
 The workstation runs three processes — `serve`, `webhook-only`, `dashboard-only` — for reasons in
-`docs/design/14-production-deployment.md` and `cmd/nfpreview/CLAUDE.md`: sharing the daemon directly
+`docs/design/14-production-deployment.md`: sharing the daemon directly
 would publish every route it serves, including `/api/secrets`, whose write gate only checks that the
 daemon's listeners are loopback. They are.
 
@@ -77,7 +77,7 @@ The compose file reproduces that exactly, and the two share containers use
   so it cannot be pointed at a bridge-network hostname.
 - The daemon's admin surface is gated on `isLocalRequest`. A bridge network would make the daemon
   reachable from every other container on it, which is the hole `Available()` cannot see (a loopback
-  listener says nothing about who can dial it — see `internal/daemon/CLAUDE.md`).
+  listener says nothing about who can dial it).
 
 Sharing the namespace means `127.0.0.1:8471` means the daemon to all three, and nothing else can reach
 it.

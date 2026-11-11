@@ -123,7 +123,8 @@ When it is unset, the comment names the dashboard without linking to it.
 
 ## `listeners`
 
-`listen` binds one TCP address. `listeners` binds any number, TCP or OpenZiti, all served by one HTTP server:
+`listen` binds one TCP address. `listeners` binds any number, TCP, OpenZiti or zrok private, all served by one HTTP
+server:
 
 ```yaml
 listeners:
@@ -150,36 +151,55 @@ address on the underlay at all**. It gives the admin surface the same posture th
 |---|---|
 | `identity_file` | An enrolled identity, named by a **Bind** policy on the service. `nfpreview configure ziti` makes one. |
 | `service` | The service to bind. |
-| `admin_identities` | Identity **ids** allowed to edit projects and store credentials through this listener. Empty, the default, means the dashboard is read-only over it. |
 
-The first two are required. A `ziti` listener missing either one fails at startup instead of on the first request.
+Both are required. A `ziti` listener missing either one fails at startup instead of on the first request.
 `nfpreview doctor` goes further and binds each one. That's the only way to catch an identity that won't
 authenticate, or a service with no Bind policy naming it.
 
-#### Who can change things over the overlay
+The login applies over the overlay like everywhere else. A ziti listener is a
+[private path](./security.md#admin-needs-a-private-path), so the admin password works over it.
 
-The whole dashboard is served over a ziti listener. Two parts of it change things: projects, which decide what
-command runs on the build host, and credentials, which decide what it runs with. Both are refused unless the dialing
-identity is listed in `admin_identities`.
+`admin_identities` used to let listed identities change things without a password. It no longer grants anything. The
+daemon still reads it so an older config loads, and logs a warning while it is set. Remove it.
+
+### A `zrok_private` listener
+
+A `zrok_private` listener serves the whole daemon, admin pages included, over a zrok private share. Use it to manage a
+remote installation without an ssh tunnel to `127.0.0.1`.
 
 ```yaml
 listeners:
-  - ziti:
-      identity_file: "/home/you/.nfpreview/ziti/nfpreview-host.json"
-      service: "nfpreview-admin"
-      admin_identities: ["abc123"]
+  - tcp: "127.0.0.1:8471"
+  - zrok_private:
+      token: "nfpadmin"
+      access_grants: ["ops@example.com"]
 ```
 
-Get the ids from the **ID** column of `ziti edge list identities`, not the name column. A name can be changed on the
-controller without the grant following it, which would quietly widen or empty this list.
+| Field | Notes |
+|---|---|
+| `token` | The private share's token: 4 to 32 lowercase letters and digits. It's what you pass to `zrok2 access private`, so it is fixed rather than generated. |
+| `access_grants` | zrok account emails that may access the share besides the account that owns it. Empty, the default, means the owner alone. |
 
-:::note Empty means read-only, on purpose
+The share uses the zrok environment the daemon already uses for its exposer. It's created in **closed** permission
+mode, so only the owning account and `access_grants` can reach it. A restart adopts the existing share instead of
+creating a new one.
 
-Being enrolled on the network doesn't mean you may write a credential. A listener that names nobody serves the
-dashboard, `/status` and every build log, and refuses every write with a message saying why. It doesn't show buttons
-that will only fail.
+To reach the dashboard, run this on your own machine, signed in to one of those accounts, and open the address it
+prints:
 
-The refusal names the identity it turned away, so adding it is a copy and paste.
+```sh
+zrok2 access private nfpadmin
+```
+
+The login still applies. The admin password gives admin and the viewer password gives read-only, the same as on
+loopback. Admin works only on a private path like this one; see
+[Admin needs a private path](./security.md#admin-needs-a-private-path).
+
+:::note Public shares never carry the admin pages
+
+A public share is reachable by anyone with its URL, so publish the dashboard over one only with
+[`nfpreview dashboard-only`](./cli.md). Its allowlist leaves out the project and credential pages and APIs, so they
+answer 404 there whatever session the visitor has.
 
 :::
 

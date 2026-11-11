@@ -25,6 +25,15 @@ listen: 127.0.0.1:8471
 #   - ziti:
 #       identity_file: ~/.nfpreview/ziti/nfpreview-host.json
 #       service: nfpreview-admin
+#
+# A zrok private share serves the whole daemon, admin pages included, to the
+# zrok account that owns this environment and to its access_grants. Reach it
+# with `zrok2 access private nfpadmin`. A public share never carries the admin
+# pages; publish the dashboard publicly only through `nfpreview dashboard-only`.
+#
+#   - zrok_private:
+#       token: nfpadmin
+#       access_grants: []
 
 # Vault, sqlite database, workspaces, and build artifacts. Created 0700.
 data_dir: ~/.nfpreview

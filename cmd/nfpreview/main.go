@@ -147,7 +147,7 @@ Read-only, and safe against a running daemon. An orphaned share and a recorded
 preview whose share has gone are opposite problems; Reap, inside the daemon, is
 the only thing that deletes either.
 
-The dashboard is open until a password is set. Set one and everything but the previews,
+Every dashboard request needs a password. Everything but the previews,
 the webhooks and the health endpoints asks for a login, including from loopback:
 
   nfpreview console password -role admin   Read a password from stdin and store its hash
@@ -810,10 +810,8 @@ func cmdServe(args []string) error {
 
 		// Who dialed, for a request that arrived over an OpenZiti listener.
 		//
-		// The admin surfaces are gated on it: a ziti listener naming `admin_identities` may
-		// write, and one that names none is read-only. Without this the identity is
-		// unavailable by the time a handler runs — ConnContext is the only hook that sees
-		// the connection — and the surfaces would have to refuse the overlay outright.
+		// It marks the request as arriving over the overlay, a private path on which an admin
+		// session is honoured. ConnContext is the only hook that sees the connection.
 		ConnContext: daemon.ConnContext,
 	}
 
@@ -1064,25 +1062,9 @@ func cmdDoctor(args []string) error {
 			label = "        "
 		}
 		fmt.Printf("%s %s\n", label, l.Describe())
-
-		// Who may write through an overlay listener, otherwise visible only by reading the
-		// config file.
-		//
-		// It is the one grant on this daemon that is neither a password nor a network
-		// boundary — the overlay authenticated the dialer, and this list decides which of
-		// those dialers may change a credential or a project. An empty list is the default
-		// and means read-only, which is a safe answer and an easily surprising one: an
-		// operator who enrolled an identity, added it nowhere, and then found the dashboard
-		// read-only had nothing to check.
-		if l.Ziti == nil {
-			continue
+		if l.Ziti != nil && len(l.Ziti.AdminIdentities) > 0 {
+			fmt.Printf("         admin_identities is set but grants nothing; remove it\n")
 		}
-		if len(l.Ziti.AdminIdentities) == 0 {
-			fmt.Printf("         read-only over this listener: admin_identities names nobody\n")
-			fmt.Printf("         (add an identity id there to allow credential and project writes)\n")
-			continue
-		}
-		fmt.Printf("         may write: %s\n", strings.Join(l.Ziti.AdminIdentities, ", "))
 	}
 
 	// Report the vault only if something needed it. Opening it here purely to
@@ -1100,29 +1082,23 @@ func cmdDoctor(args []string) error {
 		fmt.Printf("key:     %s\n", src.Describe())
 	}
 
-	// Whether the dashboard asks for a login.
-	//
-	// Reported here because `doctor` is what somebody runs to answer "is this thing exposed",
-	// and the answer is decided by whether a viewer password exists, not only by the listeners
-	// above. A daemon behind a public share with no password is a dashboard on the internet,
-	// and nothing else in this output says so.
+	// Which passwords open the dashboard. Every dashboard request needs one, so with none set
+	// the dashboard is closed to everyone.
 	ctx := context.Background()
 	admin, adminErr := daemon.ConsolePasswordSet(ctx, w.store, daemon.RoleAdmin)
 	viewer, viewerErr := daemon.ConsolePasswordSet(ctx, w.store, daemon.RoleViewer)
 	if adminErr == nil && viewerErr == nil {
 		switch {
+		case viewer && admin:
+			fmt.Printf("login:   required — either password reaches the dashboard\n")
 		case viewer:
-			who := "the viewer password"
-			if admin {
-				who = "either password"
-			}
-			fmt.Printf("login:   required — %s reaches the dashboard\n", who)
+			fmt.Printf("login:   required — the viewer password reaches the dashboard; " +
+				"no admin password, so nothing can be changed from it\n")
 		case admin:
-			fmt.Printf("login:   reading is open to anyone who can reach this daemon; " +
-				"the admin password gates writes\n")
+			fmt.Printf("login:   required — only the admin password reaches the dashboard\n")
 		default:
-			fmt.Printf("login:   none — anyone who can reach this daemon can read it " +
-				"(nfpreview console password -role viewer)\n")
+			fmt.Printf("login:   no password set, so the dashboard is closed to everyone " +
+				"(nfpreview console password -role admin)\n")
 		}
 	}
 

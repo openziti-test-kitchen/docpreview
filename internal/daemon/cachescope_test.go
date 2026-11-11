@@ -58,8 +58,7 @@ func TestClearingACacheRemovesTheRepositorysVolumes(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("DELETE", "/api/cache/"+pr.PreviewID(), nil)
-	r.RemoteAddr = "127.0.0.1:54321"
-	h.ServeHTTP(rec, r)
+	h.ServeHTTP(rec, fromCaller(r, localCaller))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())

@@ -95,17 +95,11 @@ func TestVerifyPasswordRejectsMalformedHashes(t *testing.T) {
 	}
 }
 
-// No password set means the gate is off, which is what every existing installation gets.
-//
-// Requiring one that nobody has set would lock an operator out of the surface that sets it —
-// the same ordering trap that decides where the hashes are stored.
-func TestNoPasswordMeansTheGateIsOff(t *testing.T) {
+// With no password set nothing verifies. The dashboard is then closed until the CLI sets one.
+func TestNoPasswordVerifiesNothing(t *testing.T) {
 	c := testConsole(t)
 	ctx := context.Background()
 
-	if c.loginRequired(ctx) {
-		t.Error("a fresh installation demands a login")
-	}
 	if c.anyPasswordSet(ctx) {
 		t.Error("a fresh installation reports a password as set")
 	}
@@ -178,20 +172,13 @@ func TestAnUnknownUsernameIsRefused(t *testing.T) {
 	}
 }
 
-// An admin password alone protects writes and leaves reading open.
-//
-// That is a reasonable arrangement — a dashboard anyone can read on a network you trust, with
-// the write surfaces locked — and it is why the login page is gated on the *viewer* password
-// rather than on "any password".
-func TestAnAdminPasswordAloneDoesNotDemandALogin(t *testing.T) {
+// An admin password alone is enough to serve the login page.
+func TestAnAdminPasswordAloneMakesLoginPossible(t *testing.T) {
 	c := testConsole(t)
 	ctx := context.Background()
 
 	if err := SetConsolePassword(ctx, c.store, RoleAdmin, "the-admin-password"); err != nil {
 		t.Fatal(err)
-	}
-	if c.loginRequired(ctx) {
-		t.Error("an admin password alone forces every reader to log in")
 	}
 	if !c.anyPasswordSet(ctx) {
 		t.Error("logging in is impossible, so the login page would be unreachable")
@@ -205,7 +192,7 @@ func TestSetPasswordRoundTripsAndClears(t *testing.T) {
 	if err := SetConsolePassword(ctx, c.store, RoleViewer, "a-long-enough-password"); err != nil {
 		t.Fatal(err)
 	}
-	if !c.loginRequired(ctx) {
+	if !c.anyPasswordSet(ctx) {
 		t.Fatal("the viewer password did not take effect")
 	}
 
@@ -222,7 +209,7 @@ func TestSetPasswordRoundTripsAndClears(t *testing.T) {
 	if err := ClearConsolePassword(ctx, c.store, RoleViewer); err != nil {
 		t.Fatal(err)
 	}
-	if c.loginRequired(ctx) {
+	if c.anyPasswordSet(ctx) {
 		t.Error("clearing left the password set")
 	}
 }

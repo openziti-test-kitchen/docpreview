@@ -65,6 +65,7 @@ const sidebars: SidebarsConfig = {
     'guides/linux-service',
     'guides/container',
     'guides/move-an-installation',
+    'guides/migrate-from-docpreview',
     'troubleshooting',
 
     // Understanding-oriented: read when deciding whether to use this, or before

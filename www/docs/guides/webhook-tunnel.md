@@ -94,10 +94,11 @@ nfpreview webhook-only -zrok-name nfpreview -upstream http://127.0.0.1:8471 `
 `zrok2 share public http://127.0.0.1:8471` shares an *origin*, not a path. Every route the daemon serves goes with
 it: the dashboard, the previews, and `/api/secrets`.
 
-The credential API does guard its write endpoints. A write needs an admin session, or else a loopback listener plus
-a loopback request with no forwarding header (`X-Forwarded-For`, `Forwarded` and the like). Behind a proxy, though,
-the daemon sees the connection come from the local zrok process, so `RemoteAddr` is loopback too. Only the
-forwarding headers give the proxy away, and a tunnel that strips them defeats the check. Treat that check as a
+The credential API does guard its write endpoints. A write needs an admin session, and an admin session counts only on
+a [private path](../reference/security.md#admin-needs-a-private-path): a loopback request with no forwarding header
+(`X-Forwarded-For`, `Forwarded` and the like), zrok private, or OpenZiti. Behind a proxy, though, the daemon sees the
+connection come from the local zrok process, so `RemoteAddr` is loopback too. Only the forwarding headers give the
+proxy away, and a tunnel that strips them would let an admin password typed through it work. Treat that check as a
 second line of defence. The first is keeping the admin surface and the public route on different origins.
 
 So `webhook-only` forwards `POST /webhook/github` by default, or the paths you pass with `-path`, and nothing
