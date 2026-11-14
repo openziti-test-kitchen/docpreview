@@ -58,8 +58,11 @@ func TestTheDefaultDetectScriptIsInTheBuildDirectory(t *testing.T) {
 
 // The detect container is the narrow part of the docker driver: what it must not have is the point.
 func TestTheDetectContainerHasNoNetworkAndAReadOnlyCheckout(t *testing.T) {
-	args := detectRunArgs(DetectContainer{Image: "node:24-bookworm", CPUs: 2, Memory: "1g"},
+	args, err := detectRunArgs(DetectContainer{Image: "node:24-bookworm", CPUs: 2, Memory: "1g"},
 		"nfpreview-detect-x", "/var/lib/ws", "docusaurus/nfpreview-detect")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, want := range [][]string{
 		{"--network", "none"},

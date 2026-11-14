@@ -199,23 +199,30 @@ local:
 | `enabled` | Turns the local platform on. The `/webhook/local` route always exists, but deliveries are ignored unless this is set. |
 | `repos_dir` | Where `sim init` creates bare repositories, and the only place pushes are accepted from. |
 | `default_base` | The base branch when `sim init -base` is not given, and when an event names none. |
-| `webhook_secret` | If set, `/webhook/local` requires the same HMAC-SHA256 signature GitHub sends. Blank means unauthenticated. |
+| `webhook_secret` | If set, `/webhook/local` requires the same HMAC-SHA256 signature GitHub sends. Blank means unsigned deliveries are accepted, from this machine only. |
 
 ## Security
 
 :::danger The local webhook is unauthenticated by default
 
-With no `webhook_secret`, anyone who can reach the port can trigger a build of any repository under `repos_dir`.
+With no `webhook_secret`, any program on this machine can trigger a build of any repository under `repos_dir`.
 
-That is acceptable for a loopback development loop on repositories you created. It is **not** acceptable on a shared
-address. Do not enable `local.enabled` on a daemon whose ingress is reachable by anyone you would not hand a shell
-to. Setting `webhook_secret` closes the endpoint, but the generated hook does not sign its requests, so you then
-post deliveries yourself.
+An unsigned delivery is accepted only when it comes straight from this machine: a connection from a loopback
+address with no proxy in between, or an OpenZiti or zrok private listener. A delivery from another host, or one that
+arrived through a proxy, is answered `403`. So is one sent by a web page: a request carrying an `Origin` header, or
+a `Sec-Fetch-Site` header other than `none`, is refused, because a page you have open can otherwise post to a
+loopback port as easily as `curl` can. `curl`, `Invoke-RestMethod` and the generated hook send neither header.
+
+That is acceptable for a development loop on repositories you created. Do not enable `local.enabled` on a machine
+where you would not hand every local user a shell. Setting `webhook_secret` lifts the same-machine rule and requires
+a signature instead, but the generated hook does not sign its requests, so you then post deliveries yourself.
 
 :::
 
 The payload is still validated. A repository name containing a path separator is rejected, and the name must resolve
-to an existing bare repository inside `repos_dir`. A payload cannot make the daemon clone an arbitrary path.
+to an existing bare repository inside `repos_dir`. A payload cannot make the daemon clone an arbitrary path. `sha`,
+when given, must be a full commit id of 40 or 64 lowercase hexadecimal characters, and `branch` and `base` cannot
+start with a dash.
 
 ## The demo harness
 

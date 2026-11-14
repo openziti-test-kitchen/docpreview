@@ -62,7 +62,7 @@ func TestTheChownCommand(t *testing.T) {
 	// The build directory's node_modules, not the workspace root's: npm resolves from the
 	// directory it runs in, and the volume is mounted where npm looks. Pruned because it is
 	// anonymous, discarded with the container, and holds tens of thousands of files.
-	if !strings.Contains(cmd, "-path /workspace/www/node_modules -prune") {
+	if !strings.Contains(cmd, "-path '/workspace/www/node_modules' -prune") {
 		t.Errorf("the chown does not prune the node_modules volume:\n%s", cmd)
 	}
 	// On a platform where the ids mean nothing the chown is pointless but must not fail the

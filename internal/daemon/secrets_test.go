@@ -53,6 +53,7 @@ func doAs(t *testing.T, h http.Handler, method, path, body, remote string,
 		r = httptest.NewRequest(method, path, nil)
 	} else {
 		r = httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
 	}
 	r.RemoteAddr = remote
 	for k, v := range headers {

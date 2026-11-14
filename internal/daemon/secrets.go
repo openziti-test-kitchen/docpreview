@@ -618,6 +618,9 @@ func validKey(k string) bool {
 }
 
 func decodeJSON(r *http.Request, into any) error {
+	if !jsonBody(r) {
+		return errNotJSON
+	}
 	// 1 MiB: a PEM private key is a few kilobytes, and this is the only
 	// endpoint that accepts a body from a browser.
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))

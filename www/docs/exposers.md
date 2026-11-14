@@ -48,6 +48,17 @@ Useless for sharing and perfect for everything else. You can exercise the whole 
 path without an account anywhere. When the zrok path misbehaves, you have a reference to compare against. It is
 also the shortest implementation, so read it first.
 
+Because these previews share the dashboard's address, every response under `/preview/` carries
+`Content-Security-Policy: sandbox` without `allow-same-origin`. The page's scripts run, but in an origin of their
+own, so a pull request's JavaScript cannot call the dashboard's API as you or read its cookies. The cost is that
+`localStorage`, `sessionStorage` and cookies do not work inside a local preview: a site that remembers a theme or
+caches a search index there falls back to its defaults. Previews on the other exposers have their own hostname
+and are not sandboxed.
+
+A sandboxed page is another origin to its own files, so a request it makes for them (a module script, a font, a
+`fetch`) arrives with `Origin: null` and is answered with `Access-Control-Allow-Origin: *`. Nothing is exposed
+that was not already: a local preview is served to anybody who can reach the listener, without a login.
+
 ## `zrok2`
 
 The default, and the one to use.

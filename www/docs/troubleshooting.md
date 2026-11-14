@@ -264,8 +264,9 @@ An ignored delivery says which of the above applied, at debug level.
 
 ## It says "Skipped"
 
-Detection matched nothing, so nothing was built. The comment shows ⏭️ **Skipped** and the reason below the table,
-for example `None of the 4 changed files matched a documentation path.` The debug log names the patterns.
+Detection matched nothing, so nothing was built. A pull request that has never built gets no comment for a skip,
+only a neutral check run. One that already has a comment has it edited: it shows ⏭️ **Skipped** and the reason
+below the table, for example `None of the 4 changed files matched a documentation path.` The debug log names the patterns.
 
 What counts as a change:
 

@@ -51,6 +51,20 @@ type fakeClient struct {
 	// cloneURLErr fails the very first step of a build, which is the earliest a pipeline can
 	// fail and the case where no build log exists yet.
 	cloneURLErr error
+
+	// cloneURL is where a build clones from. Empty means an address that does not resolve,
+	// which is right for every test that never gets as far as cloning.
+	cloneURL string
+
+	// noChanges makes ChangedFiles answer an empty list, which is what the detector reads
+	// as a pull request that touches no documentation.
+	noChanges bool
+
+	// afterChanged runs when ChangedFiles is asked, the last step before detection.
+	afterChanged func()
+
+	// onPublish runs as each report arrives, before it is recorded.
+	onPublish func(scm.Report)
 }
 
 func (f *fakeClient) Platform() model.Platform { return model.PlatformGitHub }
@@ -66,14 +80,26 @@ func (f *fakeClient) CloneURL(context.Context, model.PullRequest) (string, error
 	if f.cloneURLErr != nil {
 		return "", f.cloneURLErr
 	}
+	if f.cloneURL != "" {
+		return f.cloneURL, nil
+	}
 	return "https://example.invalid/repo.git", nil
 }
 
 func (f *fakeClient) ChangedFiles(context.Context, model.PullRequest) ([]string, error) {
+	if f.afterChanged != nil {
+		f.afterChanged()
+	}
+	if f.noChanges {
+		return nil, nil
+	}
 	return []string{"docs/intro.md"}, nil
 }
 
 func (f *fakeClient) Publish(_ context.Context, r scm.Report) error {
+	if f.onPublish != nil {
+		f.onPublish(r)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reports = append(f.reports, r)
@@ -392,6 +418,14 @@ func TestHandleBuildReportsQueuedAndEnqueues(t *testing.T) {
 	// inside Handle. Polling rather than sleeping the full window keeps the test
 	// fast when it passes and still fails when nothing ever arrives.
 	waitForStates(t, client, scm.StateQueued)
+
+	// Queued is said before anything is known about what the pull request changes, so it
+	// may edit a comment and may not post one.
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.reports) == 1 && !client.reports[0].UpdateOnly {
+		t.Error("the queued report could post a new comment, before detection has run")
+	}
 }
 
 // waitForStates waits for the client to have received exactly want.

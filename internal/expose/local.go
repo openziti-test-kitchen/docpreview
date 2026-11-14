@@ -106,6 +106,22 @@ func (l *Local) SetOrigin(origin string) {
 // its HTML and 404s every asset in it.
 func (l *Local) MountPath(name string) string { return MountPrefix + name + "/" }
 
+// SameOriginPreviewCSP is sent on every response this exposer serves under MountPrefix.
+//
+// These previews are served by the dashboard's own listener, so without it a pull request's
+// JavaScript runs on the dashboard's origin: the browser attaches the session cookie, and the
+// script can call every /api/ route as whoever opened the preview. The sandbox directive, with
+// no allow-same-origin, gives the document an opaque origin instead. Its scripts still run and
+// its links, forms and popups still work (a link opened in a new tab is not itself sandboxed, or
+// every external link in the docs would open a broken page), but a request it makes to /api/ is cross-origin and
+// carries no readable response, and it cannot read the dashboard's cookies or storage.
+//
+// The cost is that a sandboxed preview has no origin of its own either: localStorage,
+// sessionStorage and cookies throw or are empty, so a site that keeps a theme or a search index
+// there falls back to its defaults. Only this exposer pays it. A zrok, ziti or Frontdoor
+// preview has a hostname of its own, which is the real separation, and must not be sent this.
+const SameOriginPreviewCSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads"
+
 // Handler serves every mounted preview. The daemon mounts this at MountPrefix.
 //
 // Nothing is stripped from the path. Each preview.Site was built knowing its
@@ -113,6 +129,22 @@ func (l *Local) MountPath(name string) string { return MountPrefix + name + "/" 
 // answer 404 to the only URL it accepts.
 func (l *Local) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Set first, so every answer under the prefix carries it, the 404s included.
+		w.Header().Set("Content-Security-Policy", SameOriginPreviewCSP)
+
+		// The sandbox makes the preview's own files another origin to it. A module script, a
+		// web font and anything it fetches are requested with `Origin: null`, and a browser
+		// discards the answer unless it says the asking origin may read it, so without this a
+		// site built by Vite renders blank and a search index never loads.
+		//
+		// What it gives away is what was already given: these files are served to anybody who
+		// asks, with no session, and the browser sends no cookie with such a request. It is
+		// not sent to a request that names a real origin, which is some other site's page.
+		w.Header().Add("Vary", "Origin")
+		if r.Header.Get("Origin") == "null" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+
 		name := mountedName(r.URL.Path)
 		if name == "" {
 			http.NotFound(w, r)

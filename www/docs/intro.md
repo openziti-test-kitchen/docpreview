@@ -39,7 +39,7 @@ flowchart LR
     A[Push to a branch] --> B[Webhook]
     B --> E[Clone at the exact commit]
     E --> C{Site changed?}
-    C -->|no| D[Skip, say so on the PR]
+    C -->|no| D[Skip, neutral check run]
     C -->|yes| F[Build the site]
     F --> G[Serve the output]
     G --> H[Publish a public URL]

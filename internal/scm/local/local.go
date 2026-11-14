@@ -68,6 +68,13 @@ func New(cfg config.LocalSCMConfig, sink CommentSink, log *slog.Logger) (*Client
 
 func (c *Client) Platform() model.Platform { return model.PlatformLocal }
 
+// WebhookUnsigned reports whether deliveries are accepted without a signature, which is the
+// case until local.webhook_secret is set.
+//
+// The ingress asks, and when the answer is yes it accepts a delivery only from this machine
+// and never from a web page. See Ingress.webhook.
+func (c *Client) WebhookUnsigned() bool { return c.cfg.WebhookSecret == "" }
+
 // Validate confirms git is available and the repository directory is usable.
 func (c *Client) Validate(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "git", "--version")
@@ -172,14 +179,28 @@ func (c *Client) VerifyWebhook(_ context.Context, headers map[string][]string, b
 	if ev.Branch == "" {
 		return nil, fmt.Errorf(`the event needs a "branch"`)
 	}
+	// Both names become arguments to git. A value starting with a dash would be read as an
+	// option, and `--upload-pack=<command>` is one that runs a command.
+	if !model.IsSafeRef(ev.Branch) {
+		return nil, fmt.Errorf(`the event's "branch" is not a usable branch name`)
+	}
+	if !model.IsSafeRef(ev.Base) {
+		return nil, fmt.Errorf(`the event's "base" is not a usable branch name`)
+	}
 
 	// Resolving the SHA here rather than trusting the payload mirrors what a
 	// hosted platform does, and it means a hand-written curl can leave it out.
 	if ev.SHA == "" {
-		ev.SHA, err = gitOutput(repoPath, "rev-parse", ev.Branch)
+		ev.SHA, err = gitOutput(repoPath, "rev-parse", "--verify", ev.Branch+"^{commit}")
 		if err != nil {
 			return nil, fmt.Errorf("resolving branch %q in %s: %w", ev.Branch, ev.Repo, err)
 		}
+	}
+	// A full object name and nothing else, whether it was sent or resolved. It becomes a
+	// directory name and a git argument further on, and this endpoint can be reached without
+	// a signature.
+	if !model.IsCommitSHA(ev.SHA) {
+		return nil, fmt.Errorf(`the event's "sha" must be a full commit sha, forty or sixty-four hexadecimal characters`)
 	}
 
 	pr := model.PullRequest{
@@ -244,6 +265,11 @@ func (c *Client) ChangedFiles(ctx context.Context, pr model.PullRequest) ([]stri
 	head := pr.HeadSHA
 	if head == "" {
 		head = pr.Branch
+	}
+	// Arguments to git below. See VerifyWebhook; checked again here because a rebuild or a
+	// scan reaches this without passing through it.
+	if !model.IsSafeRef(head) || !model.IsSafeRef(pr.BaseBranch) {
+		return nil, fmt.Errorf("refusing to diff %s: its base or head is not a usable revision", pr.String())
 	}
 
 	// Three dots: changes on the branch since it diverged, not changes since

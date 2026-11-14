@@ -660,6 +660,9 @@ func (c *Client) upsertComment(ctx context.Context, r scm.Report) error {
 	payload := map[string]any{"content": map[string]string{"raw": body}}
 
 	if existing == 0 {
+		if r.UpdateOnly {
+			return nil
+		}
 		path := fmt.Sprintf("/2.0/repositories/%s/%s/pullrequests/%d/comments",
 			r.PR.Repo.Owner, r.PR.Repo.Name, r.PR.Number)
 		var created struct {

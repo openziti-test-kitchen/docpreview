@@ -284,3 +284,40 @@ func SanitizeNameTo(branch string, max int) string {
 	}
 	return clean + suffix
 }
+
+// IsCommitSHA reports whether s is a full git object name: forty hexadecimal characters for
+// SHA-1, sixty-four for SHA-256.
+//
+// A commit reaches two places that have their own syntax: a directory name, and git's command
+// line. An unauthenticated local webhook delivery used to choose both, so a "sha" of
+// `../../../../` deleted a directory outside the data directory and one of
+// `--upload-pack=<command>` was read by git as an option. A value that is only hexadecimal can
+// be neither.
+func IsCommitSHA(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// IsSafeRef reports whether s can be handed to git as a branch or revision argument: not
+// empty, not something git would read as an option, and free of control characters.
+//
+// It does not check that the ref exists or is well formed, which is git's answer to give.
+func IsSafeRef(s string) bool {
+	if s == "" || len(s) > 255 || strings.HasPrefix(s, "-") {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}

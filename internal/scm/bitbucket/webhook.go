@@ -26,9 +26,9 @@ type pullRequestObject struct {
 			Hash string `json:"hash"`
 		} `json:"commit"`
 
-		// Repository is nilable, and absent counts as untrusted. GitHub's client has
-		// a known gap here — a null head repo from a deleted fork skips the fork
-		// refusal — and reproducing it on a new platform would be choosing to.
+		// Repository is nilable, and absent counts as untrusted: a null source
+		// repository is what a deleted fork looks like, and it must not skip the fork
+		// refusal. GitHub's client applies the same rule.
 		Repository *struct {
 			FullName string `json:"full_name"`
 		} `json:"repository"`

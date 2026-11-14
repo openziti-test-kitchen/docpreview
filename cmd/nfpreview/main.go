@@ -248,13 +248,16 @@ func newLoggerTo(level, path string) *slog.Logger {
 	}
 
 	var w io.Writer = os.Stderr
-	var openErr error
+	var openErr, modeErr error
 	if path != "" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			openErr = err
-		} else if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err != nil {
+		} else if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640); err != nil {
 			openErr = err
 		} else {
+			// The mode above only applies to a file this call created. A log from an earlier
+			// release is 0644, and it holds remote addresses, usernames and build output.
+			modeErr = closeToOthers(path)
 			// Never closed, deliberately: it lives as long as the process, and closing it
 			// on any path short of exit would leave the logger writing to a closed file.
 			// Appended to rather than truncated, because the interesting content is
@@ -267,6 +270,10 @@ func newLoggerTo(level, path string) *slog.Logger {
 	if openErr != nil {
 		log.Warn("log_file could not be opened; logging to stderr only",
 			"path", path, "error", openErr)
+	}
+	if modeErr != nil {
+		log.Warn("log_file is readable by other users and could not be closed to them",
+			"path", path, "error", modeErr)
 	}
 	return log
 }
@@ -363,7 +370,24 @@ func setup(configPath, logLevel string) (*wiring, error) {
 		}
 	}
 
+	// MkdirAll's mode is for a directory it creates and does nothing to one that exists, so a
+	// data directory made by hand, or by a package under a loose umask, stays as open as it
+	// was. It holds the database, with the password hashes in it, and the workspaces.
+	if err := closeToOthers(cfg.DataDir); err != nil {
+		log.Warn("the data directory is readable by other users and could not be closed to them",
+			"dir", cfg.DataDir, "error", err)
+	}
+
 	st, err := store.Open(cfg.DatabasePath())
+	if err == nil {
+		// sqlite creates its files at the process umask, which is usually 0644.
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			if err := closeToOthers(cfg.DatabasePath() + suffix); err != nil {
+				log.Warn("the database is readable by other users and could not be closed to them",
+					"file", cfg.DatabasePath()+suffix, "error", err)
+			}
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +542,77 @@ func localOrigin(cfg config.Server) string {
 	return ""
 }
 
+// closeToOthers removes every permission on path for users who are neither its owner nor in its
+// group. A path that does not exist is not an error.
+//
+// The group's access is left as it is: an installation may give operators group access to the
+// data directory so the CLI works for them, and taking that away would break it. Nothing here
+// applies on Windows, where these bits do not describe who can read a file.
+func closeToOthers(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	// Lstat, and a link is left alone: chmod follows it, and what it points at is not ours to
+	// change.
+	fi, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	mode := fi.Mode().Perm()
+	if mode&0o007 == 0 {
+		return nil
+	}
+	return os.Chmod(path, mode&^0o007)
+}
+
 func buildExposer(w *wiring, cfg config.Server, log *slog.Logger) (expose.Exposer, error) {
+	ex, err := newExposer(w, cfg, log)
+	if err != nil {
+		return nil, err
+	}
+	// Refused rather than run without one: an exposer with no installation id reaps by the bare
+	// tag, which is what let one daemon delete another's live shares.
+	if st, ok := ex.(interface{ SetInstance(string) }); ok {
+		id, err := instanceID(context.Background(), w.store)
+		if err != nil {
+			if c, ok := ex.(io.Closer); ok {
+				c.Close()
+			}
+			return nil, err
+		}
+		st.SetInstance(id)
+	}
+	return ex, nil
+}
+
+// instanceID returns this installation's id, generating and storing it on first use.
+func instanceID(ctx context.Context, st *store.Store) (string, error) {
+	if st == nil {
+		return "", errors.New("no database to read the installation id from")
+	}
+	id, _, err := st.Setting(ctx, store.SettingInstanceID)
+	if err != nil {
+		return "", err
+	}
+	if expose.ValidInstanceID(id) {
+		return id, nil
+	}
+	if id, err = expose.NewInstanceID(); err != nil {
+		return "", fmt.Errorf("generating the installation id: %w", err)
+	}
+	if err := st.SetSetting(ctx, store.SettingInstanceID, id); err != nil {
+		return "", fmt.Errorf("storing the installation id: %w", err)
+	}
+	return id, nil
+}
+
+func newExposer(w *wiring, cfg config.Server, log *slog.Logger) (expose.Exposer, error) {
 	switch cfg.Exposer.Kind {
 	case "local":
 		// Previews are served from the daemon's own listener, so their URLs

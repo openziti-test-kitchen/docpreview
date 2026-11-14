@@ -1160,7 +1160,7 @@ func (c *RepoConfig) validate() error {
 		if p == "" {
 			continue
 		}
-		if err := checkContained(p); err != nil {
+		if err := CheckRepoPath(p); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
@@ -1172,6 +1172,33 @@ func (c *RepoConfig) validate() error {
 	c.Build.BaseURL = base
 
 	return nil
+}
+
+// repoPath is the alphabet a build directory, an output directory and a detect script
+// may be written in.
+//
+// An allowlist, because these values come from the pull request's own .nfpreview.yml and
+// end up in places with their own syntax: a docker --mount option string, whose fields
+// are separated by commas and "=", and a shell command line. A comma in build.dir was
+// enough to turn the node_modules volume into a bind mount of the host's root. Refusing
+// everything outside ordinary path characters closes that for every sink at once, rather
+// than relying on each one to quote correctly.
+//
+// No leading dash, so a value can never be read as a command-line option.
+var repoPath = regexp.MustCompile(`^[A-Za-z0-9._@+][A-Za-z0-9._@+/-]*$`)
+
+// CheckRepoPath validates a path that is relative to a repository root: build.dir,
+// build.output or detect.script, whether it came from .nfpreview.yml or from a project
+// row. It must use forward slashes, stay inside the repository, and contain nothing but
+// letters, digits and "._@+-/".
+func CheckRepoPath(p string) error {
+	if len(p) > 512 {
+		return fmt.Errorf("is too long (%d characters)", len(p))
+	}
+	if !repoPath.MatchString(p) {
+		return fmt.Errorf("must be a relative path made of letters, digits and . _ @ + - / only, got %q", p)
+	}
+	return checkContained(p)
 }
 
 // checkContained rejects paths that could escape the workspace.

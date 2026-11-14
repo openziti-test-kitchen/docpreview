@@ -46,19 +46,8 @@ const targetPrefix = "nfpreview:"
 const legacyTargetPrefix = "docpreview:"
 
 // listTargetFilter is the substring passed to ListShares. The controller's Target filter is a
-// substring match, so this one call returns both spellings; ownedKey then checks the prefix.
+// substring match, so this one call returns every spelling; parseTag then reads the tag.
 const listTargetFilter = "preview:"
-
-// ownedKey reports whether a share's Target is one this program wrote, under either name, and
-// returns the publication key it carries.
-func ownedKey(target string) (string, bool) {
-	for _, p := range []string{targetPrefix, legacyTargetPrefix} {
-		if key, ok := strings.CutPrefix(target, p); ok {
-			return key, true
-		}
-	}
-	return "", false
-}
 
 // Zrok publishes previews over an OpenZiti overlay using zrok v2.
 //
@@ -74,6 +63,10 @@ type Zrok struct {
 
 	root      env_core.Root
 	namespace string
+
+	// instance is this installation's id, stamped into the Target of every share it creates.
+	// See owner.go. Set once, before the first call, by SetInstance.
+	instance string
 
 	mu   sync.Mutex
 	live map[string]*zrokShare // keyed by preview id
@@ -137,6 +130,10 @@ func NewZrok(cfg config.ZrokConfig, log *slog.Logger) (*Zrok, error) {
 }
 
 func (z *Zrok) Kind() string { return "zrok2" }
+
+// SetInstance gives the exposer the installation id it stamps shares with and reaps by. Called
+// once, before anything is published or reaped.
+func (z *Zrok) SetInstance(id string) { z.instance = id }
 
 // Validate confirms the local zrok environment is enabled and that the
 // controller is reachable and agrees we exist.
@@ -241,7 +238,7 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	req := &sdk.ShareRequest{
 		ShareMode:      sdk.PublicShareMode,
 		BackendMode:    sdk.ProxyBackendMode,
-		Target:         targetPrefix + spec.Key(),
+		Target:         stampTag(z.instance, spec.Key()),
 		NameSelections: []sdk.NameSelection{{NamespaceToken: z.namespace, Name: spec.Name}},
 		PermissionMode: sdk.ClosedPermissionMode,
 		AccessGrants:   z.cfg.AccessGrants,
@@ -269,8 +266,8 @@ func (z *Zrok) Publish(ctx context.Context, spec Spec, h http.Handler) (*Publica
 	//
 	// The deadline is the SDK client's, so a timed-out create may well have succeeded on
 	// the controller — in which case the retry creates a second share and the first is an
-	// orphan holding nothing. That is recoverable: it carries the `nfpreview:` target
-	// prefix, so the next startup's Reap collects it, and the newer share is the one
+	// orphan holding nothing. That is recoverable: it carries this installation's stamp,
+	// so the next startup's Reap collects it, and the newer share is the one
 	// bound to the name. The alternative is what this replaced — a preview that built
 	// successfully, has its artifacts on disk, and is not served because one HTTP request
 	// was slow. A leaked share until the next restart is the cheaper failure.
@@ -431,7 +428,10 @@ func (z *Zrok) gatedCreate(ctx context.Context, spec Spec, req *sdk.ShareRequest
 	})
 }
 
-// Adoptable lists the shares this environment already owns, keyed by publication key.
+// Adoptable lists the shares this installation may take over, keyed by publication key: the ones
+// carrying its own stamp, and the unstamped ones an earlier release wrote. A share another
+// installation stamped is never listed. The daemon adopts only the keys its database lists, so
+// an unstamped share of another installation's preview is listed and left alone.
 //
 // One ListShares call, which is the same call Reap makes — so a startup that reaps and
 // then adopts pays for two listings rather than one per candidate. Worth keeping them
@@ -463,23 +463,38 @@ func (z *Zrok) Adoptable(ctx context.Context) (map[string]Adoptable, error) {
 		if shr == nil {
 			continue
 		}
-		key, ours := ownedKey(shr.Target)
-		if !ours {
-			continue
+		origin := ""
+		if len(shr.FrontendEndpoints) > 0 {
+			origin = shr.FrontendEndpoints[0]
 		}
-		// No endpoint, no adoption. The URL goes into a pull request comment, so a
-		// reconstructed one — guessing the frontend's DNS suffix — is a link that
-		// works until the day it does not.
-		if len(shr.FrontendEndpoints) == 0 {
-			continue
-		}
-		origin := shr.FrontendEndpoints[0]
-		if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
-			origin = "https://" + origin
-		}
-		out[key] = Adoptable{Handle: shr.ShareToken, Origin: origin}
+		offerAdoption(out, z.instance, shr.Target, shr.ShareToken, origin)
 	}
 	return out, nil
+}
+
+// offerAdoption adds one listed share to the adoption candidates, when it is one the
+// installation `mine` may take over.
+func offerAdoption(out map[string]Adoptable, mine, target, token, origin string) {
+	instance, key, ours := parseTag(target)
+	if !ours || (instance != "" && instance != mine) {
+		return
+	}
+	// No endpoint, no adoption. The URL goes into a pull request comment, so a
+	// reconstructed one — guessing the frontend's DNS suffix — is a link that
+	// works until the day it does not.
+	if origin == "" {
+		return
+	}
+	if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
+		origin = "https://" + origin
+	}
+	unstamped := instance != mine
+	// Two shares can carry one key, when a release that stamps republished a preview whose
+	// unstamped share was still there. The stamped one is this installation's for certain.
+	if have, clash := out[key]; clash && !have.Unstamped && unstamped {
+		return
+	}
+	out[key] = Adoptable{Handle: token, Origin: origin, Unstamped: unstamped}
 }
 
 // Adopt binds an overlay listener to a share that already exists and serves h on it.
@@ -631,8 +646,14 @@ func (z *Zrok) stopServing(entry *zrokShare) error {
 	return errors.Join(errs...)
 }
 
-// Reap deletes shares owned by this environment whose preview IDs are not in
-// keep.
+// Reap deletes the shares this installation stamped whose publication keys are not in keep.
+//
+// Only its own stamp. The zrok environment can be shared — a second daemon enrolled from the
+// same directory lists the same shares — and keep comes from one daemon's database, so a reap
+// that took every tagged share for its own deleted every live preview of the other daemon. An
+// unstamped share, from a release before the stamp, is not attributable and is never reaped
+// here: it is adopted if the database lists its key, reclaimed by name if a publish needs the
+// name, and otherwise left for `nfpreview shares` to show.
 //
 // At startup keep is the set of previews the database says should exist, and
 // since no listener has been opened yet, every matching share found on the
@@ -674,13 +695,7 @@ func (z *Zrok) Reap(ctx context.Context, keep map[string]bool) error {
 		if shr == nil || liveTokens[shr.ShareToken] {
 			continue
 		}
-		// Defend against the substring filter matching something that merely
-		// contains our prefix rather than starting with it.
-		key, ours := ownedKey(shr.Target)
-		if !ours {
-			continue
-		}
-		if keep[key] {
+		if !doomedShare(z.instance, shr.Target, keep) {
 			continue
 		}
 		z.log.Info("reaping orphaned zrok share", "token", shr.ShareToken, "target", shr.Target)
@@ -1169,8 +1184,9 @@ func (z *Zrok) ReleaseName(ctx context.Context, name string) error {
 	return nil
 }
 
-// reapName deletes any nfpreview-owned share currently bound to name. It
-// reports whether it deleted anything, so Publish knows a retry is worthwhile.
+// reapName deletes any share currently bound to name that this installation stamped or that
+// carries no stamp. It reports whether it deleted anything, so Publish knows a retry is
+// worthwhile. A share another installation stamped is left alone: the name is theirs.
 func (z *Zrok) reapName(ctx context.Context, name string) bool {
 	client, err := z.root.Client()
 	if err != nil {
@@ -1194,7 +1210,7 @@ func (z *Zrok) reapName(ctx context.Context, name string) bool {
 		if shr == nil {
 			continue
 		}
-		if _, ours := ownedKey(shr.Target); !ours {
+		if !reclaimable(z.instance, shr.Target) {
 			continue
 		}
 		if !endpointsMatchName(shr.FrontendEndpoints, name) {

@@ -60,7 +60,8 @@ detect:
   script: ""          # optional, overrides paths
 ```
 
-`Decision{Build bool, Reason string}`. The reason goes into the comment, so a skipped build says why.
+`Decision{Build bool, Reason string}`. The reason goes into the check run, and into the comment when the pull request already has one, so a skipped
+build says why. A skip never posts a new comment (`scm.Report.UpdateOnly`).
 
 `detect.script` is attacker-influenced — it comes from the pull request. It runs with a 60-second cap, five
 environment variables, and its path is resolved through symlinks and re-checked, because a symlink in a working

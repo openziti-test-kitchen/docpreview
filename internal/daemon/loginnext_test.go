@@ -54,6 +54,13 @@ func TestSafeNextRefusesEverythingThatIsNotAPathHere(t *testing.T) {
 		{"evil.example", "/"},
 		{"", "/"},
 
+		// A backslash, which a browser reads as a slash: `/\evil.example` is `//evil.example`.
+		{`/\evil.example/`, "/"},
+		{`/\/evil.example/`, "/"},
+		{`/ok\..\evil`, "/"},
+		{`\\evil.example`, "/"},
+		{"/%zz", "/"},
+
 		// Response splitting. No browser produces these, so nothing is lost by refusing them.
 		{"/ok\r\nLocation: https://evil.example", "/"},
 		{"/ok\nSet-Cookie: x=1", "/"},
