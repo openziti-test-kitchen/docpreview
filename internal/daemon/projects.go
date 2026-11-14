@@ -444,6 +444,10 @@ type projectView struct {
 	// which is why the absence has to be distinguishable from a preview that exists and is
 	// failing.
 	Branch *branchView `json:"branch,omitempty"`
+
+	// PRPreviews counts this repository's pull request previews, so the list can say how many
+	// are live without a second request per row.
+	PRPreviews int `json:"pr_previews"`
 }
 
 // branchView is the branch preview as the projects page needs it: enough to render a link
@@ -455,6 +459,8 @@ type branchView struct {
 	State     string `json:"state"`
 	Commit    string `json:"commit,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
+	// Reason is why the last build failed, so a failed row can say it without opening the log.
+	Reason string `json:"reason,omitempty"`
 }
 
 type projectDefaults struct {
@@ -649,9 +655,21 @@ func branchPreviewFor(previews []store.Preview, repo model.Repo) *branchView {
 			State:     string(p.State),
 			Commit:    p.Commit,
 			UpdatedAt: p.UpdatedAt.Format(time.RFC3339),
+			Reason:    p.Reason,
 		}
 	}
 	return nil
+}
+
+// prPreviewsFor counts a repository's pull request previews, branch previews excluded.
+func prPreviewsFor(previews []store.Preview, repo model.Repo) int {
+	n := 0
+	for _, p := range previews {
+		if !p.PR.IsBranch() && p.PR.Repo == repo {
+			n++
+		}
+	}
+	return n
 }
 
 func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projectsState, error) {
@@ -724,6 +742,7 @@ func (a *ProjectsAdmin) snapshot(ctx context.Context, r *http.Request) (projects
 		}
 		view.Ignored = ignored
 		view.Branch = branchPreviewFor(previews, repo)
+		view.PRPreviews = prPreviewsFor(previews, repo)
 		st.Projects = append(st.Projects, view)
 	}
 
