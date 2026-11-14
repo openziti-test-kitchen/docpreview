@@ -387,7 +387,7 @@ the daemon instance changed and offers a reload. **If the page contradicts the c
 | Method | Path | |
 |---|---|---|
 | `POST` | `/webhook/github` | HMAC-verified. Returns `202` before doing the work. |
-| `POST` | `/webhook/local` | The local platform. No signature. See [Local platform](../local-platform.md). |
+| `POST` | `/webhook/local` | The local platform. Unsigned deliveries are accepted from this machine only; set `local.webhook_secret` to require a signature instead. See [Local platform](../local-platform.md). |
 | `POST` | `/webhook/bitbucket` | HMAC-verified, with the signature in `X-Hub-Signature`. Bitbucket uses SHA-256 there, although GitHub uses that header name for its legacy SHA-1. Returns `501` only when no Bitbucket credential is stored. |
 | `GET` | `/` | The dashboard. |
 | `GET` | `/secrets` | Credential management, on its own page so it can be bookmarked, named in a runbook, and gated by a proxy. Registered only when a credential surface is wired, so a daemon without one answers `404`. |
@@ -770,7 +770,7 @@ never    58a4a5f461f7                          github:openziti-test-kitchen/docp
 | State | |
 |---|---|
 | `ok` | The account holds it and the database claims it. |
-| `orphan` | The account holds it and the database does not. It costs a share and a reserved name against quota, and serves a URL nothing links to. The daemon's reaper deletes these at its next sweep. |
+| `orphan` | The account holds it and the database does not. It costs a share and a reserved name against quota, and serves a URL nothing links to. The daemon's reaper deletes the ones this installation created at its next sweep. A share made by v0.5.1 or earlier carries no installation id, so the reaper leaves it: delete it with `zrok2 unshare` once you are sure no other nfpreview uses the account. |
 | `missing` | The database claims it and the account does not hold it. A comment or the dashboard offers a URL that now 404s. Rebuild the preview. |
 | `never` | A recorded preview that has not published yet. Counted apart so a queued build is not reported as a problem. |
 

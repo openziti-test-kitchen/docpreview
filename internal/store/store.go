@@ -867,6 +867,14 @@ const SettingZrokScope = "exposer.zrok.scope"
 // Empty means the config file decides, which is every installation that has never touched this.
 const SettingExposerKind = "exposer.kind"
 
+// SettingInstanceID is this installation's random id, generated on first start and never changed.
+//
+// The exposers stamp it into every share they create and reap only shares carrying it, so two
+// installations on one zrok environment or Frontdoor tenant cannot delete each other's previews.
+// It lives with the database because the database is what a reap's keep-set is read from: a
+// fresh database is a fresh installation, with a fresh id and nothing it may delete.
+const SettingInstanceID = "instance.id"
+
 // The ziti exposer's three settings, for the same reason: enrolling an identity from the dashboard
 // has to be a complete act, and it is not if it ends in "now edit config.yml and restart".
 //

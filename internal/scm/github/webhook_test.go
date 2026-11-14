@@ -142,6 +142,35 @@ func TestVerifyWebhookRefusesForkPullRequests(t *testing.T) {
 	}
 }
 
+// A deleted fork arrives as `"repo": null`, or with no head repository at all. The head commit
+// stays fetchable from the base repository, so reading "no head repository" as "not a fork"
+// built an outsider's code. Every action that starts a build is covered, because the one that
+// matters in practice is `ready_for_review` on a draft whose fork was deleted afterwards.
+func TestVerifyWebhookRefusesAPullRequestWithNoHeadRepository(t *testing.T) {
+	c := testClient()
+	for _, action := range []string{"opened", "synchronize", "reopened", "ready_for_review"} {
+		for _, head := range []string{
+			`{"ref": "attack", "sha": "def456", "repo": null}`,
+			`{"ref": "attack", "sha": "def456"}`,
+			`{"ref": "attack", "sha": "def456", "repo": {}}`,
+		} {
+			body := []byte(`{
+			  "action": "` + action + `",
+			  "pull_request": {"number": 7, "head": ` + head + `, "base": {"ref": "main"}},
+			  "repository": {"name": "docs", "owner": {"login": "acme"}},
+			  "installation": {"id": 999}
+			}`)
+			events, err := c.VerifyWebhook(context.Background(), headers("pull_request", sign(body)), body)
+			if err != nil {
+				t.Fatalf("%s %s: %v", action, head, err)
+			}
+			if len(events) != 0 {
+				t.Errorf("%s with head %s produced %d events, want 0", action, head, len(events))
+			}
+		}
+	}
+}
+
 func TestVerifyWebhookMapsClosedToTeardown(t *testing.T) {
 	const closed = `{
       "action": "closed",
@@ -187,7 +216,7 @@ func TestVerifyWebhookRejectsBuildEventWithoutHead(t *testing.T) {
 	// which is not necessarily what the event described.
 	const headless = `{
       "action": "synchronize",
-      "pull_request": {"number": 1, "head": {"ref": "", "sha": ""}, "base": {"ref": "main"}},
+      "pull_request": {"number": 1, "head": {"ref": "", "sha": "", "repo": {"full_name": "acme/docs"}}, "base": {"ref": "main"}},
       "repository": {"name": "docs", "owner": {"login": "acme"}},
       "installation": {"id": 999}
     }`

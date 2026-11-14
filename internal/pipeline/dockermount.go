@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -239,9 +240,13 @@ func (b *Builder) cacheMounts(pr model.PullRequest) ([]string, error) {
 
 	var args []string
 	for _, m := range managers {
+		mount, err := mountSpec("type=volume",
+			"source="+CacheVolume(CacheScope(pr), m.name), "target="+m.target)
+		if err != nil {
+			return nil, err
+		}
 		args = append(args,
-			"--mount", "type=volume,source="+CacheVolume(CacheScope(pr), m.name)+
-				",target="+m.target,
+			"--mount", mount,
 			"--env", m.env+"="+m.target,
 		)
 	}
@@ -379,4 +384,85 @@ func (b *Builder) runContainer(ctx context.Context, container string, out io.Wri
 		return fmt.Errorf("docker build failed: the build exited %s", status)
 	}
 	return nil
+}
+
+// mountSpec renders the value of one `docker --mount` flag from its fields.
+//
+// docker parses that value as a single CSV record of `key=value` fields, so a comma inside a
+// value starts a new field. A build directory named `a,type=bind,source=/,target=/host` used to
+// be concatenated into the node_modules volume's target, and docker read the result as a bind
+// mount of the host's root. Writing the record with a CSV encoder makes that impossible: a field
+// holding a comma, a quote or a newline is quoted, and docker reads it back as the one value it
+// was.
+//
+// Every mount goes through here, including the ones whose values are fixed, so that the next
+// mount somebody adds cannot be the one that concatenates.
+//
+// A field with nothing to quote is written exactly as given, so `type=bind,source=/x,target=/y`
+// comes out unchanged.
+func mountSpec(fields ...string) (string, error) {
+	for _, f := range fields {
+		// A line break ends a CSV record even when quoted in some readers, and no path
+		// this program mounts has one.
+		if strings.ContainsAny(f, "\r\n\x00") {
+			return "", fmt.Errorf("refusing a mount field with a control character: %q", f)
+		}
+	}
+	var b strings.Builder
+	w := csv.NewWriter(&b)
+	if err := w.Write(fields); err != nil {
+		return "", fmt.Errorf("encoding a mount: %w", err)
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return "", fmt.Errorf("encoding a mount: %w", err)
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// shellQuote wraps s in single quotes for `sh -c`, so nothing in it is expanded or split.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// resolveInside resolves every symlink in path and requires the result to be inside root.
+//
+// rejectSymlinks walks what is below a directory, so it never looks at the components above
+// it. A branch that commits `lnk -> /etc` and sets `build.output: lnk/nfpreview` names a real
+// directory with no links inside it, which passed every check and was then moved into
+// artifacts/ and served: the daemon's own config and master key at a preview URL that needs
+// no login. Resolving the whole path and comparing it with the resolved workspace is the check
+// that sees the parent.
+//
+// It returns the resolved path, and callers use that from then on, so what is published is
+// the directory that was checked and not a name that can be pointed somewhere else.
+func resolveInside(root, path, what string) (string, error) {
+	rootResolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolving the workspace: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", what, err)
+	}
+	rel, err := filepath.Rel(rootResolved, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
+		filepath.IsAbs(rel) {
+		return "", fmt.Errorf("%s leads outside the repository through a symlink, "+
+			"which cannot be built or published", what)
+	}
+	return resolved, nil
+}
+
+// OutputInside reports whether a build's output directory is still inside its workspace once
+// every symlink is resolved.
+//
+// Build already checked this. It is asked again by whoever is about to move the directory,
+// immediately before the move, so that the thing moved is known to be the workspace's own.
+func OutputInside(ws *Workspace, outputDir string) error {
+	if ws == nil {
+		return errors.New("no workspace to check the build output against")
+	}
+	_, err := resolveInside(ws.Dir, outputDir, "build.output")
+	return err
 }

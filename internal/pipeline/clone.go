@@ -78,8 +78,21 @@ func (c *Cloner) Clone(ctx context.Context, pr model.PullRequest, cloneURL strin
 	//
 	// Nesting under the preview ID keeps teardown's RemoveAll of the preview's
 	// directory working unchanged.
+	//
+	// The commit is checked before it is used for anything. It names the directory that is
+	// about to be deleted and recreated, and it is an argument to git: a value that is not a
+	// full object name is refused here whatever platform it came from.
+	if !model.IsCommitSHA(pr.HeadSHA) {
+		return nil, fmt.Errorf("refusing to clone %s: %q is not a full commit sha", pr.String(), pr.HeadSHA)
+	}
 	previewDir := filepath.Join(c.root, pr.PreviewID())
 	dir := filepath.Join(previewDir, buildDirName(pr.HeadSHA))
+	// And the directory is checked on its own terms, so the RemoveAll below can only ever
+	// reach a workspace, whatever the two names above are made of in future.
+	if rel, err := filepath.Rel(c.root, dir); err != nil || rel == "." || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return nil, fmt.Errorf("refusing to clone %s: its workspace would be outside %s", pr.String(), c.root)
+	}
 
 	// A leftover workspace for this same commit would leave stale files in the
 	// tree — deleted pages would still be there, and the preview would show
@@ -115,7 +128,8 @@ func (c *Cloner) Clone(ctx context.Context, pr model.PullRequest, cloneURL strin
 	// short-lived token and would be stale by the next build anyway.
 	steps := [][]string{
 		{"init", "--quiet"},
-		{"fetch", "--quiet", "--depth", "1", cloneURL, pr.HeadSHA},
+		// `--` ends the options, so neither the URL nor the commit can be read as one.
+		{"fetch", "--quiet", "--depth", "1", "--", cloneURL, pr.HeadSHA},
 		{"checkout", "--quiet", "FETCH_HEAD"},
 	}
 

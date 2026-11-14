@@ -257,6 +257,10 @@ type Adoptable struct {
 	// then not adoptable: a publication whose URL has to be guessed is worse than one
 	// that is recreated, because the guess ends up in a pull request comment.
 	Origin string
+
+	// Unstamped says the publication carries no installation id, so it was made by a release
+	// before the id existed and cannot be attributed. Reap never deletes one.
+	Unstamped bool
 }
 
 // Adopter is an exposer that can serve a publication a previous process created,

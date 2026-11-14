@@ -93,7 +93,15 @@ type Frontdoor struct {
 	// also the public URL, so a name collision is refused rather than resolved.
 	mu   sync.Mutex
 	live map[string]*frontdoorShare
+
+	// instance is this installation's id, stamped into the tag of every share it creates.
+	// See owner.go. Set once, before the first call, by SetInstance.
+	instance string
 }
+
+// SetInstance gives the exposer the installation id it stamps shares with and reaps by. Called
+// once, before anything is published or reaped.
+func (f *Frontdoor) SetInstance(id string) { f.instance = id }
 
 type frontdoorShare struct {
 	id    string
@@ -542,7 +550,7 @@ func (f *Frontdoor) Publish(ctx context.Context, spec Spec, h http.Handler) (*Pu
 		EnvZID:      f.cfg.EnvZID,
 		FrontendIDs: []string{f.cfg.Frontend},
 		Target:      fmt.Sprintf("http://%s:%d", f.ports.host, local.port),
-		Tag:         targetPrefix + spec.Key(),
+		Tag:         stampTag(f.instance, spec.Key()),
 	}
 
 	var created shareResponse
@@ -701,17 +709,13 @@ func (f *Frontdoor) deleteShare(ctx context.Context, id string) error {
 	return nil
 }
 
-// Reap deletes nfpreview-tagged shares whose publication keys are not in keep.
+// Reap deletes the shares this installation stamped whose publication keys are not in keep.
 //
-// The tag prefix is what stops this deleting a share an operator created by hand
-// in another terminal, which would be rude. It is also the only thing scoping the
-// sweep: the tag carries a publication key and nothing identifying the daemon, so
-// two nfpreview instances sharing one Frontdoor tenant delete each other's live
-// shares — B's startup reap sees every one of A's shares as prefix-matching and
-// absent from B's keep-set. zrok escapes this because its listing is filtered by
-// the environment's ziti identity; there is no equivalent here. One daemon per
-// tenant, until the tag grows an instance identifier — which needs a config field
-// and so is written up in docs/design/17-exposer-frontdoor.md rather than done.
+// The tag prefix is what stops this deleting a share an operator created by hand in another
+// terminal. The installation id after it is what stops two nfpreview daemons on one Frontdoor
+// tenant deleting each other's live shares: the listing is the whole tenant's, and keep comes
+// from one daemon's database. A share with our prefix and no id, from a release before the id,
+// cannot be attributed and is left alone.
 func (f *Frontdoor) Reap(ctx context.Context, keep map[string]bool) error {
 	shares, err := f.listShares(ctx)
 	if err != nil {
@@ -744,10 +748,7 @@ func (f *Frontdoor) Reap(ctx context.Context, keep map[string]bool) error {
 			}
 			continue
 		}
-		if !strings.HasPrefix(shr.Tag, targetPrefix) {
-			continue
-		}
-		if keep[strings.TrimPrefix(shr.Tag, targetPrefix)] {
+		if !doomedShare(f.instance, shr.Tag, keep) {
 			continue
 		}
 		f.log.Info("reaping orphaned frontdoor share", "id", shr.ID(), "tag", shr.Tag)

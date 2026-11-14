@@ -491,6 +491,9 @@ func (c *Client) upsertComment(ctx context.Context, r scm.Report) error {
 	}
 
 	if existing == 0 {
+		if r.UpdateOnly {
+			return nil
+		}
 		return c.createComment(ctx, r, body)
 	}
 
@@ -505,6 +508,9 @@ func (c *Client) upsertComment(ctx context.Context, r scm.Report) error {
 		c.log.Warn("the preview comment was deleted; posting a new one",
 			"pr", r.PR.String(), "comment", existing)
 		c.forgetComment(r.PreviewID)
+		if r.UpdateOnly {
+			return nil
+		}
 		return c.createComment(ctx, r, body)
 	}
 	if err != nil {

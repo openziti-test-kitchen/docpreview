@@ -48,6 +48,7 @@ func secretCall(t *testing.T, h http.Handler, method, path, body, remote string)
 		r = httptest.NewRequest(method, path, nil)
 	} else {
 		r = httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
 	}
 	h.ServeHTTP(rec, fromCaller(r, remote))
 	return rec
@@ -159,6 +160,7 @@ func TestProjectSecretWritesAreLocalOnly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			r := httptest.NewRequest("PUT", path, strings.NewReader(`{"value":"a-token-value"}`))
+			r.Header.Set("Content-Type", "application/json")
 			r.RemoteAddr = tc.remote
 			if tc.forwarded {
 				// A tunnel makes every route reachable while RemoteAddr stays

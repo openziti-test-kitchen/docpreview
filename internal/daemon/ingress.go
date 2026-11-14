@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,8 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -135,7 +139,7 @@ func NewIngress(d *Daemon, clients map[model.Platform]scm.Client, comments Comme
 
 // Handler returns the configured mux, wrapped in the login gate.
 func (i *Ingress) Handler() http.Handler {
-	return i.requireLogin(i.routes())
+	return sameOriginWrites(i.requireLogin(i.routes()))
 }
 
 // routes builds the mux itself.
@@ -290,13 +294,42 @@ func (i *Ingress) routes() http.Handler {
 var dashboardHTML []byte
 
 func (i *Ingress) dashboard(w http.ResponseWriter, _ *http.Request) {
-	serveHTML(w, dashboardHTML)
-}
-
-func serveHTML(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(body)
+	setPageHeaders(w.Header())
+	w.Header().Set("Content-Security-Policy", dashboardCSP)
+	w.Write(dashboardHTML)
+}
+
+// dashboardCSP is the dashboard's policy: the page's one script runs, by its hash, and no other.
+//
+// The page builds most of what it shows by assigning markup, and it escapes what goes into it.
+// This is what stands behind that escaping: markup that slipped through unescaped can no longer
+// run, whether as a script element, a handler attribute or a javascript: link. The page wires
+// every control by assigning a function, never with a handler attribute, which is what makes a
+// policy without 'unsafe-inline' possible.
+//
+// Only scripts are restricted. Styles are inline throughout, and images and connections go to
+// this origin or are data: URIs, so closing those would add risk of breaking the page for little.
+var dashboardCSP = "script-src " + scriptHashes(dashboardHTML) + "; " + pageCSP
+
+var inlineScript = regexp.MustCompile(`(?s)<script>(.*?)</script>`)
+
+// scriptHashes is the CSP source list naming every inline script in a page by its hash.
+//
+// A browser hashes a script's text after it has turned every line ending into a line feed, so
+// the same is done here: a page checked out with carriage returns still matches.
+func scriptHashes(page []byte) string {
+	var out []string
+	for _, m := range inlineScript.FindAllSubmatch(page, -1) {
+		text := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(string(m[1]))
+		sum := sha256.Sum256([]byte(text))
+		out = append(out, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+	}
+	if len(out) == 0 {
+		return "'none'"
+	}
+	return strings.Join(out, " ")
 }
 
 // webhook returns a handler for one platform's deliveries.
@@ -306,6 +339,19 @@ func (i *Ingress) webhook(platform model.Platform) http.HandlerFunc {
 		if !ok {
 			http.Error(w, "platform not configured", http.StatusNotImplemented)
 			return
+		}
+
+		// A platform that takes deliveries without a signature takes them from this
+		// machine only. That is the local platform with no webhook_secret: a build
+		// trigger with no authentication at all, which is fine for a curl typed at this
+		// host and is not fine for anything else that can reach the port.
+		if u, ok := client.(interface{ WebhookUnsigned() bool }); ok && u.WebhookUnsigned() {
+			if why := refuseUnsignedDelivery(r); why != "" {
+				i.log.Warn("rejected an unsigned webhook", "platform", platform,
+					"remote", r.RemoteAddr, "reason", why)
+				http.Error(w, "forbidden: "+why, http.StatusForbidden)
+				return
+			}
 		}
 
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBody+1))
@@ -387,6 +433,7 @@ func (i *Ingress) prIndex(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	setPageHeaders(w.Header())
 
 	fmt.Fprint(w, `<!doctype html><meta charset=utf-8>
 <meta http-equiv=refresh content=2>
@@ -531,4 +578,36 @@ func (i *Ingress) status(w http.ResponseWriter, r *http.Request) {
 	if err := enc.Encode(st); err != nil {
 		i.log.Error("writing status", "error", err)
 	}
+}
+
+// refuseUnsignedDelivery says why a webhook delivery with no signature must not be accepted,
+// or "" when it may be.
+//
+// Two rules, and each closes a different door.
+//
+// It has to arrive by a private path: a direct connection from this machine, or an overlay
+// listener. A listener bound to a routable address, or one reached through a proxy, would
+// otherwise let anybody who can reach the port start builds.
+//
+// And it must not come from a web page. A page the operator visits can post to
+// http://127.0.0.1:8471/webhook/local with a no-cors fetch or a form, and that request does
+// come from this machine. A browser marks every such request: `Origin` on any cross-origin
+// POST, and `Sec-Fetch-Site` on every request it makes. curl, Invoke-RestMethod and the
+// `nfpreview sim` hook send neither, so nothing typed by hand is affected.
+//
+// Setting local.webhook_secret lifts both rules, because a signed delivery proves itself.
+func refuseUnsignedDelivery(r *http.Request) string {
+	if !privatePath(r) {
+		return "an unsigned delivery is accepted only from this machine; " +
+			"set local.webhook_secret to send one from anywhere else"
+	}
+	if len(r.Header.Values("Origin")) > 0 {
+		return "an unsigned delivery is not accepted from a web page"
+	}
+	for _, v := range r.Header.Values("Sec-Fetch-Site") {
+		if v != "none" {
+			return "an unsigned delivery is not accepted from a web page"
+		}
+	}
+	return ""
 }

@@ -87,9 +87,12 @@ zrok v2 decouples names from shares: a name lives in a namespace independently o
 can be attached to the same name on every rebuild and a reviewer's bookmark keeps working. That property is why
 the pull request comment can be written once and edited thereafter.
 
-Shares are tagged `Target: "nfpreview:<key>"`, where the key is `Spec.Key()` (`internal/expose/zrok.go:159`).
-That prefix is how `Reap` tells a share nfpreview made from one an operator made by hand — deleting the latter
-would be rude.
+Shares are tagged `Target: "nfpreview:<instance>:<key>"`, where the key is `Spec.Key()` and the instance is a
+random id the installation generates once and keeps in its database (`internal/expose/owner.go`). The prefix is
+how `Reap` tells a share nfpreview made from one an operator made by hand. The instance is how it tells its own
+shares from those of another nfpreview on the same zrok environment or Frontdoor tenant: `Reap` deletes only
+shares carrying its own instance. Releases up to v0.5.1 wrote `nfpreview:<key>` with no instance. Those are
+adopted when the database lists their key and are never reaped.
 
 A name has to be registered in the namespace *before* a share can bind it: zrok v2 does not create one implicitly,
 so `CreateShare` with an unregistered `NameSelection` answers 409 and every publish failed until `ensureName` was

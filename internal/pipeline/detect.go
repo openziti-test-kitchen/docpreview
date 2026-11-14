@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/bmatcuk/doublestar/v4"
 
@@ -172,6 +173,38 @@ func (d *Detector) matchGlobs(patterns, changed []string) Decision {
 	}
 }
 
+// detectReasonLimit caps how much of a detect script's output becomes the reason.
+const detectReasonLimit = 300
+
+// scriptSaid turns a detect script's output into a reason that is safe to post.
+//
+// The script comes from the pull request's branch, and the reason goes into a comment and a check
+// run posted under the App's name. Raw, the branch author chose that comment's markdown, its
+// length and whom it mentions. So the output is reduced to one line of printable text, capped,
+// with every `@` and backtick removed, and quoted as a code span, inside which markdown and
+// HTML are inert.
+func scriptSaid(out string) string {
+	var b strings.Builder
+	for _, r := range out {
+		switch {
+		case r == '@' || r == '`':
+		case !unicode.IsPrint(r):
+			// Newlines and tabs, and the format characters that reorder text.
+			b.WriteByte(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	said := strings.Join(strings.Fields(b.String()), " ")
+	if said == "" {
+		return ""
+	}
+	if runes := []rune(said); len(runes) > detectReasonLimit {
+		said = strings.TrimSpace(string(runes[:detectReasonLimit])) + "…"
+	}
+	return "Detect script said: `" + said + "`"
+}
+
 // runScript executes the repository's detect script.
 //
 // The script receives the changed paths on stdin, one per line, so it does not
@@ -180,6 +213,11 @@ func (d *Detector) matchGlobs(patterns, changed []string) Decision {
 // business reading the host's environment — and the host's environment on a
 // build server contains things a pull request author should not see.
 func (d *Detector) runScript(ctx context.Context, ws *Workspace, script string, changed []string) (Decision, error) {
+	// Checked again where it is used, as build.dir and build.output are: the value may have
+	// come from a project row or a caller that never went through the config loader.
+	if err := config.CheckRepoPath(script); err != nil {
+		return Decision{}, fmt.Errorf("detect script %q %w", script, err)
+	}
 	abs := filepath.Join(ws.Dir, filepath.FromSlash(script))
 
 	// config validated that the path does not escape the repository, but
@@ -243,8 +281,8 @@ func (d *Detector) runScript(ctx context.Context, ws *Workspace, script string, 
 
 	if err == nil {
 		reason := "Detect script requested a build."
-		if trimmed != "" {
-			reason = trimmed
+		if said := scriptSaid(trimmed); said != "" {
+			reason = said
 		}
 		return Decision{Build: true, Reason: reason}, nil
 	}
@@ -252,8 +290,8 @@ func (d *Detector) runScript(ctx context.Context, ws *Workspace, script string, 
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == skipExitCode {
 		reason := "Detect script reported no documentation changes."
-		if trimmed != "" {
-			reason = trimmed
+		if said := scriptSaid(trimmed); said != "" {
+			reason = said
 		}
 		return Decision{Build: false, Reason: reason}, nil
 	}
@@ -294,7 +332,11 @@ func (d *Detector) containerCommand(ctx context.Context, ws *Workspace, rel stri
 	}
 	name := "nfpreview-detect-" + hex.EncodeToString(id[:])
 
-	cmd := exec.CommandContext(ctx, "docker", detectRunArgs(*d.container, name, source, rel)...)
+	args, err := detectRunArgs(*d.container, name, source, rel)
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cleanup := func() {
 		rmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
@@ -305,12 +347,16 @@ func (d *Detector) containerCommand(ctx context.Context, ws *Workspace, rel stri
 }
 
 // detectRunArgs is the `docker run` command line, split out so it can be pinned without docker.
-func detectRunArgs(c DetectContainer, name, source, rel string) []string {
+func detectRunArgs(c DetectContainer, name, source, rel string) ([]string, error) {
+	mount, err := mountSpec("type=bind", "source="+source, "target=/workspace", "readonly")
+	if err != nil {
+		return nil, err
+	}
 	args := []string{
 		"run", "--rm", "-i", "--name", name,
 		"--pull", "never",
 		"--network", "none",
-		"--mount", "type=bind,source=" + source + ",target=/workspace,readonly",
+		"--mount", mount,
 		"--workdir", "/workspace",
 		"--env", "NFPREVIEW=1",
 		"--env", "HOME=/tmp",
@@ -322,5 +368,5 @@ func detectRunArgs(c DetectContainer, name, source, rel string) []string {
 	if c.Memory != "" {
 		args = append(args, "--memory", c.Memory)
 	}
-	return append(args, c.Image)
+	return append(args, c.Image), nil
 }

@@ -246,7 +246,8 @@ nfpreview serve
 ```
 
 Open a pull request that changes a file inside the project's build directory, such as `docs/`. A pull request that
-changes nothing there is skipped. Within a minute or so you should see a comment.
+changes nothing there is skipped, and gets a neutral check run and no comment. Within a minute or so you should
+see a comment.
 
 ## Verifying the round trip
 
@@ -262,8 +263,9 @@ lists every webhook with its request and response.
 | `502 bad gateway` | The tunnel is up and the daemon behind it is not. See [502](./webhook-tunnel.md#what-a-502-means). |
 | `202 accepted`, no comment | The daemon took it. Read the server log. Usually there is no project row for this repository (the log names it), or the pull request comes from a fork. |
 
-A pull request that changes nothing in the build directory still gets a comment and a neutral check run, both
-marked skipped.
+A pull request that changes nothing in the build directory gets a neutral check run marked skipped, and no
+comment: a comment is first posted when there is documentation to build. If an earlier commit on the pull request
+did build, its comment is edited to say skipped, so it never shows a state that has passed.
 
 Every delivery has a **Redeliver** button, so you can retry without pushing more commits.
 

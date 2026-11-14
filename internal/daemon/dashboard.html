@@ -3146,8 +3146,8 @@ function updateBody(item, g) {
   unlink.onclick = async () => {
     const yes = await ask({
       kind: "Unlink a pull request",
-      what: `${p.branch} <span class="mono">#${p.number}</span>`,
-      lede: `${esc(g.name)} — this pull request stops being built. A push, a webhook ` +
+      what: markup`${p.branch} <span class="mono">#${p.number}</span>`,
+      lede: `${g.name} — this pull request stops being built. A push, a webhook ` +
         `delivery and a project scan will all skip it.`,
       goes: [
         "The preview and its URL",
@@ -3161,9 +3161,9 @@ function updateBody(item, g) {
         "Other pull requests on this repository",
         "The project, its settings and its webhook",
       ],
-      note: `<b>Reversible.</b> Link it back from the Projects page — the card lists what ` +
-        `it is not building, with a link beside each. The build history is the one thing ` +
-        `that does not come back, so the first build after linking is a cold one.`,
+      note: markup`<b>Reversible.</b> Link it back from the Projects page — the card lists what
+        it is not building, with a link beside each. The build history is the one thing
+        that does not come back, so the first build after linking is a cold one.`,
       confirm: "Unlink",
     });
     if (!yes) return;
@@ -3188,10 +3188,10 @@ function updateBody(item, g) {
     const queued = p.state === "queued";
     const yes = await ask({
       kind: queued ? "Cancel a queued build" : "Cancel a running build",
-      what: `${p.branch} <span class="mono">#${p.number}</span>`,
+      what: markup`${p.branch} <span class="mono">#${p.number}</span>`,
       lede: queued
-        ? `${esc(g.name)} — this build has not started, so it is taken out of the queue.`
-        : `${esc(g.name)} — the build is abandoned where it stands.`,
+        ? `${g.name} — this build has not started, so it is taken out of the queue.`
+        : `${g.name} — the build is abandoned where it stands.`,
       goes: [
         queued ? "Its place in the queue" : "The work done so far",
         "Reported as failed on the pull request",
@@ -5789,7 +5789,7 @@ function zrokWizard(s, preselect) {
     const needsRestart = /restart/i.test(w.note);
     return {
       title: w.signedUp ? "Signed up and enrolled" : "Enrolled",
-      lede: w.note || "This host is enrolled.",
+      lede: esc(w.note || "This host is enrolled."),
       body: `<ul class="wiz-next">
         ${needsRestart
           ? `<li><strong>Restart the daemon.</strong> zrok's directory is read once at
@@ -5908,7 +5908,7 @@ function wireZrok(s) {
       const local = kind === "local";
       const yes = await ask({
         kind: "Publish previews with " + label + "?",
-        what: `<code>${esc(s.exposer_kind)}</code> → <code>${esc(kind)}</code>`,
+        what: markup`<code>${s.exposer_kind}</code> → <code>${kind}</code>`,
         lede: "Takes effect at the next restart. Nothing changes before then.",
         goes: [
           "Every current preview URL — each one is republished at a new address",
@@ -5924,8 +5924,8 @@ function wireZrok(s) {
           "The ability to switch back, which republishes at the old addresses again",
         ],
         note: local
-          ? "A local preview URL is <code>127.0.0.1</code>. A reviewer who is not on this " +
-            "machine cannot open it, and the pull request comment will say so."
+          ? markup`A local preview URL is <code>127.0.0.1</code>. A reviewer who is not on this
+            machine cannot open it, and the pull request comment will say so.`
           : "Reviewers holding an old URL get a 404 until they reload the comment.",
         confirm: "Enable " + label,
       });
@@ -6012,7 +6012,7 @@ function wireZrok(s) {
       const which = disable.dataset.zrokUnenrol;
       const yes = await ask({
         kind: "Un-enrol this host from zrok?",
-        what: `<code>${esc(which === "system" ? s.system.path : s.project.path)}</code>`,
+        what: markup`<code>${which === "system" ? s.system.path : s.project.path}</code>`,
         lede: "This host stops being a zrok environment. The account itself is untouched — " +
           "this is the undo for enrolling, not for signing up.",
         goes: [
@@ -6385,7 +6385,18 @@ async function runScan(key) {
        if (!await ask({...})) return;
 
    Cancel is what has focus and what Escape, the backdrop and ✕ all do. A dialog that opens
-   with an irreversible action focused turns a stray Return into that action. */
+   with an irreversible action focused turns a stray Return into that action.
+
+   Every field is text and is escaped here. `what`, `lede` and `note` used to be assigned as
+   HTML, and two callers put a pull request's branch name in `what` unescaped, so a branch
+   named `<img src=x onerror=…>` ran script in the dashboard of whoever clicked Cancel or
+   Unlink. A caller that wants markup writes the field as a markup`…` template, which escapes
+   every value interpolated into it — so the markup is always the caller's own literal text
+   and never something that arrived from a repository. */
+const markup = (strings, ...values) => ({
+  html: strings.reduce((out, s, i) => out + s + (i < values.length ? esc(values[i]) : ""), ""),
+});
+const askText = v => (v && typeof v === "object" && typeof v.html === "string") ? v.html : esc(v);
 function ask(o) {
   return new Promise(resolve => {
     const wrap = document.createElement("div");
@@ -6402,8 +6413,8 @@ function ask(o) {
             <button class="modal-x" data-ask="no" title="Cancel" aria-label="Cancel">✕</button>
           </div>
           <h3>${esc(o.kind)}</h3>
-          <p class="ask-what">${o.what}</p>
-          <p class="ask-lede">${o.lede}</p>
+          <p class="ask-what">${askText(o.what)}</p>
+          <p class="ask-lede">${askText(o.lede)}</p>
           <div class="ask-cols">
             <div class="ask-col" style="--edge:var(--critical)">
               <h4>Removed now</h4>
@@ -6414,7 +6425,7 @@ function ask(o) {
               <ul>${(o.keeps || []).map(x => `<li>${esc(x)}</li>`).join("")}</ul>
             </div>
           </div>
-          ${o.note ? `<p class="ask-note">${o.note}</p>` : ""}
+          ${o.note ? `<p class="ask-note">${askText(o.note)}</p>` : ""}
           <div class="ask-acts">
             <button class="btn" data-ask="no">Cancel</button>
             <button class="btn solid-danger" data-ask="yes">${esc(o.confirm)}</button>

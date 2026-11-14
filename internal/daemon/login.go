@@ -2,10 +2,13 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"html"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -119,7 +122,7 @@ func (i *Ingress) requireLogin(next http.Handler) http.Handler {
 		}
 		// 303 rather than rendering the form in place, so the address bar says /login and a
 		// reload does not re-submit whatever the reader was originally fetching.
-		http.Redirect(w, r, "/login?next="+urlQueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
 	})
 }
 
@@ -145,7 +148,9 @@ func privatePath(r *http.Request) bool {
 // forwarded reports whether any proxy forwarding header is set.
 func forwarded(r *http.Request) bool {
 	for _, h := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Real-Ip", "Forwarded"} {
-		if r.Header.Get(h) != "" {
+		// Present at all, whatever it holds. Get reads the first value only, so a request
+		// with an empty first line and a real second one read as not forwarded.
+		if len(r.Header.Values(h)) > 0 {
 			return true
 		}
 	}
@@ -168,22 +173,6 @@ func wantsJSON(r *http.Request) bool {
 	return !strings.Contains(accept, "text/html")
 }
 
-// urlQueryEscape is url.QueryEscape without the import, kept local because the only value it
-// ever sees is a path this process produced.
-func urlQueryEscape(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '-', r == '_', r == '.', r == '~', r == '/':
-			b.WriteRune(r)
-		default:
-			b.WriteString(fmt.Sprintf("%%%02X", r))
-		}
-	}
-	return b.String()
-}
-
 // safeNext reduces a caller-supplied destination to a path on this daemon, "/" if it is anything
 // else.
 //
@@ -200,16 +189,63 @@ func urlQueryEscape(s string) string {
 // Control characters and spaces are refused outright. They cannot appear in a URL a browser
 // produced, and a newline in a value that becomes a Location header is a response-splitting
 // attempt rather than a destination.
+//
+// A backslash is refused anywhere. Browsers read `\` in a URL as `/`, so `/\evil.example` is
+// `//evil.example` to the browser that follows the redirect and a plain path to everything that
+// checked it. And the value is parsed as the last step, so the answer does not rest on this
+// function's idea of a URL agreeing with the browser's: whatever parses to a scheme or a host is
+// not a path here.
 func safeNext(next string) string {
 	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
 		return "/"
 	}
 	for _, r := range next {
-		if r <= ' ' || r == 0x7f {
+		if r <= ' ' || r == 0x7f || r == '\\' {
 			return "/"
 		}
 	}
+	u, err := url.Parse(next)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
+		return "/"
+	}
 	return next
+}
+
+// loginFormLimit caps the body of a posted login form.
+const loginFormLimit = 16 << 10
+
+// loginSlots bounds how many password verifications run at once.
+//
+// Each is an argon2id derivation at 64 MiB, including the decoy for an unknown role, and /login
+// is open and forwarded by the public dashboard proxy. Unbounded, sixty concurrent posts hold
+// about 4 GB. Three is enough for people, who log in one at a time, and bounds the cost at
+// under 200 MiB. It also bounds online guessing to three derivations at a time for the whole
+// daemon.
+var loginSlots = make(chan struct{}, 3)
+
+// privateLoginSlot is one more verification, kept for a request that arrived on a private path.
+//
+// The three above can be held by anybody: a steady stream of wrong passwords through the public
+// proxy keeps them taken, and everybody else is answered 429 for as long as it lasts. That must
+// not include the operator on the host, who is the one person able to do something about it.
+var privateLoginSlot = make(chan struct{}, 1)
+
+// takeLoginSlot claims a verification slot without waiting. The caller runs release when done.
+// private says the request came by a private path, which may also take the slot kept for those.
+func takeLoginSlot(private bool) (release func(), ok bool) {
+	select {
+	case loginSlots <- struct{}{}:
+		return func() { <-loginSlots }, true
+	default:
+	}
+	if private {
+		select {
+		case privateLoginSlot <- struct{}{}:
+			return func() { <-privateLoginSlot }, true
+		default:
+		}
+	}
+	return nil, false
 }
 
 // login serves the form and handles the submission.
@@ -232,6 +268,8 @@ func (i *Ingress) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Three short fields. Without a cap the form is read to the end of whatever was sent.
+	r.Body = http.MaxBytesReader(w, r.Body, loginFormLimit)
 	if err := r.ParseForm(); err != nil {
 		i.serveLogin(w, "", "That form could not be read.", http.StatusBadRequest)
 		return
@@ -249,7 +287,24 @@ func (i *Ingress) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !i.console.Verify(ctx, role, password) {
+	// One verification is 64 MiB and four threads, on a page anybody can post to. Beyond a
+	// few at once the answer is 429 before any of that is spent, rather than a queue: a queue
+	// of them is the same memory, later.
+	release, ok := takeLoginSlot(privatePath(r))
+	if !ok {
+		i.log.Warn("refused a dashboard login: too many verifications in progress", "remote", r.RemoteAddr)
+		w.Header().Set("Retry-After", "2")
+		i.serveLogin(w, next, "Too many sign-ins are in progress. Try again in a moment.",
+			http.StatusTooManyRequests)
+		return
+	}
+	// Deferred inside its own function, so a verification that panics still gives the slot back.
+	verified := func() bool {
+		defer release()
+		return i.console.Verify(ctx, role, password)
+	}()
+
+	if !verified {
 		// One message for every way this fails: an unknown username, a role with no password
 		// set, and the wrong password. The log carries which was attempted; the page does not
 		// carry an oracle for whether `admin` exists or whether a viewer password is
@@ -328,6 +383,11 @@ func (i *Ingress) serveLogin(w http.ResponseWriter, next, message string, code i
 	// Nothing about this page is cacheable, and a cached login form served after a logout is
 	// a page that appears to have worked and has not.
 	w.Header().Set("Cache-Control", "no-store")
+	setPageHeaders(w.Header())
+	// The page has one script, fixed at build time, so its hash can be the only script
+	// allowed: markup injected into this page, where a password is about to be typed, runs
+	// nothing. Styles are inline; the Google mark is inline SVG and needs no image source.
+	w.Header().Set("Content-Security-Policy", loginCSP)
 	w.WriteHeader(code)
 
 	note := ""
@@ -352,7 +412,7 @@ func (i *Ingress) serveLogin(w http.ResponseWriter, next, message string, code i
   </a>
   <p class="hint">for an address at %s</p>
   <div class="or"><span>or</span></div>`,
-			html.EscapeString(urlQueryEscape(next)), html.EscapeString(domains))
+			html.EscapeString(url.QueryEscape(next)), html.EscapeString(domains))
 	}
 
 	fmt.Fprintf(w, `<!doctype html>
@@ -422,7 +482,15 @@ p.hint { margin: 0.35rem 0 0; font-size: 0.72rem; opacity: 0.6; text-align: cent
   <input type="hidden" name="next" value="%s">
   <button type="submit">Sign in</button>
 </form>
-<script>
+<script>%s</script>
+</body></html>
+`, note, google, html.EscapeString(next), loginScript)
+}
+
+// loginScript is the login page's one script: it puts the fragment back into `next`.
+//
+// A constant, written into the page verbatim, so that its hash can be the page's script-src.
+const loginScript = `
 (function () {
   var hash = location.hash;
   if (!hash || hash === "#") return;
@@ -431,7 +499,11 @@ p.hint { margin: 0.35rem 0 0; font-size: 0.72rem; opacity: 0.6; text-align: cent
   var google = document.querySelector("a.google");
   if (google) google.href += encodeURIComponent(hash);
 })();
-</script>
-</body></html>
-`, note, google, html.EscapeString(next))
-}
+`
+
+// loginCSP is the login page's policy: nothing loads but the one script above, by its hash.
+var loginCSP = func() string {
+	sum := sha256.Sum256([]byte(loginScript))
+	return "default-src 'none'; script-src 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'; " +
+		"style-src 'unsafe-inline'; " + pageCSP
+}()

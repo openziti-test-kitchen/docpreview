@@ -130,6 +130,12 @@ func (a *ZrokAdmin) WithZitiEnroller(f func(ctx context.Context, jwt, name strin
 // different nouns and the reason text is the whole value of the refusal.
 func (a *ZrokAdmin) gated(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// These handlers decode their bodies themselves, so the rule decodeJSON applies is
+		// applied here: a body is JSON and says so, or it is not read.
+		if r.ContentLength != 0 && !jsonBody(r) {
+			writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": errNotJSON.Error()})
+			return
+		}
 		if roleOfContext(r.Context()) == RoleAdmin {
 			next(w, r)
 			return

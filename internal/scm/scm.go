@@ -97,6 +97,17 @@ type Report struct {
 	// Title heads the pull request comment and names the Bitbucket build status. Empty means
 	// DefaultTitle, so a report built anywhere other than the daemon still renders a heading.
 	Title string
+
+	// UpdateOnly says this report may edit the preview's comment and must not create one.
+	//
+	// A new comment notifies everybody subscribed to the pull request, so one is only worth
+	// posting once there is a preview to talk about. Until detection has said the pull
+	// request touches the documentation, nothing is: queued, the first building, and skipped
+	// are all UpdateOnly. A pull request that already has a comment, from an earlier commit
+	// that did build, still has it edited, so it never shows a state that has passed.
+	//
+	// It governs the comment alone. A check run or build status is written either way.
+	UpdateOnly bool
 }
 
 // DefaultTitle is the heading used when preview.title is not set.

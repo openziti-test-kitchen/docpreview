@@ -908,8 +908,9 @@ func (d *Daemon) recover(ctx context.Context) error {
 	// deleted is only what the database no longer claims — a preview since torn down, a
 	// build since pruned, a share left by a create that timed out after succeeding.
 	var orphans int
-	for key := range d.adoptable {
-		if !keep[key] {
+	for key, a := range d.adoptable {
+		// An unstamped share is not reaped: see expose.Adoptable.
+		if !keep[key] && !a.Unstamped {
 			orphans++
 		}
 	}
@@ -2155,9 +2156,13 @@ func (d *Daemon) handleBuild(ctx context.Context, ev scm.Event) error {
 	// The report is best-effort where the enqueue is not: a queue write that fails
 	// means no build, and the caller has to hear about it. A comment that fails to
 	// say "queued" is a cosmetic loss on the way to saying "building".
+	//
+	// UpdateOnly: nothing is known yet about whether this pull request touches the
+	// documentation, so this edits a comment that exists and does not post one. See
+	// scm.Report.UpdateOnly.
 	d.report(ctx, scm.Report{
 		PR: pr, PreviewID: id, State: scm.StateQueued,
-		Commit: pr.HeadSHA, UpdatedAt: time.Now(),
+		Commit: pr.HeadSHA, UpdatedAt: time.Now(), UpdateOnly: true,
 	})
 
 	if err := d.store.Enqueue(ctx, pr); err != nil {
@@ -2447,9 +2452,11 @@ func (d *Daemon) build(parent context.Context, pr model.PullRequest) {
 	}
 
 	started := time.Now()
+	// UpdateOnly for the same reason as queued: detection has not run. runPipeline announces
+	// the build again, able to post, once detection says there is something to build.
 	d.report(ctx, scm.Report{
 		PR: pr, PreviewID: id, State: scm.StateBuilding,
-		Commit: pr.HeadSHA, UpdatedAt: started,
+		Commit: pr.HeadSHA, UpdatedAt: started, UpdateOnly: true,
 	})
 
 	result, decision, err := d.runPipeline(ctx, me, client, pr, log)
@@ -2486,9 +2493,12 @@ func (d *Daemon) build(parent context.Context, pr model.PullRequest) {
 	case !decision.Build:
 		log.Info("skipped", "reason", decision.Reason)
 		d.recordSkip(ctx, pr, decision.Reason)
+		// A skip posts no comment. A pull request that changes no documentation used to get
+		// one saying so, which notified everybody on it about nothing. The check run still
+		// records the skip, and a comment an earlier commit earned is still edited.
 		d.report(ctx, scm.Report{
 			PR: pr, PreviewID: id, State: scm.StateSkipped,
-			Commit: pr.HeadSHA, Reason: decision.Reason, UpdatedAt: time.Now(),
+			Commit: pr.HeadSHA, Reason: decision.Reason, UpdatedAt: time.Now(), UpdateOnly: true,
 		})
 
 	default:
@@ -2683,6 +2693,21 @@ func (d *Daemon) runPipeline(
 		if !decision.Build {
 			return out, decision, nil
 		}
+
+		// The first moment a comment is worth posting: this pull request has documentation
+		// to build. Announced rather than reported, because the dashboard already has the
+		// building state from the report that opened this build.
+		//
+		// Not when this build has been cancelled, and not past the guard every report passes:
+		// a superseded build that got this far would otherwise write "building" for its old
+		// commit over the newer build's comment.
+		building := scm.Report{
+			PR: pr, PreviewID: pr.PreviewID(), State: scm.StateBuilding,
+			Commit: pr.HeadSHA, UpdatedAt: time.Now(),
+		}
+		if ctx.Err() == nil && !d.staleReport(building) {
+			d.announce(building)
+		}
 	}
 
 	// The name has to be settled before the build, not at publish. Under a
@@ -2820,6 +2845,13 @@ func (d *Daemon) runPipeline(
 	// buildID is safe as a path component: buildlog.Begin refuses one containing a
 	// separator, and this is the same value.
 	artifactDir := filepath.Join(d.cfg.ArtifactsDir(), pr.PreviewID(), buildID)
+	// Asked again here, immediately before the move. replaceDir renames, and a rename of
+	// something outside the workspace would take a directory away from the host as well as
+	// publish it. result.OutputDir is already the resolved path Build checked; this is what
+	// keeps that true for any future caller that hands this function a different one.
+	if err := pipeline.OutputInside(ws, result.OutputDir); err != nil {
+		return out, decision, err
+	}
 	if err := replaceDir(result.OutputDir, artifactDir); err != nil {
 		return out, decision, err
 	}
@@ -3314,6 +3346,14 @@ func (d *Daemon) report(ctx context.Context, r scm.Report) {
 	// happening even when the platform that asked for it is unreachable.
 	d.record(r, reportMessage(r))
 
+	d.announce(r)
+}
+
+// announce sends a report to the pull request's platform, and records nothing.
+//
+// The second half of report, split out for the one caller that has already recorded the
+// state: the building announcement made once detection has passed.
+func (d *Daemon) announce(r scm.Report) {
 	// A branch preview stops here: recorded for the dashboard, never sent to the platform.
 	//
 	// There is nothing to send it to. A branch has no pull request, so an upsert would have

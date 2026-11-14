@@ -132,9 +132,20 @@ func (c *Client) pullRequestEvent(body []byte, delivery string) ([]scm.Event, er
 		// repository under our installation token, which is exactly the supply
 		// chain hole this system must not open. Refuse, loudly enough to be
 		// found in the logs.
-		if head := p.PullRequest.Head.Repo; head != nil && !strings.EqualFold(head.FullName, pr.Repo.Slug()) {
+		//
+		// A missing head repository is refused as well. GitHub sends `"repo": null` for a
+		// pull request whose fork has been deleted, and the head commit stays fetchable
+		// from the base repository — so treating "no head repository" as "not a fork"
+		// would build an outsider's code the moment they deleted the fork it came from.
+		// Only a head repository that is present and is the base repository is ours.
+		head := p.PullRequest.Head.Repo
+		if head == nil || !strings.EqualFold(head.FullName, pr.Repo.Slug()) {
+			headRepo := "(none: the head repository is missing or deleted)"
+			if head != nil {
+				headRepo = head.FullName
+			}
 			c.log.Warn("refusing to build a fork pull request",
-				"pr", pr.String(), "head_repo", head.FullName, "delivery", delivery)
+				"pr", pr.String(), "head_repo", headRepo, "delivery", delivery)
 			return nil, nil
 		}
 		if pr.Branch == "" || pr.HeadSHA == "" {

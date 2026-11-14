@@ -885,6 +885,30 @@ func (a *ProjectsAdmin) save(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
 		return
 	}
+	// The same allowlist .nfpreview.yml is held to. These three values reach a docker
+	// --mount option string and a shell command line, and a row is no safer a source than
+	// the repository once somebody has pasted a value into it.
+	//
+	// A backslash is rewritten rather than refused: it is what somebody on Windows types,
+	// the value is a path inside a git checkout either way, and the allowlist has no
+	// backslash in it.
+	p.BuildDir = strings.ReplaceAll(p.BuildDir, `\`, "/")
+	p.BuildOutput = strings.ReplaceAll(p.BuildOutput, `\`, "/")
+	p.DetectScript = strings.ReplaceAll(p.DetectScript, `\`, "/")
+	for _, f := range []struct{ name, value string }{
+		{"build dir", p.BuildDir},
+		{"build output", p.BuildOutput},
+		{"detect script", p.DetectScript},
+	} {
+		if f.value == "" {
+			continue
+		}
+		if err := config.CheckRepoPath(f.value); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("%s %v", f.name, err)})
+			return
+		}
+	}
 	if len(p.DisplayName) > maxDisplayName {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": fmt.Sprintf("a name is capped at %d characters", maxDisplayName)})

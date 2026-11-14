@@ -210,10 +210,27 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 
 	started := time.Now()
 
+	// Checked here as well as where the values are loaded and saved. This is the last point
+	// every source passes through: .nfpreview.yml, a framework preset, and a project row,
+	// including a row written before rows were validated at all.
+	for _, f := range []struct{ name, value string }{
+		{"build.dir", cfg.Build.Dir},
+		{"build.output", cfg.Build.Output},
+	} {
+		if err := config.CheckRepoPath(f.value); err != nil {
+			return nil, fmt.Errorf("%s %w", f.name, err)
+		}
+	}
+
 	buildDir := filepath.Join(ws.Dir, filepath.FromSlash(cfg.Build.Dir))
 	if _, err := os.Stat(filepath.Join(buildDir, "package.json")); err != nil {
 		return nil, fmt.Errorf("no package.json in %q; set build.dir in %s: %w",
 			cfg.Build.Dir, config.RepoConfigName, err)
+	}
+	// A build directory that is, or sits below, a symlink committed by the branch would run
+	// the build somewhere other than the checkout.
+	if _, err := resolveInside(ws.Dir, buildDir, "build.dir"); err != nil {
+		return nil, err
 	}
 
 	// The project's own cap wins over the server's. It is set only by applyProject
@@ -285,6 +302,17 @@ func (b *Builder) Build(ctx context.Context, ws *Workspace, cfg config.RepoConfi
 		refuse(reason)
 		return nil, fmt.Errorf("%s\n%s", reason, out)
 	}
+
+	// The whole path, resolved, has to be inside the workspace. The walk below only sees
+	// what is under the output directory; this is what sees a symlink above it, whether the
+	// branch committed it or the build created it. From here on outputDir is the resolved
+	// path, so the directory that is published is the one that was checked.
+	resolvedOutput, err := resolveInside(ws.Dir, outputDir, "build.output")
+	if err != nil {
+		refuse(err.Error())
+		return nil, fmt.Errorf("%w\n%s", err, out)
+	}
+	outputDir = resolvedOutput
 
 	// Checked here rather than inside buildDocker, since the hazard applies to both
 	// drivers and has nothing to do with containers: this directory is served by an
@@ -599,11 +627,29 @@ func (b *Builder) createArgs(
 		return nil, err
 	}
 
+	// The build directory arrives from .nfpreview.yml, which the pull request wrote. It is
+	// validated where it is loaded and again in Build, and it is checked once more here because
+	// this is the function that turns it into docker's own syntax: nothing below is safe for a
+	// directory outside the allowlist, so nothing below runs for one.
+	if rel := strings.TrimPrefix(strings.TrimPrefix(containerDir, "/workspace"), "/"); rel != "" {
+		if err := config.CheckRepoPath(rel); err != nil {
+			return nil, fmt.Errorf("build.dir %w", err)
+		}
+	}
+	workspaceMount, err := mountSpec("type=bind", "source="+source, "target=/workspace")
+	if err != nil {
+		return nil, err
+	}
+	modulesMount, err := mountSpec("type=volume", "target="+containerDir+"/node_modules")
+	if err != nil {
+		return nil, err
+	}
+
 	args := []string{
 		"create",
 		// --mount, not --volume: --volume's fields are colon-separated, so a
 		// Windows source path collides with its own separator.
-		"--mount", "type=bind,source=" + source + ",target=/workspace",
+		"--mount", workspaceMount,
 		// node_modules gets a volume so npm writes to the container's filesystem rather
 		// than through the bind mount: 14s versus 5m46s for 1325 packages, with an
 		// identical warm cache, since every file in a bind mount crosses WSL into NTFS.
@@ -620,7 +666,9 @@ func (b *Builder) createArgs(
 		//
 		// Nested inside the bind mount above, which docker handles: mounts are
 		// applied shallowest first, so the volume lands on top.
-		"--mount", "type=volume,target=" + containerDir + "/node_modules",
+		//
+		// Written by mountSpec, never concatenated: see mountSpec for why.
+		"--mount", modulesMount,
 		"--workdir", containerDir,
 	}
 
@@ -726,9 +774,12 @@ func reownCommand(containerDir string, uid, gid int) string {
 	if uid < 0 || gid < 0 {
 		return ""
 	}
+	// Quoted, because this string is handed to `sh -lc` and the directory comes from the
+	// pull request. The allowlist already keeps shell syntax out of it; the quoting is what
+	// holds if that ever loosens.
 	return fmt.Sprintf(
-		"find /workspace -path %s/node_modules -prune -o -exec chown %d:%d {} + || true",
-		containerDir, uid, gid)
+		"find /workspace -path %s -prune -o -exec chown %d:%d {} + || true",
+		shellQuote(containerDir+"/node_modules"), uid, gid)
 }
 
 // writeEnvFile puts the build's environment in a private file and returns its path.
