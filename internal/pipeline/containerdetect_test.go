@@ -126,7 +126,7 @@ echo "nothing under docusaurus"; exit 78
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Build || got.Reason != "docs changed" {
+	if !got.Build || got.Reason != scriptSaid("docs changed") {
 		t.Errorf("got %+v, want a build with the script's own reason", got)
 	}
 
@@ -134,7 +134,7 @@ echo "nothing under docusaurus"; exit 78
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Build || got.Reason != "nothing under docusaurus" {
+	if got.Build || got.Reason != scriptSaid("nothing under docusaurus") {
 		t.Errorf("got %+v, want the script's skip", got)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "written")); err == nil {
