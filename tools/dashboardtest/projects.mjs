@@ -271,13 +271,14 @@ console.log("\nproject cards");
   if (!asMap.env) fail("the card does not say the project has environment variables");
   ok(`facts render as ${pairs.length} label/value pairs`);
 
-  // The second project states nothing at all, and must say so in words rather than offering a
-  // disclosure that opens onto nothing.
-  const deferring = $$(".pcard")[1];
-  if (deferring.querySelector("[data-details]")) {
-    fail("a project with no settings offers to disclose them anyway");
+  // The second project states nothing at all. It still has a Settings button, like every row,
+  // and opening it says in words that everything comes from the repository.
+  const deferKey = $$(".pcard")[1].dataset.card;
+  if (!$(`[data-card="${deferKey}"] [data-details]`)) {
+    fail("a project with no settings has no Settings button");
   }
-  if (!deferring.textContent.includes("from the repository")) {
+  await openDetails(deferKey);
+  if (!$(`[data-card="${deferKey}"]`).textContent.includes("from the repository")) {
     fail("a project that defers everything renders no explanation");
   }
   if (!cards[1].classList.contains("pcard-off")) fail("a disabled project is not marked");
@@ -504,7 +505,7 @@ console.log("\nBuild all open PRs on an enabled card");
     if (!post || !post.url.includes("unified-doc")) {
       fail(`the button sent ${JSON.stringify(calls)}`);
     } else ok(`posted ${post.url}`);
-    const note = $('.pcard[data-card="github/netfoundry/unified-doc"] .pcard-acts + .actnote');
+    const note = $('.pcard[data-card="github/netfoundry/unified-doc"] .pcard-head + .actnote');
     if (!note || !note.textContent.includes("Queued 2 builds, one per open pull request")) {
       fail(`the card's note: ${note ? JSON.stringify(note.textContent) : "(none)"}`);
     } else ok("the count lands under the card's actions");
@@ -519,7 +520,7 @@ console.log("\nBuild all open PRs on an enabled card");
      Nineteen fields expanding in place pushed every project below it off the screen, which is the
      one thing a list must not do. The form's behaviour is in projectedit.mjs, against the page it
      now lives on; what belongs here is that the list points at it, correctly, per project. */
-  const edits = $$(".pcard a.btn[href^='/projects/']");
+  const edits = $$(".pcard .pmenu-pop a[href^='/projects/']");
   if (!edits.length) {
     fail("no Edit link on any card");
   } else {

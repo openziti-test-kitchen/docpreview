@@ -962,6 +962,56 @@ input.control::placeholder { color: var(--muted) }
 .pcard-links .grow { flex: 1 }
 .pcard-links strong { color: var(--ink); font-variant-numeric: tabular-nums }
 
+/* The one-line list: a summary and a filter over it, then one ruled row per project. */
+.plist-bar { display: flex; align-items: center; gap: 0.75rem; margin: 0 0 0.6rem }
+.plist-bar .grow { flex: 1 }
+.plist-sum { display: flex; gap: 0.75rem; font-size: 0.8rem; color: var(--muted) }
+.plist-sum span::before { content: "●"; margin-right: 0.25rem }
+.plist-sum .ok::before { color: var(--good) }
+.plist-sum .bad::before { color: var(--critical) }
+.plist-sum .run::before { color: var(--warning) }
+.plist-sum .none::before { color: var(--idle) }
+.plist-find {
+  width: 14rem; padding: 0.3rem 0.55rem; font: inherit; font-size: 0.85rem;
+  border: 1px solid var(--ring); border-radius: 6px; background: var(--raised); color: var(--ink);
+}
+#projects-body .pcard { margin-bottom: 0; border-radius: 0; border-bottom-width: 0; overflow: visible }
+#projects-body .plist > .pcard:first-child { border-radius: 10px 10px 0 0 }
+#projects-body .plist > .pcard:last-child { border-radius: 0 0 10px 10px; border-bottom-width: 1px }
+#projects-body .plist > .pcard:only-child { border-radius: 10px }
+#projects-body .pcard-head { border-bottom: 0; background: none; padding: 0.5rem 0.8rem }
+#projects-body .pcard:hover { border-color: var(--ring); background: var(--raised) }
+#projects-body .pcard-body { padding: 0 0.8rem 0.55rem 3.2rem }
+.pcard-prs, .pcard-cfg {
+  font-size: 0.75rem; color: var(--muted); white-space: nowrap; min-width: 4.5rem; text-align: right;
+}
+.pcard-cfg { min-width: 6.5rem }
+/* Why the default branch failed, under the row, so nobody opens a log to learn it. */
+.pcard-why {
+  display: flex; align-items: center; gap: 0.6rem; margin: 0 0.8rem 0.55rem 3.2rem;
+  padding: 0.35rem 0.6rem; border-radius: 6px;
+  font: 12px/1.4 ui-monospace, Consolas, monospace; color: var(--critical);
+  background: color-mix(in srgb, var(--critical) 7%, transparent);
+}
+.pcard-why span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.pcard-why a { color: inherit; white-space: nowrap }
+/* The ⋯ menu. A <details>, so it opens with no script; a document listener closes it. */
+.pmenu { position: relative }
+.pmenu > summary { list-style: none; cursor: pointer }
+.pmenu > summary::-webkit-details-marker { display: none }
+.pmenu-pop {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 12rem;
+  padding: 4px; background: var(--raised); border: 1px solid var(--ring); border-radius: 9px;
+  box-shadow: var(--shadow-pop);
+}
+.pmenu-pop a, .pmenu-pop button {
+  display: block; width: 100%; text-align: left; padding: 0.4rem 0.6rem; border: 0; border-radius: 6px;
+  background: none; font: inherit; font-size: 0.85rem; color: var(--ink); text-decoration: none; cursor: pointer;
+}
+.pmenu-pop a:hover, .pmenu-pop button:hover { background: var(--surface) }
+.pmenu-pop hr { border: 0; border-top: 1px solid var(--ring); margin: 4px 0 }
+.pmenu-pop .danger { color: var(--critical) }
+
 /* The picker's rows. A row is one choice, so the whole row is the control — a list of
    labels each with a small button beside it makes the reader aim. */
 .picklist {
@@ -6417,6 +6467,26 @@ window.addEventListener("beforeunload", e => {
   e.returnValue = "";
 });
 
+// projFilter is the text in the list's filter box. Kept outside the DOM because every save
+// re-renders the list, and a filter that cleared itself on each one would be useless.
+let projFilter = "";
+
+// A click outside an open ⋯ menu, or on one of its items, closes it.
+document.addEventListener("click", e => {
+  const item = e.target.closest(".pmenu-pop a, .pmenu-pop button");
+  for (const m of document.querySelectorAll("details.pmenu[open]")) {
+    if (item || !m.contains(e.target)) m.open = false;
+  }
+});
+
+// applyProjectFilter hides the rows whose name, platform and path do not contain the filter.
+function applyProjectFilter() {
+  const q = projFilter.trim().toLowerCase();
+  for (const c of document.querySelectorAll("#projects-body .pcard")) {
+    c.hidden = Boolean(q) && !(c.dataset.find || "").includes(q);
+  }
+}
+
 function renderProjectsPage(s) {
   const el = document.getElementById("projects-body");
   const ro = !s.can_write;
@@ -6427,7 +6497,16 @@ function renderProjectsPage(s) {
        that machine.</p></div>`
     : "";
 
-  const rows = s.projects.length ? s.projects.map(p => projectCard(p, s, ro)).join("") :
+  const ordered = s.projects.map((p, i) => [p, i])
+    .sort((a, b) => projectRank(a[0]) - projectRank(b[0]) || a[1] - b[1]).map(x => x[0]);
+  const listBar = s.projects.length ? `<div class="plist-bar">
+      <span class="plist-sum">${projectSummary(s.projects)}</span>
+      <span class="grow"></span>
+      <input class="plist-find" id="p-find" type="search" placeholder="Filter projects…"
+        value="${esc(projFilter)}" aria-label="Filter projects">
+    </div>` : "";
+  const rows = s.projects.length
+    ? `${listBar}<div class="plist">${ordered.map(p => projectCard(p, s, ro)).join("")}</div>` :
     `<div class="notice">No projects yet. Every repository the App is installed on still builds
      using its own <code>.nfpreview.yml</code> — adding a project is how you take the build
      command out of the branch.</div>`;
@@ -6454,6 +6533,14 @@ function renderProjectsPage(s) {
      than both. It is linkable, the browser's back button is the way out, and a nineteen-field form
      is not something to read through a 64rem window over a dimmed list. */
   el.innerHTML = `${banner}${adder}${rows}`;
+  applyProjectFilter();
+  const find = document.getElementById("p-find");
+  if (find) {
+    find.oninput = () => {
+      projFilter = find.value;
+      applyProjectFilter();
+    };
+  }
 
   // Read once and cleared, so it cannot reappear on an unrelated render.
   const flash = takeFlash();
@@ -6511,7 +6598,31 @@ function projectCard(p, s, ro) {
     p.build_dir || p.build_command || p.build_output || p.base_url || p.detect_script ||
     p.image || p.timeout || p.notes || (p.secrets || []).length);
 
-  return `<div class="pcard${p.enabled ? "" : " pcard-off"}" data-card="${esc(key)}">
+  /* One line per project: identity, the default branch, the open pull request count, what the
+     project overrides, then Settings, the build button and a menu. The rarer actions (Edit, Build
+     all open PRs, Delete) live in the menu, Delete behind a rule. Settings stays a visible button
+     on every row, whether or not the project sets anything.
+
+     "Build all open PRs" was taken off once: labelled "Build open PRs", on a repository with
+     several open it read as having picked one at random. The label says all of them, and the note
+     it leaves says how many it queued. */
+  const nsec = (p.secrets || []).length;
+  const prs = p.pr_previews || 0;
+  const b = p.branch;
+  const why = b && b.state === "failed" && b.reason ? b.reason : "";
+  const body = [
+    credentialWanted(p, s),
+    unlinkedSection(p, ro),
+    detailsOpen ? `<div class="pcard-details">
+      ${hasDetails ? projectFacts(p)
+        : `<p class="hint">Everything comes from the repository's .nfpreview.yml.</p>`}
+      ${p.notes ? `<div class="hint pcard-notes">${esc(p.notes)}</div>` : ""}
+      ${secretsSection(p, s)}
+    </div>` : "",
+  ].join("").trim();
+
+  return `<div class="pcard${p.enabled ? "" : " pcard-off"}" data-card="${esc(key)}"
+      data-find="${esc(`${projectLabel(p)} ${p.platform} ${p.owner}/${p.repo}`.toLowerCase())}">
     <div class="pcard-head">
       ${ro ? "" : `<a class="pcard-title" href="/projects/${esc(key)}" title="Edit this project">`}
       ${avatarHTML(p)}
@@ -6523,37 +6634,50 @@ function projectCard(p, s, ro) {
       ${p.enabled ? "" : `<span class="flag off">disabled</span>`}
       <span class="grow"></span>
       ${branchInline(p, ro)}
-    </div>
-    <div class="pcard-body">
-      ${credentialWanted(p, s)}
-      ${unlinkedSection(p, ro)}
-      <div class="pcard-acts">
-        ${hasDetails ? `<button class="linkish" data-details="${esc(key)}"
-            aria-expanded="${detailsOpen}">${detailsOpen ? "Hide settings" : "Settings"}</button>`
-          : `<span class="hint">Everything comes from the repository's .nfpreview.yml.</span>`}
-        <span class="grow"></span>
-        ${ro ? "" : `<a class="btn" href="/projects/${esc(key)}">Edit</a>
-          <!-- A link, not a button that expands a panel here. The form is a page now: nineteen
-               fields expanding in place pushed every project below it off the screen, which is
-               the one thing a list of projects must not do.
-
-               "Build all open PRs" was taken off here once: labelled "Build open PRs", on a
-               repository with several open it read as having picked one at random. clint
-               approved bringing it back with a label that says all of them, and the note it
-               leaves says how many it queued. It is the edit page's "Scan pull requests"
-               handler; the note lands under this row, since a card has no header to hang it on. -->
-          ${p.enabled ? `<button class="btn" data-scan="${esc(key)}"
+      <span class="pcard-prs" title="Pull request previews on this repository">${prs
+        ? `${prs} PR${prs === 1 ? "" : "s"}` : "no PRs"}</span>
+      <span class="pcard-cfg" title="What this project sets over the repository's .nfpreview.yml">${
+        hasDetails ? "overrides" : ".nfpreview.yml"}</span>
+      <button class="btn" data-details="${esc(key)}" aria-expanded="${detailsOpen}"
+        >${detailsOpen ? "Hide settings" : `Settings${nsec ? ` · ${nsec}` : ""}`}</button>
+      ${ro ? "" : `<details class="pmenu">
+        <summary class="btn" title="More actions" aria-label="More actions">⋯</summary>
+        <div class="pmenu-pop">
+          <a href="/projects/${esc(key)}">Edit</a>
+          ${p.enabled ? `<button data-scan="${esc(key)}"
             title="Queue one build for each pull request open on this repository right now"
             >Build all open PRs</button>` : ""}
-          <button class="btn" data-del-project="${esc(key)}">Delete</button>`}
-      </div>
-      ${detailsOpen ? `<div class="pcard-details">
-        ${projectFacts(p)}
-        ${p.notes ? `<div class="hint pcard-notes">${esc(p.notes)}</div>` : ""}
-        ${secretsSection(p, s)}
-      </div>` : ""}
+          <hr>
+          <button class="danger" data-del-project="${esc(key)}">Delete…</button>
+        </div>
+      </details>`}
     </div>
+    ${why ? `<div class="pcard-why"><span>${esc(why)}</span>
+      <a href="/#preview=${esc(b.preview_id)}">build log →</a></div>` : ""}
+    ${body ? `<div class="pcard-body">${body}</div>` : ""}
   </div>`;
+}
+
+// projectSummary counts the default-branch states across the list, for the line over it.
+function projectSummary(projects) {
+  const n = {ready: 0, failed: 0, building: 0, none: 0};
+  for (const p of projects) {
+    const st = p.branch ? p.branch.state : "";
+    if (!st) n.none++;
+    else if (st === "ready") n.ready++;
+    else if (st === "failed") n.failed++;
+    else n.building++;
+  }
+  const part = (k, cls, label) => n[k] ? `<span class="${cls}">${n[k]} ${label}</span>` : "";
+  return `${part("ready", "ok", "ready")}${part("failed", "bad", "failed")}${
+    part("building", "run", "building")}${part("none", "none", "not built")}`;
+}
+
+// projectRank puts the rows that need somebody first: failed, then never built, then the rest.
+// Stable within a rank, so the order the server sends survives.
+function projectRank(p) {
+  if (!p.branch) return 1;
+  return p.branch.state === "failed" ? 0 : 2;
 }
 
 // projectLabel is what to call a project on screen.
