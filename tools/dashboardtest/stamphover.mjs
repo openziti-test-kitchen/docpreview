@@ -30,6 +30,10 @@ let failures = 0;
 const fail = msg => { failures++; console.log(`   FAIL: ${msg}`); };
 const ok = msg => console.log(`   ok: ${msg}`);
 
+// Pinned off UTC, because a stamp read in the wrong zone is only wrong when the harness's zone is
+// not the daemon's. CI runners are in UTC, where that bug would pass unseen.
+process.env.TZ = "America/New_York";
+
 const PREVIEW = "abc123def456";
 const PROJECT = "acme/docs";
 const BUILD = "20260810-182600-7127614";
@@ -206,11 +210,27 @@ if (row("UTC") !== "2026-08-10 18:26:01.612 UTC") {
 } else {
   ok(`UTC = ${row("UTC")}`);
 }
+if (row("America/New_York") !== "Aug 10, 2026, 2:26:01 PM") {
+  fail(`local = ${JSON.stringify(row("America/New_York"))}, want Aug 10, 2026, 2:26:01 PM`);
+} else {
+  ok(`America/New_York = ${row("America/New_York")}`);
+}
 if (!/ago|just now/.test(title)) {
   fail("no relative-to-now row");
 } else {
   ok("a relative-to-now row is present");
 }
+
+console.log("");
+console.log("a reader in UTC gets one UTC row, not a local row with the same label");
+process.env.TZ = "UTC";
+const utcRows = hover(stamps[2]).split("\n").filter(r => r.startsWith("UTC"));
+if (utcRows.length !== 1 || !utcRows[0].includes("2026-08-10 18:26:01.612 UTC")) {
+  fail(`want one row "UTC 2026-08-10 18:26:01.612 UTC", got ${JSON.stringify(utcRows)}`);
+} else {
+  ok("one UTC row");
+}
+process.env.TZ = "America/New_York";
 
 console.log("");
 console.log("the first line has nothing above it, so it gets no relative rows");
