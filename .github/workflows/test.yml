@@ -1,0 +1,35 @@
+# Run the tests on every pull request and on every push to main.
+#
+# Every decision this makes lives in ./test.sh, which runs anywhere. This file checks out the code,
+# installs the toolchains, and calls it.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tools/dashboardtest/package-lock.json
+
+      - name: Test
+        run: ./test.sh
