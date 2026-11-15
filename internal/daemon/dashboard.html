@@ -3949,7 +3949,10 @@ function stampTitle(el) {
   if (base) {
     const abs = stampInstant(at, base);
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
-    rows.push([zone, abs.toLocaleString([], {dateStyle: "medium", timeStyle: "medium"})]);
+    // A reader in UTC would get two rows labelled UTC, saying the same instant two ways.
+    if (!/^(Etc\/)?(UTC|UCT|GMT|Universal|Zulu)$/.test(zone)) {
+      rows.push([zone, abs.toLocaleString([], {dateStyle: "medium", timeStyle: "medium"})]);
+    }
     rows.push(["UTC", abs.toISOString().replace("T", " ").replace("Z", " UTC")]);
     rows.push(["Relative", ago(abs.toISOString())]);
   }
