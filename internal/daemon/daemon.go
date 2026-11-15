@@ -243,9 +243,12 @@ func New(
 // Writing nothing at all means a failure has no row, so it never appears on the dashboard and there is
 // nothing to click to reach its log — exactly when somebody wants the log.
 //
-// So: leave an existing preview alone — it is still true — and insert a row only
-// when there is nothing there, which is the first-build-fails case. The build
-// log is written either way and is reachable by preview ID.
+// So: leave a published preview alone — it is still true — and otherwise write the
+// failure. The build log is written either way and is reachable by preview ID.
+//
+// A row with nothing published is replaced, the same rule recordSkip uses. Keeping it
+// showed the first failure forever: frontdoor's branch card said 942cfd8 and a reason
+// from a since-fixed config while every retry was failing at bd20358 for another reason.
 func (d *Daemon) recordFailure(ctx context.Context, pr model.PullRequest, buildErr error) {
 	id := pr.PreviewID()
 
@@ -258,7 +261,7 @@ func (d *Daemon) recordFailure(ctx context.Context, pr model.PullRequest, buildE
 		return
 	}
 	for _, p := range existing {
-		if p.PreviewID == id {
+		if p.PreviewID == id && (p.State == scm.StateReady || p.URL != "") {
 			// A working preview survives a failed rebuild. Saying otherwise
 			// would be a lie the reaper acts on.
 			return
