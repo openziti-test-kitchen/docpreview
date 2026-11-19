@@ -1,27 +1,175 @@
 /**
  * Global CSS, loaded by preset-classic.
  *
- * The brand palette is NOT set here. @netfoundry/docusaurus-theme injects its
- * own variables (--ifm-color-primary and friends, plus --nf-primary /
- * --nf-secondary / --nf-tertiary) for both colour schemes. Redefining them here
- * would fork the palette from every other NetFoundry site, and this file is
- * loaded by the preset while the theme's CSS is loaded by the theme plugin, so
- * which one wins is an ordering detail nobody should have to reason about.
+ * The brand palette is NOT set here. @netfoundry/docusaurus-theme injects its own variables
+ * (--ifm-color-primary and friends, plus --nf-primary / --nf-secondary / --nf-tertiary) for both colour
+ * schemes, and this site keeps them so it reads as part of the NetFoundry family. What this file adds is
+ * the layer on top: type, surfaces, and the handful of --nfp-* tokens the landing page and the diagrams
+ * share.
  *
- * Only add rules here that are genuinely specific to this site.
+ * The theme's CSS and this file are loaded by different plugins, so which comes first is an ordering
+ * detail. Rules that must beat the theme use `:root:root` or a selector at least as specific as the
+ * theme's, rather than depending on that order.
  */
 
-:root {
-  --ifm-code-font-size: 95%;
+/* Fonts are loaded by src/fonts.ts. */
+:root:root {
+  --ifm-font-family-base: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* The theme sets font-family on `*` from this one, so it has to name Inter too or every element that
+     does not inherit keeps the theme's Open Sans. */
+  --ifm-font-family-sans: var(--ifm-font-family-base);
+  --ifm-heading-font-family: var(--ifm-font-family-base);
+  --ifm-font-family-monospace: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'Cascadia Code',
+    Consolas, monospace;
+  --ifm-code-font-size: 90%;
+  --ifm-heading-font-weight: 700;
+  --ifm-line-height-base: 1.65;
+  --ifm-global-radius: 10px;
+
+  /* Shared surfaces. */
+  --nfp-line: var(--ifm-color-emphasis-200);
+  --nfp-panel: var(--ifm-background-surface-color);
+  --nfp-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.06);
+  --nfp-shadow-lg: 0 2px 6px rgba(15, 23, 42, 0.05), 0 24px 48px -12px rgba(15, 23, 42, 0.18);
+  --nfp-gradient: linear-gradient(
+    100deg,
+    rgb(var(--nf-color-tertiary)) 0%,
+    rgb(var(--nf-color-primary)) 55%,
+    rgb(var(--nf-color-secondary)) 100%
+  );
+
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
 }
 
-[data-theme='dark'] {
+[data-theme='dark']:root {
+  --nfp-line: rgba(255, 255, 255, 0.09);
+  --nfp-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.25);
+  --nfp-shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.35), 0 24px 48px -12px rgba(0, 0, 0, 0.6);
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
 }
 
-/* In dark mode the theme's link color wins over the primary button's text color, so a
-   primary button rendered as a link shows blue text on a blue button. */
+body {
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.015em;
+}
+
+code {
+  font-variant-ligatures: none;
+}
+
+/* ── Navbar: translucent over the page, so the hero's colour reaches the top edge ─────────────────── */
+
+.navbar {
+  backdrop-filter: saturate(160%) blur(10px);
+  -webkit-backdrop-filter: saturate(160%) blur(10px);
+  box-shadow: 0 1px 0 var(--nfp-line);
+}
+
+.navbar__link {
+  font-weight: 500;
+}
+
+.dropdown__menu {
+  border: 1px solid var(--nfp-line);
+  box-shadow: var(--nfp-shadow-lg);
+  border-radius: 12px;
+  padding: 0.4rem;
+}
+
+.dropdown__link {
+  border-radius: 8px;
+}
+
+/* ── Docs pages ─────────────────────────────────────────────────────────────────────────────────── */
+
+.theme-doc-markdown h1 {
+  font-size: clamp(2rem, 4vw, 2.6rem);
+  letter-spacing: -0.025em;
+}
+
+.theme-doc-markdown h2 {
+  margin-top: 2.5rem;
+  padding-top: 0.5rem;
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  font-weight: 600;
+}
+
+.theme-doc-markdown table {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--nfp-line);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 0.9375rem;
+}
+
+/* Wide tables still scroll rather than widen the page on a phone: Infima's own behaviour, which the
+   `display: table` above would otherwise take away. */
+@media screen and (max-width: 768px) {
+  .theme-doc-markdown table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+.theme-doc-markdown table th,
+.theme-doc-markdown table td {
+  border: 0;
+  border-bottom: 1px solid var(--nfp-line);
+}
+
+.theme-doc-markdown table tr:last-child td {
+  border-bottom: 0;
+}
+
+.theme-doc-markdown table tr:nth-child(2n) {
+  background: transparent;
+}
+
+.theme-doc-markdown table thead tr {
+  background: var(--ifm-color-emphasis-100);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────────────────────────────── */
+
+.button {
+  border-radius: 999px;
+  font-weight: 600;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    background-color 120ms ease;
+}
+
+.button--primary {
+  box-shadow: 0 6px 20px -6px rgba(var(--nf-color-tertiary), 0.6);
+}
+
+.button--primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px -8px rgba(var(--nf-color-tertiary), 0.7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button:hover {
+    transform: none;
+  }
+}
+
+/* In dark mode the theme's link colour wins over the primary button's text colour, so a primary button
+   rendered as a link shows blue text on a blue button. */
 [data-theme='dark'] a.button--primary,
 [data-theme='dark'] a.button--primary:hover {
   color: #fff;

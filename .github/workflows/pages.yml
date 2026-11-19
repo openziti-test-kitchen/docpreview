@@ -9,10 +9,12 @@ on:
   push:
     branches:
       - main
-    # The site is www/ plus the config that builds it. A commit that touches neither cannot change
-    # what gets published, and republishing it anyway spends minutes to produce identical bytes.
+    # The site is www/, the design documents it publishes from docs/design, and the config that builds
+    # them. A commit that touches none of those cannot change what gets published, and republishing it
+    # anyway spends minutes to produce identical bytes.
     paths:
       - "www/**"
+      - "docs/design/**"
       - "docs-site.sh"
       - ".github/workflows/pages.yml"
   workflow_dispatch:

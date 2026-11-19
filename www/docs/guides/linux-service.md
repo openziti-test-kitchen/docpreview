@@ -135,7 +135,7 @@ On the VM or on your laptop:
 ```bash
 # on the VM, with Go installed
 git clone https://github.com/openziti-test-kitchen/docpreview
-cd nfpreview
+cd docpreview
 go build -o nfpreview ./cmd/nfpreview
 ```
 

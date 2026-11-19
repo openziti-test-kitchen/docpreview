@@ -37,7 +37,7 @@ On Bitbucket instead, follow the [Bitbucket guide](./guides/bitbucket.md) for pa
 
 ```powershell
 git clone https://github.com/openziti-test-kitchen/docpreview
-cd nfpreview
+cd docpreview
 go build -o bin/ ./cmd/nfpreview
 ```
 

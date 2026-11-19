@@ -1,177 +1,333 @@
 /**
  * Landing page styles.
  *
- * Everything here is expressed in the theme's own custom properties -- the
- * --nf-* brand triple and the ifm variables @netfoundry/docusaurus-theme
- * redefines for each colour scheme. That is deliberate: the site sets
- * `respectPrefersColorScheme: true`, so any hardcoded colour would be wrong for
- * half the visitors, and the two flavours would drift apart the first time the
- * brand palette moves. The one exception is the rgb() triples fed to
- * colour-mix-style alpha blends, which need the channel form (--nf-color-*)
- * rather than the composed rgb() value.
+ * Colours come from the theme's custom properties: the --nf-* brand triple, the ifm variables the
+ * NetFoundry theme redefines per colour scheme, and the --nfp-* tokens in src/css/custom.css. The site
+ * follows prefers-color-scheme, so a hardcoded colour would be wrong for half the visitors. The rgb()
+ * triples (--nf-color-*) are used where an alpha blend is needed.
  */
 
-/* ── Shared section scaffolding ──────────────────────────────────────────── */
+/* ── Scaffolding ─────────────────────────────────────────────────────────────────────────────────── */
 
-/* NetFoundryHorizontalSection centres itself and caps its own width, so these
-   only own vertical rhythm and the inner measure. */
-.section {
+.container {
   width: 100%;
-  max-width: 1140px;
+  max-width: 1180px;
   margin: 0 auto;
-  padding: 3.5rem 1rem;
+  padding: 0 1.25rem;
+}
+
+.section {
+  padding: 5.5rem 0;
 }
 
 .sectionTinted {
-  /* The theme's section component reads --nf-section-bg for its background, so
-     tinting a band is a variable, not an override. */
-  --nf-section-bg: var(--ifm-background-surface-color);
+  background: var(--ifm-background-surface-color);
+  border-top: 1px solid var(--nfp-line);
+  border-bottom: 1px solid var(--nfp-line);
 }
 
-.sectionTitle {
-  font-size: 2rem;
-  line-height: 1.2;
-  margin: 0 0 0.5rem;
-}
-
-.sectionLead {
-  font-size: 1.0625rem;
-  color: var(--ifm-color-emphasis-700);
-  max-width: 62ch;
-  margin: 0 0 2rem;
-}
-
-/* ── Hero ────────────────────────────────────────────────────────────────── */
-
-.hero {
-  /* Brand gradient at low alpha so it reads as a tint over whichever
-     background colour the active theme supplies. */
-  --nf-section-bg: transparent;
-  background:
-    radial-gradient(
-      ellipse 90% 120% at 15% 0%,
-      rgba(var(--nf-color-tertiary), 0.16),
-      transparent 70%
-    ),
-    radial-gradient(
-      ellipse 80% 100% at 85% 10%,
-      rgba(var(--nf-color-primary), 0.14),
-      transparent 70%
-    );
-  border-bottom: 1px solid var(--ifm-color-emphasis-200);
-  width: 100%;
-}
-
-.heroInner {
-  display: grid;
-  /* minmax(0, ...) rather than 1fr: grid items default to min-content width,
-     and a <pre> full of a long command line would otherwise push the whole
-     page wider than the viewport on a phone. */
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-  gap: 2.5rem;
-  align-items: center;
-  width: 100%;
-  max-width: 1140px;
-  margin: 0 auto;
-  padding: 4rem 1rem;
-}
-
-.heroTitle {
-  font-size: clamp(2.5rem, 6vw, 3.75rem);
-  line-height: 1.05;
-  letter-spacing: -0.02em;
-  margin: 0;
-}
-
-.heroTagline {
-  font-size: 1.125rem;
-  font-weight: 600;
+.kicker {
+  margin: 0 0 0.6rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: var(--nf-tertiary);
-  margin: 0.75rem 0 0;
 }
 
-[data-theme='dark'] .heroTagline {
-  /* --nf-tertiary is a saturated mid-blue: legible on white, muddy on the
-     dark surface. The primary tint is the light end of the same family. */
+[data-theme='dark'] .kicker {
   color: var(--nf-primary);
 }
 
-.heroBody {
-  font-size: 1.0625rem;
+.sectionTitle {
+  font-size: clamp(1.75rem, 3.2vw, 2.5rem);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  margin: 0 0 0.85rem;
+  max-width: 24ch;
+}
+
+.sectionLead {
+  font-size: 1.125rem;
   line-height: 1.65;
-  margin: 1.25rem 0 0;
-  max-width: 52ch;
+  color: var(--ifm-color-emphasis-700);
+  max-width: 62ch;
+  margin: 0 0 2.5rem;
+}
+
+.textLink {
+  display: inline-block;
+  margin-top: 1.75rem;
+  font-weight: 600;
+}
+
+.gradientText {
+  background: var(--nfp-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ── Hero ────────────────────────────────────────────────────────────────────────────────────────── */
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 1px solid var(--nfp-line);
+}
+
+/* Two soft brand-coloured glows and a faint grid, behind everything. */
+.heroGlow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(40rem 26rem at 10% -10%, rgba(var(--nf-color-tertiary), 0.18), transparent 70%),
+    radial-gradient(36rem 24rem at 95% 10%, rgba(var(--nf-color-primary), 0.2), transparent 70%),
+    radial-gradient(30rem 20rem at 70% 110%, rgba(var(--nf-color-secondary), 0.12), transparent 70%);
+}
+
+.heroGlow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--nfp-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--nfp-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 30%, transparent 75%);
+  opacity: 0.6;
+}
+
+.heroInner {
+  position: relative;
+  display: grid;
+  /* minmax(0, ...) rather than 1fr: grid items default to min-content width, and a wide table would
+     otherwise push the page wider than a phone's viewport. */
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 3.5rem;
+  align-items: center;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 5.5rem 1.25rem 6rem;
+}
+
+.eyebrow {
+  display: inline-block;
+  margin: 0 0 1.25rem;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid rgba(var(--nf-color-tertiary), 0.3);
+  border-radius: 999px;
+  background: rgba(var(--nf-color-tertiary), 0.07);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--nf-tertiary);
+}
+
+[data-theme='dark'] .eyebrow {
+  border-color: rgba(var(--nf-color-primary), 0.35);
+  background: rgba(var(--nf-color-primary), 0.08);
+  color: var(--nf-primary);
+}
+
+.heroTitle {
+  font-size: clamp(2.4rem, 5.2vw, 3.9rem);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+  font-weight: 800;
+  margin: 0;
+}
+
+.heroLead {
+  font-size: 1.1875rem;
+  line-height: 1.65;
+  color: var(--ifm-color-emphasis-800);
+  margin: 1.5rem 0 0;
+  max-width: 54ch;
 }
 
 .heroButtons {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
-  margin-top: 2rem;
+  margin-top: 2.25rem;
 }
 
-.heroAside {
-  min-width: 0;
+.heroFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  margin: 2rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9375rem;
+  color: var(--ifm-color-emphasis-700);
 }
 
-.heroAsideNote {
-  font-size: 0.875rem;
-  color: var(--ifm-color-emphasis-600);
-  margin: 0.75rem 0 0;
-}
-
-/* ── Terminal card ───────────────────────────────────────────────────────── */
-
-.terminal {
-  border: 1px solid var(--ifm-color-emphasis-300);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--ifm-background-surface-color);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.09);
-}
-
-[data-theme='dark'] .terminal {
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
-}
-
-.terminalBar {
+.heroFacts li {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--ifm-color-emphasis-200);
-  background: var(--ifm-color-emphasis-100);
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 0.75rem;
+}
+
+.heroFacts li::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--nf-secondary);
+  box-shadow: 0 0 0 3px rgba(var(--nf-color-secondary), 0.2);
+}
+
+.heroVisual {
+  min-width: 0;
+}
+
+.heroVisualNote {
+  margin: 0.9rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--ifm-color-emphasis-600);
+  text-align: center;
+}
+
+/* A pull request page, reduced to its title and one comment. */
+.prChrome {
+  padding: 1.25rem;
+  border: 1px solid var(--nfp-line);
+  border-radius: 18px;
+  background: var(--ifm-background-color);
+  box-shadow: var(--nfp-shadow-lg);
+  transform: perspective(1400px) rotateY(-4deg) rotateX(2deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prChrome {
+    transform: none;
+  }
+}
+
+.prTitle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+
+.prNumber {
+  font-weight: 400;
   color: var(--ifm-color-emphasis-600);
 }
 
-.terminalDot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--ifm-color-emphasis-400);
-  flex: 0 0 auto;
+.prState {
+  padding: 0.15rem 0.65rem;
+  border-radius: 999px;
+  background: #1f883d;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
-.terminalTitle {
-  margin-left: 0.25rem;
+/* ── The comment ─────────────────────────────────────────────────────────────────────────────────── */
+
+.comment {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--ifm-background-color);
+  min-width: 0;
 }
 
-/* Docusaurus code blocks carry their own margin and radius; inside the card
-   both fight the frame. */
-.terminal :global(.theme-code-block) {
+.commentHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  background: var(--ifm-color-emphasis-100);
+  font-size: 0.8125rem;
+}
+
+.avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--nfp-gradient);
+}
+
+.commentAuthor {
+  font-weight: 700;
+}
+
+.commentBot {
+  padding: 0 0.4rem;
+  border: 1px solid var(--ifm-color-emphasis-400);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.commentWhen {
+  color: var(--ifm-color-emphasis-600);
+}
+
+.commentBody {
+  padding: 0.9rem;
+}
+
+.commentBodyTitle {
+  margin: 0 0 0.6rem;
+  font-weight: 700;
+}
+
+/* Its own scroll container, so a long cell cannot widen the page on a phone. */
+.commentTableWrap {
+  overflow-x: auto;
+}
+
+.commentTable {
+  display: table;
+  width: 100%;
   margin: 0;
-  border-radius: 0;
-  box-shadow: none;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
 }
 
-/* ── Step list ───────────────────────────────────────────────────────────── */
+.commentTable th,
+.commentTable td {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.commentTable tr {
+  background: transparent;
+}
+
+.commentTable th {
+  background: var(--ifm-color-emphasis-100);
+}
+
+/* Links in a picture of a comment go nowhere, so they are drawn as links rather than being anchors. */
+.fakeLink {
+  color: var(--ifm-link-color);
+}
+
+/* ── How it works ────────────────────────────────────────────────────────────────────────────────── */
+
+.diagram {
+  margin: 0 0 3rem;
+}
 
 .steps {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 1.25rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.5rem;
   counter-reset: step;
   list-style: none;
   padding: 0;
@@ -180,26 +336,35 @@
 
 .step {
   position: relative;
-  padding-top: 2.75rem;
-  border-top: 3px solid var(--ifm-color-emphasis-200);
+  padding: 3.25rem 0 0;
 }
 
 .step::before {
   counter-increment: step;
-  content: counter(step);
+  content: counter(step, decimal-leading-zero);
   position: absolute;
-  top: 0.75rem;
+  top: 0;
   left: 0;
-  display: grid;
-  place-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 50%;
-  background: var(--nf-tertiary);
-  color: #fff;
+  font-family: var(--ifm-font-family-monospace);
   font-size: 0.875rem;
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
+  color: var(--nf-tertiary);
+}
+
+[data-theme='dark'] .step::before {
+  color: var(--nf-primary);
+}
+
+.step::after {
+  content: '';
+  position: absolute;
+  top: 1.75rem;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--nfp-gradient);
+  opacity: 0.6;
+  border-radius: 2px;
 }
 
 .stepTitle {
@@ -215,179 +380,290 @@
   color: var(--ifm-color-emphasis-700);
 }
 
-/* ── Card grids ──────────────────────────────────────────────────────────── */
+/* ── Features ────────────────────────────────────────────────────────────────────────────────────── */
 
-.cards {
+.features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1.25rem;
 }
 
-.card {
-  padding: 1.5rem;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-left: 3px solid var(--nf-primary);
-  border-radius: 10px;
-  background: var(--ifm-background-color);
-}
-
-.cardTitle {
-  font-size: 1.0625rem;
-  font-weight: 700;
-  margin: 0 0 0.5rem;
-}
-
-.cardBody {
-  margin: 0;
-  font-size: 0.9375rem;
-  line-height: 1.6;
-  color: var(--ifm-color-emphasis-700);
-}
-
-/* ── Exposers ────────────────────────────────────────────────────────────── */
-
-.exposers {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 1.25rem;
-}
-
-.exposer {
+.feature {
   display: flex;
   flex-direction: column;
-  padding: 1.5rem;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 10px;
+  padding: 1.6rem;
+  border: 1px solid var(--nfp-line);
+  border-radius: 16px;
   background: var(--ifm-background-color);
+  color: inherit;
+  box-shadow: var(--nfp-shadow);
+  transition:
+    transform 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
-.exposerName {
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 1.0625rem;
-  font-weight: 700;
-  margin: 0;
+.feature:hover {
+  color: inherit;
+  text-decoration: none;
+  transform: translateY(-2px);
+  border-color: rgba(var(--nf-color-tertiary), 0.45);
+  box-shadow: var(--nfp-shadow-lg);
 }
 
-/* The whole point of the four exposers is that the public surface differs, so
-   that is the field the badge carries -- not a decorative label. */
-.exposerBadge {
-  align-self: flex-start;
-  margin: 0.6rem 0 0.9rem;
-  padding: 0.15rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
+@media (prefers-reduced-motion: reduce) {
+  .feature:hover {
+    transform: none;
+  }
 }
 
-.surfacePublic {
-  background: rgba(var(--nf-color-tertiary), 0.14);
+.featureIcon {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-bottom: 1.1rem;
+  border-radius: 12px;
+  background: rgba(var(--nf-color-tertiary), 0.1);
   color: var(--nf-tertiary);
 }
 
-[data-theme='dark'] .surfacePublic {
+[data-theme='dark'] .featureIcon {
+  background: rgba(var(--nf-color-primary), 0.12);
   color: var(--nf-primary);
 }
 
-.surfaceNone {
-  background: rgba(var(--nf-color-secondary), 0.16);
-  /* --nf-secondary is a bright green -- fine as a fill, thin as text on white.
-     colour-mix would be nicer; this stays within what the ifm scale offers. */
-  color: var(--ifm-color-emphasis-900);
+.featureTitle {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  margin-bottom: 0.45rem;
 }
 
-.surfaceLoopback {
-  background: var(--ifm-color-emphasis-200);
-  color: var(--ifm-color-emphasis-800);
-}
-
-.exposerBody {
-  margin: 0;
+.featureBody {
   font-size: 0.9375rem;
   line-height: 1.6;
   color: var(--ifm-color-emphasis-700);
 }
 
-/* ── The pull request comment mock ───────────────────────────────────────── */
+/* ── Exposers ────────────────────────────────────────────────────────────────────────────────────── */
 
-.commentLayout {
+.split {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 2.5rem;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 3.5rem;
   align-items: start;
 }
 
-.comment {
-  border: 1px solid var(--ifm-color-emphasis-300);
-  border-radius: 10px;
-  overflow: hidden;
+.exposers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.exposer {
+  padding: 1.35rem;
+  border: 1px solid var(--nfp-line);
+  border-radius: 16px;
   background: var(--ifm-background-color);
-  min-width: 0;
+  box-shadow: var(--nfp-shadow);
 }
 
-.commentHeader {
+.exposerHead {
   display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--ifm-color-emphasis-200);
-  background: var(--ifm-color-emphasis-100);
-  font-size: 0.875rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
-.commentAuthor {
+.exposerName {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.9375rem;
   font-weight: 700;
 }
 
-.commentBot {
-  padding: 0.05rem 0.4rem;
-  border: 1px solid var(--ifm-color-emphasis-400);
-  border-radius: 999px;
-  font-size: 0.6875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+/* How far the preview travels, from loopback to the public internet. */
+.meter {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.meterDot {
+  width: 14px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ifm-color-emphasis-200);
+}
+
+.meterOn {
+  background: var(--nfp-gradient);
+}
+
+.exposerWho {
+  margin-top: 0.9rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.exposerSurface {
+  margin-top: 0.2rem;
+  font-size: 0.8125rem;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.exposerBody {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
   color: var(--ifm-color-emphasis-700);
 }
 
-.commentBodyTitle {
-  margin: 1rem 1rem 0.75rem;
+/* ── Quick start ─────────────────────────────────────────────────────────────────────────────────── */
+
+.quick {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.quickStep {
+  min-width: 0;
+}
+
+.quickHead {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.85rem;
   font-weight: 700;
+  font-size: 1.0625rem;
 }
 
-/* A table of one-line values is the honest shape here, and it is also what
-   GitHub renders. It gets its own scroll container so a long preview URL
-   cannot widen the page on a phone. */
-.commentTableWrap {
-  overflow-x: auto;
-  padding: 0 1rem 1rem;
-}
-
-.commentTable {
-  width: 100%;
-  border-collapse: collapse;
+.quickNum {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--nfp-gradient);
+  color: #fff;
   font-size: 0.875rem;
 }
 
-.commentTable th,
-.commentTable td {
-  padding: 0.4rem 0.75rem;
-  border: 1px solid var(--ifm-color-emphasis-300);
-  text-align: left;
-  white-space: nowrap;
+.quickNote {
+  margin: 0.75rem 0 0;
+  font-size: 0.875rem;
+  color: var(--ifm-color-emphasis-700);
 }
 
-.commentTable th {
-  background: var(--ifm-color-emphasis-100);
+.terminal {
+  border: 1px solid var(--nfp-line);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: var(--nfp-shadow);
 }
 
-/* ── Closing call to action ──────────────────────────────────────────────── */
+/* Docusaurus code blocks carry their own margin and radius; inside the frame both fight it. */
+.terminal :global(.theme-code-block) {
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* ── Explore ─────────────────────────────────────────────────────────────────────────────────────── */
+
+.explore {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.exploreCard {
+  display: flex;
+  flex-direction: column;
+  padding: 1.4rem 1.5rem;
+  border: 1px solid var(--nfp-line);
+  border-radius: 16px;
+  background: var(--ifm-background-color);
+  color: inherit;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.exploreCard:hover {
+  color: inherit;
+  text-decoration: none;
+  border-color: rgba(var(--nf-color-tertiary), 0.45);
+  box-shadow: var(--nfp-shadow);
+}
+
+.exploreLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.exploreTitle {
+  margin-top: 0.35rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.exploreTitle::after {
+  content: ' →';
+  color: var(--nf-tertiary);
+  transition: margin-left 150ms ease;
+}
+
+[data-theme='dark'] .exploreTitle::after {
+  color: var(--nf-primary);
+}
+
+.exploreBody {
+  margin-top: 0.4rem;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--ifm-color-emphasis-700);
+}
+
+/* ── Closing ─────────────────────────────────────────────────────────────────────────────────────── */
+
+.closingWrap {
+  padding: 5.5rem 1.25rem;
+}
 
 .closing {
-  text-align: center;
-  max-width: 44rem;
+  position: relative;
+  overflow: hidden;
+  max-width: 1180px;
   margin: 0 auto;
+  padding: 4rem 2rem;
+  border-radius: 28px;
+  text-align: center;
+  color: #fff;
+  background:
+    radial-gradient(30rem 18rem at 15% 0%, rgba(var(--nf-color-primary), 0.55), transparent 70%),
+    radial-gradient(26rem 16rem at 90% 100%, rgba(var(--nf-color-secondary), 0.4), transparent 70%),
+    linear-gradient(135deg, #062a6b 0%, rgb(var(--nf-color-tertiary)) 100%);
+  box-shadow: var(--nfp-shadow-lg);
+}
+
+.closingTitle {
+  margin: 0;
+  font-size: clamp(1.75rem, 3.5vw, 2.6rem);
+  letter-spacing: -0.03em;
+  color: #fff;
+}
+
+.closingLead {
+  max-width: 54ch;
+  margin: 1rem auto 0;
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.88);
 }
 
 .closingButtons {
@@ -395,32 +671,111 @@
   flex-wrap: wrap;
   gap: 0.75rem;
   justify-content: center;
-  margin-top: 1.75rem;
+  margin-top: 2rem;
 }
 
-/* ── Narrow viewports ────────────────────────────────────────────────────── */
+/* On the dark band the outline button needs light colours in both schemes. */
+.closingButtons :global(.button--outline) {
+  --ifm-button-border-color: rgba(255, 255, 255, 0.7);
+  color: #fff;
+}
+
+.closingButtons :global(.button--outline):hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.closingButtons :global(.button--primary) {
+  --ifm-button-background-color: #fff;
+  --ifm-button-border-color: #fff;
+  color: #062a6b;
+}
+
+[data-theme='dark'] .closingButtons a:global(.button--primary),
+[data-theme='dark'] .closingButtons a:global(.button--primary):hover {
+  color: #062a6b;
+}
+
+/* ── Narrow viewports ────────────────────────────────────────────────────────────────────────────── */
 
 @media screen and (max-width: 996px) {
   .heroInner {
     grid-template-columns: minmax(0, 1fr);
-    gap: 2rem;
-    padding: 2.5rem 1rem;
+    gap: 3rem;
+    padding: 3.5rem 1.25rem 4rem;
+  }
+
+  .prChrome {
+    transform: none;
   }
 
   .section {
-    padding: 2.5rem 1rem;
+    padding: 4rem 0;
   }
 
-  .commentLayout {
-    gap: 1.5rem;
+  .steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .features,
+  .explore {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+  }
+
+  .quick {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
-/* On a phone the five columns do not fit, and the date is the one cell a reader
-   can lose without losing the point of the comment. */
-@media screen and (max-width: 576px) {
+/* The diagram's text would be too small to read on a phone. The numbered steps below it say the same
+   thing, so the diagram steps aside rather than shrinking into illegibility. */
+@media screen and (max-width: 768px) {
+  .diagram {
+    display: none;
+  }
+}
+
+@media screen and (max-width: 640px) {
+  .steps,
+  .features,
+  .explore,
+  .exposers {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .closing {
+    padding: 3rem 1.25rem;
+    border-radius: 20px;
+  }
+
+  /* Five columns do not fit; the date is the one cell a reader can lose without losing the point. */
   .commentTable th:last-child,
   .commentTable td:last-child {
     display: none;
   }
+}
+
+/* ── Full-bleed bands ────────────────────────────────────────────────────────────────────────────── */
+
+/* The NetFoundry theme caps the page's content wrapper at --ziti-max-width (1400px), which on a wide
+   screen leaves the hero and the tinted bands as boxes with gutters. Lift the cap on this page only:
+   the sections bring their own inner measure (.container), so nothing else gets wider. */
+:global(.main-wrapper):has(.landing) > div {
+  max-width: none;
+}
+
+.landing {
+  width: 100%;
+}
+
+/* The theme's dark-mode link colour outranks `color: inherit` on these card links, which turned every
+   card title link-blue. They are cards, not inline links. */
+[data-theme='dark'] a.feature,
+[data-theme='dark'] a.exploreCard {
+  color: var(--ifm-font-color-base);
 }

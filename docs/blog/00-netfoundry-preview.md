@@ -148,7 +148,7 @@ only works on your own machine.
 
 ```powershell
 git clone https://github.com/openziti-test-kitchen/docpreview
-cd nfpreview
+cd docpreview
 go build -o bin/ ./cmd/nfpreview
 
 nfpreview init                                        # one question: which exposer

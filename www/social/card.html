@@ -1,0 +1,376 @@
+<!doctype html>
+<!--
+  The social card: what a link to this site shows in Slack, GitHub, LinkedIn, X and the rest.
+
+  Open Graph wants a raster, so this page is the source and static/img/social-card.png is rendered from it at
+  exactly 1200x630 by render.mjs. Edit this file, run `node social/render.mjs` from www/, commit both.
+
+  The look is the landing page's closing band: NetFoundry navy into the brand blue, with the sky and green
+  glows. The comment on the right is the same mock as the landing page hero, which copies the table
+  internal/scm/comment.go posts. Keep the three in step.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face {
+    font-family: 'Inter Variable';
+    font-weight: 100 900;
+    src: url('../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2') format('woff2');
+  }
+  @font-face {
+    font-family: 'JetBrains Mono Variable';
+    font-weight: 100 800;
+    src: url('../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2')
+      format('woff2');
+  }
+
+  :root {
+    --tertiary: 3, 92, 230;
+    --primary: 119, 194, 252;
+    --secondary: 78, 219, 63;
+    --gradient: linear-gradient(100deg, rgb(var(--primary)) 0%, #9fe3ff 45%, rgb(var(--secondary)) 100%);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    width: 1200px;
+    height: 630px;
+    overflow: hidden;
+  }
+
+  body {
+    position: relative;
+    font-family: 'Inter Variable', system-ui, sans-serif;
+    color: #fff;
+    -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(520px 360px at 8% -8%, rgba(var(--primary), 0.45), transparent 70%),
+      radial-gradient(560px 380px at 100% 108%, rgba(var(--secondary), 0.35), transparent 70%),
+      radial-gradient(600px 420px at 78% 30%, rgba(var(--tertiary), 0.55), transparent 70%),
+      linear-gradient(135deg, #031a45 0%, #062a6b 45%, #0a3f9e 100%);
+  }
+
+  /* The landing page's faint grid, fading out toward the edges. */
+  .grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(ellipse 75% 70% at 40% 45%, #000 25%, transparent 80%);
+  }
+
+  /* The bottom edge: the brand gradient as a thin rule. */
+  .rule {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 8px;
+    background: linear-gradient(90deg, rgb(var(--tertiary)), rgb(var(--primary)) 55%, rgb(var(--secondary)));
+  }
+
+  .copy {
+    position: absolute;
+    left: 72px;
+    top: 64px;
+    width: 600px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .brand img {
+    width: 64px;
+    height: 64px;
+    filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
+  }
+
+  .eyebrow {
+    display: inline-block;
+    margin-top: 40px;
+    padding: 6px 14px;
+    border: 1px solid rgba(var(--primary), 0.45);
+    border-radius: 999px;
+    background: rgba(var(--primary), 0.12);
+    color: #cfeaff;
+    font-size: 17px;
+    font-weight: 600;
+  }
+
+  h1 {
+    margin: 22px 0 0;
+    font-size: 66px;
+    line-height: 1.02;
+    letter-spacing: -0.04em;
+    font-weight: 800;
+  }
+
+  .grad {
+    background: var(--gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .lead {
+    margin: 24px 0 0;
+    font-size: 23px;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.82);
+  }
+
+  .chips {
+    position: absolute;
+    left: 72px;
+    bottom: 54px;
+    display: flex;
+    gap: 10px;
+  }
+
+  .chip {
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    font-family: 'JetBrains Mono Variable', ui-monospace, monospace;
+    font-size: 16px;
+    font-weight: 600;
+    color: #e6f3ff;
+  }
+
+  /* ── The pull request, tilted, with a glow behind it ─────────────────────────────────────────── */
+
+  .stage {
+    position: absolute;
+    right: -40px;
+    top: 128px;
+    width: 560px;
+    perspective: 1400px;
+  }
+
+  .stage::before {
+    content: '';
+    position: absolute;
+    inset: 30px 40px;
+    background: radial-gradient(closest-side, rgba(var(--primary), 0.55), transparent);
+    filter: blur(30px);
+  }
+
+  .pr {
+    position: relative;
+    padding: 22px;
+    border-radius: 22px;
+    background: #ffffff;
+    color: #1f2328;
+    box-shadow: 0 40px 80px -20px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.4);
+    transform: rotateY(-14deg) rotateX(6deg) rotateZ(-2deg);
+    transform-origin: left center;
+  }
+
+  .prTitle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 21px;
+    font-weight: 700;
+  }
+
+  .prTitle .num { font-weight: 400; color: #656d76; }
+
+  .open {
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: #1f883d;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .comment {
+    margin-top: 16px;
+    border: 1px solid #d0d7de;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #d0d7de;
+    background: #f6f8fa;
+    font-size: 14px;
+  }
+
+  .avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    background: linear-gradient(100deg, rgb(var(--tertiary)), rgb(var(--primary)) 55%, rgb(var(--secondary)));
+  }
+
+  .head b { font-weight: 700; }
+  .bot { padding: 0 7px; border: 1px solid #afb8c1; border-radius: 999px; font-size: 12px; color: #57606a; }
+  .when { color: #656d76; }
+
+  .body { padding: 14px; }
+  .body .t { font-weight: 700; font-size: 16px; margin-bottom: 10px; }
+
+  /* ── The preview it links to ─────────────────────────────────────────────────────────────────── */
+
+  .browser {
+    position: absolute;
+    right: -30px;
+    top: 368px;
+    width: 470px;
+    height: 300px;
+    border-radius: 16px 0 0 0;
+    overflow: hidden;
+    background: #0d1b36;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 30px 70px -10px rgba(0, 0, 0, 0.65), 0 0 60px -10px rgba(var(--secondary), 0.35);
+    transform: rotateZ(-2deg);
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 40px;
+    padding: 0 14px;
+    background: rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); }
+
+  .url {
+    margin-left: 10px;
+    flex: 1;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.3);
+    font-family: 'JetBrains Mono Variable', ui-monospace, monospace;
+    font-size: 13px;
+    color: #cfeaff;
+  }
+
+  .lock { color: rgb(var(--secondary)); font-size: 10px; vertical-align: 1px; margin-right: 4px; }
+
+  .site { display: flex; height: 100%; }
+
+  .site i { display: block; height: 9px; margin: 0 0 13px; border-radius: 5px; background: rgba(255, 255, 255, 0.16); }
+
+  .side {
+    width: 130px;
+    padding: 22px 16px;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .side i.on { background: rgba(var(--primary), 0.7); }
+
+  .main { flex: 1; padding: 22px 24px; }
+
+  .main i.h {
+    width: 55%;
+    height: 18px;
+    margin-bottom: 18px;
+    background: linear-gradient(90deg, rgb(var(--primary)), rgb(var(--secondary)));
+    opacity: 0.85;
+  }
+
+  .main i.code { height: 52px; border-radius: 8px; background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.08); }
+
+  table { border-collapse: collapse; font-size: 14px; width: 100%; }
+  th, td { border: 1px solid #d0d7de; padding: 7px 10px; text-align: left; white-space: nowrap; }
+  th { background: #f6f8fa; }
+  .a { color: #0969da; }
+  code {
+    font-family: 'JetBrains Mono Variable', ui-monospace, monospace;
+    font-size: 12.5px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(175, 184, 193, 0.25);
+  }
+</style>
+</head>
+<body>
+  <div class="grid"></div>
+
+  <div class="copy">
+    <div class="brand">
+      <img src="../static/img/netfoundry-preview-logo.svg" alt="">
+      <span>NetFoundry Preview</span>
+    </div>
+    <div class="eyebrow">Self-hosted pull request previews</div>
+    <h1>Every pull request,<br><span class="grad">a live preview.</span></h1>
+    <p class="lead">One Go binary on hardware you run. One comment on the pull request, edited in place.</p>
+  </div>
+
+  <div class="stage">
+    <div class="pr">
+      <div class="prTitle"><span class="open">Open</span><span>Rewrite the install guide</span><span class="num">#128</span></div>
+      <div class="comment">
+        <div class="head">
+          <span class="avatar"></span><b>netfoundry-preview</b><span class="bot">bot</span><span class="when">edited just now</span>
+        </div>
+        <div class="body">
+          <div class="t">NetFoundry Preview</div>
+          <table>
+            <tr><th>Project</th><th>Status</th><th>Preview</th><th>Commit</th></tr>
+            <tr>
+              <td class="a">acme/docs</td>
+              <td>✅ <span class="a">Ready</span> · 41s</td>
+              <td class="a">Preview</td>
+              <td><code>a1b2c3d</code></td>
+            </tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- What the Preview link opens: the branch's site, abstracted to skeleton lines. The hostname is the
+       zrok share shape README.md shows. -->
+  <div class="browser">
+    <div class="bar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="url"><span class="lock">●</span> feature-new-guide.share.zrok.io</span>
+    </div>
+    <div class="site">
+      <div class="side">
+        <i style="width:70%"></i><i style="width:55%"></i><i class="on" style="width:80%"></i><i style="width:60%"></i>
+        <i style="width:50%"></i>
+      </div>
+      <div class="main">
+        <i class="h"></i>
+        <i style="width:92%"></i><i style="width:86%"></i><i style="width:64%"></i>
+        <i class="code"></i>
+        <i style="width:88%"></i><i style="width:40%"></i>
+      </div>
+    </div>
+  </div>
+
+  <div class="chips">
+    <span class="chip">GitHub</span>
+    <span class="chip">Bitbucket</span>
+    <span class="chip">zrok</span>
+    <span class="chip">Frontdoor</span>
+    <span class="chip">OpenZiti</span>
+  </div>
+
+  <div class="rule"></div>
+</body>
+</html>

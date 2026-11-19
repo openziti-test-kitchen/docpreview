@@ -1,6 +1,7 @@
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import userDocLinks from './src/remark/userDocLinks';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
@@ -81,6 +82,29 @@ const config: Config = {
   // touch the same component.
   themes: ['@docusaurus/theme-mermaid', '@netfoundry/docusaurus-theme'],
 
+  // The design documents live in docs/design at the repository root, beside the code they describe, and
+  // are written for someone changing that code. A second docs instance publishes them from where they
+  // are: a copy under www/ would be a second copy, and the one nobody edits goes stale.
+  // Inter and JetBrains Mono, self-hosted so the site makes no request to a font CDN. See src/fonts.ts
+  // for why this is a client module and not an @import in custom.css.
+  clientModules: ['./src/fonts.ts'],
+
+  plugins: [
+    [
+      '@docusaurus/plugin-content-docs',
+      {
+        id: 'design',
+        path: '../docs/design',
+        routeBasePath: 'design',
+        sidebarPath: './sidebarsDesign.ts',
+        // A function, because the default joins editUrl to a path relative to www/, which for a
+        // directory outside it starts with ../ and points at nothing.
+        editUrl: ({docPath}: {docPath: string}) => `${repoUrl}/blob/main/docs/design/${docPath}`,
+        beforeDefaultRemarkPlugins: [userDocLinks],
+      },
+    ],
+  ],
+
   presets: [
     [
       'classic',
@@ -122,9 +146,12 @@ const config: Config = {
           {href: sitePath('docs/quickstart'), label: 'Quickstart'},
           {href: sitePath('docs/architecture'), label: 'Architecture'},
           {href: sitePath('docs/reference/configuration'), label: 'Configuration'},
+          {href: sitePath('docs/reference/security'), label: 'Security model'},
+          {href: sitePath('design/'), label: 'Design documents'},
         ],
         communityLinks: [
           {href: repoUrl, label: 'GitHub'},
+          {href: `${repoUrl}/tree/main/docs/blog`, label: 'Blog drafts'},
           {href: `${repoUrl}/issues`, label: 'Issues'},
           {href: 'https://openziti.discourse.group/', label: 'Discourse forum'},
         ],
@@ -135,10 +162,11 @@ const config: Config = {
         ],
       },
     },
-    // No social card. The one here was Docusaurus's own artwork, so every link
-    // preview of this site advertised a dragon that has nothing to do with it —
-    // worse than no image. A replacement has to be a raster: Open Graph and every
-    // consumer of it ignore SVG. None is made yet.
+    // The social card: og:image and twitter:image on every page, 1200x630. A raster, because Open Graph
+    // and every consumer of it ignore SVG. Rendered from social/card.html by social/render.mjs, so edit
+    // the HTML and re-render rather than editing the PNG. Docusaurus makes it absolute from url + baseUrl,
+    // which is why DOCUSAURUS_URL has to be the real address for a published build.
+    image: 'img/social-card.png',
     colorMode: {
       respectPrefersColorScheme: true,
     },
@@ -154,6 +182,56 @@ const config: Config = {
           sidebarId: 'docsSidebar',
           position: 'left',
           label: 'Docs',
+        },
+        {
+          type: 'doc',
+          docId: 'quickstart',
+          position: 'left',
+          label: 'Quickstart',
+        },
+        // Two dropdowns because the sidebar already lists everything; these are the pages people come back
+        // for, one click from any page including the landing page, which has no sidebar.
+        {
+          type: 'dropdown',
+          label: 'Guides',
+          position: 'left',
+          items: [
+            {type: 'doc', docId: 'guides/github-app', label: 'Create the GitHub App'},
+            {type: 'doc', docId: 'guides/bitbucket', label: 'Connect Bitbucket'},
+            {type: 'doc', docId: 'guides/webhook-tunnel', label: 'Expose the webhook'},
+            {type: 'doc', docId: 'guides/zrok2', label: 'Publish with zrok v2'},
+            {type: 'doc', docId: 'guides/frontdoor', label: 'Publish with Frontdoor'},
+            {type: 'doc', docId: 'guides/linux-service', label: 'Run as a Linux service'},
+            {type: 'doc', docId: 'guides/container', label: 'Run in a container'},
+            {type: 'doc', docId: 'troubleshooting', label: 'Troubleshooting'},
+          ],
+        },
+        {
+          type: 'dropdown',
+          label: 'Reference',
+          position: 'left',
+          items: [
+            {type: 'doc', docId: 'reference/configuration', label: 'Server configuration'},
+            {type: 'doc', docId: 'reference/repo-config', label: 'Repository configuration'},
+            {type: 'doc', docId: 'reference/cli', label: 'CLI'},
+            {type: 'doc', docId: 'exposers', label: 'Exposers'},
+            {type: 'doc', docId: 'reference/security', label: 'Security model'},
+            {type: 'doc', docId: 'architecture', label: 'Architecture'},
+          ],
+        },
+        {
+          type: 'docSidebar',
+          docsPluginId: 'design',
+          sidebarId: 'designSidebar',
+          position: 'left',
+          label: 'Design',
+        },
+        // The posts in docs/blog are drafts that say they are not linked from this site until they are
+        // published, so this points at them on GitHub rather than publishing them here.
+        {
+          href: `${repoUrl}/tree/main/docs/blog`,
+          label: 'Blog',
+          position: 'left',
         },
         {
           href: repoUrl,
