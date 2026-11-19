@@ -1,0 +1,137 @@
+/* Colours come from the theme's variables so the diagram follows the light/dark switch. */
+
+.figure {
+  margin: 0;
+  padding: 1.25rem;
+  border: 1px solid var(--nfp-line);
+  border-radius: 20px;
+  background: var(--nfp-panel);
+  box-shadow: var(--nfp-shadow-lg);
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--ifm-font-family-base);
+}
+
+.box {
+  fill: var(--ifm-background-color);
+  stroke: var(--ifm-color-emphasis-300);
+  stroke-width: 1.5;
+}
+
+.boxAccent {
+  fill: rgba(var(--nf-color-tertiary), 0.07);
+  stroke: rgba(var(--nf-color-tertiary), 0.55);
+  stroke-width: 1.5;
+}
+
+[data-theme='dark'] .boxAccent {
+  fill: rgba(var(--nf-color-primary), 0.08);
+  stroke: rgba(var(--nf-color-primary), 0.55);
+}
+
+.container {
+  fill: rgba(var(--nf-color-secondary), 0.06);
+  stroke: rgba(var(--nf-color-secondary), 0.7);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 5;
+}
+
+.containerLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12px;
+  fill: var(--ifm-color-emphasis-700);
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 700;
+  fill: var(--ifm-font-color-base);
+}
+
+.sub {
+  font-size: 12.5px;
+  fill: var(--ifm-color-emphasis-700);
+}
+
+.note {
+  font-size: 11.5px;
+  fill: var(--ifm-color-emphasis-600);
+}
+
+.pill {
+  fill: var(--ifm-background-color);
+  stroke: var(--ifm-color-emphasis-300);
+}
+
+.pillText {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 12.5px;
+  font-weight: 600;
+  fill: var(--ifm-font-color-base);
+}
+
+.wire {
+  fill: none;
+  stroke: var(--ifm-color-emphasis-500);
+  stroke-width: 2;
+}
+
+.arrowHead {
+  fill: var(--ifm-color-emphasis-500);
+}
+
+/* A dash running along each wire: the "something is flowing" cue. Off for anyone who asked for less
+   motion, where the static wire underneath carries the meaning on its own. */
+.flow {
+  fill: none;
+  stroke: var(--nf-tertiary);
+  stroke-width: 2;
+  stroke-dasharray: 4 14;
+  animation: nfp-flow 1.4s linear infinite;
+}
+
+[data-theme='dark'] .flow {
+  stroke: var(--nf-primary);
+}
+
+@keyframes nfp-flow {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow {
+    animation: none;
+    display: none;
+  }
+}
+
+.band {
+  stroke: rgba(var(--nf-color-tertiary), 0.35);
+}
+
+.bandStart {
+  stop-color: rgb(var(--nf-color-tertiary));
+  stop-opacity: 0.12;
+}
+
+.bandEnd {
+  stop-color: rgb(var(--nf-color-secondary));
+  stop-opacity: 0.14;
+}
+
+.bandTitle {
+  font-size: 16px;
+  font-weight: 700;
+  fill: var(--ifm-font-color-base);
+}
+
+.bandSub {
+  font-size: 12.5px;
+  fill: var(--ifm-color-emphasis-700);
+}

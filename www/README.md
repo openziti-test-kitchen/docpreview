@@ -86,8 +86,17 @@ docs/
   guides/                   GitHub App, zrok2, Frontdoor
   reference/                  configuration, repo-config, CLI, security
 sidebars.ts                   hand-written; reading order is deliberate
+sidebarsDesign.ts             the design documents, grouped as docs/design/README.md groups them
+src/pages/index.tsx           the landing page; every claim on it has to be true of the code
+src/components/               the pipeline diagram, inline SVG so it follows light and dark
+src/remark/userDocLinks.js    rewrites ../../www/docs/*.md links in the design documents to routes
+src/fonts.ts                  Inter and JetBrains Mono, self-hosted
+social/                       the social card: card.html, rendered to static/img/social-card.png by render.mjs
 docusaurus.config.ts          note the baseUrl line
 ```
+
+The design documents are not under `www/`. They stay in `docs/design/`, beside the code, and a second docs
+instance publishes them at `/design/`. The blog posts in `docs/blog/` are drafts and are only linked, on GitHub.
 
 ## Conventions
 
