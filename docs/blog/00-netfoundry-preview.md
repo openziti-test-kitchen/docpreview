@@ -147,8 +147,8 @@ First, publish something with no App and no webhook. You need Go 1.26+, git, Nod
 only works on your own machine.
 
 ```powershell
-git clone https://github.com/openziti-test-kitchen/docpreview
-cd docpreview
+git clone https://github.com/openziti-test-kitchen/docpreview nfpreview
+cd nfpreview
 go build -o bin/ ./cmd/nfpreview
 
 nfpreview init                                        # one question: which exposer
