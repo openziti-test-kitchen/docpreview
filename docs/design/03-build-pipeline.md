@@ -91,6 +91,43 @@ because it would be arbitrary shell on the host chosen by whoever opened the pul
 under `local`, put it behind `npm run build` in `package.json` — which puts the decision in the hands of
 whoever can merge rather than whoever can open a pull request.
 
+#### The build runs as the daemon's user, with passwordless sudo
+
+The container starts as root, and the first thing it runs is a setup script (`asUser`,
+`internal/pipeline/build.go`). That script prepares the image for the daemon's uid and gid and then runs the install
+and the build as that uid. Every file the build writes through the bind mount is the daemon's from the moment it is
+written.
+
+This matters most for a build that does not finish. Files written as root are root-owned on the host, and the chown
+at the end of the script hands them back only when the script reaches it. A build that is killed by the timeout, a
+cancel, or a newer commit never does. The daemon then cannot remove that workspace, and each later build of the same
+commit fails at once with `clearing workspace: permission denied` until someone chowns the directory by hand.
+
+`docker run --user` is not enough by itself. A uid with no entry in the image's `/etc/passwd` has no HOME, which npm
+needs. And docker creates the anonymous `node_modules` volume root-owned, so the install cannot write to it. The
+setup script fixes both for any image before it drops privileges:
+
+- It adds a passwd and group entry for the uid when the image has none, and gives it a writable HOME
+  (`/tmp/nfpreview-home`). An image that already has the uid keeps its own name for it, so `node:24-bookworm`
+  builds as `node`.
+- It gives the `node_modules` volume to the uid, and any `/cache/*` directory that an earlier root build left
+  root-owned.
+- It gives the uid passwordless `sudo`, so a build command can run `apt-get install` or `npm install -g`.
+  An image with sudo gets a `NOPASSWD` sudoers entry. A Debian image without sudo has a setuid `su`, so the script
+  clears root's password and installs a small `sudo` wrapper around `su`. Alpine's `su` is not setuid, so the script
+  installs sudo from apk. The container is discarded after the build, so none of this outlives it.
+
+The drop uses `setpriv` when the image has a version that can switch users (util-linux, in every Debian image).
+Otherwise it uses `su -p`, which keeps the environment that holds the build's secrets and cache settings. An image
+with neither builds as root.
+
+The chown at the end of the script hands back what is still root-owned: files written under `sudo`, and every file
+of an image that cannot switch users. It changes only files the uid does not own, so a build that wrote nothing as
+root costs one walk of the tree and no chown calls. A killed build that used `sudo` can still leave root-owned files
+behind.
+
+Nothing changes where the ids mean nothing (Windows reports -1) or the daemon itself runs as root.
+
 #### Spelling the host path (Windows)
 
 The mount source has to be a path the *daemon* can resolve, and on Windows that is never the path the host uses.

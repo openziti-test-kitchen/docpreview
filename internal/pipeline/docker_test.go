@@ -99,8 +99,8 @@ func TestDockerMountRoundTrip(t *testing.T) {
 	// and this process cannot read it. Docker Desktop maps ownership on the way through, which
 	// is what would let that version pass on Windows or macOS and fail only on Linux.
 	script := buildScript(
-		"mkdir -p out/deep/deeper && cp input.txt out/copied.txt",
-		"cp deep/deeper/nested.txt out/deep/deeper/nested.txt",
+		"mkdir -p out/deep/deeper && cp input.txt out/copied.txt && "+
+			"cp deep/deeper/nested.txt out/deep/deeper/nested.txt",
 		reownCommand("/workspace/site", os.Getuid(), os.Getgid()))
 
 	out, err := exec.CommandContext(ctx, "docker", "run", "--rm",

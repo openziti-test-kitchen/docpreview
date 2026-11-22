@@ -241,6 +241,11 @@ func TestStartupBuildsOpenPullRequestsWithNoPreview(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// the repository has been listed before, with only the built one open, because a first
+	// listing builds nothing
+	client.openPRs = []model.PullRequest{built}
+	d.backfillOpenPullRequests(ctx)
+
 	client.openPRs = []model.PullRequest{built, missed}
 
 	d.backfillOpenPullRequests(ctx)

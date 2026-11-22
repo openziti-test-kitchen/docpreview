@@ -19,7 +19,7 @@ import (
 //
 // The second is what this test exists for.
 func TestTheBuildsExitStatusSurvivesTheChown(t *testing.T) {
-	script := buildScript("npm ci", "npm run build", "chown -R 1000:1000 /workspace")
+	script := buildScript("npm ci && npm run build", "chown -R 1000:1000 /workspace")
 
 	if !strings.Contains(script, "rc=$?") {
 		t.Fatalf("the script does not capture the build's exit status:\n%s", script)
@@ -46,7 +46,7 @@ func TestTheBuildsExitStatusSurvivesTheChown(t *testing.T) {
 // With nothing to append the script is exactly what it always was. Asserted so the Windows and
 // macOS path cannot acquire a stray `; exit $rc` that changes how a build reports.
 func TestWithNoChownTheScriptIsUnchanged(t *testing.T) {
-	script := buildScript("npm ci", "npm run build", "")
+	script := buildScript("npm ci && npm run build", "")
 	if script != "npm ci && npm run build" {
 		t.Errorf("script = %q", script)
 	}

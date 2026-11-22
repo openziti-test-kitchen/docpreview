@@ -697,10 +697,84 @@ func (b *Builder) createArgs(
 	// Whatever could not go in the file. See writeEnvFile: docker's env-file format has
 	// no way to express a value containing a newline.
 	args = append(args, envArgs...)
-	return append(args, image, "sh", "-lc", buildScript(
-		installCommand(buildDir), cfg.Build.Command,
-		reownCommand(containerDir, os.Getuid(), os.Getgid()))), nil
+	uid, gid := os.Getuid(), os.Getgid()
+	run := asUser(installCommand(buildDir)+" && "+cfg.Build.Command, containerDir, uid, gid)
+	return append(args, image, "sh", "-lc", buildScript(run, reownCommand(containerDir, uid, gid))), nil
 }
+
+// asUser wraps the build so it runs as the user the daemon runs as, with passwordless sudo.
+//
+// # Why
+//
+// Files a build writes as root are root-owned on the host. reownCommand hands them back when
+// the build ends, but a build killed by the timeout, a cancel or a newer commit never gets
+// there. The daemon then cannot remove that workspace, and every later build of the commit
+// fails with "clearing workspace: permission denied" until someone chowns it by hand. A build
+// that runs as the daemon's uid writes files the daemon owns, so a killed build leaves nothing
+// it cannot delete.
+//
+// # Why the container starts as root
+//
+// A uid with no entry in the image's /etc/passwd has no HOME, which npm needs, and docker
+// creates the anonymous node_modules volume root-owned. So the container starts as root, and
+// this script fixes both for any image before it drops to the uid:
+//
+//   - a passwd and group entry for the uid when the image has none, and a writable HOME
+//   - the node_modules volume, and any package-manager cache an earlier root build left
+//     root-owned, handed to the uid
+//
+// # Passwordless root
+//
+// A build command that needs root (`apt-get install`, `npm install -g`) gets it with
+// `sudo`, without a password. Real sudo is configured when the image has it. Debian-based
+// images have no sudo but a setuid su, so root's password is cleared inside the container
+// and a small `sudo` wrapper calls su. Alpine's su is not setuid, so sudo is installed from
+// apk. The container is thrown away after the build, so none of this outlives it.
+//
+// Files written under sudo are root-owned. reownCommand hands those back, but a killed build
+// that used sudo can leave some behind.
+//
+// # Dropping to the uid
+//
+// setpriv where it can switch users (util-linux, in every Debian image), else `su -p`,
+// which keeps the environment the build's secrets and cache settings are in. An image with
+// neither cannot switch users, and the build runs as root.
+//
+// Nothing changes where the ids mean nothing (-1, Windows) or the daemon is itself root.
+func asUser(cmd, containerDir string, uid, gid int) string {
+	if uid <= 0 || gid < 0 {
+		return cmd
+	}
+	u, g := strconv.Itoa(uid), strconv.Itoa(gid)
+	inner := shellQuote(cmd)
+	modules := shellQuote(containerDir + "/node_modules")
+	return strings.Join([]string{
+		"U=" + u + "; G=" + g + "; HM=/tmp/nfpreview-home",
+		`grep -q "^[^:]*:[^:]*:$G:" /etc/group || echo "nfpreview:x:$G:" >> /etc/group`,
+		`NAME=$(awk -F: -v u="$U" '$3==u{print $1; exit}' /etc/passwd)`,
+		`[ -n "$NAME" ] || { NAME=nfpreview; echo "nfpreview:x:$U:$G:nfpreview:$HM:/bin/sh" >> /etc/passwd; }`,
+		`mkdir -p "$HM" && chown "$U:$G" "$HM"`,
+		"chown \"$U:$G\" " + modules + " 2>/dev/null",
+		`for d in /cache/*; do [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 2 ! -user "$U" -print -quit 2>/dev/null)" ] && chown -R "$U:$G" "$d"; done`,
+		`if ! command -v sudo >/dev/null 2>&1 && ! [ -u "$(command -v su)" ] && command -v apk >/dev/null 2>&1; then apk add -q --no-cache sudo >/dev/null 2>&1; fi`,
+		`if command -v sudo >/dev/null 2>&1; then mkdir -p /etc/sudoers.d && echo "$NAME ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nfpreview && chmod 0440 /etc/sudoers.d/nfpreview; ` +
+			`elif [ -u "$(command -v su)" ]; then sed -i 's/^root:[^:]*:/root::/' /etc/shadow 2>/dev/null; printf '%s\n' ` + shellQuote(sudoShim) + ` > /usr/local/bin/sudo && chmod 0755 /usr/local/bin/sudo; fi`,
+		`export HOME="$HM" USER="$NAME" LOGNAME="$NAME"`,
+		`if setpriv --reuid="$U" --regid="$G" --clear-groups -- true 2>/dev/null; then echo "$ building as $NAME (uid $U)"; setpriv --reuid="$U" --regid="$G" --clear-groups -- sh -lc ` + inner + `; ` +
+			`elif command -v su >/dev/null 2>&1; then echo "$ building as $NAME (uid $U)"; su -p -s /bin/sh "$NAME" -c ` + inner + `; ` +
+			`else echo '$ this image cannot switch users; building as root'; sh -lc ` + inner + `; fi`,
+	}, "\n")
+}
+
+// sudoShim is the `sudo` an image without one gets, when its su is setuid.
+//
+// It drops the flags builds commonly pass to sudo and runs the rest through su, quoting each
+// argument so one with spaces or quotes reaches the command intact.
+const sudoShim = `#!/bin/sh
+while :; do case "$1" in -E|-H|-n|-S|--preserve-env) shift ;; --) shift; break ;; *) break ;; esac; done
+c=""
+for a in "$@"; do c="$c '$(printf '%s' "$a" | sed "s/'/'\\\\''/g")'"; done
+exec su root -s /bin/sh -c "$c"`
 
 // buildScript is what the container runs: install, build, and hand the output back.
 //
@@ -726,8 +800,8 @@ func (b *Builder) createArgs(
 // finished, followed by seconds of nothing.
 //
 // The echo is placed after `rc=$?` so it cannot become the status the container exits with.
-func buildScript(install, build, reown string) string {
-	script := install + " && " + build
+func buildScript(run, reown string) string {
+	script := run
 	if reown != "" {
 		script += "; rc=$?; echo '$ handing the output back to the daemon'; " + reown + "; exit $rc"
 	}
@@ -738,24 +812,18 @@ func buildScript(install, build, reown string) string {
 //
 // # The problem it solves
 //
-// The container runs as root — `--user` is deliberately not passed, see below — so on Linux every
-// file it writes through the bind mount is owned by root on the host. The daemon then runs as an
-// unprivileged service account and cannot read the site it just built, cannot copy it into
-// `artifacts/`, and cannot remove the workspace afterwards. Every one of those fails with
-// `permission denied` at a point where the build log says the build succeeded.
+// The build runs as the daemon's uid (see asUser), but two kinds of file are still root-owned on
+// the host: files a build command wrote under sudo, and every file of an image that cannot switch
+// users and so built as root. On Linux the
+// daemon, an unprivileged service account, cannot read them, copy them into `artifacts/`, or
+// remove the workspace afterwards. Every one of those fails with `permission denied` at a point
+// where the build log says the build succeeded.
+//
+// Only files not already the uid's are changed, so a build that wrote nothing as root costs one
+// walk and no chown calls.
 //
 // Invisible on Docker Desktop, which maps ownership on the way through, so this must be
 // exercised on Linux to catch a regression — see TestDockerMountRoundTrip.
-//
-// # Why not --user
-//
-// `--user $(id -u)` is the obvious fix and breaks two things. `npm` wants a writable HOME, and a
-// uid with no entry in the image's `/etc/passwd` does not have one. And the anonymous volume
-// mounted at `node_modules` is created root-owned, so the install cannot write into the one
-// directory it exists to write into. Both are solvable per image and neither is solvable for an
-// arbitrary image an operator names in a project row.
-//
-// Doing it afterwards needs no cooperation from the image at all.
 //
 // # Why the node_modules volume is pruned
 //
@@ -778,8 +846,8 @@ func reownCommand(containerDir string, uid, gid int) string {
 	// pull request. The allowlist already keeps shell syntax out of it; the quoting is what
 	// holds if that ever loosens.
 	return fmt.Sprintf(
-		"find /workspace -path %s -prune -o -exec chown %d:%d {} + || true",
-		shellQuote(containerDir+"/node_modules"), uid, gid)
+		"find /workspace -path %s -prune -o ! -user %d -exec chown %d:%d {} + || true",
+		shellQuote(containerDir+"/node_modules"), uid, uid, gid)
 }
 
 // writeEnvFile puts the build's environment in a private file and returns its path.

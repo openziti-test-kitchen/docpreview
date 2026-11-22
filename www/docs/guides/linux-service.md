@@ -194,13 +194,13 @@ driver, and it is why this VM should do nothing else.
 
 :::note Why the uid matters
 
-A build container runs as **root**, so everything it writes through the bind mount is root-owned on the host. The
-daemon, running as `nfpreview`, then can't read its own build output, copy it into `artifacts/`, or remove the
-workspace.
+A build runs inside its container as the daemon's own uid and gid, so the files it writes through the bind mount
+belong to `nfpreview` on the host. The build command has passwordless `sudo` for steps such as
+`apt-get install`. Anything written under `sudo` is root-owned, so the daemon also appends a `chown` to the build's
+command to hand those files back.
 
-To handle that, the daemon appends a `chown` to the build's command, using its own uid and gid. You don't have to
-do anything. But if you change `User=` in the unit file to an account that does not own `/var/lib/nfpreview`, the
-daemon builds fine and then fails to publish.
+You don't have to do anything. But if you change `User=` in the unit file to an account that does not own
+`/var/lib/nfpreview`, the daemon builds fine and then fails to publish.
 
 :::
 

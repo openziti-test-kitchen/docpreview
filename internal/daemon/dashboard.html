@@ -4093,8 +4093,8 @@ function renderFeedFilters(events) {
 // outcome. Dropped rather than merged into one row with a duration, because the
 // timestamps are the history and a synthesised row has no honest one.
 //
-// The kind filter bypasses this. Picking "queued" is asking for exactly what was
-// hidden, and answering with nothing would be a filter that lies.
+// The kind filter and its counts work on what this returns, one row per attempt, so
+// a finished build counts once, as ready or failed, and never as building.
 //
 // One pass, newest first, which is the order the daemon sends. A non-terminal entry
 // is dropped only when a *newer* terminal entry for the same attempt has already
@@ -4159,9 +4159,13 @@ function renderEvents() {
     .sort((a, b) => new Date(b.at) - new Date(a.at));
 
   document.getElementById("feed-scope").textContent = only ? only : "all projects";
-  renderFeedFilters(scoped);
+  const current = collapse(scoped);
+  // when the last build of the selected kind moves on, its chip disappears, so the
+  // filter is cleared too. Otherwise the feed is empty with no chip to press.
+  if (ui.kind && !current.some(e => e.kind === ui.kind)) ui.kind = null;
+  renderFeedFilters(current);
 
-  const shown = ui.kind ? scoped.filter(e => e.kind === ui.kind) : collapse(scoped);
+  const shown = ui.kind ? current.filter(e => e.kind === ui.kind) : current;
 
   if (shown.length === 0) {
     el.innerHTML = `<div class="empty">Nothing yet.</div>`;

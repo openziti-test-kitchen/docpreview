@@ -197,6 +197,10 @@ This is the largest known gap.
 - **A transformed secret.** Six encodings are matched. A build that hashes or fragments a credential defeats
   redaction.
 - **Timing and traffic analysis on the overlay.**
+- **Root inside the build container.** A build runs as the daemon's uid, but with passwordless `sudo` (see
+  [03-build-pipeline.md](03-build-pipeline.md)). The uid exists so that the files a build leaves are ones the daemon
+  can remove. It is not a privilege boundary. The container, with its limits and its single bind mount, is the
+  boundary. This is one more reason fork pull requests are refused: their code would get that `sudo` too.
 
 ## Invariants
 
