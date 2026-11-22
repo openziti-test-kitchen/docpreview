@@ -10,6 +10,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -593,6 +594,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 // Unlinked pull requests are skipped without this having to know: `handleBuild` is where that
 // check lives, and this goes through it like everything else.
 //
+// **Not the pull requests that were already open when the repository was first listed.** No
+// webhook was missed for those, because the daemon was not watching yet. Building them all is a
+// burst of public comments on pull requests nobody asked about. The first listing records each
+// one's head commit instead (see firstScanSeen), and a later listing skips a pull request still at
+// that commit. A push after that arrives as a webhook and builds. A push whose webhook was missed
+// shows up here as a new commit and builds.
+//
 // One listing per project per startup, and it costs nothing on a settled installation — every
 // pull request already has a preview, so the answer is "nothing to do" after one API call.
 func (d *Daemon) backfillOpenPullRequests(ctx context.Context) {
@@ -643,8 +651,15 @@ func (d *Daemon) backfillOpenPullRequests(ctx context.Context) {
 			continue
 		}
 
+		seen, scanned := d.firstScanSeen(ctx, repo)
+		// Rewritten from this listing, so closed and since-built pull requests drop out of it.
+		stillSeen := map[int]string{}
 		for _, pr := range prs {
 			if have[pr.PreviewID()] {
+				continue
+			}
+			if !scanned || seen[pr.Number] == pr.HeadSHA {
+				stillSeen[pr.Number] = pr.HeadSHA
 				continue
 			}
 			if err := d.handleBuild(ctx, scm.Event{Kind: scm.EventBuild, PR: pr}); err != nil {
@@ -655,8 +670,51 @@ func (d *Daemon) backfillOpenPullRequests(ctx context.Context) {
 			d.log.Info("queued a pull request that had no preview", "pr", pr.String(),
 				"note", "its webhook delivery was missed, or it was opened while the daemon was down")
 		}
+		d.saveFirstScanSeen(ctx, repo, stillSeen)
+		if !scanned && len(stillSeen) > 0 {
+			d.log.Info("first listing of a project: its open pull requests build on their next push",
+				"project", repo.String(), "open", len(stillSeen))
+		}
 
 		d.teardownClosed(ctx, repo, prs, storedByRepo[repo])
+	}
+}
+
+// firstScanSettingPrefix keys, per repository, the open pull requests the startup scan leaves
+// alone: number to head commit, as JSON.
+const firstScanSettingPrefix = "backfill.seen."
+
+// firstScanSeen reads what backfillOpenPullRequests left unbuilt for repo last time, and whether
+// it has listed repo before at all.
+//
+// An unreadable or corrupt value counts as "never listed". That errs toward building nothing,
+// which costs a preview until the next push. The other way round costs a comment on every open
+// pull request.
+func (d *Daemon) firstScanSeen(ctx context.Context, repo model.Repo) (map[int]string, bool) {
+	raw, ok, err := d.store.Setting(ctx, firstScanSettingPrefix+repo.String())
+	if err != nil {
+		d.log.Warn("reading the startup scan's record", "project", repo.String(), "error", err)
+		return nil, false
+	}
+	if !ok {
+		return nil, false
+	}
+	seen := map[int]string{}
+	if err := json.Unmarshal([]byte(raw), &seen); err != nil {
+		d.log.Warn("the startup scan's record is unreadable; treating the project as new",
+			"project", repo.String(), "error", err)
+		return nil, false
+	}
+	return seen, true
+}
+
+func (d *Daemon) saveFirstScanSeen(ctx context.Context, repo model.Repo, seen map[int]string) {
+	raw, err := json.Marshal(seen)
+	if err == nil {
+		err = d.store.SetSetting(ctx, firstScanSettingPrefix+repo.String(), string(raw))
+	}
+	if err != nil {
+		d.log.Warn("saving the startup scan's record", "project", repo.String(), "error", err)
 	}
 }
 
